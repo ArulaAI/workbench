@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="840" height="420" viewBox="0 0 840 420" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="840" height="420" fill="#2a2a2e"/>
+
+  <defs>
+    <linearGradient id="grad-teal" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#00ccaa" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#00ccaa" stop-opacity="0.03"/>
+    </linearGradient>
+    <linearGradient id="grad-amber" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ffcc33" stop-opacity="0.10"/>
+      <stop offset="100%" stop-color="#ffcc33" stop-opacity="0.03"/>
+    </linearGradient>
+    <linearGradient id="grad-cyan" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#44bbee" stop-opacity="0.10"/>
+      <stop offset="100%" stop-color="#44bbee" stop-opacity="0.03"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Control Plane -->
+  <rect x="50" y="50" width="740" height="100" rx="16" fill="url(#grad-teal)" stroke="#00ccaa" stroke-opacity="0.3" stroke-width="1"/>
+  <text x="70" y="85" fill="#00ccaa" font-family="IBM Plex Mono, monospace" font-size="12" font-weight="600" letter-spacing="0.05em">CONTROL PLANE</text>
+
+  <rect x="250" y="70" width="160" height="60" rx="8" fill="#42424a" stroke="#00ccaa" stroke-opacity="0.4"/>
+  <text x="330" y="105" fill="#f0f0f0" font-family="Inter, sans-serif" font-size="12" font-weight="500" text-anchor="middle">speed CLI</text>
+
+  <rect x="430" y="70" width="160" height="60" rx="8" fill="#42424a" stroke="#00ccaa" stroke-opacity="0.4"/>
+  <text x="510" y="105" fill="#f0f0f0" font-family="Inter, sans-serif" font-size="12" font-weight="500" text-anchor="middle">Worktree Mgr</text>
+
+  <!-- Execution Plane -->
+  <rect x="50" y="170" width="470" height="200" rx="16" fill="url(#grad-amber)" stroke="#ffcc33" stroke-opacity="0.25" stroke-width="1"/>
+  <text x="70" y="205" fill="#ffcc33" font-family="IBM Plex Mono, monospace" font-size="12" font-weight="600" letter-spacing="0.05em">EXECUTION PLANE</text>
+
+  <rect x="80" y="240" width="125" height="65" rx="8" fill="#42424a" stroke="#ffcc33" stroke-opacity="0.3"/>
+  <text x="142" y="278" fill="#f0f0f0" font-family="Inter, sans-serif" font-size="11" font-weight="600" text-anchor="middle">Agent Fleet</text>
+
+  <rect x="222" y="240" width="125" height="65" rx="8" fill="#42424a" stroke="#ffcc33" stroke-opacity="0.3"/>
+  <text x="284" y="278" fill="#f0f0f0" font-family="Inter, sans-serif" font-size="11" font-weight="600" text-anchor="middle">Quality Gates</text>
+
+  <rect x="364" y="240" width="125" height="65" rx="8" fill="#42424a" stroke="#ffcc33" stroke-opacity="0.3"/>
+  <text x="426" y="278" fill="#f0f0f0" font-family="Inter, sans-serif" font-size="11" font-weight="600" text-anchor="middle">Failure Analyst</text>
+
+  <!-- Data Plane -->
+  <rect x="540" y="170" width="250" height="200" rx="16" fill="url(#grad-cyan)" stroke="#44bbee" stroke-opacity="0.25" stroke-width="1"/>
+  <text x="560" y="205" fill="#44bbee" font-family="IBM Plex Mono, monospace" font-size="12" font-weight="600" letter-spacing="0.05em">DATA PLANE</text>
+
+  <rect x="570" y="240" width="190" height="50" rx="8" fill="#42424a" stroke="#44bbee" stroke-opacity="0.3"/>
+  <text x="665" y="271" fill="#f0f0f0" font-family="Inter, sans-serif" font-size="11" text-anchor="middle">Global Index (L1)</text>
+
+  <rect x="570" y="300" width="190" height="50" rx="8" fill="#42424a" stroke="#44bbee" stroke-opacity="0.3"/>
+  <text x="665" y="331" fill="#f0f0f0" font-family="Inter, sans-serif" font-size="11" text-anchor="middle">Scoping (L2)</text>
+
+  <!-- Connectors -->
+  <path d="M 330 150 V 240" stroke="#00ccaa" stroke-width="1" stroke-dasharray="4 4" opacity="0.3"/>
+  <path d="M 510 150 V 240" stroke="#ffcc33" stroke-width="1" stroke-dasharray="4 4" opacity="0.3"/>
+  <path d="M 665 150 V 240" stroke="#44bbee" stroke-width="1" stroke-dasharray="4 4" opacity="0.3"/>
+</svg>

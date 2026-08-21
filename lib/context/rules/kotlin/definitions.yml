@@ -1,0 +1,63 @@
+id: kotlin-class
+language: kotlin
+metadata:
+  produces: node
+  kind: class
+rule:
+  kind: class_declaration
+
+---
+id: kotlin-interface
+language: kotlin
+metadata:
+  produces: node
+  kind: type
+rule:
+  kind: class_declaration
+
+---
+id: kotlin-object
+language: kotlin
+metadata:
+  produces: node
+  kind: class
+rule:
+  kind: object_declaration
+
+---
+id: kotlin-enum
+language: kotlin
+metadata:
+  produces: node
+  kind: type
+rule:
+  kind: class_declaration
+
+---
+id: kotlin-function
+language: kotlin
+metadata:
+  produces: node
+  kind: method
+rule:
+  kind: function_declaration
+
+---
+id: kotlin-property
+language: kotlin
+metadata:
+  produces: node
+  kind: variable
+rule:
+  kind: property_declaration
+
+---
+id: kotlin-class-extends
+language: kotlin
+metadata:
+  produces: edge
+  edge_type: inherits
+rule:
+  kind: class_declaration
+  has:
+    kind: delegation_specifier

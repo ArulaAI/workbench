@@ -1,0 +1,37 @@
+{
+  "id": "6",
+  "title": "SAST and SCA quality gate functions in lib/gates.sh",
+  "description": "Add `gate_sast()` and `gate_sca()` to `lib/gates.sh`, then wire both into `gates_run()` after the existing `for gate_type in lint typecheck test; do ... done` loop.\n\n**`gate_sast(task_id, worktree_path)`:**\n1. Read `TOML_SECURITY_SAST_CMD`. If empty, return 0 silently (no log message for SAST skip, matching S5 behavior where unconfigured tools are simply absent).\n2. Extract `feature_name` from `${TASKS_DIR}/${task_id}.json` via `jq -r '.feature // \"unknown\"'`.\n3. Create `${STATE_DIR}/features/${feature_name}/logs/` directory.\n4. Run `(cd \"$worktree_path\" && eval \"$sast_cmd\" > \"$raw_output\" 2>&1)`, capturing exit code.\n5. If no output and non-zero exit: `log_warn \"SAST tool failed (exit ${sast_exit}). Is '${sast_cmd%% *}' installed?\"` and return 0.\n6. Call `security_sast_parse \"$raw_output\" \"$parsed_output\"` (from `lib/security.sh`, Task 2).\n7. Count findings via `jq 'length'`. If > 0, build severity summary via `jq group_by(.severity)`, append warning to `results` array, print individual finding lines. If 0, append success message.\n8. Return 0 always.\n\n**`gate_sca(task_id, worktree_path)`:** Same structure using `TOML_SECURITY_SCA_CMD` and `security_sca_parse`.\n\n**Integration:** After the existing gate loop in `gates_run()` and before printing results, add:\n```bash\ngate_sast \"$task_id\" \"$worktree_path\"\ngate_sca \"$task_id\" \"$worktree_path\"\n```\n\nEnsure `lib/security.sh` is sourced (add `source \"${SCRIPT_DIR}/lib/security.sh\"` if not already sourced by the caller chain).\n\nWrite `tests/test_gates_security.sh` with mock SAST/SCA tools (bash scripts outputting fixture JSON in Semgrep and npm-audit formats).",
+  "acceptance_criteria": "- gate_sast function exists in lib/gates.sh\n  verify_by: test\n- gate_sca function exists in lib/gates.sh\n  verify_by: test\n- gate_sast with empty TOML_SECURITY_SAST_CMD returns 0 and produces no output\n  verify_by: test\n- gate_sast with configured mock tool writes sast-output.json and sast-findings.json to feature logs\n  verify_by: test\n- gate_sast returns 0 even when SAST findings exist\n  verify_by: test\n- gate_sca with empty TOML_SECURITY_SCA_CMD returns 0 silently\n  verify_by: test\n- gate_sca with configured mock tool writes sca-output.json and sca-findings.json\n  verify_by: test\n- SAST findings appear in results array with severity breakdown\n  verify_by: test\n- SCA findings appear in results array with severity breakdown\n  verify_by: test\n- Missing tool (non-zero exit, empty output) logs install hint warning\n  verify_by: test\n- gates_run calls gate_sast and gate_sca after lint/typecheck/test gates\n  verify_by: test",
+  "depends_on": [
+    "1",
+    "2"
+  ],
+  "status": "done",
+  "branch": "speed/speed-security/task-6-sast-and-sca-quality-gate-functions-in-l",
+  "agent_model": "opus",
+  "created_at": "2026-02-26T11:44:36Z",
+  "started_at": "2026-02-26T12:08:54Z",
+  "completed_at": "2026-02-26T12:14:19Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": null,
+  "files_touched": [
+    "lib/gates.sh",
+    "tests/test_gates_security.sh"
+  ],
+  "timeout_count": 1,
+  "review_verdict": "approve",
+  "retry_count": 1,
+  "decisions": [
+    "Placed gate_sast() and gate_sca() at the end of lib/gates.sh after _run_scoped_test_fallback, keeping the security gates section clearly separated from the quality gates",
+    "Sourced lib/security.sh in the speed CLI bootstrap after context_bridge.sh (line 44) since security_sast_parse/security_sca_parse depend on _context_python() from context_bridge.sh",
+    "Both gate functions modify the results array from the calling scope (gates_run) rather than using a separate output mechanism, matching the existing pattern for syntax/lint/typecheck/test gates",
+    "Individual finding lines are printed via jq piped to a while loop, not appended to results array, matching the task spec's intent for detail output vs. summary in results"
+  ],
+  "concerns": [
+    "The speed file modification is an undeclared file change (only lib/gates.sh and the test file were declared). However, sourcing lib/security.sh is required for the gate functions to call security_sast_parse/security_sca_parse at runtime. Without this, the gates would fail with 'command not found' errors.",
+    "The results array is modified in the caller's scope (gates_run) via bash's nameref-like scoping. This works because gate_sast/gate_sca are called directly (not in a subshell). The existing gate loop uses the same pattern."
+  ],
+  "reviewed_at": "2026-02-26T16:38:02Z"
+}

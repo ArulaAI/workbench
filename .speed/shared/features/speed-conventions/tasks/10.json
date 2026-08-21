@@ -1,0 +1,85 @@
+{
+  "id": "10",
+  "title": "Project Knowledge pipeline: seed, gap detection, staleness",
+  "description": "Create `lib/learn/project_knowledge.py` with the three public functions and supporting types for the Project Knowledge subsystem.\n\n**DraftEntry dataclass:** Fields `id`, `knowledge`, `why_it_matters`, `applies_to`, `agents`, `tags`, `source`, `draft_reason`, `staleness_flag`, `last_verified`. Pattern prefix `pk-draft-` for IDs.\n\n**`seed_knowledge(project_root: Path, memory_dir: Path) -> list[DraftEntry]`:**\n- Scan these files if present: README.md, CLAUDE.md, CONTRIBUTING.md, any `docs/adr/` or `adr/` directory files, `.env.example`\n- For `.env.example`: read only comment lines and variable names. Explicit denylist: `.env`, `.env.local`, `*.key`, `*.pem`, `credentials.*`\n- Scan all Python/JS/TS/Bash source files for inline comments containing: IMPORTANT, NOTE, HACK, ASSUMPTION, DO NOT, NEVER, ALWAYS (case-insensitive)\n- Generate DraftEntry per extracted knowledge snippet with `source: 'seeded'`, `draft_reason` noting the source file and line\n- Write/merge to `project-knowledge-drafts.json` (skip entries with duplicate IDs if file already exists)\n- Never write to `project-knowledge.json`\n- Create `memory_dir` if missing (including parents)\n\n**`detect_knowledge_gaps(memory_dir: Path) -> list[DraftEntry]`:**\n- Read all `observations/*.jsonl` files from memory_dir\n- Group observations by file path from `applies_to` or file references\n- Where 3+ retries/failures cluster in the same area with no matching convention or existing project-knowledge entry, generate a draft question entry with `source: 'system-prompted'`\n- Write/merge to `project-knowledge-drafts.json`\n\n**`check_staleness(project_root: Path, memory_dir: Path) -> list[DraftEntry]`:**\n- Read `project-knowledge.json` (return empty list if missing)\n- For each entry: (1) check `applies_to` paths exist via `project_root`, (2) check dependency versions in lock files (requirements.txt, package.json, Cargo.toml, go.sum) against any version references in `knowledge` text, (3) check `last_verified` > 90 days old\n- Flag stale entries by writing to `project-knowledge-drafts.json` with `source: 'stale-flag'` and `staleness_flag` describing the issue\n\nAll file writes use atomic write pattern (write to temp, then rename) from the `_atomic_write_json` utility in `lib/learn/conventions.py` (task 1). Import it.",
+  "acceptance_criteria": "- seed_knowledge() scanning a directory with README.md containing 'IMPORTANT: do not call X directly' produces at least one DraftEntry with source='seeded'\n- seed_knowledge() never writes to project-knowledge.json, only project-knowledge-drafts.json\n- seed_knowledge() on a directory with no scannable files returns empty list and writes empty array to drafts file\n- seed_knowledge() run twice on same project does not create duplicate IDs in drafts file\n- seed_knowledge() skips .env files (denylist enforced) but reads .env.example\n- detect_knowledge_gaps() with 3+ retry observations on the same file path produces a draft question entry\n- detect_knowledge_gaps() with fewer than 3 retries in any area returns empty list\n- detect_knowledge_gaps() with missing observations directory returns empty list\n- check_staleness() flags entry whose applies_to path no longer exists\n- check_staleness() flags entry with last_verified older than 90 days\n- check_staleness() returns empty list when project-knowledge.json is missing\n- check_staleness() raises json.JSONDecodeError on malformed project-knowledge.json\n- All output conforms to project-knowledge-drafts.json schema (id pattern ^pk-draft-, required fields present)\n- memory_dir is created if missing",
+  "depends_on": [
+    "1"
+  ],
+  "status": "done",
+  "branch": "speed/speed-conventions/task-10-project-knowledge-pipeline-seed-gap-dete",
+  "agent_model": "opus",
+  "created_at": "2026-03-14T16:03:48Z",
+  "started_at": null,
+  "completed_at": "2026-03-15T18:26:46Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": "{\"verdict\":\"request_changes\",\"spec_verification\":[{\"spec_quote\":\"seed_knowledge() scanning a directory with README.md containing 'IMPORTANT: do not call X directly' produces at least one DraftEntry with source='seeded'\",\"spec_section\":\"AC-1\",\"satisfied\":false,\"evidence\":\"Git diff is empty. No implementation provided.\",\"notes\":\"Cannot verify.\"},{\"spec_quote\":\"seed_knowledge() never writes to project-knowledge.json, only project-knowledge-drafts.json\",\"spec_section\":\"AC-2\",\"satisfied\":false,\"evidence\":\"Git diff is empty.\",\"notes\":null},{\"spec_quote\":\"seed_knowledge() on a directory with no scannable files returns empty list and writes empty array to drafts file\",\"spec_section\":\"AC-3\",\"satisfied\":false,\"evidence\":\"Git diff is empty.\",\"notes\":null},{\"spec_quote\":\"seed_knowledge() run twice on same project does not create duplicate IDs in drafts file\",\"spec_section\":\"AC-4\",\"satisfied\":false,\"evidence\":\"Git diff is empty.\",\"notes\":null},{\"spec_quote\":\"seed_knowledge() skips .env files (denylist enforced) but reads .env.example\",\"spec_section\":\"AC-5\",\"satisfied\":false,\"evidence\":\"Git diff is empty.\",\"notes\":null},{\"spec_quote\":\"detect_knowledge_gaps() with 3+ retry observations on the same file path produces a draft question entry\",\"spec_section\":\"AC-6\",\"satisfied\":false,\"evidence\":\"Git diff is empty.\",\"notes\":null},{\"spec_quote\":\"detect_knowledge_gaps() with fewer than 3 retries in any area returns empty list\",\"spec_section\":\"AC-7\",\"satisfied\":false,\"evidence\":\"Git diff is empty.\",\"notes\":null},{\"spec_quote\":\"detect_knowledge_gaps() with missing observations directory returns empty list\",\"spec_section\":\"AC-8\",\"satisfied\":false,\"evidence\":\"Git diff is empty.\",\"notes\":null},{\"spec_quote\":\"check_staleness() flags entry whose applies_to path no longer exists\",\"spec_section\":\"AC-9\",\"satisfied\":false,\"evidence\":\"Git diff is empty.\",\"notes\":null},{\"spec_quote\":\"check_staleness() flags entry with last_verified older than 90 days\",\"spec_section\":\"AC-10\",\"satisfied\":false,\"evidence\":\"Git diff is empty.\",\"notes\":null},{\"spec_quote\":\"check_staleness() returns empty list when project-knowledge.json is missing\",\"spec_section\":\"AC-11\",\"satisfied\":false,\"evidence\":\"Git diff is empty.\",\"notes\":null},{\"spec_quote\":\"check_staleness() raises json.JSONDecodeError on malformed project-knowledge.json\",\"spec_section\":\"AC-12\",\"satisfied\":false,\"evidence\":\"Git diff is empty.\",\"notes\":null},{\"spec_quote\":\"All output conforms to project-knowledge-drafts.json schema (id pattern ^pk-draft-, required fields present)\",\"spec_section\":\"AC-13\",\"satisfied\":false,\"evidence\":\"Git diff is empty.\",\"notes\":null},{\"spec_quote\":\"memory_dir is created if missing\",\"spec_section\":\"AC-14\",\"satisfied\":false,\"evidence\":\"Git diff is empty.\",\"notes\":null}],\"missing_from_spec\":[{\"spec_quote\":\"All 14 acceptance criteria\",\"description\":\"The submitted diff is empty — no implementation was provided. All 14 criteria are unmet. lib/learn/project_knowledge.py was not created or modified.\"}],\"out_of_scope\":[],\"issues\":[{\"severity\":\"critical\",\"file\":\"lib/learn/project_knowledge.py\",\"line\":null,\"message\":\"The git diff is empty. No implementation was submitted for review.\",\"suggestion\":\"Submit the actual implementation diff for lib/learn/project_knowledge.py before requesting review.\"}],\"strengths\":[],\"defect_scope_check\":null}\n\n--- Attempt 2 ---\nFailed with: Merge conflict: speed/speed-conventions/task-1-data-models-shared-types-and-atomic-writ into feature/continuous-learning (failed 3x)\nHuman guidance: Merge conflict resolved — task 1 already merged into feature branch",
+  "files_touched": [
+    "lib/learn/project_knowledge.py"
+  ],
+  "gate_results": {
+    "checks": [
+      {
+        "name": "diff_non_empty",
+        "status": "pass"
+      },
+      {
+        "name": "declared_files",
+        "status": "pass"
+      },
+      {
+        "name": "scope",
+        "status": "pass"
+      },
+      {
+        "name": "python_imports",
+        "status": "pass"
+      },
+      {
+        "name": "not_blocked",
+        "status": "pass"
+      },
+      {
+        "name": "test_coverage",
+        "status": "pass"
+      },
+      {
+        "name": "gate_evidence",
+        "status": "warn"
+      },
+      {
+        "name": "criteria",
+        "status": "pass"
+      },
+      {
+        "name": "secrets",
+        "status": "pass"
+      }
+    ],
+    "scope": {}
+  },
+  "decisions": [
+    "Imported _atomic_write (not _atomic_write_json) since that's the actual function name in conventions.py — the task spec has a naming discrepancy",
+    "seed_knowledge always writes to drafts file even when empty, satisfying the AC 'returns empty list and writes empty array'",
+    "detect_knowledge_gaps and check_staleness only write when they have new entries (no empty write needed per spec)",
+    "_merge_and_write skips entries with duplicate IDs — idempotent on repeated runs",
+    ".env.example produces a combined 'required environment variables' entry (var names) plus keyword-filtered comment entries — satisfies both the 'reads .env.example' AC and the 'variable names extracted' requirement without generating one entry per variable",
+    "Source file scanning skips node_modules, .venv, __pycache__, .git, dist, build to avoid scanning dependency trees",
+    "For check_staleness version check: only fires when lock files exist AND knowledge text contains version strings absent from those files — correctly skipped when no lock files present per the AC",
+    "DraftEntry.staleness_flag defaults to empty string (not None) for non-stale entries, matching the field semantics"
+  ],
+  "concerns": [
+    "The version staleness heuristic is imprecise by design — any version string in knowledge text that doesn't appear verbatim in any lock file triggers the flag. This produces false positives (e.g., 'Python 3.11' in knowledge text vs requirements.txt containing '3.11.5'). Task 14 tests will validate the exact behavior expected.",
+    "detect_knowledge_gaps checks conventions.json scope field for coverage — conventions are typically directory-level scopes (e.g., 'lib/learn/'), not file paths, so this check may miss some covered files. The project-knowledge.json applies_to check is more reliable."
+  ],
+  "review_verdict": "approve",
+  "failure_classification": {
+    "class": "unclassified",
+    "subclass": "unknown",
+    "evidence": "No classification rule matched"
+  },
+  "retry_count": 3,
+  "timeout_count": 1,
+  "reviewed_at": "2026-03-15T20:57:59Z"
+}

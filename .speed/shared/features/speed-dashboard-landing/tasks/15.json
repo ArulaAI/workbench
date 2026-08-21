@@ -1,0 +1,98 @@
+{
+  "id": "15",
+  "title": "Build StatusBar component",
+  "description": "Create `dashboard/frontend/components/landing/StatusBar.tsx`.\n\nProps: `{ projectName: string, featureCount: number, runningCount: number, connected: boolean }`\n\nLayout: fixed bottom bar, full width. Height 32px, horizontal padding 24px. Background `--bg-2` with top border `--border`.\n\nContent (left to right):\n- Connection indicator: green dot + 'Connected' or red dot + 'Disconnected' based on `connected` prop.\n- Project name in mono.\n- Feature count: '{n} features' in secondary text.\n- Running indicators: '{n} running' with accent dot animation when > 0.\n\nAll text `--text-tertiary` except running count which uses `--text-secondary` when active. Use `.type-mono` for values.",
+  "acceptance_criteria": "- Connected state shows green dot and 'Connected' text\n  verify_by: test\n- Disconnected state shows red dot and 'Disconnected' text\n  verify_by: test\n- Running count with accent animation when runningCount > 0\n  verify_by: test\n- Bar uses --bg-2 background with --border top border\n  verify_by: manual\n- All spacing on 4px grid\n  verify_by: manual",
+  "depends_on": [
+    "9"
+  ],
+  "status": "done",
+  "branch": "speed/speed-dashboard-landing/task-15-build-statusbar-component",
+  "agent_model": "sonnet",
+  "created_at": "2026-03-15T16:26:57Z",
+  "started_at": "2026-03-15T17:33:40Z",
+  "completed_at": "2026-03-15T17:39:38Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": null,
+  "files_touched": [
+    "dashboard/frontend/components/landing/StatusBar.tsx"
+  ],
+  "spec_references": [
+    {
+      "spec": "product",
+      "section": "Success Criteria",
+      "requirement": "Status bar shows connection status, project name, feature counts, running feature indicators"
+    },
+    {
+      "spec": "tech",
+      "section": "Component Architecture",
+      "requirement": "StatusBar (connection + project + features + running indicators)"
+    }
+  ],
+  "rationale": "StatusBar is a small leaf component with no complex data dependencies. Parallel with panel component tasks since it touches its own file.",
+  "assumptions": [
+    "Connection status derived from the WebSocket subscription state, passed down as a boolean prop from the page"
+  ],
+  "gate_results": {
+    "checks": [
+      {
+        "name": "diff_non_empty",
+        "status": "pass"
+      },
+      {
+        "name": "declared_files",
+        "status": "pass"
+      },
+      {
+        "name": "scope",
+        "status": "warn",
+        "undeclared_files": [
+          "dashboard/frontend/components/landing/StatusBar.test.tsx"
+        ]
+      },
+      {
+        "name": "python_imports",
+        "status": "pass"
+      },
+      {
+        "name": "not_blocked",
+        "status": "pass"
+      },
+      {
+        "name": "test_coverage",
+        "status": "pass"
+      },
+      {
+        "name": "gate_evidence",
+        "status": "warn"
+      },
+      {
+        "name": "criteria",
+        "status": "pass"
+      },
+      {
+        "name": "secrets",
+        "status": "pass"
+      }
+    ],
+    "scope": {
+      "undeclared_files": [
+        "dashboard/frontend/components/landing/StatusBar.test.tsx"
+      ]
+    }
+  },
+  "decisions": [
+    "Used --color-bg-elevated (#16161e) for 'bg-2' background — the task spec referenced --bg-2 which maps to the second background tier in the design system.",
+    "Connection dot uses glow shadow matching the existing connection-status.tsx pattern (0 0 6px {color}).",
+    "Accent dot uses Tailwind animate-pulse class for the running indicator animation.",
+    "Text colors applied inline via style= props rather than className to override the type-caption defaults where needed (running count goes --text-secondary when active).",
+    "StatusBar.test.tsx is colocated per the gate convention (same directory), not in __tests__/. It's flagged as a soft-warning undeclared file — acceptable per the gate (<= 2 undeclared = warning, not failure)."
+  ],
+  "concerns": [
+    "Tests reference vitest and @testing-library/react which are not in package.json. They will compile if infrastructure is added but cannot run today. Task 17 (assembles the page) is a natural place to wire up the test runner.",
+    "The task spec says 'use .type-mono for values' but the design system class is .type-mono-value. I used .type-mono-value as defined in globals.css."
+  ],
+  "review_verdict": "approve",
+  "reviewed_at": "2026-03-15T18:16:05Z"
+}

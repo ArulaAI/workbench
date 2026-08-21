@@ -1,0 +1,115 @@
+id: csharp-class
+language: csharp
+metadata:
+  produces: node
+  kind: class
+rule:
+  kind: class_declaration
+
+---
+id: csharp-struct
+language: csharp
+metadata:
+  produces: node
+  kind: class
+rule:
+  kind: struct_declaration
+
+---
+id: csharp-record
+language: csharp
+metadata:
+  produces: node
+  kind: class
+rule:
+  kind: record_declaration
+
+---
+id: csharp-interface
+language: csharp
+metadata:
+  produces: node
+  kind: interface
+rule:
+  kind: interface_declaration
+
+---
+id: csharp-enum
+language: csharp
+metadata:
+  produces: node
+  kind: type
+rule:
+  kind: enum_declaration
+
+---
+id: csharp-delegate
+language: csharp
+metadata:
+  produces: node
+  kind: type
+rule:
+  kind: delegate_declaration
+
+---
+id: csharp-method
+language: csharp
+metadata:
+  produces: node
+  kind: method
+rule:
+  kind: method_declaration
+
+---
+id: csharp-constructor
+language: csharp
+metadata:
+  produces: node
+  kind: method
+rule:
+  kind: constructor_declaration
+
+---
+id: csharp-constant
+language: csharp
+metadata:
+  produces: node
+  kind: constant
+rule:
+  kind: field_declaration
+  has:
+    kind: modifier
+    regex: "^const$"
+
+---
+id: csharp-class-inherits
+language: csharp
+metadata:
+  produces: edge
+  edge_type: inherits
+rule:
+  kind: class_declaration
+  has:
+    kind: base_list
+
+---
+id: csharp-struct-implements
+language: csharp
+metadata:
+  produces: edge
+  edge_type: implements
+rule:
+  kind: struct_declaration
+  has:
+    kind: base_list
+
+---
+id: csharp-interface-extends
+language: csharp
+metadata:
+  produces: edge
+  edge_type: inherits
+rule:
+  kind: interface_declaration
+  has:
+    kind: base_list

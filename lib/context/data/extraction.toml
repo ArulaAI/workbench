@@ -1,0 +1,116 @@
+# lib/context/data/extraction.toml
+
+# ── Source languages with ast-grep rules ──
+# Rule files in lib/context/rules/{language}/
+
+[python]
+extraction = "rules"
+
+[javascript]
+extraction = "rules"
+
+[typescript]
+extraction = "rules"
+grammar_module = "tree_sitter_typescript"
+grammar_func = "language_typescript"
+
+[tsx]
+extraction = "rules"
+grammar_module = "tree_sitter_typescript"
+grammar_func = "language_tsx"
+
+[go]
+extraction = "rules"
+
+[rust]
+extraction = "rules"
+
+[java]
+extraction = "rules"
+
+[ruby]
+extraction = "rules"
+
+[c]
+extraction = "rules"
+
+[cpp]
+extraction = "rules"
+
+[c-sharp]
+extraction = "rules"
+fence_label = "csharp"
+
+[bash]
+extraction = "rules"
+
+[php]
+extraction = "rules"
+grammar_module = "tree_sitter_php"
+grammar_func = "language_php"
+
+[kotlin]
+extraction = "rules"
+
+[swift]
+extraction = "rules"
+
+[scala]
+extraction = "rules"
+
+[elixir]
+extraction = "skeleton"
+
+[lua]
+extraction = "rules"
+
+[haskell]
+extraction = "rules"
+
+[zig]
+extraction = "rules"
+
+# ── Schema languages (ast-grep rules via custom grammars) ──
+# Full content included in context. Custom grammars in lib/context/data/grammars/.
+
+[prisma]
+category = "schema"
+extraction = "rules"
+
+[graphql]
+category = "schema"
+extraction = "rules"
+
+[protobuf]
+category = "schema"
+extraction = "rules"
+
+# ── Skeleton-only (grammar exists, parse for structure, no defs/refs) ──
+
+[html]
+extraction = "skeleton"
+
+[css]
+extraction = "skeleton"
+
+# ── Config languages (override category from default "source") ──
+
+[json]
+category = "config"
+extraction = "skeleton"
+
+[yaml]
+category = "config"
+extraction = "skeleton"
+
+[toml]
+category = "config"
+
+[ini]
+category = "config"
+
+[xml]
+category = "config"
+
+[c_sharp]
+extraction = "rules"

@@ -1,0 +1,78 @@
+{
+  "id": "3",
+  "title": "Create useAuditHistory state management hook",
+  "description": "Create `dashboard/frontend/components/editor/use-audit-history.ts` with a custom React hook that manages all audit history selection state.\n\n**`useAuditHistory(auditCount: number)`** returns `AuditHistoryState`.\n\nState variables:\n- `selectedRunIndex: number` (useState, init 0)\n- `compareIndices: [number, number] | null` (useState, init null)\n\nDerived:\n- `isComparing: boolean` = compareIndices !== null\n\nActions (wrap each in useCallback with appropriate deps):\n- `selectRun(index: number)`: clamp index to [0, auditCount-1]. If index === current selectedRunIndex, reset to 0 (toggle off). Otherwise set selectedRunIndex to clamped index. Always clear compareIndices.\n- `shiftSelectRun(index: number)`: if auditCount < 2, return (no-op). Clamp index. If compareIndices is null, create tuple from [selectedRunIndex, index] sorted ascending (lower index = newer run). If the two indices are equal, return (can't compare run with itself). Set compareIndices, clear selectedRunIndex to 0. If compareIndices is already set and index matches one existing entry, clear compareIndices (cancel comparison). If index is new, replace the higher-numbered (older) entry in the tuple.\n- `exitComparison()`: set compareIndices to null, set selectedRunIndex to 0.\n- `resetToLatest()`: set compareIndices to null, set selectedRunIndex to 0.\n\nEffects:\n- Clamping effect: useEffect watching auditCount. If selectedRunIndex >= auditCount, set to Math.max(0, auditCount - 1). If compareIndices has any index >= auditCount, clear compareIndices.\n- Escape handler: useEffect adding keydown listener on document. On Escape: if isComparing, call exitComparison. Else if selectedRunIndex !== 0, call resetToLatest. Cleanup removes listener.\n\nExport the `AuditHistoryState` interface and the hook as default export.",
+  "acceptance_criteria": "- Initial state: selectedRunIndex=0, compareIndices=null, isComparing=false [verify: test]\n- selectRun(1) sets selectedRunIndex to 1 [verify: test]\n- selectRun with same index toggles back to 0 [verify: test]\n- selectRun(5) with auditCount=3 clamps to 2 [verify: test]\n- selectRun clears any active compareIndices [verify: test]\n- shiftSelectRun is no-op when auditCount < 2 [verify: test]\n- shiftSelectRun with two different valid indices enters comparison mode [verify: test]\n- shiftSelectRun on existing compare index cancels comparison [verify: test]\n- Escape exits comparison mode on first press, deselects on second [verify: test]\n- selectedRunIndex auto-clamps when auditCount shrinks [verify: test]\n- compareIndices cleared when auditCount makes indices invalid [verify: test]\n- AuditHistoryState type is exported [verify: lint]",
+  "depends_on": [],
+  "status": "pending",
+  "branch": "speed/speed-dashboard-audit-history/task-3-create-useaudithistory-state-management-",
+  "agent_model": "sonnet",
+  "created_at": "2026-03-25T22:18:30Z",
+  "started_at": "2026-03-26T02:08:11Z",
+  "completed_at": "2026-03-26T02:15:33Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": "{\"verdict\":\"request_changes\",\"spec_verification\":[{\"spec_quote\":\"Initial state: selectedRunIndex=0, compareIndices=null, isComparing=false\",\"spec_section\":\"Acceptance Criteria #1\",\"satisfied\":false,\"evidence\":\"No file created. dashboard/frontend/components/editor/use-audit-history.ts does not exist in the diff.\",\"notes\":\"Nothing implemented.\"},{\"spec_quote\":\"selectRun(1) sets selectedRunIndex to 1\",\"spec_section\":\"Acceptance Criteria #2\",\"satisfied\":false,\"evidence\":\"No implementation.\",\"notes\":null},{\"spec_quote\":\"selectRun with same index toggles back to 0\",\"spec_section\":\"Acceptance Criteria #3\",\"satisfied\":false,\"evidence\":\"No implementation.\",\"notes\":null},{\"spec_quote\":\"selectRun(5) with auditCount=3 clamps to 2\",\"spec_section\":\"Acceptance Criteria #4\",\"satisfied\":false,\"evidence\":\"No implementation.\",\"notes\":null},{\"spec_quote\":\"selectRun clears any active compareIndices\",\"spec_section\":\"Acceptance Criteria #5\",\"satisfied\":false,\"evidence\":\"No implementation.\",\"notes\":null},{\"spec_quote\":\"shiftSelectRun is no-op when auditCount < 2\",\"spec_section\":\"Acceptance Criteria #6\",\"satisfied\":false,\"evidence\":\"No implementation.\",\"notes\":null},{\"spec_quote\":\"shiftSelectRun with two different valid indices enters comparison mode\",\"spec_section\":\"Acceptance Criteria #7\",\"satisfied\":false,\"evidence\":\"No implementation.\",\"notes\":null},{\"spec_quote\":\"shiftSelectRun on existing compare index cancels comparison\",\"spec_section\":\"Acceptance Criteria #8\",\"satisfied\":false,\"evidence\":\"No implementation.\",\"notes\":null},{\"spec_quote\":\"Escape exits comparison mode on first press, deselects on second\",\"spec_section\":\"Acceptance Criteria #9\",\"satisfied\":false,\"evidence\":\"No implementation.\",\"notes\":null},{\"spec_quote\":\"selectedRunIndex auto-clamps when auditCount shrinks\",\"spec_section\":\"Acceptance Criteria #10\",\"satisfied\":false,\"evidence\":\"No implementation.\",\"notes\":null},{\"spec_quote\":\"compareIndices cleared when auditCount makes indices invalid\",\"spec_section\":\"Acceptance Criteria #11\",\"satisfied\":false,\"evidence\":\"No implementation.\",\"notes\":null},{\"spec_quote\":\"AuditHistoryState type is exported\",\"spec_section\":\"Acceptance Criteria #12\",\"satisfied\":false,\"evidence\":\"No implementation.\",\"notes\":null}],\"missing_from_spec\":[{\"spec_quote\":\"All 12 acceptance criteria\",\"description\":\"The diff is empty. dashboard/frontend/components/editor/use-audit-history.ts was never created. No hook, no state shape, no exported type, no tests.\"}],\"out_of_scope\":[],\"issues\":[{\"severity\":\"critical\",\"file\":\"dashboard/frontend/components/editor/use-audit-history.ts\",\"line\":null,\"message\":\"File does not exist. Task produced no output.\",\"suggestion\":\"Implement the hook with the AuditHistoryState type, selectRun, shiftSelectRun, and keyboard escape handling per all 12 acceptance criteria. Tests are required for every criterion.\"}],\"strengths\":[]}",
+  "claimed_by": "sanjay",
+  "base_commit": "9977b6097f2fa8d0d140dcf5abe43194e6c80b98",
+  "files_touched": [
+    "dashboard/frontend/components/editor/use-audit-history.ts"
+  ],
+  "started_by": "sanjay",
+  "gate_results": {
+    "checks": [
+      {
+        "name": "diff_non_empty",
+        "status": "pass"
+      },
+      {
+        "name": "declared_files",
+        "status": "pass"
+      },
+      {
+        "name": "scope",
+        "status": "pass"
+      },
+      {
+        "name": "python_imports",
+        "status": "pass"
+      },
+      {
+        "name": "not_blocked",
+        "status": "pass"
+      },
+      {
+        "name": "test_coverage",
+        "status": "warn",
+        "note": "deferred to sibling tasks"
+      },
+      {
+        "name": "gate_evidence",
+        "status": "pass"
+      },
+      {
+        "name": "criteria",
+        "status": "warn"
+      },
+      {
+        "name": "secrets",
+        "status": "pass"
+      },
+      {
+        "name": "syntax",
+        "status": "pass"
+      }
+    ],
+    "scope": {}
+  },
+  "decisions": [
+    "shiftSelectRun: when replacing in an existing compare pair, always keep the lower-indexed (newer) entry and replace the higher-indexed (older) one, then re-sort — preserves the 'comparing newer vs older' semantics",
+    "selectRun with auditCount=0: clamps to 0 (guard against Math.min(x, -1)) so state never goes negative",
+    "Escape handler deps include isComparing/selectedRunIndex rather than using refs, so the effect re-subscribes when those values change — avoids stale closure issues"
+  ],
+  "concerns": [
+    "Test file (use-audit-history.test.ts) is owned by Task 5 — test coverage is deferred to that sibling task",
+    "shiftSelectRun captures selectedRunIndex and compareIndices in useCallback deps — if a consumer calls it inside a stale closure, it may see old values. Standard React pattern but worth noting for Task 9 integration."
+  ],
+  "review_verdict": "request_changes"
+}

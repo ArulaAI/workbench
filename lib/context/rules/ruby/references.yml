@@ -1,0 +1,38 @@
+id: ruby-scope-resolution
+language: ruby
+metadata:
+  produces: reference
+  ref_kind: attribute_access
+rule:
+  kind: scope_resolution
+
+---
+id: ruby-require
+language: ruby
+metadata:
+  produces: reference
+  ref_kind: import
+  module_var: MODULE
+rule:
+  kind: call
+  pattern: require $MODULE
+
+---
+id: ruby-require-relative
+language: ruby
+metadata:
+  produces: reference
+  ref_kind: import
+  module_var: MODULE
+rule:
+  kind: call
+  pattern: require_relative $MODULE
+
+---
+id: ruby-call
+language: ruby
+metadata:
+  produces: reference
+  ref_kind: call
+rule:
+  kind: call

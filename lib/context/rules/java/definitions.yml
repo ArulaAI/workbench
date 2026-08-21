@@ -1,0 +1,107 @@
+id: java-class
+language: java
+metadata:
+  produces: node
+  kind: class
+rule:
+  kind: class_declaration
+
+---
+id: java-interface
+language: java
+metadata:
+  produces: node
+  kind: type
+rule:
+  kind: interface_declaration
+
+---
+id: java-enum
+language: java
+metadata:
+  produces: node
+  kind: type
+rule:
+  kind: enum_declaration
+
+---
+id: java-annotation-type
+language: java
+metadata:
+  produces: node
+  kind: type
+rule:
+  kind: annotation_type_declaration
+
+---
+id: java-record
+language: java
+metadata:
+  produces: node
+  kind: class
+rule:
+  kind: record_declaration
+
+---
+id: java-method
+language: java
+metadata:
+  produces: node
+  kind: method
+rule:
+  kind: method_declaration
+
+---
+id: java-constructor
+language: java
+metadata:
+  produces: node
+  kind: method
+rule:
+  kind: constructor_declaration
+
+---
+id: java-constant
+language: java
+metadata:
+  produces: node
+  kind: constant
+rule:
+  kind: field_declaration
+  regex: "\\bstatic\\b.*\\bfinal\\b|\\bfinal\\b.*\\bstatic\\b"
+
+---
+id: java-class-extends
+language: java
+metadata:
+  produces: edge
+  edge_type: inherits
+rule:
+  kind: class_declaration
+  has:
+    field: superclass
+    kind: superclass
+
+---
+id: java-class-implements
+language: java
+metadata:
+  produces: edge
+  edge_type: implements
+rule:
+  kind: class_declaration
+  has:
+    field: interfaces
+    kind: super_interfaces
+
+---
+id: java-interface-extends
+language: java
+metadata:
+  produces: edge
+  edge_type: inherits
+rule:
+  kind: interface_declaration
+  has:
+    field: interfaces
+    kind: extends_interfaces

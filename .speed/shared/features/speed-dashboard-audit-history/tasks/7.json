@@ -1,0 +1,81 @@
+{
+  "id": "7",
+  "title": "Create RunHeader and ComparisonHeader banner components",
+  "description": "Create two small presentational components in separate files.\n\n**`dashboard/frontend/components/editor/RunHeader.tsx`**\n\nProps: `relativeTime` (string), `onBackToLatest` (callback).\n\nRenders a horizontal bar with:\n- Left: \"Viewing audit from {relativeTime}\" in `--font-mono`, 10px, weight 400, `--color-text-tertiary`.\n- Right: \"← Latest\" link in `--font-mono`, 10px, weight 500, `--color-accent`. On click calls `onBackToLatest`.\n- Background: `var(--color-bg)`. Border-bottom: `1px solid var(--color-border)`.\n- Padding: `6px 12px`.\n- `role=\"status\"`, `aria-live=\"polite\"` on the container.\n- Entry animation: opacity 0→1 + max-height 0→40px over 150ms ease. Exit: reverse in 100ms ease-in. Under reduced motion, instant.\n\n**`dashboard/frontend/components/editor/ComparisonHeader.tsx`**\n\nProps: `olderTime` (string), `newerTime` (string), `olderCount` (number), `newerCount` (number).\n\nRenders a stacked layout:\n- Row 1: \"Comparing: {olderTime} → {newerTime}\" in `--font-mono`, 11px, weight 500, `--color-text`.\n- Row 2: \"{olderCount} issues → {newerCount} issues\" in `--font-mono`, 11px, weight 500. Delta shown as parenthesized signed integer: `(−3)` or `(+2)` or `(0)`. Color: `--color-emerald` if newerCount < olderCount, `--color-red` if greater, `--color-text-tertiary` if equal.\n- Background: `var(--color-bg)`. Padding: `10px 12px`.\n- `role=\"status\"`, `aria-live=\"polite\"`. Screen reader announcement: \"Comparing audit from {olderTime} with {newerTime}. {olderCount} issues to {newerCount} issues.\"\n- Same entry/exit animation as RunHeader.\n\nBoth components export named and default exports.",
+  "acceptance_criteria": "- [test] RunHeader renders relative timestamp text and Latest link\n- [test] RunHeader Latest link uses --color-accent and calls onBackToLatest on click\n- [test] RunHeader has role=status and aria-live=polite\n- [test] ComparisonHeader renders both timestamps and issue counts with delta\n- [test] ComparisonHeader delta uses --color-emerald when issues decreased\n- [test] ComparisonHeader delta uses --color-red when issues increased\n- [test] ComparisonHeader has role=status and aria-live=polite\n- [lint] No hardcoded color or font values — all reference CSS custom properties",
+  "depends_on": [],
+  "status": "done",
+  "branch": "speed/speed-dashboard-audit-history/task-7-create-runheader-and-comparisonheader-ba",
+  "agent_model": "sonnet",
+  "created_at": "2026-03-25T22:18:31Z",
+  "started_at": "2026-03-26T02:15:41Z",
+  "completed_at": "2026-03-26T02:23:02Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": null,
+  "claimed_by": "sanjay",
+  "base_commit": "9977b6097f2fa8d0d140dcf5abe43194e6c80b98",
+  "files_touched": [
+    "dashboard/frontend/components/editor/RunHeader.tsx",
+    "dashboard/frontend/components/editor/ComparisonHeader.tsx"
+  ],
+  "started_by": "sanjay",
+  "gate_results": {
+    "checks": [
+      {
+        "name": "diff_non_empty",
+        "status": "pass"
+      },
+      {
+        "name": "declared_files",
+        "status": "pass"
+      },
+      {
+        "name": "scope",
+        "status": "pass"
+      },
+      {
+        "name": "python_imports",
+        "status": "pass"
+      },
+      {
+        "name": "not_blocked",
+        "status": "pass"
+      },
+      {
+        "name": "test_coverage",
+        "status": "warn",
+        "note": "deferred to sibling tasks"
+      },
+      {
+        "name": "gate_evidence",
+        "status": "warn"
+      },
+      {
+        "name": "criteria",
+        "status": "warn"
+      },
+      {
+        "name": "secrets",
+        "status": "pass"
+      },
+      {
+        "name": "syntax",
+        "status": "pass"
+      }
+    ],
+    "scope": {}
+  },
+  "decisions": [
+    "Used inline <style> blocks (scoped per component) matching the IntelPanel.tsx pattern",
+    "Used Unicode U+2212 MINUS SIGN (−) for negative delta per spec notation",
+    "Used a visually hidden sr-only span inside the live region for ComparisonHeader's screen reader announcement, keeping visual layout separate",
+    "CSS class prefixes rh- and ch- to avoid collisions with IntelPanel inline styles"
+  ],
+  "concerns": [
+    "Exit animation (opacity 1→0 + max-height 40px→0 over 100ms) cannot be implemented in a purely presentational component without an isExiting prop — the spec describes it but these components have no mechanism to intercept unmounting. Exit animation requires parent coordination or a library like Framer Motion."
+  ],
+  "review_verdict": "approve",
+  "reviewed_at": "2026-03-26T03:02:54Z",
+  "reviewed_by": "sanjay"
+}

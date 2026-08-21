@@ -1,0 +1,92 @@
+{
+  "id": "5",
+  "title": "Implement Learn panel reader",
+  "description": "Add `read_learn_panel(project_root: Path) -> LandingLearnPanel` to `dashboard/backend/resolvers/landing.py`. Logic:\n\n1. **Coverage trend**: Glob `.speed/features/*/spec-traceability.json`. Parse each for feature name and coverage_pct. Fallback: if no traceability files, try `.speed/memory/observations/{feature}.jsonl` and extract the latest coverage entry per feature. Clamp coverage_pct to 0-100.\n2. **Insights**: Glob `.speed/memory/*-learnings.json`. Parse each file for entries with `weight` field. Sort by weight descending. Take top 5. Map each to LandingInsight with type ('good' or 'warn') and text. Filter out entries where type is not 'good' or 'warn'.\n3. **Escalation trend**: Reuse feature list from coverage trend. For each feature, count tasks that had escalation_question fields (from `.speed/features/{name}/tasks/*.json`). Build LandingEscalationTrend per feature.\n\nHandle all missing directories/files gracefully with empty lists.",
+  "acceptance_criteria": "- read_learn_panel returns coverage_trend from spec-traceability.json files\n- Falls back to observation JSONL when traceability files absent\n- coverage_pct clamped to 0.0-100.0 range\n- Insights sourced from *-learnings.json, sorted by weight, limited to top 5\n- Unknown insight types filtered out (only 'good' and 'warn' kept)\n- Escalation trend counts tasks with escalation_question per feature\n- All missing directories return empty lists without exceptions",
+  "depends_on": [
+    "4"
+  ],
+  "status": "done",
+  "branch": "speed/speed-dashboard-landing/task-5-implement-learn-panel-reader",
+  "agent_model": "sonnet",
+  "created_at": "2026-03-15T16:26:56Z",
+  "started_at": "2026-03-15T17:14:02Z",
+  "completed_at": "2026-03-15T17:15:42Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": null,
+  "files_touched": [
+    "dashboard/backend/resolvers/landing.py"
+  ],
+  "spec_references": [
+    {
+      "spec": "tech",
+      "section": "Data Model - What the resolver reads",
+      "requirement": "Learn panel reads observations, spec traceability, and learnings"
+    },
+    {
+      "spec": "product",
+      "section": "User Stories - S6",
+      "requirement": "Learn panel with coverage trends and insights"
+    }
+  ],
+  "rationale": "Last panel reader in the chain. Learn panel has the most diverse data sources (three different file types across two directories) and a fallback strategy, making it the most complex reader after Judge.",
+  "assumptions": [
+    "Learnings JSON files have entries with 'weight', 'type', and 'text' fields. The exact schema isn't fully specified but these fields are implied by the tech spec.",
+    "Escalation trend counts all tasks that ever had an escalation, not just currently-blocked ones, to show historical trend."
+  ],
+  "gate_results": {
+    "checks": [
+      {
+        "name": "diff_non_empty",
+        "status": "pass"
+      },
+      {
+        "name": "declared_files",
+        "status": "pass"
+      },
+      {
+        "name": "scope",
+        "status": "pass"
+      },
+      {
+        "name": "python_imports",
+        "status": "pass"
+      },
+      {
+        "name": "not_blocked",
+        "status": "pass"
+      },
+      {
+        "name": "test_coverage",
+        "status": "pass"
+      },
+      {
+        "name": "gate_evidence",
+        "status": "warn"
+      },
+      {
+        "name": "criteria",
+        "status": "pass"
+      },
+      {
+        "name": "secrets",
+        "status": "pass"
+      }
+    ],
+    "scope": {}
+  },
+  "decisions": [
+    "Coverage fallback iterates features_dir to discover feature names when no traceability files exist, rather than requiring an explicit list — this matches the same discovery pattern used elsewhere in the file.",
+    "Learnings files can be either a top-level JSON array or a dict with an 'entries' key; both formats are handled.",
+    "Escalation trend returns empty list when feature_names is empty (e.g. no coverage data), rather than scanning all features. The task says 'reuse feature list from coverage trend' which implies this coupling.",
+    "_read_json was not reused for learnings files because its return type annotation is dict-only and learnings files are often arrays — read directly with json.loads to avoid the type mismatch."
+  ],
+  "concerns": [
+    "Test coverage deferred to Task 7 (test_landing.py), consistent with Tasks 2-4.",
+    "The observations JSONL fallback extracts the *last* entry with a coverage_pct field per feature. 'Latest' is interpreted as last-in-file order, not by timestamp. If entries have explicit timestamps, Task 7 may surface a mismatch.",
+    "Learnings file schema (weight/type/text fields) is inferred from the task spec assumptions — not verified against real files."
+  ],
+  "review_verdict": "approve",
+  "reviewed_at": "2026-03-15T18:01:55Z"
+}

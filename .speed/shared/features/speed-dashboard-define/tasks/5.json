@@ -1,0 +1,88 @@
+{
+  "id": "5",
+  "title": "Write integration tests for Define GraphQL query",
+  "description": "Create `dashboard/backend/tests/test_schema_define.py` with integration tests that execute the `defineView` GraphQL query through the Strawberry schema.\n\nFollow the pattern in `dashboard/backend/tests/test_schema_landing.py` (which tests landing_view through the schema) and `test_schema_spec_alignment.py`.\n\nTest cases:\n1. **Valid response**: Create a tmp_path with features and specs, execute `defineView` query, verify all nested types return correctly.\n2. **Empty project**: Execute query against empty tmp_path, verify features=[], defects=[], aggregates all zero.\n3. **Feature filtering**: Execute query with `feature: \"auth\"`, verify only matching features returned and aggregates recomputed.\n4. **Null handling**: Execute query for project with features but no task files/traceability → null fields in BuiltData returned without errors.\n5. **Full query string**: Test with the complete query from the tech spec (all fields requested).",
+  "acceptance_criteria": "- defineView query returns valid GraphQL response with all nested types populated\n- defineView returns empty features list for empty project without errors\n- Feature filtering returns only matching features when feature argument provided\n- Null fields in BuiltData do not cause GraphQL errors\n- All tests pass with pytest",
+  "depends_on": [
+    "3"
+  ],
+  "status": "pending",
+  "branch": "speed/speed-dashboard-define/task-5-write-integration-tests-for-define-graph",
+  "agent_model": "opus",
+  "created_at": "2026-03-21T11:49:37Z",
+  "started_at": "2026-03-21T13:43:01Z",
+  "completed_at": "2026-03-21T13:48:18Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": "{\"verdict\":\"request_changes\",\"spec_verification\":[{\"spec_quote\":\"defineView query returns valid GraphQL response with all nested types populated\",\"spec_section\":\"Task Acceptance Criteria\",\"satisfied\":\"partial\",\"evidence\":\"test_valid_response_with_all_nested_types (line 199) exercises the full DEFINE_VIEW_QUERY including all nested types. The query shape is correct and all nested fields are present. However, two assertions encode spec-violating resolver behavior: auth['state'] == 'running' (line 235) and pay['state'] == 'done' (line 255). The spec validation rules require 'complete' | 'executing' | 'writing' | 'unplanned' only. The resolver stores raw JSON values instead of normalizing — the test encodes that bug as expected behavior.\",\"notes\":\"The tests would pass against the current resolver, but they're asserting non-canonical state values. If the resolver is fixed to normalize states (as the spec requires), these tests break immediately. They're not a correctness contract.\"},{\"spec_quote\":\"defineView returns empty features list for empty project without errors\",\"spec_section\":\"Task Acceptance Criteria\",\"satisfied\":true,\"evidence\":\"test_empty_project_returns_valid_response (line 266) verifies features=[], defects=[], aggregates all zero, visionStatus='missing', visionPath=null against an empty tmp_path. No errors asserted.\",\"notes\":\"Clean. All aggregate fields checked individually.\"},{\"spec_quote\":\"Feature filtering returns only matching features when feature argument provided\",\"spec_section\":\"Task Acceptance Criteria\",\"satisfied\":\"partial\",\"evidence\":\"test_feature_filtering_returns_matching_only (line 289) uses DEFINE_VIEW_FILTERED_QUERY with feature='auth'. Verifies len(features)==1, name=='auth', aggregates recomputed, and defects NOT filtered per spec ('Defects are not filtered (they are project-wide, not per-feature)'). test_feature_filter_no_match_returns_empty (line 317) also covers zero-match case correctly. However line 299 asserts data['features'][0]['state'] == 'running' — same non-canonical state value issue.\",\"notes\":\"The defects-not-filtered assertion is a nice explicit spec verification. The state assertion is the same resolver-bug encoding as above.\"},{\"spec_quote\":\"Null fields in BuiltData do not cause GraphQL errors\",\"spec_section\":\"Task Acceptance Criteria\",\"satisfied\":true,\"evidence\":\"test_null_built_fields_no_graphql_errors (line 333) creates a feature with state.json but no tasks, traceability, guardian, or criteria files. Asserts all Optional BuiltData fields are None and blockedCount==0. Covers the spec requirement 'BuiltData.coveragePct | Float 0.0-100.0 or null. Null for features that have not been executed.'\",\"notes\":\"Well-constructed test. blockedCount correctly expected as 0 (non-optional int).\"},{\"spec_quote\":\"DefineFeature.state | One of 'complete', 'executing', 'writing', 'unplanned'.\",\"spec_section\":\"Validation Rules\",\"satisfied\":false,\"evidence\":\"Resolver (_read_feature_state, line 650 of define.py) returns raw status value from state.json: return data.get('status', 'unplanned'). No normalization to canonical values. test_valid_response_with_all_nested_types asserts auth['state'] == 'running' (line 235) and pay['state'] == 'done' (line 255). Both 'running' and 'done' are absent from the spec's allowed set.\",\"notes\":\"This is a resolver bug that predates this task. The integration tests faithfully reflect what the resolver returns, but by encoding 'running' and 'done' as expected values, the tests lock in the wrong behavior. The _compute_aggregates function uses f.state in ('done', 'completed') and f.state in ('running', 'executing'), so the aggregate counts work correctly — but the per-feature state field is wrong.\"},{\"spec_quote\":\"DefineDefect.status | One of 'unfixed', 'triaging', 'fixing', 'resolved'. Defaults to 'unfixed' if state.json has no status.\",\"spec_section\":\"Validation Rules\",\"satisfied\":false,\"evidence\":\"Resolver (_build_defects, line 518 of define.py): status = data.get('status', 'open'). Default is 'open', not 'unfixed' per spec. Test fixture writes {'status': 'open'} and asserts crash['status'] == 'open' (line 252). 'open' is not in the spec's valid status set. Neither the resolver default nor the test assertion is spec-compliant.\",\"notes\":\"Two violations in one: (1) resolver default 'open' != spec default 'unfixed', (2) test fixture uses and asserts a status value not in the valid set. The fixture should use a valid status ('unfixed', 'triaging', 'fixing', 'resolved') and assert the same.\"},{\"spec_quote\":\"DefineView.visionPath | Absolute path string or null. Null when overview.md does not exist.\",\"spec_section\":\"Validation Rules\",\"satisfied\":false,\"evidence\":\"Resolver (_resolve_vision_path) returns 'specs/product/overview.md' (relative). Test asserts data['visionPath'] == 'specs/product/overview.md' (line 221). The spec says 'Absolute path string'. The test encodes the relative-path behavior rather than asserting the spec requirement.\",\"notes\":\"Minor in impact since this is local-only software, but the test should assert an absolute path or the spec should be updated to allow relative paths. The test faithfully documents the resolver's behavior, which is not spec-compliant.\"},{\"spec_quote\":\"Integration tests: defineView returns null gracefully for missing project\",\"spec_section\":\"Test Plan — Integration tests\",\"satisfied\":false,\"evidence\":\"test_empty_project_returns_valid_response tests an empty but valid tmp_path. The spec test plan specifically calls out 'missing project' (i.e., project_root is None or points to a nonexistent directory). The resolver signature is Optional[DefineView] — the null-return code path is untested.\",\"notes\":\"Not in the task's acceptance criteria, but it IS in the spec's stated integration test plan. Minor gap, but the Optional return is wired to schema and is untested.\"},{\"spec_quote\":\"Features are identified by directory names in .speed/features/\",\"spec_section\":\"Spec-to-feature matching\",\"satisfied\":\"partial\",\"evidence\":\"The resolver (define.py lines 716-731) also discovers features from specs/product/*.md files that have no .speed/features/ entry and assigns them state='unplanned'. The test fixture creates specs/product/search.md with no feature directory and asserts search appears in features (line 240-241) with state=='unplanned'. This behavior is not in the spec's feature discovery description but is likely intentional design.\",\"notes\":\"The spec says features are identified by .speed/features/ directory names. Spec-file-only discovery is an undocumented extension. The behavior may be correct product design but the spec should say so. The test encodes this undocumented behavior. featureCount==3 (line 245) depends on it.\"}],\"missing_from_spec\":[{\"spec_quote\":\"Vision status: missing, placeholder, defined\",\"description\":\"The 'placeholder' vision status path (overview.md < 50 chars or all-structural content) is not tested. Tests cover 'missing' (empty project) and 'defined' (populated project). _read_vision_status has a 'placeholder' return path that no test exercises.\"},{\"spec_quote\":\"Integration tests: defineView returns null gracefully for missing project\",\"description\":\"The resolver's Optional[DefineView] null return path is not exercised. No test passes a nonexistent or None project_root.\"}],\"out_of_scope\":[{\"file\":\"dashboard/backend/tests/test_schema_define.py\",\"line\":369,\"description\":\"test_full_query_string_all_fields largely duplicates test_valid_response_with_all_nested_types. It re-runs the same DEFINE_VIEW_QUERY on the same fixture and checks that field names exist in the response dict, which the first test already implicitly verifies by accessing those fields. It adds no behavioral coverage.\"}],\"issues\":[{\"severity\":\"major\",\"file\":\"dashboard/backend/tests/test_schema_define.py\",\"line\":235,\"message\":\"Asserts auth['state'] == 'running' but spec validation rules require state to be one of 'complete' | 'executing' | 'writing' | 'unplanned'. The correct expected value is 'executing'. The same issue appears at line 255 (pay['state'] == 'done' should be 'complete') and line 299 in the filter test (same 'running' assertion).\",\"suggestion\":\"Fix the resolver (_read_feature_state) to normalize raw state values to canonical spec values using the existing _EXECUTING_STATES / _COMPLETED_STATES frozensets. Then update test assertions to match: 'running' → 'executing', 'done' → 'complete'. The resolver constants already exist for this purpose — they just aren't used for normalization.\"},{\"severity\":\"major\",\"file\":\"dashboard/backend/tests/test_schema_define.py\",\"line\":179,\"message\":\"Fixture writes {'status': 'open'} and line 252 asserts crash['status'] == 'open'. 'open' is not in the spec's allowed set ('unfixed' | 'triaging' | 'fixing' | 'resolved'). The resolver also has the bug: data.get('status', 'open') defaults to 'open' instead of 'unfixed'.\",\"suggestion\":\"Fix the resolver default: data.get('status', 'unfixed'). Update the fixture to use a valid status (e.g. {'status': 'triaging'}) and assert that value. Add a separate test for unknown status → 'unfixed' default.\"},{\"severity\":\"minor\",\"file\":\"dashboard/backend/tests/test_schema_define.py\",\"line\":221,\"message\":\"Asserts visionPath == 'specs/product/overview.md' (relative path). Spec validation rules say 'Absolute path string or null'. The resolver returns a relative path — either the spec should be updated to allow relative paths or the resolver should return str(project_root / 'specs/product/overview.md').\",\"suggestion\":\"Clarify with the spec owner whether relative is acceptable. If absolute is required, fix the resolver and update the assertion to check path.endswith('specs/product/overview.md') rather than an exact string to stay portable.\"},{\"severity\":\"minor\",\"file\":\"dashboard/backend/tests/test_schema_define.py\",\"line\":240,\"message\":\"Expects 'search' as a feature (state='unplanned') discovered from specs/product/search.md alone, with no .speed/features/search/ directory. The spec says 'Features are identified by directory names in .speed/features/'. The resolver's spec-file discovery is undocumented behavior. The test encodes it without a comment explaining the source.\",\"suggestion\":\"Either update the spec to document that spec-only features are included as unplanned, or add a comment in the test explaining why a spec-only feature appears. The featureCount==3 assertion at line 245 silently depends on this undocumented behavior.\"},{\"severity\":\"nit\",\"file\":\"dashboard/backend/tests/test_schema_define.py\",\"line\":369,\"message\":\"test_full_query_string_all_fields re-runs DEFINE_VIEW_QUERY on the same _populate_project fixture and checks that field names exist. This is covered by test_valid_response_with_all_nested_types which accesses all these fields directly. The structural existence checks add no coverage.\",\"suggestion\":\"Remove or repurpose this test to cover a genuinely different scenario (e.g., the 'placeholder' vision status case, or a feature in 'writing' state).\"}],\"strengths\":[\"test_null_built_fields_no_graphql_errors is exactly right: creates a minimal feature, runs the full query, and individually asserts every Optional BuiltData field is None while confirming blockedCount defaults to 0. This is the kind of precise behavioral test that actually catches type mismatches.\",\"The filter tests correctly verify that defects are NOT filtered when a feature argument is provided — this is a non-obvious spec requirement ('Defects are not filtered (they are project-wide, not per-feature)') that is easy to miss.\",\"test_feature_filter_no_match_returns_empty is a good edge case: zero-match filter returns empty features but still returns defects. Most reviewers would forget this case.\",\"Escalation count assertion uses >= 2 (line 243) rather than == 2, correctly accounting for the two sources: escalations.json and blocked tasks with escalation_question. The test understands the aggregation logic.\",\"All tests use schema.execute_sync() against the real compiled schema, making these genuine integration tests rather than unit tests with resolver mocks. The test correctly reflects the spec intent: 'defineView query returns valid GraphQL response with all nested types'.\"]}",
+  "base_commit": "7ed4b169751e655eb28450aea043215ed898e0bf",
+  "files_touched": [
+    "dashboard/backend/tests/test_schema_define.py"
+  ],
+  "spec_references": [
+    {
+      "spec": "tech",
+      "section": "Testing",
+      "requirement": "Integration tests: defineView query returns valid response, null handling, feature filtering"
+    }
+  ],
+  "rationale": "Integration tests verify the full GraphQL pipeline (schema → resolver → types → response). Depends on task 3 because the query field must be registered in schema.py. Separated from unit tests to isolate resolver logic testing from GraphQL transport testing.",
+  "timeout_count": 1,
+  "review_verdict": "request_changes",
+  "retry_count": 1,
+  "gate_results": {
+    "checks": [
+      {
+        "name": "diff_non_empty",
+        "status": "pass"
+      },
+      {
+        "name": "declared_files",
+        "status": "pass"
+      },
+      {
+        "name": "scope",
+        "status": "pass"
+      },
+      {
+        "name": "python_imports",
+        "status": "pass"
+      },
+      {
+        "name": "not_blocked",
+        "status": "pass"
+      },
+      {
+        "name": "test_coverage",
+        "status": "pass"
+      },
+      {
+        "name": "gate_evidence",
+        "status": "warn"
+      },
+      {
+        "name": "criteria",
+        "status": "warn"
+      },
+      {
+        "name": "secrets",
+        "status": "pass"
+      },
+      {
+        "name": "syntax",
+        "status": "pass"
+      }
+    ],
+    "scope": {}
+  },
+  "decisions": [
+    "Used `from backend.schema import schema` instead of the broken `from schema import schema` pattern found in existing test_schema_*.py files. The existing pattern fails because schema.py uses relative imports (`from .resolvers import ...`) which require package-aware importing. Added _DASHBOARD_DIR to sys.path so `backend.schema` resolves correctly.",
+    "Added 6 test cases (one more than the 5 specified): the extra test_feature_filter_no_match_returns_empty validates that filtering with a non-matching string returns empty features but still includes defects.",
+    "The test fixture creates 3 features (auth/running, payments/done, search/unplanned) to exercise all feature states, plus a defect and vision document."
+  ],
+  "concerns": [
+    "The existing test_schema_landing.py and test_schema_spec_alignment.py use `from schema import schema` which is broken (ImportError on relative imports). My file uses `from backend.schema import schema` which works. The existing files may need the same fix if anyone tries to run them.",
+    "The review flagged that BuiltData might have `facility_criteria_passed` instead of `criteria_passed`. I confirmed the field is correctly named `criteria_passed` on line 38 of define_types.py. The review's concern may have been from a stale state.",
+    "The review flagged enum types for str fields (audit_status, guardian_verdict, etc.) as a minor improvement. This is out of scope for task 5 (integration tests only) but worth noting for follow-up."
+  ]
+}

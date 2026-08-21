@@ -1,0 +1,61 @@
+id: haskell-data
+language: haskell
+metadata:
+  produces: node
+  kind: type
+rule:
+  kind: data_type
+
+---
+id: haskell-newtype
+language: haskell
+metadata:
+  produces: node
+  kind: type
+rule:
+  kind: newtype
+
+---
+id: haskell-class
+language: haskell
+metadata:
+  produces: node
+  kind: class
+rule:
+  kind: class
+
+---
+id: haskell-instance
+language: haskell
+metadata:
+  produces: node
+  kind: class
+rule:
+  kind: instance
+
+---
+id: haskell-type-synonym
+language: haskell
+metadata:
+  produces: node
+  kind: type
+rule:
+  kind: type_synomym
+
+---
+id: haskell-signature
+language: haskell
+metadata:
+  produces: node
+  kind: method
+rule:
+  kind: signature
+
+---
+id: haskell-function
+language: haskell
+metadata:
+  produces: node
+  kind: function
+rule:
+  kind: function

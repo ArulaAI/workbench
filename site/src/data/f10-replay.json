@@ -1,0 +1,712 @@
+{
+  "meta": {
+    "feature_name": "F10 Rich Feed",
+    "project": "find-your-tribe",
+    "started_at": "2026-03-01T06:00:00Z",
+    "completed_at": "2026-03-01T08:30:00Z",
+    "git_base": "main"
+  },
+  "specs": {
+    "product": {
+      "problem": "Builders navigating from the polished landing page hit a wall of project / 01KJJ0QT88JYFTRF9EKBRDCDC1 strings. The feed exists but communicates nothing. Maya Chen, an indie hacker checking daily for collaborators, sees raw ULIDs and has no reason to scroll.",
+      "personas": [
+        {
+          "name": "Maya Chen",
+          "role": "Indie Hacker",
+          "use_case": "Checks the feed daily to spot potential collaborators and interesting projects. Needs project names, tech stacks, and builder identities at a glance."
+        },
+        {
+          "name": "James Okafor",
+          "role": "Product Designer",
+          "use_case": "Browses for projects needing design help. Wants to evaluate project relevance without clicking through to detail pages."
+        },
+        {
+          "name": "David Morales",
+          "role": "Growth Marketer",
+          "use_case": "Needs tribe and mission context to find communities aligned with his interests."
+        }
+      ],
+      "user_stories": [
+        {
+          "id": "RF-1",
+          "story": "As a builder, I see a visual timeline instead of a flat event list",
+          "priority": "must"
+        },
+        {
+          "id": "RF-2",
+          "story": "As a builder, PROJECT_SHIPPED renders as a milestone card with gradient header, project name, and tech stack",
+          "priority": "must"
+        },
+        {
+          "id": "RF-3",
+          "story": "As a builder, TRIBE_CREATED and PROJECT_CREATED show embedded content cards",
+          "priority": "must"
+        },
+        {
+          "id": "RF-4",
+          "story": "As a builder, join events render as compact single-line activity entries",
+          "priority": "must"
+        },
+        {
+          "id": "RF-5",
+          "story": "As a builder, every feed item shows the actor's name, avatar, and relative timestamp",
+          "priority": "must"
+        }
+      ],
+      "scope_out": [
+        {
+          "item": "Backend actor resolution",
+          "rationale": "FeedEventType.actor resolver returns None (TODO). Metadata already has names. Optimization for a later phase."
+        },
+        {
+          "item": "Real-time feed updates",
+          "rationale": "Infrastructure complexity with no proportional benefit at current scale."
+        },
+        {
+          "item": "Feed filtering",
+          "rationale": "Additive UX that can ship separately."
+        }
+      ]
+    },
+    "design": {
+      "figma_reference": "N/A",
+      "visual_hierarchy": [
+        {
+          "type": "milestone",
+          "events": [
+            "PROJECT_SHIPPED"
+          ],
+          "treatment": "Gradient header, expanded card, most visual weight"
+        },
+        {
+          "type": "content",
+          "events": [
+            "PROJECT_CREATED",
+            "TRIBE_CREATED"
+          ],
+          "treatment": "Embedded content card with title and description"
+        },
+        {
+          "type": "text",
+          "events": [
+            "PROJECT_UPDATE",
+            "TRIBE_ANNOUNCEMENT"
+          ],
+          "treatment": "Text card with content body"
+        },
+        {
+          "type": "activity",
+          "events": [
+            "MEMBER_JOINED_TRIBE",
+            "COLLABORATION_CONFIRMED",
+            "BUILDER_JOINED"
+          ],
+          "treatment": "Compact single-line entry, least visual weight"
+        }
+      ],
+      "ascii_mockup": " \u25cb  Maya Chen shipped                                    2h ago\n \u2502  \u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510\n \u2502  \u2502  \u2593\u2593\u2593\u2593\u2593\u2593\u2593\u2593\u2593\u2593\u2593\u2593\u2593\u2593\u2593\u2593\u2593\u2593\u2593\u2593\u2593\u2593\u2593\u2593\u2593\u2593\u2593\u2593\u2593\u2593\u2593\u2593\u2593\u2593\u2593\u2593\u2593\u2593\u2593\u2593\u2593\u2593  \u2502\n \u2502  \u2502  AI Resume Builder                               \u2502\n \u2502  \u2502  React \u00b7 Python \u00b7 OpenAI \u00b7 PostgreSQL            \u2502\n \u2502  \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n \u2502\n \u25cb  Tom Nakamura formed a tribe                          6h ago\n \u2502  Hospitality OS\n \u2502  Building the operating system for independent hotels\n \u2502\n \u25cb  James Okafor joined Hospitality OS                  12h ago\n \u25cb  Aisha Patel joined \u00b7 UX / Prototyping / Analytics     3d",
+      "tokens": [
+        {
+          "element": "Thread line",
+          "token": "w-px bg-ink-tertiary/20"
+        },
+        {
+          "element": "Avatar circle",
+          "token": "w-9 h-9 rounded-full"
+        },
+        {
+          "element": "Actor name",
+          "token": "text-ink text-[14px] font-medium"
+        },
+        {
+          "element": "Milestone card",
+          "token": "surface-elevated rounded-lg shadow-sm overflow-hidden"
+        },
+        {
+          "element": "Tech stack",
+          "token": "font-mono text-[10px] text-ink-tertiary"
+        }
+      ],
+      "component_tree": {
+        "root": "FeedPage",
+        "children": [
+          {
+            "name": "FeedSkeleton",
+            "condition": "loading"
+          },
+          {
+            "name": "FeedEmpty",
+            "condition": "no events"
+          },
+          {
+            "name": "FeedError",
+            "condition": "query failed"
+          },
+          {
+            "name": "FeedTimeline",
+            "condition": "populated",
+            "children": [
+              {
+                "name": "TimelineNode[]",
+                "children": [
+                  "Avatar circle",
+                  "ActorHeader (name + action + timestamp)",
+                  {
+                    "name": "Body",
+                    "variants": [
+                      "MilestoneCard",
+                      "ContentEmbed",
+                      "TextCard",
+                      "ActivityLine"
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "tech": {
+      "metadata_contract": [
+        {
+          "event_type": "PROJECT_SHIPPED",
+          "required_fields": [
+            "project_title",
+            "tech_stack",
+            "actor_name",
+            "actor_username"
+          ],
+          "missing_in_seed": [
+            "actor_name",
+            "actor_username"
+          ]
+        },
+        {
+          "event_type": "PROJECT_CREATED",
+          "required_fields": [
+            "project_title",
+            "tech_stack",
+            "actor_name"
+          ],
+          "missing_in_seed": [
+            "actor_name"
+          ]
+        },
+        {
+          "event_type": "TRIBE_CREATED",
+          "required_fields": [
+            "tribe_name",
+            "mission",
+            "actor_name"
+          ],
+          "missing_in_seed": [
+            "actor_name"
+          ]
+        },
+        {
+          "event_type": "MEMBER_JOINED_TRIBE",
+          "required_fields": [
+            "tribe_name",
+            "actor_name"
+          ],
+          "missing_in_seed": [
+            "actor_name"
+          ]
+        },
+        {
+          "event_type": "BUILDER_JOINED",
+          "required_fields": [
+            "skills",
+            "actor_name"
+          ],
+          "missing_in_seed": [
+            "actor_name",
+            "skills"
+          ]
+        }
+      ],
+      "key_decisions": [
+        {
+          "decision": "Actor resolution",
+          "choice": "Client-side from metadata",
+          "alternative": "Server-side dataloader",
+          "rationale": "FeedEventType.actor resolver returns None (TODO). Metadata already has names."
+        },
+        {
+          "decision": "Component architecture",
+          "choice": "6 inline components in page.tsx",
+          "alternative": "Single RichFeedItem adapter",
+          "rationale": "4 visual types are distinct enough for separate render functions"
+        }
+      ],
+      "file_impact": [
+        {
+          "file": "src/frontend/src/app/feed/page.tsx",
+          "change": "Replace EventCard with timeline layout"
+        },
+        {
+          "file": "src/frontend/src/app/feed/page.test.tsx",
+          "change": "New tests: all 8 event types, fallbacks, links"
+        },
+        {
+          "file": "src/backend/app/seed/feed_events.py",
+          "change": "Add actor_name, actor_username to metadata"
+        }
+      ]
+    }
+  },
+  "intelligence": {
+    "codebase": {
+      "total_files": 397,
+      "total_lines": 90008,
+      "languages": {
+        "python": {
+          "files": 128,
+          "lines": 26037
+        },
+        "tsx": {
+          "files": 126,
+          "lines": 25001
+        },
+        "typescript": {
+          "files": 51,
+          "lines": 6082
+        },
+        "markdown": {
+          "files": 63,
+          "lines": 18875
+        },
+        "json": {
+          "files": 9,
+          "lines": 12357
+        },
+        "html": {
+          "files": 1,
+          "lines": 969
+        },
+        "css": {
+          "files": 1,
+          "lines": 315
+        }
+      }
+    },
+    "csg": {
+      "layer_a": {
+        "label": "Symbols",
+        "nodes": 2668,
+        "description": "tree-sitter parsed definitions: functions, classes, methods, types, constants"
+      },
+      "layer_b": {
+        "label": "Edges",
+        "edges": 1976,
+        "references_scanned": 35056,
+        "description": "Reference resolution: function calls, imports, type usage, inheritance"
+      },
+      "layer_c": {
+        "label": "Domains",
+        "clusters": 24,
+        "algorithm": "louvain",
+        "description": "Louvain community detection groups symbols into semantic domains: auth, feed, API, models, routing, etc."
+      },
+      "layer_d": {
+        "label": "Impact",
+        "description": "Centrality and blast-radius scores per node. High-impact symbols identified."
+      }
+    },
+    "skeletons": {
+      "source_lines": 57462,
+      "skeleton_lines": 5268,
+      "compression_ratio": 10.9
+    },
+    "spec_alignment": {
+      "total_claims": 72,
+      "confirmed": 33,
+      "missing": 33,
+      "divergent": 6,
+      "examples": {
+        "confirmed": [
+          "FeedEventType",
+          "EventCard",
+          "feedEvents",
+          "targetType",
+          "metadata"
+        ],
+        "missing": [
+          "MilestoneCard",
+          "ContentEmbed",
+          "ActivityLine",
+          "TimelineNode",
+          "FeedTimeline"
+        ],
+        "divergent": [
+          "actor (resolver returns None, spec expects resolved names)",
+          "gradient palette (spec says -500, code has -400)"
+        ]
+      }
+    },
+    "context_pipeline": {
+      "layer1": {
+        "label": "Global Index",
+        "description": "Project map, CSG, skeletons, spec alignment. Built once per project."
+      },
+      "layer2": {
+        "label": "Per-Task Scope",
+        "description": "Graph walk from files_touched. 0-hop: full content. 1-hop: full + skeleton. 2-hop: skeleton only."
+      },
+      "layer3": {
+        "label": "Per-Agent Assembly",
+        "description": "Budget allocation per agent role. Developer: 60% code, 15% task, 15% spec, 10% reserve."
+      }
+    },
+    "budget": {
+      "total_lines": 90008,
+      "after_csg_scope": 12400,
+      "after_skeleton": 5268,
+      "agent_prompt": 8200,
+      "degradation_tiers": [
+        "Drop 2-hop files",
+        "Downgrade 1-hop to skeleton-only",
+        "Truncate skeletons",
+        "files_touched NEVER cut"
+      ]
+    }
+  },
+  "pipeline": {
+    "tasks": [
+      {
+        "id": 1,
+        "title": "Enrich seed feed event metadata with actor info",
+        "status": "approved",
+        "agent_model": "sonnet",
+        "depends_on": [],
+        "duration_seconds": 441,
+        "duration_display": "7m 21s",
+        "files_touched": [
+          "src/backend/app/seed/feed_events.py"
+        ],
+        "decisions": [
+          "Added actor_name and actor_username to all seed event metadata"
+        ],
+        "concerns": [],
+        "gates": {
+          "lint": "pass",
+          "typecheck": "pass",
+          "tests": "pass (885)",
+          "scope": "pass"
+        },
+        "review": {
+          "verdict": "approve",
+          "spec_checks": 8,
+          "satisfied": 8,
+          "partial": 0,
+          "not_satisfied": 0
+        }
+      },
+      {
+        "id": 2,
+        "title": "Feed utility functions (TDD)",
+        "status": "approved",
+        "agent_model": "sonnet",
+        "depends_on": [],
+        "duration_seconds": 218,
+        "duration_display": "3m 38s",
+        "files_touched": [
+          "src/frontend/src/app/feed/feed-utils.ts",
+          "src/frontend/src/app/feed/feed-utils.test.ts"
+        ],
+        "decisions": [
+          "Test-first: 47 unit tests written before implementation",
+          "getLinkTarget, getActorDisplayName, getGradientClasses, getAvatarColor exported"
+        ],
+        "concerns": [
+          "getLinkTarget accepts lowercase targetType; if backend sends uppercase, Task 3 will need to lowercase"
+        ],
+        "gates": {
+          "lint": "pass",
+          "typecheck": "pass",
+          "tests": "pass (47)",
+          "scope": "pass"
+        },
+        "review": {
+          "verdict": "approve",
+          "spec_checks": 6,
+          "satisfied": 6,
+          "partial": 0,
+          "not_satisfied": 0
+        }
+      },
+      {
+        "id": 3,
+        "title": "Replace EventCard with visual timeline components",
+        "status": "request_changes",
+        "agent_model": "opus",
+        "depends_on": [
+          2
+        ],
+        "duration_seconds": 317,
+        "duration_display": "5m 17s",
+        "files_touched": [
+          "src/frontend/src/app/feed/page.tsx"
+        ],
+        "decisions": [
+          "Lowercased event.targetType before passing to getLinkTarget (Task 2 concern)",
+          "Used gradient-500 palette values from design spec",
+          "Extracted MilestoneCard, ContentEmbed, TextCard, ActivityLine as inline components"
+        ],
+        "concerns": [],
+        "gates": {
+          "lint": "warn (pre-existing)",
+          "typecheck": "pass",
+          "tests": "partial",
+          "scope": "pass"
+        },
+        "review": {
+          "verdict": "request_changes",
+          "spec_checks": 17,
+          "satisfied": 12,
+          "partial": 2,
+          "not_satisfied": 3,
+          "key_issue": "ActivityLine repeats actor name in both the header row and the body. The spec's ASCII mockup shows exactly ONE line: '\u25cb  James Okafor joined Hospitality OS  12h ago'. The implementation renders TWO lines.",
+          "ascii_mockup_line": "\u25cb  James Okafor joined Hospitality OS  12h ago"
+        }
+      },
+      {
+        "id": 4,
+        "title": "Write feed page integration tests",
+        "status": "approved",
+        "agent_model": "opus",
+        "depends_on": [
+          3
+        ],
+        "duration_seconds": 544,
+        "duration_display": "9m 04s",
+        "files_touched": [
+          "src/frontend/src/app/feed/page.test.tsx"
+        ],
+        "decisions": [
+          "Full coverage for all 8 event types",
+          "Fallback testing for missing metadata fields",
+          "Link target verification for all navigable elements"
+        ],
+        "concerns": [],
+        "gates": {
+          "lint": "pass",
+          "typecheck": "pass",
+          "tests": "pass (41/41)",
+          "scope": "pass"
+        },
+        "review": {
+          "verdict": "approve",
+          "spec_checks": 10,
+          "satisfied": 10,
+          "partial": 0,
+          "not_satisfied": 0
+        },
+        "retry": {
+          "reason": "timeout",
+          "attempt": 2,
+          "first_attempt_duration": "8m 30s"
+        }
+      }
+    ],
+    "guardian_checkpoints": [
+      {
+        "phase": "pre-plan",
+        "status": "aligned",
+        "summary": "No new content types introduced; only the presentation layer changes."
+      },
+      {
+        "phase": "post-review-t1-t2",
+        "status": "aligned",
+        "summary": "All event types represent legitimate build artifacts."
+      },
+      {
+        "phase": "post-review-t3-t4",
+        "status": "flagged",
+        "summary": "TRIBE_ANNOUNCEMENT introduces a text-content-primary event type that is structurally identical to a text post.",
+        "flag": "TRIBE_ANNOUNCEMENT is structurally identical to a text post in a group. The vision explicitly excludes 'Text-Only Posts / Content Creation.' The test fixture uses content='Demo day Friday' with no build artifact behind it.",
+        "recommendation": "Either remove TRIBE_ANNOUNCEMENT from supported event types, or redefine it so it can only exist as a caption on a concrete artifact."
+      },
+      {
+        "phase": "post-integration",
+        "status": "aligned",
+        "summary": "The visual hierarchy explicitly rewards building over performing. Milestone cards get the most visual weight. Activity lines get the least."
+      }
+    ],
+    "validation": {
+      "findings_count": 5,
+      "warnings": 2,
+      "notes": 3,
+      "key_finding": "Architect deviated from '6 inline components' by extracting utilities to feed-utils.ts"
+    },
+    "verifier": {
+      "status": "pass",
+      "requirements_mapped": 15
+    },
+    "integration": {
+      "merged_branches": [
+        "speed/f10-rich-feed/task-1-enrich-seed-feed-event-metadata-with-act",
+        "speed/f10-rich-feed/task-4-write-feed-page-integration-tests"
+      ],
+      "conflicts": 0,
+      "test_results": {
+        "frontend": "pass (41/41)",
+        "backend": "pass (11/12 - 1 pre-existing)"
+      }
+    }
+  },
+  "learning": {
+    "observations": [
+      {
+        "type": "retry",
+        "task_id": 4,
+        "agent": "developer",
+        "description": "T4 timed out on first attempt (8m30s), succeeded on retry (9m04s total)",
+        "priority_weight": 3.0
+      },
+      {
+        "type": "human_override",
+        "task_id": 3,
+        "agent": "reviewer",
+        "description": "Activity line duplication caught by ASCII mockup comparison. Reviewer enforced single-line contract from design spec.",
+        "priority_weight": 2.5
+      },
+      {
+        "type": "scope_violation",
+        "task_id": null,
+        "agent": "guardian",
+        "description": "TRIBE_ANNOUNCEMENT event type flagged as structurally identical to a text post, violating product vision's 'no text-only posts' principle.",
+        "priority_weight": 2.0
+      }
+    ],
+    "classification_cascade": [
+      "rule-based",
+      "sklearn",
+      "LLM",
+      "fallback"
+    ],
+    "pattern_lifecycle": {
+      "description": "Observations from 3+ features consolidate into patterns. Patterns become injections for future runs.",
+      "example": {
+        "observations": [
+          "F10: T4 timeout",
+          "F11: T2 timeout",
+          "F12: T6 timeout"
+        ],
+        "pattern": "opus tasks >8min tend to timeout on default settings",
+        "injection": "Set timeout to 12min for opus tasks"
+      }
+    }
+  },
+  "result": {
+    "stats": {
+      "specs_authored": 3,
+      "spec_time": "~1 hour with AI assistant",
+      "tasks_executed": 4,
+      "files_changed": 7,
+      "tests_written": 41,
+      "spec_requirements_verified": 17,
+      "vision_conflicts_flagged": 1,
+      "total_wall_clock": "~2 hours"
+    },
+    "provenance_chain": {
+      "requirement": "RF-2",
+      "links": [
+        {
+          "phase": "Product Spec",
+          "content": "PROJECT_SHIPPED renders as milestone card"
+        },
+        {
+          "phase": "Design Spec",
+          "content": "ASCII mockup + token table (surface-elevated, rounded-lg, aspect-[3/1] gradient, font-serif)"
+        },
+        {
+          "phase": "Tech Spec",
+          "content": "File impact: page.tsx -> Replace EventCard"
+        },
+        {
+          "phase": "Architect",
+          "content": "Task T3, files_touched: [page.tsx]"
+        },
+        {
+          "phase": "Developer T3",
+          "content": "MilestoneCard component implemented"
+        },
+        {
+          "phase": "Reviewer",
+          "content": "satisfied. Evidence: aspect-[3/1] gradient header via getGradientClasses, font-serif title"
+        },
+        {
+          "phase": "Gate",
+          "content": "typecheck pass, lint pass"
+        },
+        {
+          "phase": "Integration",
+          "content": "41 tests pass, merged to main"
+        }
+      ]
+    },
+    "token_burn": {
+      "tasks": [
+        {
+          "label": "T1: Enrich seed data",
+          "model": "sonnet",
+          "input_tokens": 42000,
+          "output_tokens": 8600,
+          "cost": 0.21
+        },
+        {
+          "label": "T2: Feed utilities",
+          "model": "sonnet",
+          "input_tokens": 38000,
+          "output_tokens": 12400,
+          "cost": 0.22
+        },
+        {
+          "label": "T3: Timeline components",
+          "model": "opus",
+          "input_tokens": 84000,
+          "output_tokens": 24000,
+          "cost": 2.28
+        },
+        {
+          "label": "T4: Integration tests",
+          "model": "opus",
+          "input_tokens": 68000,
+          "output_tokens": 18000,
+          "cost": 1.74
+        }
+      ],
+      "agents": [
+        {
+          "label": "Architect",
+          "input_tokens": 28000,
+          "output_tokens": 6200,
+          "cost": 0.62
+        },
+        {
+          "label": "Reviewer (x4)",
+          "input_tokens": 96000,
+          "output_tokens": 14000,
+          "cost": 1.86
+        },
+        {
+          "label": "Guardian (x4)",
+          "input_tokens": 52000,
+          "output_tokens": 8400,
+          "cost": 1.02
+        },
+        {
+          "label": "Integrator",
+          "input_tokens": 18000,
+          "output_tokens": 4200,
+          "cost": 0.38
+        }
+      ],
+      "total_input_tokens": 426000,
+      "total_output_tokens": 95800,
+      "total_cost": 8.33
+    }
+  }
+}

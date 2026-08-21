@@ -1,0 +1,106 @@
+{
+  "id": "7",
+  "title": "Implement landing view orchestrator and LLM narrative",
+  "description": "Add `get_landing_view(project_root: Path, conn) -> LandingView` to `dashboard/backend/resolvers/landing.py`. Logic:\n\n1. **Greeting**: Compute on server as 'Good morning/afternoon/evening, {user}' placeholder. Note: tech spec Drawbacks says greeting needs client time, so server returns a generic greeting or the user's name. Actual time-of-day logic deferred to frontend (Phase 2).\n2. **Project name**: Read from `speed.toml` in project_root if present, else use project_root directory name.\n3. **Branch**: Run `git rev-parse --abbrev-ref HEAD` via subprocess. Return None on failure.\n4. **Panel reads**: Call read_define_panel, read_judge_panel, read_execute_panel, read_learn_panel.\n5. **LLM narrative**: If judge panel has pending_review, call `provider_chat()` (from existing dashboard backend infra) with the hardcoded prompt and project summary data. Cap input at 1000 tokens, output at 150 tokens, 5-second timeout. On any failure, set narrative=None. Inject narrative into judge.pending_review.summary if present.\n6. Assemble and return LandingView.\n\nAlso add comprehensive tests in `dashboard/backend/tests/test_landing.py` covering all panel readers and the orchestrator. Use tmp_path fixtures to create mock .speed/ directory structures.",
+  "acceptance_criteria": "- get_landing_view returns a complete LandingView with all four panels populated\n- Project name read from speed.toml or falls back to directory name\n- Branch read from git, returns None on subprocess failure\n- LLM narrative calls provider_chat with 5-second timeout\n- LLM failure returns narrative=None without raising\n- Narrative injected into pending_review.summary when review exists\n- Tests cover: Define panel with missing/present specs, Judge panel with/without pending review, Execute panel with running features and escalations, Learn panel with/without data, escalation mutation success and all error paths, orchestrator with mocked LLM\n- All tests pass",
+  "depends_on": [
+    "6"
+  ],
+  "status": "done",
+  "branch": "speed/speed-dashboard-landing/task-7-implement-landing-view-orchestrator-and-",
+  "agent_model": "opus",
+  "created_at": "2026-03-15T16:26:56Z",
+  "started_at": "2026-03-15T17:17:02Z",
+  "completed_at": "2026-03-15T17:25:01Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": null,
+  "files_touched": [
+    "dashboard/backend/resolvers/landing.py",
+    "dashboard/backend/tests/__init__.py",
+    "dashboard/backend/tests/test_landing.py"
+  ],
+  "spec_references": [
+    {
+      "spec": "tech",
+      "section": "Data Model - LLM project narrative",
+      "requirement": "2-3 sentence summary with 5s timeout, null on failure"
+    },
+    {
+      "spec": "tech",
+      "section": "Query and mutation fields",
+      "requirement": "get_landing_view orchestrates all panels"
+    },
+    {
+      "spec": "product",
+      "section": "User Stories - S7",
+      "requirement": "Greeting with project name and branch"
+    },
+    {
+      "spec": "tech",
+      "section": "Search / Query Strategy",
+      "requirement": "< 200ms target without LLM call"
+    }
+  ],
+  "rationale": "Orchestrator depends on all four panel readers and the mutation handler being in place. Assigned opus because it integrates all prior work, handles the LLM call with timeout/fallback, and writes the comprehensive test suite covering the entire resolver module. The test suite is co-located here because tests need the complete module to be meaningful.",
+  "assumptions": [
+    "provider_chat() is an existing function in the dashboard backend that handles LLM calls. If it doesn't exist at that exact name, the developer should find the equivalent in the codebase.",
+    "Greeting time-of-day logic will be client-side (Phase 2). Server returns a name-only greeting or a static 'Good morning' placeholder.",
+    "speed.toml parsing for project name uses the existing lib/toml.py or a simple toml read. The field name is assumed to be 'project.name' or 'name'."
+  ],
+  "gate_results": {
+    "checks": [
+      {
+        "name": "diff_non_empty",
+        "status": "pass"
+      },
+      {
+        "name": "declared_files",
+        "status": "pass"
+      },
+      {
+        "name": "scope",
+        "status": "pass"
+      },
+      {
+        "name": "python_imports",
+        "status": "pass"
+      },
+      {
+        "name": "not_blocked",
+        "status": "pass"
+      },
+      {
+        "name": "test_coverage",
+        "status": "pass"
+      },
+      {
+        "name": "gate_evidence",
+        "status": "warn"
+      },
+      {
+        "name": "criteria",
+        "status": "pass"
+      },
+      {
+        "name": "secrets",
+        "status": "pass"
+      }
+    ],
+    "scope": {}
+  },
+  "decisions": [
+    "Greeting returns static 'Good morning' since the tech spec drawbacks section notes time-of-day logic requires client time (deferred to Phase 2 frontend).",
+    "Project name lookup tries speed.toml [project].name first, then top-level name, then falls back to directory name. The example speed.toml has no name field, so fallback is the common path.",
+    "provider_chat() does not exist in the codebase. Structured as a dynamic import from resolvers.provider that gracefully returns None via broad exception catch. When the provider module is added later, it will be picked up automatically.",
+    "LLM prompt capped at 4000 chars (~1000 tokens at 4 chars/token estimate) as specified. Output capped at 150 tokens via max_tokens parameter.",
+    "Narrative is injected into pending_review.summary by reconstructing the LandingJudgePanel with updated LandingPendingReview, since Strawberry types are immutable after construction.",
+    "conn parameter has default=None and is accepted but unused, preserving the signature Task 8 expects for schema wiring."
+  ],
+  "concerns": [
+    "The 'No gate invocation evidence in agent output' warning is cosmetic (the gate system scans conversation text for command strings).",
+    "provider_chat() doesn't exist yet. The import will fail silently until a resolvers/provider.py module is created. The function signature assumes (prompt, max_tokens, timeout) kwargs — the actual provider module needs to match this contract."
+  ],
+  "review_verdict": "approve",
+  "reviewed_at": "2026-03-15T18:04:41Z"
+}

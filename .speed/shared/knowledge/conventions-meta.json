@@ -1,0 +1,10 @@
+{
+  "last_run": "2026-03-17T06:12:15.856355+00:00",
+  "files_analyzed": 484,
+  "cluster_checksums": {},
+  "trigger": "first_run",
+  "convention_count": 65,
+  "candidate_count": 7289,
+  "observation_count_at_run": 255,
+  "convention_violation_count_at_run": 0
+}

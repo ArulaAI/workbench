@@ -1,0 +1,101 @@
+{
+  "id": "10",
+  "title": "Build TopBar component with greeting and project context",
+  "description": "Create `dashboard/frontend/components/landing/TopBar.tsx`.\n\nProps: `{ projectName: string, branch: string }`\n\nBehavior:\n- Compute greeting client-side from `new Date().getHours()`: 'Good morning' (5-11), 'Good afternoon' (12-17), 'Good evening' (18-4). User name hardcoded as 'Sanjay' for V1 (no auth system).\n- Display: greeting text (left), project name + branch (right) with mono font for project/branch.\n- Use `.type-section-label` for greeting, `.type-mono` for project/branch values.\n- Use `--text` for greeting, `--text-secondary` for project/branch labels.\n- Follow 4px spacing grid. Component height ~48px with 24px horizontal padding.",
+  "acceptance_criteria": "- Component renders greeting based on current hour\n  verify_by: test\n- Project name and branch displayed with mono font\n  verify_by: manual\n- No hardcoded colors outside design tokens from globals.css\n  verify_by: lint\n- Component accepts projectName and branch as props\n  verify_by: lint",
+  "depends_on": [
+    "9"
+  ],
+  "status": "done",
+  "branch": "speed/speed-dashboard-landing/task-10-build-topbar-component-with-greeting-and",
+  "agent_model": "sonnet",
+  "created_at": "2026-03-15T16:26:57Z",
+  "started_at": "2026-03-15T17:30:01Z",
+  "completed_at": "2026-03-15T17:33:39Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": null,
+  "files_touched": [
+    "dashboard/frontend/components/landing/TopBar.tsx"
+  ],
+  "spec_references": [
+    {
+      "spec": "product",
+      "section": "User Stories",
+      "requirement": "S7: greeting with project name and branch"
+    },
+    {
+      "spec": "tech",
+      "section": "Component Architecture",
+      "requirement": "TopBar (greeting + project + branch)"
+    },
+    {
+      "spec": "tech",
+      "section": "Drawbacks",
+      "requirement": "Greeting requires timezone — computed on the client"
+    }
+  ],
+  "rationale": "TopBar is a leaf component with no data dependencies beyond simple string props. Building it early allows parallel work on panel components. Depends on task 9 only because it lives in the landing component directory and the query types inform its prop types.",
+  "assumptions": [
+    "User name hardcoded to 'Sanjay' since there's no auth system — Q3 from open questions resolved as yes for time-of-day awareness"
+  ],
+  "gate_results": {
+    "checks": [
+      {
+        "name": "diff_non_empty",
+        "status": "pass"
+      },
+      {
+        "name": "declared_files",
+        "status": "pass"
+      },
+      {
+        "name": "scope",
+        "status": "warn",
+        "undeclared_files": [
+          "dashboard/frontend/components/landing/TopBar.test.tsx"
+        ]
+      },
+      {
+        "name": "python_imports",
+        "status": "pass"
+      },
+      {
+        "name": "not_blocked",
+        "status": "pass"
+      },
+      {
+        "name": "test_coverage",
+        "status": "pass"
+      },
+      {
+        "name": "gate_evidence",
+        "status": "warn"
+      },
+      {
+        "name": "criteria",
+        "status": "pass"
+      },
+      {
+        "name": "secrets",
+        "status": "pass"
+      }
+    ],
+    "scope": {
+      "undeclared_files": [
+        "dashboard/frontend/components/landing/TopBar.test.tsx"
+      ]
+    }
+  },
+  "decisions": [
+    "Task spec referenced .type-section-label and .type-mono but neither exists in globals.css. Used .type-section-header (Inter 13px 600, --text) for the greeting and .type-mono-value (IBM Plex Mono 13px 500) for project/branch values — closest matches that satisfy the stated intent.",
+    "Project/branch labels ('project', 'branch') use .type-caption with color: var(--color-text-secondary) inline override since .type-caption defaults to tertiary; the task spec explicitly calls for secondary color on labels.",
+    "TopBar is a thin flex bar (height 48px, px-6) with no .surface wrapper — it's a bar element meant to sit above the grid, not an elevated card."
+  ],
+  "concerns": [
+    "The test file was not declared in the task plan's files_touched, so the scope gate warns (non-blocking). The tests are written for vitest + @testing-library/react but neither is installed in package.json — they will not run until task 19 (or equivalent) wires up the test framework.",
+    ".type-section-label and .type-mono do not exist in globals.css. If these classes are added later (e.g. by task 20 or a design system update), the component should be updated to use them."
+  ],
+  "review_verdict": "approve",
+  "reviewed_at": "2026-03-15T18:08:23Z"
+}

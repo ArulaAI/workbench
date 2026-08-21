@@ -1,0 +1,269 @@
+{
+  "entities": [
+    {
+      "name": "LandingView GraphQL types",
+      "type": "file",
+      "path": "dashboard/backend/resolvers/landing_types.py",
+      "created_by_task": "1",
+      "key_fields": [
+        "LandingView",
+        "LandingDefinePanel",
+        "LandingJudgePanel",
+        "LandingExecutePanel",
+        "LandingLearnPanel",
+        "LandingDraftSpec",
+        "LandingDefect",
+        "LandingPendingReview",
+        "LandingLastCompleted",
+        "LandingRunningFeature",
+        "LandingEscalation",
+        "LandingCoverageTrend",
+        "LandingInsight",
+        "LandingEscalationTrend",
+        "EscalationResponseInput",
+        "EscalationResponseResult"
+      ]
+    },
+    {
+      "name": "Define panel reader",
+      "type": "function",
+      "path": "dashboard/backend/resolvers/landing.py",
+      "function": "read_define_panel",
+      "created_by_task": "2",
+      "key_fields": [
+        "reads specs/product/*.md",
+        "reads specs/tech/*.md",
+        "reads .speed/defects/*/state.json",
+        "checks specs/product/overview.md",
+        "returns LandingDefinePanel"
+      ]
+    },
+    {
+      "name": "Judge panel reader",
+      "type": "function",
+      "path": "dashboard/backend/resolvers/landing.py",
+      "function": "read_judge_panel",
+      "created_by_task": "3",
+      "key_fields": [
+        "reads .speed/features/*/state.json",
+        "reads .speed/features/*/review.json",
+        "reads .speed/features/*/criteria-verify.json",
+        "reads .speed/features/*/logs/Guardian-*.jsonl",
+        "returns LandingJudgePanel"
+      ]
+    },
+    {
+      "name": "Execute panel reader",
+      "type": "function",
+      "path": "dashboard/backend/resolvers/landing.py",
+      "function": "read_execute_panel",
+      "created_by_task": "4",
+      "key_fields": [
+        "reads .speed/features/*/state.json",
+        "reads .speed/features/*/tasks/*.json",
+        "filters status=running",
+        "extracts escalations",
+        "returns LandingExecutePanel"
+      ]
+    },
+    {
+      "name": "Learn panel reader",
+      "type": "function",
+      "path": "dashboard/backend/resolvers/landing.py",
+      "function": "read_learn_panel",
+      "created_by_task": "5",
+      "key_fields": [
+        "reads .speed/memory/observations/*.jsonl",
+        "reads .speed/memory/*-learnings.json",
+        "reads .speed/features/*/spec-traceability.json",
+        "returns LandingLearnPanel"
+      ]
+    },
+    {
+      "name": "Escalation response handler",
+      "type": "function",
+      "path": "dashboard/backend/resolvers/landing.py",
+      "function": "respond_to_escalation",
+      "created_by_task": "6",
+      "key_fields": [
+        "validates feature directory exists",
+        "validates task file exists",
+        "validates task is blocked with escalation_question",
+        "writes escalation_response and escalation_responded_at",
+        "atomic write via temp-file-rename",
+        "path traversal rejection"
+      ]
+    },
+    {
+      "name": "Landing view orchestrator",
+      "type": "function",
+      "path": "dashboard/backend/resolvers/landing.py",
+      "function": "get_landing_view",
+      "created_by_task": "7",
+      "key_fields": [
+        "calls all four panel readers",
+        "generates greeting",
+        "reads project name and branch",
+        "calls LLM for narrative with 5s timeout",
+        "returns LandingView"
+      ]
+    },
+    {
+      "name": "Landing resolver tests",
+      "type": "file",
+      "path": "dashboard/backend/tests/test_landing.py",
+      "created_by_task": "7",
+      "key_fields": [
+        "test_define_panel_reads_specs",
+        "test_judge_panel_pending_review",
+        "test_execute_panel_running_features",
+        "test_learn_panel_coverage_trends",
+        "test_escalation_response_writes",
+        "test_escalation_validation",
+        "test_get_landing_view_orchestration",
+        "test_narrative_timeout_returns_null"
+      ]
+    },
+    {
+      "name": "Landing schema integration",
+      "type": "function",
+      "path": "dashboard/backend/schema.py",
+      "function": "landing_view",
+      "created_by_task": "8",
+      "key_fields": [
+        "landing_view query field",
+        "respond_to_escalation mutation field",
+        "imports from landing_types and landing resolver"
+      ]
+    },
+    {
+      "name": "Landing GraphQL queries",
+      "type": "file",
+      "path": "dashboard/frontend/lib/graphql/queries/landing.ts",
+      "created_by_task": "9",
+      "key_fields": [
+        "LANDING_VIEW_QUERY",
+        "RESPOND_TO_ESCALATION_MUTATION"
+      ]
+    },
+    {
+      "name": "TopBar component",
+      "type": "file",
+      "path": "dashboard/frontend/components/landing/TopBar.tsx",
+      "created_by_task": "10",
+      "key_fields": [
+        "greeting with time-of-day",
+        "project name",
+        "branch name"
+      ]
+    },
+    {
+      "name": "DefinePanel component",
+      "type": "file",
+      "path": "dashboard/frontend/components/landing/DefinePanel.tsx",
+      "created_by_task": "11",
+      "key_fields": [
+        "VisionWarning",
+        "DraftSpecItem list",
+        "DefectList with severity badges"
+      ]
+    },
+    {
+      "name": "JudgePanel component",
+      "type": "file",
+      "path": "dashboard/frontend/components/landing/JudgePanel.tsx",
+      "created_by_task": "12",
+      "key_fields": [
+        "ReviewSummary narrative",
+        "HeroMetrics 28px mono",
+        "DecisionCount amber",
+        "Review & decide CTA"
+      ]
+    },
+    {
+      "name": "ExecutePanel component",
+      "type": "file",
+      "path": "dashboard/frontend/components/landing/ExecutePanel.tsx",
+      "created_by_task": "13",
+      "key_fields": [
+        "RunningFeature progress bars",
+        "EscalationCard with inline input",
+        "Send mutation trigger"
+      ]
+    },
+    {
+      "name": "LearnPanel component",
+      "type": "file",
+      "path": "dashboard/frontend/components/landing/LearnPanel.tsx",
+      "created_by_task": "14",
+      "key_fields": [
+        "CoverageTrend mini bars",
+        "Insights good/warn cards",
+        "EscalationTrend counts"
+      ]
+    },
+    {
+      "name": "StatusBar component",
+      "type": "file",
+      "path": "dashboard/frontend/components/landing/StatusBar.tsx",
+      "created_by_task": "15",
+      "key_fields": [
+        "connection status",
+        "project name",
+        "feature counts",
+        "running indicators"
+      ]
+    },
+    {
+      "name": "EditorialGrid component",
+      "type": "file",
+      "path": "dashboard/frontend/components/landing/EditorialGrid.tsx",
+      "created_by_task": "16",
+      "key_fields": [
+        "CSS grid 260px 1fr 320px",
+        "T-shape layout",
+        "Define left spanning full height",
+        "Judge top center",
+        "Execute bottom center",
+        "Learn right spanning full height"
+      ]
+    },
+    {
+      "name": "Landing page",
+      "type": "file",
+      "path": "dashboard/frontend/app/page.tsx",
+      "created_by_task": "17",
+      "key_fields": [
+        "landingView query hook",
+        "taskStatusChanged subscription",
+        "panel data distribution",
+        "error and loading states"
+      ]
+    },
+    {
+      "name": "Landing backend tests",
+      "type": "file",
+      "path": "dashboard/backend/tests/test_landing.py",
+      "created_by_task": "18",
+      "key_fields": [
+        "schema integration tests",
+        "query execution tests",
+        "mutation execution tests"
+      ]
+    },
+    {
+      "name": "Landing frontend tests",
+      "type": "file",
+      "path": "dashboard/frontend/__tests__/landing/LandingPage.test.tsx",
+      "created_by_task": "19",
+      "key_fields": [
+        "grid layout verification",
+        "panel rendering with mock data",
+        "escalation mutation",
+        "CTA routing",
+        "empty states"
+      ]
+    }
+  ],
+  "relationships": []
+}

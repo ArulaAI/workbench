@@ -1,0 +1,11 @@
+.git
+.github
+.venv
+.claude
+.speed
+.config
+site
+working-docs
+tests
+example
+dashboard

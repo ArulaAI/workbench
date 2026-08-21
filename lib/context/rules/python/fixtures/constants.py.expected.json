@@ -1,0 +1,13 @@
+{
+  "expected_rules": [
+    "python-class",
+    "python-constant",
+    "python-constant",
+    "python-constant",
+    "python-constant",
+    "python-constant",
+    "python-function",
+    "python-function",
+    "python-method"
+  ]
+}

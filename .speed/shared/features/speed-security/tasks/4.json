@@ -1,0 +1,31 @@
+{
+  "id": "4",
+  "title": "Security section check for spec audit",
+  "description": "Create `lib/security-audit-check.sh` with deterministic shell functions that check whether spec files contain a `## Security` section. Per the tech spec, this is intentionally a shell grep (not an LLM call) because checking heading presence is a binary question.\n\n**check_security_section(spec_file):**\n1. Grep case-insensitively for headings matching `## Security` (catches `## Security & Controls`, `## Security Considerations`, etc.).\n2. If heading is missing, return a warning string: \"WARN: Missing security section in <filename>\"\n3. If heading exists, check whether the section has content between the heading and the next `##` or EOF. An empty section (just the heading with no text before the next section) also produces a warning: \"WARN: Empty security section in <filename>\"\n4. Return empty string (success) when a non-empty security section exists.\n\n**check_security_sections_in_specs(specs_dir):**\n1. Find all `.md` files in the given directory (non-recursive or recursive based on the specs/ directory convention).\n2. Run `check_security_section` on each file.\n3. Collect all warnings into a newline-separated string.\n4. Return the collected warnings (empty if all specs pass).\n\nThe speed audit integration point (calling these from the audit command) is deferred to Phase 2/3. Phase 1 delivers the standalone check functions.\n\n**tests/test_security_audit_check.sh:**\n1. Create temp markdown files with various structures:\n   - Spec with `## Security & Controls` and content → passes\n   - Spec with `## security considerations` (lowercase) → passes (case insensitive)\n   - Spec with no security heading → warns\n   - Spec with `## Security` heading but no content before `## Next Section` → warns (empty)\n   - Spec with `## Security` and whitespace-only content → warns\n2. Test check_security_sections_in_specs against a temp directory containing mixed specs\n3. Verify warning messages include the filename\n\nRationale: Separated from the security.sh core library because this is an audit-time check (runs during `speed audit`), not a pipeline-time check. Different lifecycle, different callers. The functions are pure shell (no Python, no external tools) and have zero dependencies beyond basic bash.",
+  "acceptance_criteria": "- check_security_section returns warning string for spec missing ## Security heading [verify: test]\n- check_security_section returns empty for spec with ## Security & Controls and content [verify: test]\n- check_security_section returns warning for spec with security heading but no content before next ## [verify: test]\n- check_security_section matching is case-insensitive (## security works) [verify: test]\n- check_security_section warning includes the filename [verify: test]\n- check_security_sections_in_specs processes all .md files in a directory [verify: test]\n- check_security_sections_in_specs returns empty when all specs have security sections [verify: test]\n- check_security_sections_in_specs collects warnings from multiple files [verify: test]\n- lib/security-audit-check.sh exists with both function names defined [verify: file_exists]",
+  "depends_on": [],
+  "status": "done",
+  "branch": "speed/speed-security/task-4-security-section-check-for-spec-audit",
+  "agent_model": "sonnet",
+  "created_at": "2026-02-26T11:44:36Z",
+  "started_at": "2026-02-26T11:52:18Z",
+  "completed_at": "2026-02-26T11:55:22Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": null,
+  "files_touched": [
+    "lib/security-audit-check.sh",
+    "tests/test_security-audit-check.sh"
+  ],
+  "decisions": [
+    "Used bash `while read` with a state machine to parse the security section content rather than awk/sed, keeping the implementation pure bash with zero external tool dependencies beyond grep and find.",
+    "Named the test file tests/test_security-audit-check.sh (hyphens) to satisfy the grounding check's naming convention (tests/test_{stem}.sh where stem = security-audit-check), and updated the task's files_touched accordingly.",
+    "check_security_section always returns exit 0 (prints warning or nothing) — callers only need to check whether the output is empty, not the exit code."
+  ],
+  "concerns": [
+    "The whitespace-only detection strips spaces and tabs but not other Unicode whitespace. Spec files written with non-breaking spaces (U+00A0) in the security section body would incorrectly pass. Extremely unlikely in practice.",
+    "check_security_sections_in_specs uses find -print0 with sort -z for deterministic ordering, but sort -z behavior may differ on older macOS versions (pre-Ventura). Has not been tested on older systems."
+  ],
+  "review_verdict": "approve",
+  "reviewed_at": "2026-02-26T16:34:18Z"
+}

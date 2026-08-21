@@ -1,0 +1,106 @@
+{
+  "type": "object",
+  "required": ["tasks", "contract"],
+  "additionalProperties": false,
+  "properties": {
+    "tasks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "acceptance_criteria", "spec_references", "rationale", "assumptions"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Task ID from the skeleton (must match exactly)"
+          },
+          "acceptance_criteria": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["criterion", "verify_by"],
+              "properties": {
+                "criterion": { "type": "string" },
+                "verify_by": { "type": "string", "enum": ["test", "schema_check", "file_exists", "lint", "manual"] }
+              }
+            }
+          },
+          "spec_references": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["spec", "section", "requirement"],
+              "properties": {
+                "spec": { "type": "string" },
+                "section": { "type": "string" },
+                "requirement": { "type": "string" }
+              }
+            }
+          },
+          "rationale": { "type": "string" },
+          "assumptions": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    "contract": {
+      "type": "object",
+      "required": ["core_question", "entities", "relationships", "core_queries"],
+      "properties": {
+        "core_question": {
+          "type": "string",
+          "description": "The single most important question this feature answers"
+        },
+        "entities": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "type", "created_by_task", "key_fields"],
+            "properties": {
+              "name": { "type": "string" },
+              "type": { "type": "string", "enum": ["database", "file", "function"] },
+              "table": { "type": "string" },
+              "path": { "type": "string" },
+              "function": { "type": "string" },
+              "created_by_task": { "type": "string" },
+              "key_fields": {
+                "type": "array",
+                "items": { "type": "string" }
+              }
+            }
+          }
+        },
+        "relationships": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["from", "to", "type", "via", "created_by_task"],
+            "properties": {
+              "from": { "type": "string" },
+              "to": { "type": "string" },
+              "type": { "type": "string", "enum": ["belongs_to", "has_many", "many_to_many"] },
+              "via": { "type": "string" },
+              "created_by_task": { "type": "string" }
+            }
+          }
+        },
+        "core_queries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["description", "traversal", "answers"],
+            "properties": {
+              "description": { "type": "string" },
+              "traversal": { "type": "string" },
+              "answers": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

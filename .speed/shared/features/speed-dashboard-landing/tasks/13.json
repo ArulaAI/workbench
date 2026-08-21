@@ -1,0 +1,104 @@
+{
+  "id": "13",
+  "title": "Build ExecutePanel component with inline escalation",
+  "description": "Create `dashboard/frontend/components/landing/ExecutePanel.tsx`.\n\nProps: typed from the `execute` field of LandingViewData, plus `onRespondToEscalation: (feature: string, taskId: string, response: string) => Promise<void>`.\n\nSub-components:\n- `PanelLabel` (imported): 'Execute' + running feature count.\n- `RunningFeature`: row with status dot (green `--status-success`), feature name, progress bar (CSS custom with accent fill), percentage in mono. Maps over `runningFeatures`.\n- `EscalationCard`: amber-bordered card with escalation badge count, question text, inline text `<input>` and Send `<button>`. On send: calls the `onRespondToEscalation` callback, clears input, shows brief success indicator. Disabled state while mutation is in-flight.\n\nProgress bar: height 6px, border-radius 3px, background `--surface-2`, fill `--accent` scaled to `progressPct`. Blocked count shown as small badge if > 0.\n\nEmpty state: 'No features running' message.\n\nLayout: bottom center of grid. Internal padding 20px. `.surface` class.",
+  "acceptance_criteria": "- Running features render with progress bars showing correct percentage width\n  verify_by: test\n- Escalation card displays question text and inline input field\n  verify_by: test\n- Send button calls onRespondToEscalation with correct feature, taskId, response\n  verify_by: test\n- Input field clears after successful send\n  verify_by: test\n- Send button disabled during in-flight mutation\n  verify_by: test\n- Empty state renders when runningFeatures is empty\n  verify_by: test\n- Blocked count badge appears when blockedCount > 0\n  verify_by: test",
+  "depends_on": [
+    "11"
+  ],
+  "status": "done",
+  "branch": "speed/speed-dashboard-landing/task-13-build-executepanel-component-with-inline",
+  "agent_model": "sonnet",
+  "created_at": "2026-03-15T16:26:57Z",
+  "started_at": "2026-03-15T17:35:00Z",
+  "completed_at": "2026-03-15T17:39:12Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": null,
+  "files_touched": [
+    "dashboard/frontend/components/landing/ExecutePanel.tsx"
+  ],
+  "spec_references": [
+    {
+      "spec": "product",
+      "section": "User Stories",
+      "requirement": "S4: running features with progress and inline escalation response"
+    },
+    {
+      "spec": "tech",
+      "section": "Component Architecture",
+      "requirement": "ExecutePanel (grid-column:2, grid-row:2)"
+    },
+    {
+      "spec": "product",
+      "section": "User Flows",
+      "requirement": "Responding to an escalation — type response, click Send, escalation resolved"
+    }
+  ],
+  "rationale": "ExecutePanel contains the only write interaction on the landing page (escalation response). Mutation callback is passed as a prop so the component stays testable without GraphQL mocking at the component level. Depends on task 11 for PanelLabel, parallel with task 12 (JudgePanel) since they touch different files.",
+  "assumptions": [
+    "The onRespondToEscalation callback is wired to the GraphQL mutation in the parent page component, not inside ExecutePanel directly"
+  ],
+  "gate_results": {
+    "checks": [
+      {
+        "name": "diff_non_empty",
+        "status": "pass"
+      },
+      {
+        "name": "declared_files",
+        "status": "pass"
+      },
+      {
+        "name": "scope",
+        "status": "warn",
+        "undeclared_files": [
+          "dashboard/frontend/components/landing/ExecutePanel.test.tsx"
+        ]
+      },
+      {
+        "name": "python_imports",
+        "status": "pass"
+      },
+      {
+        "name": "not_blocked",
+        "status": "pass"
+      },
+      {
+        "name": "test_coverage",
+        "status": "pass"
+      },
+      {
+        "name": "gate_evidence",
+        "status": "warn"
+      },
+      {
+        "name": "criteria",
+        "status": "pass"
+      },
+      {
+        "name": "secrets",
+        "status": "pass"
+      }
+    ],
+    "scope": {
+      "undeclared_files": [
+        "dashboard/frontend/components/landing/ExecutePanel.test.tsx"
+      ]
+    }
+  },
+  "decisions": [
+    "Used --color-emerald (the actual CSS variable) for the green status dot — the task spec referenced '--status-success' which isn't a CSS variable; --color-emerald is the equivalent in globals.css.",
+    "Progress bar track uses rgba(255, 255, 255, 0.04) to match the .progress-track class definition in globals.css rather than a non-existent '--surface-2' token.",
+    "Subtitle shows '<N> features running' (pluralized) rather than a bare count, matching the PanelLabel convention established in task 11.",
+    "Escalation count badge appears at the section header level; each individual EscalationCard carries an 'escalation' type badge — makes sense visually since each card represents one escalation.",
+    "Send button transitions: Send → Sending… (disabled) → Sent (2s) → Send. 'Sent' state uses emerald color to signal success without relying on a separate toast/notification."
+  ],
+  "concerns": [
+    "Test file is flagged as undeclared by the scope check (warning, not failure) — same cosmetic issue reported in task 11.",
+    "Vitest + @testing-library/react isn't installed yet (task 19 owns framework setup), so tests are syntactically correct but can't run until vitest config and deps land.",
+    "The 'Sent' success indicator disappears after 2s via setTimeout — in production this feels right, but tests that check the 'Sent' state would need vi.useFakeTimers() to control the timer."
+  ],
+  "review_verdict": "approve",
+  "reviewed_at": "2026-03-17T05:31:38Z"
+}

@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Palette Options</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Inter', system-ui, sans-serif; background: #1a1a1a; color: #e0e0e0; padding: 40px; }
+  h1 { font-size: 24px; margin-bottom: 40px; font-weight: 300; }
+  .palettes { display: flex; flex-direction: column; gap: 60px; }
+  .palette { display: flex; flex-direction: column; gap: 20px; }
+  .palette-title { font-size: 18px; font-weight: 600; }
+  .palette-desc { font-size: 14px; color: #999; max-width: 600px; line-height: 1.5; }
+  .preview-card {
+    border-radius: 12px;
+    padding: 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    max-width: 800px;
+  }
+  .swatches { display: flex; gap: 2px; border-radius: 8px; overflow: hidden; }
+  .swatch {
+    flex: 1;
+    height: 80px;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    padding: 8px 4px;
+    font-size: 10px;
+    font-family: monospace;
+  }
+  .swatch-label { opacity: 0.8; text-align: center; line-height: 1.3; }
+  .sample-ui {
+    border-radius: 8px;
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .sample-nav {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-bottom: 12px;
+    border-bottom: 1px solid;
+  }
+  .sample-nav-brand { font-weight: 700; font-size: 16px; }
+  .sample-btn {
+    padding: 6px 16px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    border: none;
+    cursor: pointer;
+  }
+  .sample-body { padding: 16px 0; }
+  .sample-h { font-size: 20px; font-weight: 700; margin-bottom: 8px; }
+  .sample-p { font-size: 13px; line-height: 1.6; max-width: 500px; }
+  .sample-pills { display: flex; gap: 6px; margin-top: 12px; }
+  .sample-pill {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-family: monospace;
+  }
+  .sample-card {
+    border-radius: 8px;
+    padding: 16px;
+    margin-top: 8px;
+  }
+  .sample-card-title { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 4px; font-family: monospace; }
+  .sample-card-text { font-size: 12px; line-height: 1.5; }
+  .divider { height: 1px; background: #333; margin: 20px 0; }
+</style>
+</head>
+<body>
+<h1>Pick a palette direction</h1>
+<div class="palettes">
+
+  <!-- 1. 90s Web -->
+  <div class="palette">
+    <div class="palette-title">1. 90s Web / Geocities</div>
+    <div class="palette-desc">Warm medium-gray backgrounds, saturated teals, magentas, and yellows. Early internet energy on a lit-up CRT. Not pitch black.</div>
+    <div class="swatches">
+      <div class="swatch" style="background:#2a2a2e;color:#f0f0f0"><span class="swatch-label">bg<br>#2a2a2e</span></div>
+      <div class="swatch" style="background:#363638;color:#f0f0f0"><span class="swatch-label">elevated<br>#363638</span></div>
+      <div class="swatch" style="background:#42424a;color:#f0f0f0"><span class="swatch-label">card<br>#42424a</span></div>
+      <div class="swatch" style="background:#00ccaa;color:#1a1a1a"><span class="swatch-label">accent<br>#00ccaa</span></div>
+      <div class="swatch" style="background:#ff6699;color:#1a1a1a"><span class="swatch-label">secondary<br>#ff6699</span></div>
+      <div class="swatch" style="background:#ffcc33;color:#1a1a1a"><span class="swatch-label">gold<br>#ffcc33</span></div>
+      <div class="swatch" style="background:#44bbee;color:#1a1a1a"><span class="swatch-label">blue<br>#44bbee</span></div>
+      <div class="swatch" style="background:#a0a0a8;color:#1a1a1a"><span class="swatch-label">muted<br>#a0a0a8</span></div>
+    </div>
+    <div class="sample-ui" style="background:#2a2a2e;">
+      <div class="sample-nav" style="border-color: rgba(0,204,170,0.15);">
+        <span class="sample-nav-brand" style="color:#f0f0f0;">SPEED</span>
+        <button class="sample-btn" style="background:#00ccaa;color:#1a1a1a;">Get Started</button>
+      </div>
+      <div class="sample-body">
+        <div class="sample-h" style="color:#f0f0f0;">Autonomous Software Engineering</div>
+        <div class="sample-p" style="color:#a0a0a8;">12 specialized agents orchestrate your codebase. From spec to merged PR, fully automated.</div>
+        <div class="sample-pills">
+          <span class="sample-pill" style="background:rgba(0,204,170,0.15);color:#00ccaa;">Validator</span>
+          <span class="sample-pill" style="background:rgba(255,102,153,0.15);color:#ff6699;">Architect</span>
+          <span class="sample-pill" style="background:rgba(255,204,51,0.15);color:#ffcc33;">Guardian</span>
+          <span class="sample-pill" style="background:rgba(68,187,238,0.15);color:#44bbee;">Developer</span>
+        </div>
+      </div>
+      <div class="sample-card" style="background:#363638;">
+        <div class="sample-card-title" style="color:#00ccaa;">Execute</div>
+        <div class="sample-card-text" style="color:#a0a0a8;">plan &rarr; code on branches</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
+  <!-- 2. PS1 -->
+  <div class="palette">
+    <div class="palette-title">2. PS1 / Late 90s 3D</div>
+    <div class="palette-desc">Cool steel-blue mid-tones, muted cyans, amber HUD elements. Metal Gear Solid codec screens, Wipeout menus. Technical but not oppressively dark.</div>
+    <div class="swatches">
+      <div class="swatch" style="background:#1a2028;color:#d8e0e4"><span class="swatch-label">bg<br>#1a2028</span></div>
+      <div class="swatch" style="background:#222a34;color:#d8e0e4"><span class="swatch-label">elevated<br>#222a34</span></div>
+      <div class="swatch" style="background:#2a3440;color:#d8e0e4"><span class="swatch-label">card<br>#2a3440</span></div>
+      <div class="swatch" style="background:#4ac8c0;color:#1a1a1a"><span class="swatch-label">accent<br>#4ac8c0</span></div>
+      <div class="swatch" style="background:#e09040;color:#1a1a1a"><span class="swatch-label">amber<br>#e09040</span></div>
+      <div class="swatch" style="background:#d0a830;color:#1a1a1a"><span class="swatch-label">gold<br>#d0a830</span></div>
+      <div class="swatch" style="background:#5898d0;color:#1a1a1a"><span class="swatch-label">blue<br>#5898d0</span></div>
+      <div class="swatch" style="background:#8090a0;color:#1a1a1a"><span class="swatch-label">muted<br>#8090a0</span></div>
+    </div>
+    <div class="sample-ui" style="background:#1a2028;">
+      <div class="sample-nav" style="border-color: rgba(74,200,192,0.15);">
+        <span class="sample-nav-brand" style="color:#d8e0e4;">SPEED</span>
+        <button class="sample-btn" style="background:#4ac8c0;color:#1a2028;">Get Started</button>
+      </div>
+      <div class="sample-body">
+        <div class="sample-h" style="color:#d8e0e4;">Autonomous Software Engineering</div>
+        <div class="sample-p" style="color:#8090a0;">12 specialized agents orchestrate your codebase. From spec to merged PR, fully automated.</div>
+        <div class="sample-pills">
+          <span class="sample-pill" style="background:rgba(74,200,192,0.15);color:#4ac8c0;">Validator</span>
+          <span class="sample-pill" style="background:rgba(224,144,64,0.15);color:#e09040;">Architect</span>
+          <span class="sample-pill" style="background:rgba(208,168,48,0.15);color:#d0a830;">Guardian</span>
+          <span class="sample-pill" style="background:rgba(88,152,208,0.15);color:#5898d0;">Developer</span>
+        </div>
+      </div>
+      <div class="sample-card" style="background:#222a34;">
+        <div class="sample-card-title" style="color:#4ac8c0;">Execute</div>
+        <div class="sample-card-text" style="color:#8090a0;">plan &rarr; code on branches</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
+  <!-- 3. Arcade -->
+  <div class="palette">
+    <div class="palette-title">3. Arcade Cabinet / Neo Geo</div>
+    <div class="palette-desc">Rich dark blue with punchy neon accents. Electric cyan, hot pink, acid green. SNK title screens, fighting game character selects.</div>
+    <div class="swatches">
+      <div class="swatch" style="background:#141820;color:#e8ecf0"><span class="swatch-label">bg<br>#141820</span></div>
+      <div class="swatch" style="background:#1c2430;color:#e8ecf0"><span class="swatch-label">elevated<br>#1c2430</span></div>
+      <div class="swatch" style="background:#243040;color:#e8ecf0"><span class="swatch-label">card<br>#243040</span></div>
+      <div class="swatch" style="background:#00e0ff;color:#1a1a1a"><span class="swatch-label">accent<br>#00e0ff</span></div>
+      <div class="swatch" style="background:#ff4488;color:#1a1a1a"><span class="swatch-label">pink<br>#ff4488</span></div>
+      <div class="swatch" style="background:#ffe040;color:#1a1a1a"><span class="swatch-label">gold<br>#ffe040</span></div>
+      <div class="swatch" style="background:#40e870;color:#1a1a1a"><span class="swatch-label">green<br>#40e870</span></div>
+      <div class="swatch" style="background:#7888a0;color:#1a1a1a"><span class="swatch-label">muted<br>#7888a0</span></div>
+    </div>
+    <div class="sample-ui" style="background:#141820;">
+      <div class="sample-nav" style="border-color: rgba(0,224,255,0.15);">
+        <span class="sample-nav-brand" style="color:#e8ecf0;">SPEED</span>
+        <button class="sample-btn" style="background:#00e0ff;color:#141820;">Get Started</button>
+      </div>
+      <div class="sample-body">
+        <div class="sample-h" style="color:#e8ecf0;">Autonomous Software Engineering</div>
+        <div class="sample-p" style="color:#7888a0;">12 specialized agents orchestrate your codebase. From spec to merged PR, fully automated.</div>
+        <div class="sample-pills">
+          <span class="sample-pill" style="background:rgba(0,224,255,0.15);color:#00e0ff;">Validator</span>
+          <span class="sample-pill" style="background:rgba(255,68,136,0.15);color:#ff4488;">Architect</span>
+          <span class="sample-pill" style="background:rgba(255,224,64,0.15);color:#ffe040;">Guardian</span>
+          <span class="sample-pill" style="background:rgba(64,232,112,0.15);color:#40e870;">Developer</span>
+        </div>
+      </div>
+      <div class="sample-card" style="background:#1c2430;">
+        <div class="sample-card-title" style="color:#00e0ff;">Execute</div>
+        <div class="sample-card-text" style="color:#7888a0;">plan &rarr; code on branches</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
+  <!-- 4. Warm Editorial -->
+  <div class="palette">
+    <div class="palette-title">4. Warm Editorial / Boutique</div>
+    <div class="palette-desc">Cream backgrounds, terracotta coral accent, muted browns. The Kinfolk magazine / boutique hotel aesthetic. Light mode, warm, confident.</div>
+    <div class="swatches">
+      <div class="swatch" style="background:#f5f0e8;color:#2a2420"><span class="swatch-label">bg<br>#f5f0e8</span></div>
+      <div class="swatch" style="background:#ffffff;color:#2a2420"><span class="swatch-label">elevated<br>#ffffff</span></div>
+      <div class="swatch" style="background:#faf6f0;color:#2a2420"><span class="swatch-label">card<br>#faf6f0</span></div>
+      <div class="swatch" style="background:#c4775a;color:#ffffff"><span class="swatch-label">accent<br>#c4775a</span></div>
+      <div class="swatch" style="background:#8a7060;color:#ffffff"><span class="swatch-label">brown<br>#8a7060</span></div>
+      <div class="swatch" style="background:#b89860;color:#1a1a1a"><span class="swatch-label">gold<br>#b89860</span></div>
+      <div class="swatch" style="background:#6a8a7a;color:#ffffff"><span class="swatch-label">sage<br>#6a8a7a</span></div>
+      <div class="swatch" style="background:#887868;color:#ffffff"><span class="swatch-label">muted<br>#887868</span></div>
+    </div>
+    <div class="sample-ui" style="background:#f5f0e8;">
+      <div class="sample-nav" style="border-color: rgba(196,119,90,0.15);">
+        <span class="sample-nav-brand" style="color:#2a2420;">SPEED</span>
+        <button class="sample-btn" style="background:#c4775a;color:#ffffff;">Get Started</button>
+      </div>
+      <div class="sample-body">
+        <div class="sample-h" style="color:#2a2420;">Autonomous Software Engineering</div>
+        <div class="sample-p" style="color:#887868;">12 specialized agents orchestrate your codebase. From spec to merged PR, fully automated.</div>
+        <div class="sample-pills">
+          <span class="sample-pill" style="background:rgba(196,119,90,0.12);color:#c4775a;">Validator</span>
+          <span class="sample-pill" style="background:rgba(138,112,96,0.12);color:#8a7060;">Architect</span>
+          <span class="sample-pill" style="background:rgba(184,152,96,0.12);color:#b89860;">Guardian</span>
+          <span class="sample-pill" style="background:rgba(106,138,122,0.12);color:#6a8a7a;">Developer</span>
+        </div>
+      </div>
+      <div class="sample-card" style="background:#faf6f0;">
+        <div class="sample-card-title" style="color:#c4775a;">Execute</div>
+        <div class="sample-card-text" style="color:#887868;">plan &rarr; code on branches</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

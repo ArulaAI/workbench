@@ -1,0 +1,68 @@
+id: activerecord-model
+language: ruby
+metadata:
+  produces: node
+  kind: class
+  orm: true
+rule:
+  kind: class
+  has:
+    kind: superclass
+    stopBy: neighbor
+    has:
+      stopBy: end
+      regex: "(ApplicationRecord|ActiveRecord::Base)"
+
+---
+id: activerecord-has-many
+language: ruby
+metadata:
+  produces: node
+  kind: variable
+  orm: true
+  relationship: true
+rule:
+  kind: call
+  has:
+    kind: identifier
+    field: method
+    regex: "^has_many$"
+  inside:
+    kind: class
+    stopBy: end
+
+---
+id: activerecord-belongs-to
+language: ruby
+metadata:
+  produces: node
+  kind: variable
+  orm: true
+  relationship: true
+rule:
+  kind: call
+  has:
+    kind: identifier
+    field: method
+    regex: "^belongs_to$"
+  inside:
+    kind: class
+    stopBy: end
+
+---
+id: activerecord-has-one
+language: ruby
+metadata:
+  produces: node
+  kind: variable
+  orm: true
+  relationship: true
+rule:
+  kind: call
+  has:
+    kind: identifier
+    field: method
+    regex: "^has_one$"
+  inside:
+    kind: class
+    stopBy: end

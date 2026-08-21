@@ -1,0 +1,82 @@
+{
+  "id": "4",
+  "title": "Phase B: Observation log integration",
+  "description": "Create `lib/learn/convention_observations.py` with `_integrate_observations(raw_patterns: list[RawPattern], obs_dir: Path) -> list[RawPattern]`.\n\nRead all `.jsonl` files from `obs_dir` (the existing observation log at `.speed/memory/observations/`). Parse each line as JSON, skip malformed lines (log warning, continue). Filter for convention-relevant observation types:\n- `convention_violation` — direct evidence of a pattern deviation\n- `reviewer_finding` with `category: 'convention'` — reviewer spotted a convention\n- `human_override` with `change_category: 'convention'` or `change_category: 'style'` — human corrected code\n\nFor each raw pattern, check if observations corroborate or challenge it:\n- 3+ `convention_violation` observations matching the pattern's scope → increment `observation_support` by the count\n- `human_override` entries about the same pattern → increment `observation_support`\n- `reviewer_finding` with matching scope → increment `observation_support`\n\nCreate new `RawPattern` objects for observation-only conventions (observations exist but no matching code pattern found). These get `confidence: 'emerging'`, `evidence.code_adherence: 'N/A — observation-derived'`, and `observation_support` set to the observation count.\n\nEdge cases: empty observations directory (return patterns unchanged), no `.jsonl` files (return unchanged), all lines malformed (log warning, return unchanged).\n\nImport `RawPattern` from `lib.learn.conventions`.",
+  "acceptance_criteria": "- 3+ convention_violation observations about isinstance checks increments observation_support on matching pattern\n  verify_by: test\n- human_override entries create new RawPattern when no matching code pattern exists\n  verify_by: test\n- Patterns without observation matches pass through unchanged (same object, same fields)\n  verify_by: test\n- Empty observation directory returns input patterns unchanged\n  verify_by: test\n- Malformed JSONL line is skipped with warning logged, valid lines still processed\n  verify_by: test\n- Observation-derived patterns have evidence field 'N/A — observation-derived'\n  verify_by: test",
+  "depends_on": [
+    "1"
+  ],
+  "status": "done",
+  "branch": "speed/speed-conventions/task-4-phase-b-observation-log-integration",
+  "agent_model": "sonnet",
+  "created_at": "2026-03-14T16:03:48Z",
+  "started_at": "2026-03-15T05:15:04Z",
+  "completed_at": "2026-03-15T10:50:00Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": "{\"verdict\":\"request_changes\",\"spec_verification\":[{\"spec_quote\":\"3+ convention_violation observations about isinstance checks increments observation_support on matching pattern\",\"spec_section\":\"AC-1\",\"satisfied\":false,\"evidence\":\"Git diff is empty. No implementation provided.\",\"notes\":\"Cannot verify.\"},{\"spec_quote\":\"human_override entries create new RawPattern when no matching code pattern exists\",\"spec_section\":\"AC-3\",\"satisfied\":false,\"evidence\":\"Git diff is empty. No implementation provided.\",\"notes\":null},{\"spec_quote\":\"Patterns without observation matches pass through unchanged (same object, same fields)\",\"spec_section\":\"AC-5\",\"satisfied\":false,\"evidence\":\"Git diff is empty. No implementation provided.\",\"notes\":null},{\"spec_quote\":\"Empty observation directory returns input patterns unchanged\",\"spec_section\":\"AC-7\",\"satisfied\":false,\"evidence\":\"Git diff is empty. No implementation provided.\",\"notes\":null},{\"spec_quote\":\"Malformed JSONL line is skipped with warning logged, valid lines still processed\",\"spec_section\":\"AC-9\",\"satisfied\":false,\"evidence\":\"Git diff is empty. No implementation provided.\",\"notes\":null},{\"spec_quote\":\"Observation-derived patterns have evidence field 'N/A — observation-derived'\",\"spec_section\":\"AC-11\",\"satisfied\":false,\"evidence\":\"Git diff is empty. No implementation provided.\",\"notes\":null}],\"missing_from_spec\":[{\"spec_quote\":\"All 6 acceptance criteria (AC-1, AC-3, AC-5, AC-7, AC-9, AC-11) plus corresponding tests (AC-2, AC-4, AC-6, AC-8, AC-10, AC-12)\",\"description\":\"The submitted diff is empty — no implementation was provided. lib/learn/convention_observations.py was not created or modified. All 12 criteria are unmet.\"}],\"out_of_scope\":[],\"issues\":[{\"severity\":\"critical\",\"file\":\"lib/learn/convention_observations.py\",\"line\":null,\"message\":\"The git diff is empty. No implementation was submitted for the task-scoped file.\",\"suggestion\":\"Implement lib/learn/convention_observations.py with: observation log parsing (JSONL), observation_support incrementing for matching convention_violation entries, RawPattern creation for human_override entries with no matching code pattern, pass-through for unmatched patterns, empty-directory guard, malformed-line skip with warning, and evidence field set to 'N/A — observation-derived' for observation-derived patterns. Add tests covering all 6 behavioral criteria.\"}],\"strengths\":[]}\n\n--- Attempt 1 ---\nFailed with: Quality gates failed\nHuman guidance: Write lib/learn/convention_observations.py immediately. Do not explore. Import RawPattern from lib.learn.conventions. Implement _integrate_observations(patterns, observations_dir).",
+  "files_touched": [
+    "lib/learn/convention_observations.py"
+  ],
+  "gate_results": {
+    "checks": [
+      {
+        "name": "diff_non_empty",
+        "status": "fail"
+      },
+      {
+        "name": "declared_files",
+        "status": "pass"
+      },
+      {
+        "name": "scope",
+        "status": "pass"
+      },
+      {
+        "name": "python_imports",
+        "status": "pass"
+      },
+      {
+        "name": "not_blocked",
+        "status": "pass"
+      },
+      {
+        "name": "test_coverage",
+        "status": "pass"
+      },
+      {
+        "name": "gate_evidence",
+        "status": "warn"
+      },
+      {
+        "name": "criteria",
+        "status": "pass"
+      },
+      {
+        "name": "secrets",
+        "status": "pass"
+      }
+    ],
+    "scope": {}
+  },
+  "decisions": [
+    "convention_violation threshold is module-level constant (_VIOLATION_THRESHOLD = 3) for clarity and testability",
+    "Unmatched patterns preserve Python object identity (not copied) by only calling dataclasses.replace() on patterns that gain support",
+    "Violations below the 3+ threshold do NOT become observation-only patterns — they're filtered out (no match + no corroboration means insufficient signal)",
+    "Observation-only patterns derived from unmatched observations are grouped by _obs_group_key (obs_type:category), so two unmatched human_override:convention entries collapse into one pattern with observation_support=2",
+    "Scope for observation-only patterns is derived from the first path component of observation files (e.g. lib/foo.py → scope='lib/')",
+    "RawPattern has no confidence field, so the spec's 'confidence: emerging' is expressed implicitly via adherence=0.0 and the evidence string; confidence is a ConventionEntry-level concept resolved downstream"
+  ],
+  "concerns": [
+    "The spec mentions 'confidence: emerging' for observation-derived patterns but RawPattern has no confidence field (it belongs to ConventionEntry). Downstream Task 6/5 will need to infer confidence from observation_support and adherence=0.0.",
+    "The gate flagged tests/test_convention_observations.py as an undeclared file — this is expected for companion test files and not a real violation."
+  ],
+  "review_verdict": "approve",
+  "failure_classification": {
+    "class": "unclassified",
+    "subclass": "unknown",
+    "evidence": "No classification rule matched"
+  },
+  "retry_count": 1,
+  "reviewed_at": "2026-03-15T11:13:18Z"
+}

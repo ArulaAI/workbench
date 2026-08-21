@@ -1,0 +1,73 @@
+{
+  "id": "14",
+  "title": "Unit tests for project knowledge pipeline",
+  "description": "Create `tests/test_project_knowledge.py` with comprehensive unit tests for all three functions in `lib/learn/project_knowledge.py`.\n\nUse pytest with tmp_path fixtures for isolated file system operations. Create minimal fixture files (README.md with IMPORTANT comments, .env.example, CLAUDE.md with knowledge-bearing content, mock observation JSONL files, mock project-knowledge.json).\n\n**seed_knowledge tests:**\n- README with 'IMPORTANT: payment service returns 202' produces draft entry\n- CLAUDE.md with 'NEVER import tomli' produces draft entry\n- Inline Python comment '# HACK: workaround for X' produces draft entry\n- .env.example is read (variable names extracted); .env is skipped\n- No scannable files → empty list, empty array written to drafts\n- Duplicate run merges without duplicate IDs\n- Draft entries conform to schema (id starts with pk-draft-, required fields present)\n- Output file is project-knowledge-drafts.json, never project-knowledge.json\n\n**detect_knowledge_gaps tests:**\n- 3 retry observations on lib/api/payments.py → draft question generated\n- 2 retry observations (below threshold) → empty result\n- Empty observations directory → empty result\n- Malformed JSONL line → skipped, valid lines processed\n- Existing project-knowledge.json entry covering the area → no duplicate gap detected\n\n**check_staleness tests:**\n- Entry with applies_to pointing to deleted file → flagged with staleness_flag\n- Entry with last_verified 100 days ago → flagged\n- Entry with last_verified 30 days ago → not flagged\n- Entry referencing dependency version not in lock file → flagged\n- project-knowledge.json missing → empty result\n- project-knowledge.json malformed → json.JSONDecodeError raised\n- Lock file missing → only checks file existence and age, skips version check",
+  "acceptance_criteria": "- All seed_knowledge tests pass: README scanning, CLAUDE.md scanning, inline comment scanning, .env denylist, empty project, duplicate merge, schema conformance, output file target\n- All detect_knowledge_gaps tests pass: threshold behavior, empty observations, malformed JSONL, dedup against existing knowledge\n- All check_staleness tests pass: deleted file, age threshold, dependency version, missing/malformed knowledge file, missing lock file\n- Tests use tmp_path for isolation (no shared state between tests)\n- Tests run in < 5 seconds total (no I/O beyond tmp_path)\n- No test imports from lib.learn.conventions (project_knowledge is tested independently)",
+  "depends_on": [
+    "10"
+  ],
+  "status": "done",
+  "branch": "speed/speed-conventions/task-14-unit-tests-for-project-knowledge-pipelin",
+  "agent_model": "sonnet",
+  "created_at": "2026-03-14T16:03:48Z",
+  "started_at": "2026-03-14T21:17:52Z",
+  "completed_at": "2026-03-14T21:21:39Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": null,
+  "files_touched": [
+    "tests/test_project_knowledge.py"
+  ],
+  "gate_results": {
+    "checks": [
+      {
+        "name": "diff_non_empty",
+        "status": "pass"
+      },
+      {
+        "name": "declared_files",
+        "status": "pass"
+      },
+      {
+        "name": "scope",
+        "status": "pass"
+      },
+      {
+        "name": "python_imports",
+        "status": "pass"
+      },
+      {
+        "name": "not_blocked",
+        "status": "pass"
+      },
+      {
+        "name": "test_coverage",
+        "status": "pass"
+      },
+      {
+        "name": "gate_evidence",
+        "status": "warn"
+      },
+      {
+        "name": "criteria",
+        "status": "pass"
+      },
+      {
+        "name": "secrets",
+        "status": "pass"
+      }
+    ],
+    "scope": {}
+  },
+  "decisions": [
+    "Added two extra tests beyond the minimum spec (test_missing_observations_dir_returns_empty, test_gate_failure_observations_count_toward_threshold, test_drafts_file_written_when_gaps_found, test_matching_version_not_flagged, test_drafts_file_written_for_stale_entries, test_non_list_knowledge_file_returns_empty) to cover edge cases visible in the implementation",
+    "Used _iso_days_ago() helper to compute ISO dates relative to today, making age-based tests robust against clock drift",
+    "Verified .env denylist by asserting project-knowledge.json does NOT exist (not just empty result) — the file is never created when there's nothing to scan",
+    "No imports from lib.learn.conventions — project_knowledge is tested independently per AC"
+  ],
+  "concerns": [
+    "The gates --fast command failed with 'No feature context' because this worktree has no .speed/features/ directory. The pytest suite itself passes (27/27 in 0.08s), which is the real correctness signal."
+  ],
+  "review_verdict": "approve",
+  "reviewed_at": "2026-03-15T04:04:31Z"
+}

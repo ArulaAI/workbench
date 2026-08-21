@@ -1,0 +1,82 @@
+{
+  "id": "5",
+  "title": "Phase C: Template formatting, quality bar, and confidence assignment",
+  "description": "Create `lib/learn/convention_templates.py` with the template engine, quality bar, confidence assignment, evolution tracking, and conflict handling.\n\n**`CONVENTION_TEMPLATES` dict** \u2014 all 20 templates from the tech spec (comodification, naming_snake, naming_camel, naming_pascal, naming_upper_snake, naming_go_exported, naming_cs_interface, naming_cs_async, naming_react_component, naming_react_hook, naming_bool_prefix, naming_ruby_predicate, naming_ruby_bang, naming_test_prefix, naming_test_suffix, import_relative, test_framework, config_rule, wrapper_module). Each template is a format string accepting named placeholders.\n\n**`_format_and_validate(enriched_patterns: list[RawPattern], config_conventions: list[ConventionEntry]) -> tuple[list[ConventionEntry], list[ConventionEntry]]`**\nConverts RawPatterns into ConventionEntries via template lookup (pattern.type \u2192 template key). Patterns without a matching template go to candidates with `rejection_reason: 'no_matching_template'`. Config conventions pass through (skip quality bar).\n\n**Quality bar (6 checks):** actionable, project-specific, evidenced (2+ examples), scoped, not redundant, template matched. Each failed check sets the corresponding `rejection_reason`.\n\n**`_assign_confidence(pattern: RawPattern) -> str`** \u2014 90%+ adherence AND obs_support >= 1 \u2192 established; 60%+ adherence OR obs_support >= 3 \u2192 emerging; recent_trend == 'away' \u2192 decaying; default \u2192 emerging.\n\n**Evolution tracking:** When old and new patterns exist for the same scope (detected by overlapping scope + one pattern trending away while another trends toward), populate the `evolution` field on both entries.\n\n**Conflict handling:** When two patterns of the same category exist in the same scope with neither dominant, create a conflict dict. If observation evidence favors one, auto-resolve (set winner to emerging/established, loser to decaying).\n\nImport `RawPattern`, `ConventionEntry` from `lib.learn.conventions`.",
+  "acceptance_criteria": "- All 20 CONVENTION_TEMPLATES entries produce valid convention text when formatted with sample data\n  verify_by: test\n- Pattern with type='comodification' maps to comodification template and produces expected convention string\n  verify_by: test\n- Pattern without matching template goes to candidates list with rejection_reason='no_matching_template'\n  verify_by: test\n- Quality bar rejects 'Use meaningful variable names' as not_project_specific\n  verify_by: test\n- Quality bar rejects pattern with no canonical_example as not_evidenced\n  verify_by: test\n- _assign_confidence returns 'established' for 92% adherence + 2 observation_support\n  verify_by: test\n- _assign_confidence returns 'emerging' for 65% adherence + 0 observation_support\n  verify_by: test\n- _assign_confidence returns 'decaying' for pattern with recent_trend='away'\n  verify_by: test\n- _assign_confidence returns 'emerging' (not 'established') for 95% adherence + 0 observation_support (single source insufficient)\n  verify_by: test\n- Evolution field populated when old pattern trends away and new pattern trends toward in same scope\n  verify_by: test\n- Conflict entry created for two competing patterns in same scope with neither dominant\n  verify_by: test\n- Conflict auto-resolved when observation evidence favors one pattern\n  verify_by: test\n- Config conventions pass through without quality bar filtering\n  verify_by: test",
+  "depends_on": [
+    "1"
+  ],
+  "status": "done",
+  "branch": "speed/speed-conventions/task-5-phase-c-template-formatting-quality-bar-",
+  "agent_model": "opus",
+  "created_at": "2026-03-14T16:03:48Z",
+  "started_at": "2026-03-14T21:07:06Z",
+  "completed_at": "2026-03-14T21:16:57Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": "",
+  "files_touched": [
+    "lib/learn/convention_templates.py"
+  ],
+  "gate_results": {
+    "checks": [
+      {
+        "name": "diff_non_empty",
+        "status": "pass"
+      },
+      {
+        "name": "declared_files",
+        "status": "pass"
+      },
+      {
+        "name": "scope",
+        "status": "warn",
+        "undeclared_files": [
+          "tests/test_convention_templates.py"
+        ]
+      },
+      {
+        "name": "python_imports",
+        "status": "pass"
+      },
+      {
+        "name": "not_blocked",
+        "status": "pass"
+      },
+      {
+        "name": "test_coverage",
+        "status": "pass"
+      },
+      {
+        "name": "gate_evidence",
+        "status": "warn"
+      },
+      {
+        "name": "criteria",
+        "status": "pass"
+      },
+      {
+        "name": "secrets",
+        "status": "pass"
+      }
+    ],
+    "scope": {
+      "undeclared_files": [
+        "tests/test_convention_templates.py"
+      ]
+    }
+  },
+  "decisions": [
+    "Tech spec says '20 templates' but only defines 19 template keys in its code block. Implemented all 19 from the spec. The task description also lists exactly 19 names.",
+    "Used 'insufficient_evidence' (from RejectionReason in conventions.py) instead of 'not_evidenced' (from spec schema) for the evidenced quality bar check, to match the existing shared type definition.",
+    "Stored rejection_reason inside the ConventionEntry.evidence dict rather than adding a field to ConventionEntry (which belongs to Task 1/6). Task 6 orchestrator can extract it during serialization.",
+    "Template placeholders that aren't directly available from RawPattern fields (entity_type, prefix, framework) are derived from pattern.type with sensible defaults or parsed from the evidence string.",
+    "Used _SafeDict for template formatting to gracefully handle any missing placeholders without crashing."
+  ],
+  "concerns": [
+    "The spec claims 20 CONVENTION_TEMPLATES but only defines 19. All 19 are implemented. If a 20th template type exists elsewhere in the spec, it needs to be added.",
+    "The RejectionReason type in conventions.py uses 'insufficient_evidence' while the spec JSON schema uses 'not_evidenced'. The code follows conventions.py. Task 6 (orchestrator) may need to reconcile this when serializing to conventions-candidates.json."
+  ],
+  "review_verdict": "approve",
+  "reviewed_at": "2026-03-15T03:42:05Z"
+}

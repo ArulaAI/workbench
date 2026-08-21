@@ -1,0 +1,77 @@
+id: ts-member-expression
+language: typescript
+metadata:
+  produces: reference
+  ref_kind: attribute_access
+rule:
+  kind: member_expression
+
+---
+id: ts-import-named
+language: typescript
+metadata:
+  produces: reference
+  ref_kind: import
+  module_var: MODULE
+  symbols_var: NAMES
+rule:
+  kind: import_statement
+  pattern: import { $$$NAMES } from $MODULE
+
+---
+id: ts-import-default
+language: typescript
+metadata:
+  produces: reference
+  ref_kind: import
+  module_var: MODULE
+rule:
+  kind: import_statement
+  pattern: import $NAME from $MODULE
+
+---
+id: ts-import-namespace
+language: typescript
+metadata:
+  produces: reference
+  ref_kind: import
+  module_var: MODULE
+rule:
+  kind: import_statement
+  pattern: import * as $NAME from $MODULE
+
+---
+id: ts-import-type
+language: typescript
+metadata:
+  produces: reference
+  ref_kind: import
+  module_var: MODULE
+  symbols_var: NAMES
+rule:
+  kind: import_statement
+  pattern: import type { $$$NAMES } from $MODULE
+
+---
+id: ts-require
+language: typescript
+metadata:
+  produces: reference
+  ref_kind: import
+  module_var: MODULE
+rule:
+  kind: call_expression
+  pattern: require($MODULE)
+
+---
+id: ts-call
+language: typescript
+metadata:
+  produces: reference
+  ref_kind: call
+  name_var: FUNC
+rule:
+  kind: call_expression
+  pattern: $FUNC($$$ARGS)
+
+Summary of what each file covers:

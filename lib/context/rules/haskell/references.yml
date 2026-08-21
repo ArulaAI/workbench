@@ -1,0 +1,7 @@
+id: haskell-import
+language: haskell
+metadata:
+  produces: reference
+  ref_kind: import
+rule:
+  kind: import

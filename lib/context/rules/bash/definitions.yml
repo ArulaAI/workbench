@@ -1,0 +1,10 @@
+id: bash-function
+language: bash
+metadata:
+  produces: node
+  kind: function
+rule:
+  kind: function_definition
+  has:
+    field: name
+    pattern: $NAME

@@ -1,0 +1,103 @@
+id: rust-struct
+language: rust
+metadata:
+  produces: node
+  kind: class
+rule:
+  kind: struct_item
+
+---
+id: rust-enum
+language: rust
+metadata:
+  produces: node
+  kind: type
+rule:
+  kind: enum_item
+
+---
+id: rust-function
+language: rust
+metadata:
+  produces: node
+  kind: function
+rule:
+  kind: function_item
+
+---
+id: rust-method
+language: rust
+metadata:
+  produces: node
+  kind: method
+rule:
+  kind: function_item
+  inside:
+    kind: impl_item
+    stopBy: end
+
+---
+id: rust-trait
+language: rust
+metadata:
+  produces: node
+  kind: type
+rule:
+  kind: trait_item
+
+---
+id: rust-impl
+language: rust
+metadata:
+  produces: node
+  kind: class
+rule:
+  kind: impl_item
+
+---
+id: rust-const
+language: rust
+metadata:
+  produces: node
+  kind: constant
+rule:
+  kind: const_item
+
+---
+id: rust-static
+language: rust
+metadata:
+  produces: node
+  kind: constant
+rule:
+  kind: static_item
+
+---
+id: rust-type-alias
+language: rust
+metadata:
+  produces: node
+  kind: type
+rule:
+  kind: type_item
+
+---
+id: rust-macro
+language: rust
+metadata:
+  produces: node
+  kind: function
+rule:
+  kind: macro_definition
+
+---
+id: rust-impl-trait
+language: rust
+metadata:
+  produces: edge
+  edge_type: implements
+rule:
+  kind: impl_item
+  has:
+    field: trait
+    kind: type_identifier

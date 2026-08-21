@@ -1,0 +1,87 @@
+{
+  "id": "1",
+  "title": "Define GraphQL types for landing page",
+  "description": "Create `dashboard/backend/resolvers/landing_types.py` with all 16 Strawberry type and input definitions from the tech spec's API Surface section. Types: LandingDraftSpec, LandingDefect, LandingDefinePanel, LandingPendingReview, LandingLastCompleted, LandingJudgePanel, LandingRunningFeature, LandingEscalation, LandingExecutePanel, LandingCoverageTrend, LandingInsight, LandingEscalationTrend, LandingLearnPanel, LandingView, EscalationResponseInput, EscalationResponseResult. Use exact field names from the spec (snake_case Python, camelCase in GraphQL via Strawberry auto-naming). All Optional fields annotated per spec. Validation constraints documented as comments (coverage_pct clamped 0-100, severity enum, insight.type enum, spec_types limited to product/technical).",
+  "acceptance_criteria": "- LandingView type has fields: greeting (str), project_name (str), branch (Optional[str]), narrative (Optional[str]), define (LandingDefinePanel), judge (LandingJudgePanel), execute (LandingExecutePanel), learn (LandingLearnPanel)\n- LandingDefinePanel has: vision_status (str), draft_specs (list[LandingDraftSpec]), defects (list[LandingDefect]), defect_count (int)\n- LandingJudgePanel has: pending_review (Optional[LandingPendingReview]), last_completed (Optional[LandingLastCompleted])\n- LandingExecutePanel has: running_features (list[LandingRunningFeature]), escalations (list[LandingEscalation])\n- LandingLearnPanel has: coverage_trend (list[LandingCoverageTrend]), insights (list[LandingInsight]), escalation_trend (list[LandingEscalationTrend])\n- EscalationResponseInput has: feature (str), task_id (str), response (str)\n- EscalationResponseResult has: success (bool), error (Optional[str])\n- All types decorated with @strawberry.type or @strawberry.input\n- No type errors in the file",
+  "depends_on": [],
+  "status": "done",
+  "branch": "speed/speed-dashboard-landing/task-1-define-graphql-types-for-landing-page",
+  "agent_model": "sonnet",
+  "created_at": "2026-03-15T16:26:56Z",
+  "started_at": null,
+  "completed_at": "2026-03-15T19:43:40Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": "{\"verdict\":\"request_changes\",\"spec_verification\":[{\"spec_quote\":\"LandingView type has fields: greeting (str), project_name (str), branch (Optional[str]), narrative (Optional[str]), define (LandingDefinePanel), judge (LandingJudgePanel), execute (LandingExecutePanel), learn (LandingLearnPanel)\",\"spec_section\":\"Acceptance Criteria #1\",\"satisfied\":false,\"evidence\":\"No diff provided. dashboard/backend/resolvers/landing_types.py was not created or modified.\",\"notes\":\"Cannot verify — empty diff.\"},{\"spec_quote\":\"LandingDefinePanel has: vision_status (str), draft_specs (list[LandingDraftSpec]), defects (list[LandingDefect]), defect_count (int)\",\"spec_section\":\"Acceptance Criteria #2\",\"satisfied\":false,\"evidence\":\"No diff provided.\",\"notes\":null},{\"spec_quote\":\"LandingJudgePanel has: pending_review (Optional[LandingPendingReview]), last_completed (Optional[LandingLastCompleted])\",\"spec_section\":\"Acceptance Criteria #3\",\"satisfied\":false,\"evidence\":\"No diff provided.\",\"notes\":null},{\"spec_quote\":\"LandingExecutePanel has: running_features (list[LandingRunningFeature]), escalations (list[LandingEscalation])\",\"spec_section\":\"Acceptance Criteria #4\",\"satisfied\":false,\"evidence\":\"No diff provided.\",\"notes\":null},{\"spec_quote\":\"LandingLearnPanel has: coverage_trend (list[LandingCoverageTrend]), insights (list[LandingInsight]), escalation_trend (list[LandingEscalationTrend])\",\"spec_section\":\"Acceptance Criteria #5\",\"satisfied\":false,\"evidence\":\"No diff provided.\",\"notes\":null},{\"spec_quote\":\"EscalationResponseInput has: feature (str), task_id (str), response (str)\",\"spec_section\":\"Acceptance Criteria #6\",\"satisfied\":false,\"evidence\":\"No diff provided.\",\"notes\":null},{\"spec_quote\":\"EscalationResponseResult has: success (bool), error (Optional[str])\",\"spec_section\":\"Acceptance Criteria #7\",\"satisfied\":false,\"evidence\":\"No diff provided.\",\"notes\":null},{\"spec_quote\":\"All types decorated with @strawberry.type or @strawberry.input\",\"spec_section\":\"Acceptance Criteria #8\",\"satisfied\":false,\"evidence\":\"No diff provided.\",\"notes\":null},{\"spec_quote\":\"No type errors in the file\",\"spec_section\":\"Acceptance Criteria #9\",\"satisfied\":false,\"evidence\":\"No diff provided.\",\"notes\":null}],\"missing_from_spec\":[{\"spec_quote\":\"All 9 acceptance criteria\",\"description\":\"The task file dashboard/backend/resolvers/landing_types.py was not created. All criteria are unmet.\"}],\"out_of_scope\":[],\"issues\":[{\"severity\":\"critical\",\"file\":\"dashboard/backend/resolvers/landing_types.py\",\"line\":null,\"message\":\"File does not exist. The git diff is empty — the task was not implemented.\",\"suggestion\":\"Implement landing_types.py with all required strawberry types before resubmitting for review.\"}],\"strengths\":[]}\n\n--- Attempt 1 ---\nFailed with: Quality gates failed\nHuman guidance: Code complete on main branch. landing_types.py has all 16 Strawberry types. test_landing_types.py has structural validation. Timed out during quality gates, not due to missing code.",
+  "files_touched": [
+    "dashboard/backend/resolvers/landing_types.py"
+  ],
+  "spec_references": [
+    {
+      "spec": "tech",
+      "section": "API Surface",
+      "requirement": "GraphQL types for landing page"
+    }
+  ],
+  "rationale": "Types are the foundation every other task imports. Isolating them in their own file prevents file ownership conflicts: the resolver module (landing.py) is touched by tasks 2-7 sequentially, but types are stable after task 1.",
+  "assumptions": [
+    "Strawberry auto-converts snake_case to camelCase for GraphQL, matching the spec's GraphQL schema"
+  ],
+  "gate_results": {
+    "checks": [
+      {
+        "name": "diff_non_empty",
+        "status": "fail"
+      },
+      {
+        "name": "declared_files",
+        "status": "pass"
+      },
+      {
+        "name": "scope",
+        "status": "pass"
+      },
+      {
+        "name": "python_imports",
+        "status": "pass"
+      },
+      {
+        "name": "not_blocked",
+        "status": "pass"
+      },
+      {
+        "name": "test_coverage",
+        "status": "pass"
+      },
+      {
+        "name": "gate_evidence",
+        "status": "warn"
+      },
+      {
+        "name": "criteria",
+        "status": "pass"
+      },
+      {
+        "name": "secrets",
+        "status": "pass"
+      }
+    ],
+    "scope": {}
+  },
+  "decisions": [
+    "Used AST-based structural tests instead of importing strawberry directly, since strawberry-graphql is not installed in the system Python environment — avoids a hard dependency in CI.",
+    "Created dashboard/backend/tests/__init__.py briefly but removed it because it is owned by task 7. The test file works without it since it's run directly and doesn't need to be a package import."
+  ],
+  "concerns": [
+    "The test file dashboard/backend/tests/test_landing_types.py is flagged as 'undeclared' by the scope check (warning, not error). Task 7 owns __init__.py for this directory; when task 7 creates it, the test will be in a proper package.",
+    "LandingInsight has a field named 'type' which shadows Python's built-in. Strawberry handles this fine, but downstream code using these objects should avoid calling type() on them."
+  ],
+  "review_verdict": "approve",
+  "failure_classification": {
+    "class": "unclassified",
+    "subclass": "unknown",
+    "evidence": "No classification rule matched"
+  },
+  "retry_count": 1,
+  "reviewed_at": "2026-03-16T02:18:35Z"
+}

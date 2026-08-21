@@ -1,0 +1,94 @@
+{
+  "id": "3",
+  "title": "Implement Judge panel reader",
+  "description": "Add `read_judge_panel(project_root: Path) -> LandingJudgePanel` to `dashboard/backend/resolvers/landing.py`. Logic:\n\n1. **Pending review**: Glob `.speed/features/*/state.json`. For each, parse JSON. If `status == 'done'` and no `review.json` sibling exists, this feature is pending review. For the pending feature, read `criteria-verify.json` for coverage_pct (clamped 0-100), criteria_passed, criteria_total. Scan `logs/Guardian-*.jsonl` for the last line's verdict (default 'unknown' if no logs). Count entries in criteria-verify where `needs_decision == true` for decisions_needed. completed_at from state.json. summary is null (populated by LLM in orchestrator). If multiple features pending, pick the one with the most recent completed_at.\n2. **Last completed**: Find features with `review.json` present. Parse for verdict and coverage_pct. Pick the most recent by timestamp.\n\nHandle missing files gracefully: missing criteria-verify.json yields zeroed metrics, missing Guardian logs yield verdict='unknown'.",
+  "acceptance_criteria": "- read_judge_panel returns pending_review when a feature has status='done' and no review.json\n- pending_review includes coverage_pct clamped to 0.0-100.0\n- pending_review includes criteria_passed and criteria_total from criteria-verify.json\n- guardian_verdict defaults to 'unknown' when no Guardian log files exist\n- decisions_needed counted from criteria entries needing decision\n- Most recent pending feature selected when multiple exist\n- last_completed populated from features with review.json\n- Returns null pending_review and null last_completed when no features exist",
+  "depends_on": [
+    "2"
+  ],
+  "status": "done",
+  "branch": "speed/speed-dashboard-landing/task-3-implement-judge-panel-reader",
+  "agent_model": "sonnet",
+  "created_at": "2026-03-15T16:26:56Z",
+  "started_at": "2026-03-15T17:08:46Z",
+  "completed_at": "2026-03-15T19:43:53Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": "{\"verdict\":\"request_changes\",\"spec_verification\":[{\"spec_quote\":\"read_judge_panel returns pending_review when a feature has status='done' and no review.json\",\"spec_section\":\"Acceptance Criterion 1\",\"satisfied\":false,\"evidence\":\"No diff provided — no implementation exists to evaluate\",\"notes\":null},{\"spec_quote\":\"pending_review includes coverage_pct clamped to 0.0-100.0\",\"spec_section\":\"Acceptance Criterion 2\",\"satisfied\":false,\"evidence\":\"No diff provided\",\"notes\":null},{\"spec_quote\":\"pending_review includes criteria_passed and criteria_total from criteria-verify.json\",\"spec_section\":\"Acceptance Criterion 3\",\"satisfied\":false,\"evidence\":\"No diff provided\",\"notes\":null},{\"spec_quote\":\"guardian_verdict defaults to 'unknown' when no Guardian log files exist\",\"spec_section\":\"Acceptance Criterion 4\",\"satisfied\":false,\"evidence\":\"No diff provided\",\"notes\":null},{\"spec_quote\":\"decisions_needed counted from criteria entries needing decision\",\"spec_section\":\"Acceptance Criterion 5\",\"satisfied\":false,\"evidence\":\"No diff provided\",\"notes\":null},{\"spec_quote\":\"Most recent pending feature selected when multiple exist\",\"spec_section\":\"Acceptance Criterion 6\",\"satisfied\":false,\"evidence\":\"No diff provided\",\"notes\":null},{\"spec_quote\":\"last_completed populated from features with review.json\",\"spec_section\":\"Acceptance Criterion 7\",\"satisfied\":false,\"evidence\":\"No diff provided\",\"notes\":null},{\"spec_quote\":\"Returns null pending_review and null last_completed when no features exist\",\"spec_section\":\"Acceptance Criterion 8\",\"satisfied\":false,\"evidence\":\"No diff provided\",\"notes\":null}],\"missing_from_spec\":[],\"out_of_scope\":[],\"issues\":[{\"severity\":\"critical\",\"file\":\"dashboard/backend/resolvers/landing.py\",\"line\":null,\"message\":\"No implementation submitted. The diff is empty.\",\"suggestion\":\"Submit the actual diff for dashboard/backend/resolvers/landing.py before requesting review.\"}],\"strengths\":[]}",
+  "files_touched": [
+    "dashboard/backend/resolvers/landing.py"
+  ],
+  "spec_references": [
+    {
+      "spec": "tech",
+      "section": "Data Model - What the resolver reads",
+      "requirement": "Judge panel reads feature state, review state, verification, and Guardian logs"
+    },
+    {
+      "spec": "product",
+      "section": "User Stories - S2",
+      "requirement": "Judge panel shows review summary, hero metrics, decision count"
+    }
+  ],
+  "rationale": "Depends on task 2 because both write to landing.py. Judge panel is more complex than Define (cross-referencing state.json, criteria-verify.json, and Guardian logs for a single feature), so it follows Define in the chain.",
+  "assumptions": [
+    "decisions_needed is derived from criteria-verify.json entries with a needs_decision field. The exact field name isn't specified in the tech spec, so we look for entries where a boolean decision field is true.",
+    "completed_at comes from a timestamp field in state.json. The exact field name is assumed to be 'completed_at' based on the GraphQL schema."
+  ],
+  "gate_results": {
+    "checks": [
+      {
+        "name": "diff_non_empty",
+        "status": "pass"
+      },
+      {
+        "name": "declared_files",
+        "status": "pass"
+      },
+      {
+        "name": "scope",
+        "status": "pass"
+      },
+      {
+        "name": "python_imports",
+        "status": "pass"
+      },
+      {
+        "name": "not_blocked",
+        "status": "pass"
+      },
+      {
+        "name": "test_coverage",
+        "status": "pass"
+      },
+      {
+        "name": "gate_evidence",
+        "status": "warn"
+      },
+      {
+        "name": "criteria",
+        "status": "pass"
+      },
+      {
+        "name": "secrets",
+        "status": "pass"
+      }
+    ],
+    "scope": {}
+  },
+  "decisions": [
+    "criteria-verify.json handled for both list and dict root shapes: list root uses len() for criteria_total, dict root reads coverage_pct/criteria_passed/criteria_total directly and looks for a nested 'criteria' array for decisions_needed.",
+    "Guardian log selection: glob 'Guardian-*.jsonl', sort alphabetically (timestamps sort correctly this way), take last file, then last non-empty line.",
+    "last_completed timestamp for sorting: prefer review.json 'completed_at', fall back to state.json 'completed_at', then empty string (so missing timestamps sort last).",
+    "summary is always null — populated by the orchestrator LLM layer, not the reader.",
+    "_read_criteria_verify uses json.loads directly (not _read_json) because criteria-verify.json may be a list, and _read_json is typed to return dict | None."
+  ],
+  "concerns": [
+    "Test coverage is deferred to Task 7 (test_landing.py), consistent with Task 2's approach.",
+    "The exact structure of criteria-verify.json is unspecified in the tech spec. Implementation handles both a flat list of entries and a dict with top-level summary fields plus a 'criteria' array. If the actual format differs, Task 7 will surface it.",
+    "Guardian log verdict field name ('verdict') is assumed from the task description. If Guardian logs use a different field name, the fallback returns 'unknown' rather than silently misreading.",
+    "review.json structure assumed to have 'verdict' and 'coverage_pct' at the root, and optionally 'completed_at' for timestamp-based sorting."
+  ],
+  "review_verdict": "approve",
+  "reviewed_at": "2026-03-16T02:26:20Z"
+}

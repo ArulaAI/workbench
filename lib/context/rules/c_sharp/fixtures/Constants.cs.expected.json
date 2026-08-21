@@ -1,0 +1,16 @@
+{
+  "expected_rules": [
+    "csharp-call",
+    "csharp-class",
+    "csharp-constant",
+    "csharp-constant",
+    "csharp-constant",
+    "csharp-constructor",
+    "csharp-enum",
+    "csharp-interface",
+    "csharp-member-access",
+    "csharp-method",
+    "csharp-method",
+    "csharp-struct"
+  ]
+}

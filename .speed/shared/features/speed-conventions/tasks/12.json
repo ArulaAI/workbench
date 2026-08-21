@@ -1,0 +1,74 @@
+{
+  "id": "12",
+  "title": "Context bridge: load and pass conventions + knowledge to assembly",
+  "description": "Modify `lib/context_bridge.sh` to add convention and project knowledge loading to the three `context_assemble_*` bridge functions.\n\nEach of `context_assemble_developer()`, `context_assemble_reviewer()`, and `context_assemble_architect()` already contains a Python block that calls the corresponding assembly function. Extend each Python block to:\n\n1. Import `format_conventions_for_agent` and `format_knowledge_for_agent` from `lib.learn.conventions`\n2. Compute `memory_dir = Path(project_root) / '.speed' / 'memory'`\n3. Compute `conventions_path = memory_dir / 'conventions.json'` and `knowledge_path = memory_dir / 'project-knowledge.json'`\n4. Extract `task_files` from the task dict (combine `files_to_modify` + `files_to_create` lists, defaulting to empty)\n5. Determine the agent name string ('developer', 'reviewer', or 'architect') based on which bridge function is executing\n6. Call `conventions_md = format_conventions_for_agent(conventions_path, agent, task_files)` and `knowledge_md = format_knowledge_for_agent(knowledge_path, agent, task_files)`\n7. Pass `conventions=conventions_md` and `project_knowledge=knowledge_md` as the new keyword arguments to the `assemble_*()` call\n\nThe existing `learnings` loading pattern in each bridge function (via `filter_learnings_for_task()`) is the template to follow. The new loading sits alongside it, not replacing it.\n\nGraceful degradation: if conventions.json or project-knowledge.json don't exist, the format functions return empty strings (handled inside the formatters, not in the bridge). No try/except needed in the bridge for missing files.",
+  "acceptance_criteria": "- context_assemble_developer() calls format_conventions_for_agent with agent='developer' and task_files from task dict\n- context_assemble_developer() calls format_knowledge_for_agent with agent='developer' and task_files from task dict\n- context_assemble_developer() passes conventions_md and knowledge_md to assemble_developer()\n- context_assemble_reviewer() performs equivalent loading with agent='reviewer'\n- context_assemble_architect() performs equivalent loading with agent='architect'\n- When conventions.json is missing, conventions_md is empty string (no crash)\n- When project-knowledge.json is missing, knowledge_md is empty string (no crash)\n- Existing learnings loading is unchanged and still functions\n- No syntax errors in context_bridge.sh (bash -n check passes)",
+  "depends_on": [
+    "6",
+    "10",
+    "11"
+  ],
+  "status": "done",
+  "branch": "speed/speed-conventions/task-12-context-bridge-load-and-pass-conventions",
+  "agent_model": "sonnet",
+  "created_at": "2026-03-14T16:03:48Z",
+  "started_at": "2026-03-15T02:37:19Z",
+  "completed_at": "2026-03-15T02:38:47Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": "",
+  "files_touched": [
+    "lib/context_bridge.sh"
+  ],
+  "gate_results": {
+    "checks": [
+      {
+        "name": "diff_non_empty",
+        "status": "pass"
+      },
+      {
+        "name": "declared_files",
+        "status": "pass"
+      },
+      {
+        "name": "scope",
+        "status": "pass"
+      },
+      {
+        "name": "python_imports",
+        "status": "pass"
+      },
+      {
+        "name": "not_blocked",
+        "status": "pass"
+      },
+      {
+        "name": "test_coverage",
+        "status": "pass"
+      },
+      {
+        "name": "gate_evidence",
+        "status": "warn"
+      },
+      {
+        "name": "criteria",
+        "status": "pass"
+      },
+      {
+        "name": "secrets",
+        "status": "pass"
+      }
+    ],
+    "scope": {}
+  },
+  "decisions": [
+    "Placed the format_conventions_for_agent/format_knowledge_for_agent import and calls immediately after the existing learnings block in each function, reusing the already-computed memory_dir variable rather than recomputing it",
+    "For context_assemble_architect (single-quoted heredoc, no bash variable expansion), the all_files list computed for learnings is reused as task_files \u2014 architect has no task dict, so all project files is the correct scope, matching the existing learnings pattern"
+  ],
+  "concerns": [
+    "The 'No gate invocation evidence in agent output' warning is a known false positive per Task 11's documented concerns \u2014 the gate checks agent text output, not actual command history",
+    "context_assemble_architect uses a single-quoted heredoc ('PYTHON_EOF'), so no bash variable interpolation is possible inside it \u2014 all paths must be derived from os.environ, which is already how project_root and memory_dir are computed"
+  ],
+  "review_verdict": "approve",
+  "reviewed_at": "2026-03-15T03:58:02Z"
+}

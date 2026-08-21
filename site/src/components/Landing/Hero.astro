@@ -1,0 +1,142 @@
+---
+---
+
+<section class="hero">
+  <div class="hero-tagline">Engineers<span class="dot">&middot;</span>Designers<span class="dot">&middot;</span>Product</div>
+  <div class="hero-intro">Introducing the fourth role</div>
+  <div class="hero-name"><span class="chevron">&gt;</span> SPEED</div>
+  <div class="hero-subtitle">Spec to Production: Engineering, Experience, Design</div>
+  <div class="hero-command">
+    <span class="prompt">&gt; </span><span id="typed"></span><span class="cursor" id="cursor">_</span>
+  </div>
+
+  <slot />
+</section>
+
+<style>
+  .hero {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    padding: 100px 48px 60px;
+    position: relative;
+  }
+
+  /* Radial glow */
+  .hero::before {
+    content: '';
+    position: absolute;
+    top: 45%;
+    left: 50%;
+    width: 700px;
+    height: 500px;
+    border-radius: 50%;
+    background: radial-gradient(circle, color-mix(in srgb, var(--color-accent) 3%, transparent) 0%, transparent 70%);
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+  }
+
+  /* Dot grid */
+  .hero::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image: radial-gradient(circle, color-mix(in srgb, var(--color-accent) 2.5%, transparent) 1px, transparent 1px);
+    background-size: 32px 32px;
+    pointer-events: none;
+  }
+
+  .hero-tagline {
+    font-family: var(--font-mono);
+    font-size: clamp(11px, 1.3vw, 13px);
+    font-weight: 500;
+    color: var(--color-text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    white-space: nowrap;
+    margin-bottom: 32px;
+    position: relative;
+    z-index: 1;
+  }
+
+  .hero-tagline .dot {
+    color: var(--color-accent);
+    margin: 0 12px;
+  }
+
+  .hero-intro {
+    font-family: var(--font-mono);
+    font-size: clamp(10px, 1.2vw, 11px);
+    font-weight: 500;
+    color: var(--color-accent);
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    text-align: center;
+    margin-top: 16px;
+    position: relative;
+    z-index: 1;
+  }
+
+  .hero-name {
+    font-family: var(--font-mono);
+    font-size: clamp(28px, 5vw, 44px);
+    font-weight: 700;
+    color: var(--color-text);
+    letter-spacing: 0.08em;
+    text-align: center;
+    margin-top: 6px;
+    position: relative;
+    z-index: 1;
+  }
+
+  .hero-name .chevron { color: var(--color-accent); }
+
+  .hero-subtitle {
+    font-family: var(--font-mono);
+    font-size: clamp(9px, 1.1vw, 11px);
+    font-weight: 400;
+    color: var(--color-text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    text-align: center;
+    margin-top: 4px;
+    margin-bottom: 32px;
+    position: relative;
+    z-index: 1;
+  }
+
+  .hero-command {
+    font-family: var(--font-mono);
+    font-size: clamp(16px, 2.5vw, 22px);
+    color: var(--color-text-secondary);
+    margin-bottom: 56px;
+    position: relative;
+    z-index: 1;
+    text-align: center;
+  }
+
+  .hero-command .prompt {
+    color: var(--color-accent);
+    user-select: none;
+  }
+
+  .hero-command .cursor {
+    color: var(--color-accent);
+    animation: blink 1s step-end infinite;
+  }
+
+  @keyframes blink {
+    50% { opacity: 0; }
+  }
+
+  @media (max-width: 900px) {
+    .hero { padding: 90px 24px 48px; }
+  }
+
+  @media (max-width: 600px) {
+    .hero { padding: 80px 16px 32px; }
+    .hero-command { margin-bottom: 40px; }
+  }
+</style>

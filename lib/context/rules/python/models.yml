@@ -1,0 +1,89 @@
+id: django-model
+language: python
+metadata:
+  produces: node
+  kind: class
+  orm: true
+rule:
+  kind: class_definition
+  has:
+    field: superclasses
+    stopBy: end
+    has:
+      kind: attribute
+      regex: "models\\.Model"
+      stopBy: end
+
+---
+id: sqlalchemy-model
+language: python
+metadata:
+  produces: node
+  kind: class
+  orm: true
+rule:
+  kind: class_definition
+  has:
+    field: body
+    stopBy: end
+    has:
+      kind: assignment
+      stopBy: end
+      regex: "__tablename__"
+
+---
+id: sqlalchemy-column
+language: python
+metadata:
+  produces: node
+  kind: variable
+  orm: true
+rule:
+  pattern: $FIELD = mapped_column($$$ARGS)
+  inside:
+    kind: class_definition
+    stopBy: end
+
+---
+id: sqlalchemy-column-old
+language: python
+metadata:
+  produces: node
+  kind: variable
+  orm: true
+rule:
+  pattern: $FIELD = Column($$$ARGS)
+  inside:
+    kind: class_definition
+    stopBy: end
+
+---
+id: sqlalchemy-relationship
+language: python
+metadata:
+  produces: node
+  kind: variable
+  orm: true
+  relationship: true
+rule:
+  pattern: $FIELD = relationship($$$ARGS)
+  inside:
+    kind: class_definition
+    stopBy: end
+
+---
+id: flask-sqlalchemy-model
+language: python
+metadata:
+  produces: node
+  kind: class
+  orm: true
+rule:
+  kind: class_definition
+  has:
+    field: superclasses
+    stopBy: end
+    has:
+      kind: attribute
+      regex: "db\\.Model"
+      stopBy: end

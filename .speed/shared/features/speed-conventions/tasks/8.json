@@ -1,0 +1,73 @@
+{
+  "id": "8",
+  "title": "Unit tests for Phase A extractors",
+  "description": "Create `tests/test_convention_extractors.py` with tests for all four Phase A extraction functions.\n\n**A1 co-modification tests:**\nCreate synthetic git log output (mock subprocess.run). Test:\n- Two files co-modified in 10/10 commits → pair detected at 100%\n- Two files co-modified in 7/10 commits → pair NOT detected (below 80%)\n- Asymmetric pair: A touches B in 9/10, B touches A in 3/10 → directional pair detected\n- Empty git history → empty list\n- Single commit → co-modification still computed (no divide-by-zero)\n\n**A2 import and naming tests:**\nCreate synthetic tree-sitter output and CSG data. Test:\n- Python files importing pytest → test_framework='pytest' pattern\n- JS files importing vitest → test_framework='vitest' pattern\n- Directory with 8/10 snake_case functions → naming_snake pattern at 80% adherence\n- Directory with 8/10 camelCase functions → naming_camel pattern\n- PascalCase class names detected\n- csg=None → tree-sitter-only path, no crash\n\n**A3 import graph tests:**\nCreate synthetic CSG with clusters and edges. Test:\n- Cluster with all relative imports → import_relative pattern\n- Mixed imports → no pattern (below threshold)\n- csg=None → empty list returned\n- Hub file detection from stability scores\n\n**A4 dependency usage tests:**\nCreate synthetic requirements.txt and package.json. Test:\n- Wrapper module detected: client.py imports httpx, 5 other files import client but not httpx\n- No wrapper pattern when library imported directly by multiple files\n- Missing lock files → empty dependency list, no error\n\nUse `unittest.mock.patch` to mock subprocess calls and file I/O where needed.",
+  "acceptance_criteria": "- All A1 tests pass including edge cases (empty history, single commit, asymmetric pairs)\n  verify_by: test\n- All A2 tests pass for framework detection, naming patterns, and CSG-absent fallback\n  verify_by: test\n- A3 tests verify empty list when CSG is None\n  verify_by: test\n- A4 tests verify wrapper module detection logic\n  verify_by: test\n- At least 20 test cases across all four extractors\n  verify_by: file_exists",
+  "depends_on": [
+    "3"
+  ],
+  "status": "done",
+  "branch": "speed/speed-conventions/task-8-unit-tests-for-phase-a-extractors",
+  "agent_model": "opus",
+  "created_at": "2026-03-14T16:03:48Z",
+  "started_at": "2026-03-14T21:17:11Z",
+  "completed_at": "2026-03-14T21:20:49Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": null,
+  "files_touched": [
+    "tests/test_convention_extractors.py"
+  ],
+  "timeout_count": 1,
+  "review_verdict": "approve",
+  "retry_count": 1,
+  "gate_results": {
+    "checks": [
+      {
+        "name": "diff_non_empty",
+        "status": "pass"
+      },
+      {
+        "name": "declared_files",
+        "status": "pass"
+      },
+      {
+        "name": "scope",
+        "status": "pass"
+      },
+      {
+        "name": "python_imports",
+        "status": "pass"
+      },
+      {
+        "name": "not_blocked",
+        "status": "pass"
+      },
+      {
+        "name": "test_coverage",
+        "status": "pass"
+      },
+      {
+        "name": "gate_evidence",
+        "status": "warn"
+      },
+      {
+        "name": "criteria",
+        "status": "pass"
+      },
+      {
+        "name": "secrets",
+        "status": "pass"
+      }
+    ],
+    "scope": {}
+  },
+  "decisions": [
+    "Used the project's existing check() test pattern instead of pytest/unittest, matching test_conventions.py conventions",
+    "Tested A2 sub-functions (_detect_naming_patterns, _detect_test_frameworks, _detect_import_style, _detect_test_file_naming) directly rather than mocking the full tree-sitter pipeline, since the top-level function wraps them",
+    "For A4 wrapper detection, mocked lib.context.treesitter_extract.Extractor at source since it's imported inside the function body",
+    "Built git numstat output helper to create realistic subprocess.run mock data for A1"
+  ],
+  "concerns": [],
+  "reviewed_at": "2026-03-15T03:51:26Z"
+}

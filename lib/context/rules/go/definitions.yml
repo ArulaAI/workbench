@@ -1,0 +1,67 @@
+id: go-struct
+language: go
+metadata:
+  produces: node
+  kind: class
+rule:
+  kind: type_spec
+  has:
+    field: type
+    kind: struct_type
+
+---
+id: go-interface
+language: go
+metadata:
+  produces: node
+  kind: type
+rule:
+  kind: type_spec
+  has:
+    field: type
+    kind: interface_type
+
+---
+id: go-function
+language: go
+metadata:
+  produces: node
+  kind: function
+rule:
+  kind: function_declaration
+
+---
+id: go-method
+language: go
+metadata:
+  produces: node
+  kind: method
+rule:
+  kind: method_declaration
+
+---
+id: go-constant
+language: go
+metadata:
+  produces: node
+  kind: constant
+rule:
+  kind: const_spec
+
+---
+id: go-struct-embed
+language: go
+metadata:
+  produces: edge
+  edge_type: inherits
+rule:
+  kind: field_declaration
+  has:
+    kind: type_identifier
+  not:
+    has:
+      field: name
+      kind: field_identifier
+  inside:
+    kind: struct_type
+    stopBy: end

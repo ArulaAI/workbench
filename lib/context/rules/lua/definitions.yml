@@ -1,0 +1,16 @@
+id: lua-function
+language: lua
+metadata:
+  produces: node
+  kind: function
+rule:
+  kind: function_declaration
+
+---
+id: lua-local-var
+language: lua
+metadata:
+  produces: node
+  kind: variable
+rule:
+  kind: variable_declaration

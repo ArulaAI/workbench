@@ -1,0 +1,88 @@
+{
+  "id": "6",
+  "title": "Pipeline orchestrator, trigger logic, and formatting functions",
+  "description": "Extend `lib/learn/conventions.py` (created in task 1) with the public API functions that tie the pipeline together.\n\n**`discover_conventions(project_root: Path, memory_dir: Path, csg_path: Path | None = None, incremental: bool = True) -> ConventionResult`**\nOrchestrator that runs the full pipeline:\n1. Call `_should_run_discovery()` if incremental=True. If trigger not met, load and return existing conventions.json\n2. Load CSG from csg_path if provided (json.load), handle missing/malformed gracefully\n3. Phase 0: `_extract_config_conventions(project_root)` from `lib.learn.convention_configs`\n4. Phase A: call all four extractors from `lib.learn.convention_extractors`, concatenate results\n5. Phase B: `_integrate_observations(raw_patterns, memory_dir / 'observations')` from `lib.learn.convention_observations`\n6. Phase C: `_format_and_validate(enriched, config_conventions)` from `lib.learn.convention_templates`\n7. Build views dict with agent-specific formatted strings\n8. Write conventions.json, conventions-meta.json, conventions-candidates.json via `_atomic_write()`\n9. Return ConventionResult\n\n**Incremental logic:** Read conventions-meta.json for last_run. Compare cluster checksums. Count files changed via `git diff --name-only` since last_run. Apply the threshold table from tech spec (< 10 files \u2192 changed files only, 10-49 \u2192 changed clusters, 50+ or cluster restructure \u2192 full rescan).\n\n**`_should_run_discovery(memory_dir: Path, project_root: Path) -> tuple[bool, str]`**\nCheck trigger conditions in order: meta missing \u2192 first_run; 50+ files changed \u2192 files_changed; 3+ features completed \u2192 features_completed; cluster checksums differ \u2192 csg_restructured; 5+ convention violations \u2192 violations_threshold.\n\n**`format_conventions_for_agent(conventions_path: Path, agent: str, task_files: list[str]) -> str`**\nLoad conventions.json, read `views.{agent}`, filter by task_files scope intersection, truncate to 2,000 tokens max. Return markdown string. Handle missing/malformed file gracefully (return empty string, log warning).\n\n**`format_knowledge_for_agent(knowledge_path: Path, agent: str, task_files: list[str]) -> str`**\nLoad project-knowledge.json, filter entries by `agents` containing agent and `applies_to` intersecting task_files (support glob patterns via `fnmatch`), truncate to 1,500 tokens max. Return markdown string. Handle missing file (return empty string).",
+  "acceptance_criteria": "- discover_conventions produces valid conventions.json, conventions-meta.json, and conventions-candidates.json files\n  verify_by: test\n- discover_conventions with csg_path=None skips Phase A3, runs other phases successfully\n  verify_by: test\n- discover_conventions on empty project (no git, no configs, no observations) writes empty conventions.json without crash\n  verify_by: test\n- _should_run_discovery returns (True, 'first_run') when conventions-meta.json does not exist\n  verify_by: test\n- _should_run_discovery returns (False, '') when no trigger conditions are met\n  verify_by: test\n- format_conventions_for_agent returns empty string when conventions.json does not exist\n  verify_by: test\n- format_conventions_for_agent returns markdown filtered to task_files scope\n  verify_by: test\n- format_conventions_for_agent truncates output to 2,000 token budget\n  verify_by: test\n- format_knowledge_for_agent filters by agent name and applies_to intersection with task_files\n  verify_by: test\n- format_knowledge_for_agent supports glob patterns in applies_to via fnmatch\n  verify_by: test\n- format_knowledge_for_agent returns empty string when project-knowledge.json does not exist\n  verify_by: test\n- Incremental run with zero file changes returns existing conventions without re-running extractors\n  verify_by: test\n- conventions-meta.json contains last_run timestamp, files_analyzed count, cluster_checksums, and trigger field\n  verify_by: schema_check",
+  "depends_on": [
+    "2",
+    "3",
+    "4",
+    "5"
+  ],
+  "status": "done",
+  "branch": "speed/speed-conventions/task-6-pipeline-orchestrator-trigger-logic-and-",
+  "agent_model": "opus",
+  "created_at": "2026-03-14T16:03:48Z",
+  "started_at": "2026-03-15T02:34:46Z",
+  "completed_at": "2026-03-15T02:37:16Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": "{\"verdict\":\"request_changes\",\"spec_verification\":[{\"spec_quote\":\"discover_conventions produces valid conventions.json, conventions-meta.json, and conventions-candidates.json files\",\"spec_section\":\"AC-1\",\"satisfied\":false,\"evidence\":\"Git diff is empty. No implementation provided.\",\"notes\":\"Cannot verify.\"},{\"spec_quote\":\"discover_conventions with csg_path=None skips Phase A3, runs other phases successfully\",\"spec_section\":\"AC-3\",\"satisfied\":false,\"evidence\":\"Git diff is empty.\",\"notes\":null},{\"spec_quote\":\"discover_conventions on empty project (no git, no configs, no observations) writes empty conventions.json without crash\",\"spec_section\":\"AC-5\",\"satisfied\":false,\"evidence\":\"Git diff is empty.\",\"notes\":null},{\"spec_quote\":\"_should_run_discovery returns (True, 'first_run') when conventions-meta.json does not exist\",\"spec_section\":\"AC-7\",\"satisfied\":false,\"evidence\":\"Git diff is empty.\",\"notes\":null},{\"spec_quote\":\"_should_run_discovery returns (False, '') when no trigger conditions are met\",\"spec_section\":\"AC-9\",\"satisfied\":false,\"evidence\":\"Git diff is empty.\",\"notes\":null},{\"spec_quote\":\"format_conventions_for_agent returns empty string when conventions.json does not exist\",\"spec_section\":\"AC-11\",\"satisfied\":false,\"evidence\":\"Git diff is empty.\",\"notes\":null},{\"spec_quote\":\"format_conventions_for_agent returns markdown filtered to task_files scope\",\"spec_section\":\"AC-13\",\"satisfied\":false,\"evidence\":\"Git diff is empty.\",\"notes\":null},{\"spec_quote\":\"format_conventions_for_agent truncates output to 2,000 token budget\",\"spec_section\":\"AC-15\",\"satisfied\":false,\"evidence\":\"Git diff is empty.\",\"notes\":null},{\"spec_quote\":\"format_knowledge_for_agent filters by agent name and applies_to intersection with task_files\",\"spec_section\":\"AC-17\",\"satisfied\":false,\"evidence\":\"Git diff is empty.\",\"notes\":null},{\"spec_quote\":\"format_knowledge_for_agent supports glob patterns in applies_to via fnmatch\",\"spec_section\":\"AC-19\",\"satisfied\":false,\"evidence\":\"Git diff is empty.\",\"notes\":null},{\"spec_quote\":\"format_knowledge_for_agent returns empty string when project-knowledge.json does not exist\",\"spec_section\":\"AC-21\",\"satisfied\":false,\"evidence\":\"Git diff is empty.\",\"notes\":null},{\"spec_quote\":\"Incremental run with zero file changes returns existing conventions without re-running extractors\",\"spec_section\":\"AC-23\",\"satisfied\":false,\"evidence\":\"Git diff is empty.\",\"notes\":null},{\"spec_quote\":\"conventions-meta.json contains last_run timestamp, files_analyzed count, cluster_checksums, and trigger field\",\"spec_section\":\"AC-25\",\"satisfied\":false,\"evidence\":\"Git diff is empty.\",\"notes\":null}],\"missing_from_spec\":[{\"spec_quote\":\"All 13 acceptance criteria covering discover_conventions, _should_run_discovery, format_conventions_for_agent, and format_knowledge_for_agent\",\"description\":\"The submitted diff is empty \u2014 no implementation was provided. All criteria are unmet.\"}],\"out_of_scope\":[],\"issues\":[{\"severity\":\"critical\",\"file\":\"lib/learn/conventions.py\",\"line\":null,\"message\":\"The git diff is empty. There is no code to review.\",\"suggestion\":\"Submit the actual implementation diff for lib/learn/conventions.py.\"}],\"strengths\":[]}",
+  "files_touched": [
+    "lib/learn/conventions.py"
+  ],
+  "gate_results": {
+    "checks": [
+      {
+        "name": "diff_non_empty",
+        "status": "pass"
+      },
+      {
+        "name": "declared_files",
+        "status": "pass"
+      },
+      {
+        "name": "scope",
+        "status": "pass"
+      },
+      {
+        "name": "python_imports",
+        "status": "pass"
+      },
+      {
+        "name": "not_blocked",
+        "status": "pass"
+      },
+      {
+        "name": "test_coverage",
+        "status": "pass"
+      },
+      {
+        "name": "gate_evidence",
+        "status": "warn"
+      },
+      {
+        "name": "criteria",
+        "status": "pass"
+      },
+      {
+        "name": "secrets",
+        "status": "pass"
+      }
+    ],
+    "scope": {}
+  },
+  "timeout_count": 1,
+  "failure_classification": {
+    "class": "complexity",
+    "subclass": "exceeded_capacity",
+    "evidence": "Task timed out even after escalation to higher-capability model"
+  },
+  "review_verdict": "approve",
+  "retry_count": 1,
+  "decisions": [
+    "Used deferred imports (inside discover_conventions) for pipeline phase modules to avoid circular dependencies and keep the file self-contained for type/utility imports",
+    "Trigger checks evaluate in priority order (first_run > files_changed > features_completed > csg_restructured > violations_threshold) and short-circuit on first match",
+    "Token budget approximation uses len(text) // 4 for both format_conventions_for_agent (2000 tokens) and format_knowledge_for_agent (1500 tokens)",
+    "Scope intersection logic handles root scope ('.', './') as matching everything, plus directory prefix matching in both directions",
+    "CSG cluster checksums use sha256[:16] of sorted member lists for compact comparison",
+    "format_knowledge_for_agent treats empty agents list as 'all agents' and empty applies_to as 'global scope'",
+    "_build_views generates identical convention lists for all three agents (developer, reviewer, architect) with scope metadata preserved for downstream filtering",
+    "Convention violations count uses string comparison on timestamps (ISO format sorts correctly) rather than datetime parsing for simplicity"
+  ],
+  "concerns": [
+    "Tests for this module are owned by Task 9 (tests/test_convention_pipeline.py), not this task",
+    "_count_git_changes uses git log --since which depends on git being available; returns 0 gracefully when git is absent",
+    "The views dict currently gives all agents the same conventions list - if agent-specific filtering is needed at the view level (beyond scope filtering), this would need extension"
+  ]
+}

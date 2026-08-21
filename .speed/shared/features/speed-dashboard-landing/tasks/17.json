@@ -1,0 +1,115 @@
+{
+  "id": "17",
+  "title": "Assemble landing page with data fetching and subscriptions",
+  "description": "Replace `dashboard/frontend/app/page.tsx` (currently a redirect to Mission Control) with the landing page.\n\n1. Import and use `LANDING_VIEW_QUERY` with the project's GraphQL client hook (useQuery or equivalent).\n2. Import `RESPOND_TO_ESCALATION_MUTATION` and create a mutation handler.\n3. Import the existing `TASK_STATUS_SUBSCRIPTION` and subscribe for live Execute panel updates.\n4. Wire connection state from the subscription client to StatusBar's `connected` prop.\n5. Compose the page:\n   ```\n   <TopBar projectName={data.projectName} branch={data.branch} />\n   <EditorialGrid\n     definePanel={<DefinePanel {...data.define} />}\n     judgePanel={<JudgePanel judge={data.judge} narrative={data.narrative} />}\n     executePanel={<ExecutePanel execute={data.execute} onRespondToEscalation={handleEscalation} />}\n     learnPanel={<LearnPanel {...data.learn} />}\n   />\n   <StatusBar ... />\n   ```\n6. Loading state: render a skeleton grid (same T-shape with pulsing placeholders) while query loads.\n7. Error state: render the grid with empty panels and a top-level error banner.\n8. After escalation mutation succeeds, refetch the landing view query to update panels.\n9. On subscription event for taskStatusChanged, refetch the landing view query.",
+  "acceptance_criteria": "- Page fetches landingView query on mount and renders all four panels\n  verify_by: test\n- Escalation Send triggers respondToEscalation mutation and refetches landing data\n  verify_by: test\n- Loading state shows skeleton grid\n  verify_by: test\n- Error state shows error banner with empty panel structure\n  verify_by: test\n- taskStatusChanged subscription triggers data refetch\n  verify_by: test\n- Page renders at /  (root route)\n  verify_by: test\n- No crash when landingView returns null/empty for any panel\n  verify_by: test",
+  "depends_on": [
+    "10",
+    "12",
+    "13",
+    "14",
+    "15",
+    "16"
+  ],
+  "status": "done",
+  "branch": "speed/speed-dashboard-landing/task-17-assemble-landing-page-with-data-fetching",
+  "agent_model": "opus",
+  "created_at": "2026-03-15T16:26:57Z",
+  "started_at": "2026-03-17T05:09:00Z",
+  "completed_at": "2026-03-17T05:18:20Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": "{\"verdict\":\"request_changes\",\"spec_verification\":[{\"spec_quote\":\"[Spec 'product' not found]\",\"spec_section\":\"product § User Stories\",\"satisfied\":false,\"evidence\":\"Spec could not be resolved. Cannot verify any product requirements.\",\"notes\":\"The spec lookup failed — review cannot proceed without the source of truth.\"},{\"spec_quote\":\"[Spec 'tech' not found]\",\"spec_section\":\"tech § File Impact\",\"satisfied\":false,\"evidence\":\"Spec could not be resolved.\",\"notes\":\"Same failure as above.\"}],\"missing_from_spec\":[],\"out_of_scope\":[],\"issues\":[{\"severity\":\"critical\",\"file\":\"N/A\",\"line\":0,\"message\":\"No diff available. There is no code to review.\",\"suggestion\":\"Ensure the task is committed and the diff is generated before routing to the Reviewer. The orchestrator should not invoke this agent when 'No diff available' is the input.\"},{\"severity\":\"critical\",\"file\":\"N/A\",\"line\":0,\"message\":\"Both product and tech specs failed to resolve ('[Spec not found]'). The Reviewer cannot verify correctness without a spec.\",\"suggestion\":\"Fix spec resolution in the orchestrator before re-running. The Reviewer is spec-grounded — it cannot approve work it cannot verify.\"}],\"strengths\":[]}\n\n--- Attempt 1 ---\nFailed with: Merge conflict: speed/speed-dashboard-landing/task-10-build-topbar-component-with-greeting-and into dashboard-human-surfaces (failed 3x)\nHuman guidance: Previous failure was a merge conflict from incorrect MAIN_BRANCH. Code is correct, just needs clean re-run.\n\n--- Attempt 2 ---\nFailed with: Quality gates failed\nHuman guidance: False negative review — code is correct, previous failure was topology poisoning from refresh step.",
+  "files_touched": [
+    "dashboard/frontend/app/page.tsx"
+  ],
+  "spec_references": [
+    {
+      "spec": "product",
+      "section": "User Stories",
+      "requirement": "S1: see all four phases simultaneously when opening the dashboard"
+    },
+    {
+      "spec": "tech",
+      "section": "File Impact",
+      "requirement": "dashboard/frontend/app/page.tsx: Replace redirect with landing page component"
+    },
+    {
+      "spec": "tech",
+      "section": "Key Decisions",
+      "requirement": "Single summary resolver — one query aggregates all four panels"
+    },
+    {
+      "spec": "product",
+      "section": "Success Criteria",
+      "requirement": "Live updates via taskStatusChanged subscription for Execute panel"
+    }
+  ],
+  "rationale": "The page is the integration point for all panel components, data fetching, and subscriptions. Requires opus because it coordinates six component imports, query/mutation/subscription wiring, and three render states (loading/error/data). Depends on all panel and layout component tasks.",
+  "assumptions": [
+    "Replacing the root redirect is the chosen approach per Q1 — Mission Control will be accessible via sidebar nav",
+    "Single query refetch is acceptable for subscription-triggered updates (no partial panel refresh)"
+  ],
+  "decisions": [
+    "Used module-level variable to capture onRespondToEscalation handler from the mocked ExecutePanel, avoiding fragile dynamic import patterns for mutation testing",
+    "Mocked all child components (TopBar, EditorialGrid, panels, StatusBar, Skeleton) to isolate page-level logic from component internals",
+    "Used color-mix(in srgb, var(--color-red) 8%, transparent) for ErrorBanner background so it stays in sync if --color-red changes"
+  ],
+  "concerns": [
+    "Tests are written for vitest + @testing-library/react which are not yet in package.json — they will not run until task 19 wires up the test framework (same situation as all other component tests)",
+    "The undeclared file scope warning for page.test.tsx is cosmetic, consistent with all other tasks' test files"
+  ],
+  "review_verdict": "approve",
+  "retry_count": 2,
+  "failure_classification": {
+    "class": "unclassified",
+    "subclass": "unknown",
+    "evidence": "No classification rule matched"
+  },
+  "gate_results": {
+    "checks": [
+      {
+        "name": "diff_non_empty",
+        "status": "pass"
+      },
+      {
+        "name": "declared_files",
+        "status": "pass"
+      },
+      {
+        "name": "scope",
+        "status": "pass"
+      },
+      {
+        "name": "python_imports",
+        "status": "pass"
+      },
+      {
+        "name": "not_blocked",
+        "status": "pass"
+      },
+      {
+        "name": "test_coverage",
+        "status": "pass"
+      },
+      {
+        "name": "gate_evidence",
+        "status": "warn"
+      },
+      {
+        "name": "criteria",
+        "status": "warn"
+      },
+      {
+        "name": "secrets",
+        "status": "pass"
+      },
+      {
+        "name": "syntax",
+        "status": "pass"
+      }
+    ],
+    "scope": {}
+  },
+  "reviewed_at": "2026-03-17T05:35:40Z"
+}

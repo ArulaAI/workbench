@@ -1,0 +1,502 @@
+{
+  "entities": [
+    {
+      "name": "conventions.py data models",
+      "type": "file",
+      "path": "lib/learn/conventions.py",
+      "created_by_task": "1",
+      "key_fields": [
+        "RawPattern",
+        "ConventionEntry",
+        "ConventionResult",
+        "_atomic_write"
+      ]
+    },
+    {
+      "name": "discover_conventions",
+      "type": "function",
+      "path": "lib/learn/conventions.py",
+      "function": "discover_conventions",
+      "created_by_task": "6",
+      "key_fields": [
+        "project_root",
+        "memory_dir",
+        "csg_path",
+        "incremental",
+        "returns ConventionResult"
+      ]
+    },
+    {
+      "name": "format_conventions_for_agent",
+      "type": "function",
+      "path": "lib/learn/conventions.py",
+      "function": "format_conventions_for_agent",
+      "created_by_task": "6",
+      "key_fields": [
+        "conventions_path",
+        "agent",
+        "task_files",
+        "max 2000 tokens",
+        "returns markdown string"
+      ]
+    },
+    {
+      "name": "format_knowledge_for_agent",
+      "type": "function",
+      "path": "lib/learn/conventions.py",
+      "function": "format_knowledge_for_agent",
+      "created_by_task": "6",
+      "key_fields": [
+        "knowledge_path",
+        "agent",
+        "task_files",
+        "fnmatch glob support",
+        "max 1500 tokens",
+        "returns markdown string"
+      ]
+    },
+    {
+      "name": "_should_run_discovery",
+      "type": "function",
+      "path": "lib/learn/conventions.py",
+      "function": "_should_run_discovery",
+      "created_by_task": "6",
+      "key_fields": [
+        "memory_dir",
+        "project_root",
+        "returns tuple[bool, str]",
+        "6 trigger conditions"
+      ]
+    },
+    {
+      "name": "convention_configs module",
+      "type": "file",
+      "path": "lib/learn/convention_configs.py",
+      "created_by_task": "2",
+      "key_fields": [
+        "_extract_config_conventions",
+        "16 config file types",
+        "TOML/JSON/YAML/XML parsers"
+      ]
+    },
+    {
+      "name": "_extract_config_conventions",
+      "type": "function",
+      "path": "lib/learn/convention_configs.py",
+      "function": "_extract_config_conventions",
+      "created_by_task": "2",
+      "key_fields": [
+        "project_root",
+        "returns list[ConventionEntry]",
+        "source=config",
+        "confidence=established"
+      ]
+    },
+    {
+      "name": "convention_extractors module",
+      "type": "file",
+      "path": "lib/learn/convention_extractors.py",
+      "created_by_task": "3",
+      "key_fields": [
+        "_extract_comodification",
+        "_extract_imports_and_naming",
+        "_extract_import_graph",
+        "_extract_dependency_usage"
+      ]
+    },
+    {
+      "name": "_extract_comodification",
+      "type": "function",
+      "path": "lib/learn/convention_extractors.py",
+      "function": "_extract_comodification",
+      "created_by_task": "3",
+      "key_fields": [
+        "project_root",
+        "80% threshold",
+        "asymmetric pairs",
+        "git log --numstat"
+      ]
+    },
+    {
+      "name": "_extract_imports_and_naming",
+      "type": "function",
+      "path": "lib/learn/convention_extractors.py",
+      "function": "_extract_imports_and_naming",
+      "created_by_task": "3",
+      "key_fields": [
+        "project_root",
+        "csg optional",
+        "test framework detection",
+        "naming pattern detection"
+      ]
+    },
+    {
+      "name": "_extract_import_graph",
+      "type": "function",
+      "path": "lib/learn/convention_extractors.py",
+      "function": "_extract_import_graph",
+      "created_by_task": "3",
+      "key_fields": [
+        "project_root",
+        "csg required",
+        "per-cluster import conventions",
+        "hub detection"
+      ]
+    },
+    {
+      "name": "_extract_dependency_usage",
+      "type": "function",
+      "path": "lib/learn/convention_extractors.py",
+      "function": "_extract_dependency_usage",
+      "created_by_task": "3",
+      "key_fields": [
+        "project_root",
+        "lock file parsing",
+        "wrapper module detection"
+      ]
+    },
+    {
+      "name": "convention_observations module",
+      "type": "file",
+      "path": "lib/learn/convention_observations.py",
+      "created_by_task": "4",
+      "key_fields": [
+        "_integrate_observations",
+        "convention_violation",
+        "reviewer_finding",
+        "human_override"
+      ]
+    },
+    {
+      "name": "_integrate_observations",
+      "type": "function",
+      "path": "lib/learn/convention_observations.py",
+      "function": "_integrate_observations",
+      "created_by_task": "4",
+      "key_fields": [
+        "raw_patterns",
+        "obs_dir",
+        "observation-derived pattern creation",
+        "returns list[RawPattern]"
+      ]
+    },
+    {
+      "name": "convention_templates module",
+      "type": "file",
+      "path": "lib/learn/convention_templates.py",
+      "created_by_task": "5",
+      "key_fields": [
+        "CONVENTION_TEMPLATES",
+        "_format_and_validate",
+        "_assign_confidence",
+        "quality bar",
+        "evolution tracking",
+        "conflict handling"
+      ]
+    },
+    {
+      "name": "_format_and_validate",
+      "type": "function",
+      "path": "lib/learn/convention_templates.py",
+      "function": "_format_and_validate",
+      "created_by_task": "5",
+      "key_fields": [
+        "enriched_patterns",
+        "config_conventions",
+        "returns tuple of passed and rejected lists",
+        "6-check quality bar"
+      ]
+    },
+    {
+      "name": "_assign_confidence",
+      "type": "function",
+      "path": "lib/learn/convention_templates.py",
+      "function": "_assign_confidence",
+      "created_by_task": "5",
+      "key_fields": [
+        "pattern",
+        "established requires 90%+obs",
+        "emerging 60%+ or 3+obs",
+        "decaying on trend away"
+      ]
+    },
+    {
+      "name": "test_convention_configs",
+      "type": "file",
+      "path": "tests/test_convention_configs.py",
+      "created_by_task": "7",
+      "key_fields": [
+        "pyproject.toml tests",
+        "editorconfig tests",
+        "eslintrc tests",
+        "malformed config tests",
+        "empty config tests"
+      ]
+    },
+    {
+      "name": "test_convention_extractors",
+      "type": "file",
+      "path": "tests/test_convention_extractors.py",
+      "created_by_task": "8",
+      "key_fields": [
+        "comodification tests",
+        "naming pattern tests",
+        "import graph tests",
+        "dependency usage tests"
+      ]
+    },
+    {
+      "name": "test_convention_pipeline",
+      "type": "file",
+      "path": "tests/test_convention_pipeline.py",
+      "created_by_task": "9",
+      "key_fields": [
+        "observation integration tests",
+        "template formatting tests",
+        "confidence assignment tests",
+        "orchestrator tests",
+        "formatting function tests"
+      ]
+    },
+    {
+      "name": "project_knowledge module",
+      "type": "file",
+      "path": "lib/learn/project_knowledge.py",
+      "created_by_task": "10",
+      "key_fields": [
+        "seed_knowledge",
+        "detect_knowledge_gaps",
+        "check_staleness",
+        "DraftEntry"
+      ]
+    },
+    {
+      "name": "seed_knowledge",
+      "type": "function",
+      "path": "lib/learn/project_knowledge.py",
+      "function": "seed_knowledge",
+      "created_by_task": "10",
+      "key_fields": [
+        "scans README/CLAUDE.md/CONTRIBUTING.md/ADRs/.env.example/inline comments",
+        "writes project-knowledge-drafts.json",
+        "never writes project-knowledge.json",
+        "merges on duplicate IDs"
+      ]
+    },
+    {
+      "name": "detect_knowledge_gaps",
+      "type": "function",
+      "path": "lib/learn/project_knowledge.py",
+      "function": "detect_knowledge_gaps",
+      "created_by_task": "10",
+      "key_fields": [
+        "reads observations/*.jsonl",
+        "3+ retries threshold",
+        "generates draft questions",
+        "source=system-prompted"
+      ]
+    },
+    {
+      "name": "check_staleness",
+      "type": "function",
+      "path": "lib/learn/project_knowledge.py",
+      "function": "check_staleness",
+      "created_by_task": "10",
+      "key_fields": [
+        "checks applies_to paths exist",
+        "checks dependency versions",
+        "checks last_verified > 90 days",
+        "source=stale-flag"
+      ]
+    },
+    {
+      "name": "assemble_developer conventions param",
+      "type": "function",
+      "path": "lib/context/assembly.py",
+      "function": "assemble_developer",
+      "created_by_task": "11",
+      "key_fields": [
+        "conventions param",
+        "project_knowledge param",
+        "Project Conventions section",
+        "Project Knowledge section"
+      ]
+    },
+    {
+      "name": "assemble_reviewer conventions param",
+      "type": "function",
+      "path": "lib/context/assembly.py",
+      "function": "assemble_reviewer",
+      "created_by_task": "11",
+      "key_fields": [
+        "conventions param",
+        "project_knowledge param",
+        "Convention Checklist section",
+        "Project Knowledge section"
+      ]
+    },
+    {
+      "name": "assemble_architect conventions param",
+      "type": "function",
+      "path": "lib/context/assembly.py",
+      "function": "assemble_architect",
+      "created_by_task": "11",
+      "key_fields": [
+        "conventions param",
+        "project_knowledge param",
+        "Structural Conventions section",
+        "Project Knowledge section"
+      ]
+    },
+    {
+      "name": "context_bridge convention loading",
+      "type": "file",
+      "path": "lib/context_bridge.sh",
+      "created_by_task": "12",
+      "key_fields": [
+        "format_conventions_for_agent calls",
+        "format_knowledge_for_agent calls",
+        "passes conventions_md to assembly",
+        "passes knowledge_md to assembly"
+      ]
+    },
+    {
+      "name": "learn.sh convention flags",
+      "type": "file",
+      "path": "lib/cmd/learn.sh",
+      "created_by_task": "13",
+      "key_fields": [
+        "--conventions flag",
+        "--seed-knowledge flag",
+        "automatic trigger hook"
+      ]
+    },
+    {
+      "name": "learn_bridge convention functions",
+      "type": "file",
+      "path": "lib/learn_bridge.sh",
+      "created_by_task": "13",
+      "key_fields": [
+        "learn_conventions function",
+        "learn_seed_knowledge function"
+      ]
+    },
+    {
+      "name": "project knowledge tests",
+      "type": "file",
+      "path": "tests/test_project_knowledge.py",
+      "created_by_task": "14",
+      "key_fields": [
+        "seed_knowledge tests",
+        "detect_knowledge_gaps tests",
+        "check_staleness tests"
+      ]
+    },
+    {
+      "name": "integration tests",
+      "type": "file",
+      "path": "tests/test_conventions_integration.py",
+      "created_by_task": "15",
+      "key_fields": [
+        "assembly injection",
+        "graceful degradation",
+        "token budget",
+        "scope filtering",
+        "full pipeline"
+      ]
+    }
+  ],
+  "relationships": [
+    {
+      "from": "convention_configs module",
+      "to": "conventions.py data models",
+      "type": "belongs_to",
+      "via": "imports ConventionEntry from lib.learn.conventions",
+      "created_by_task": "2"
+    },
+    {
+      "from": "convention_extractors module",
+      "to": "conventions.py data models",
+      "type": "belongs_to",
+      "via": "imports RawPattern from lib.learn.conventions",
+      "created_by_task": "3"
+    },
+    {
+      "from": "convention_observations module",
+      "to": "conventions.py data models",
+      "type": "belongs_to",
+      "via": "imports RawPattern from lib.learn.conventions",
+      "created_by_task": "4"
+    },
+    {
+      "from": "convention_templates module",
+      "to": "conventions.py data models",
+      "type": "belongs_to",
+      "via": "imports RawPattern and ConventionEntry from lib.learn.conventions",
+      "created_by_task": "5"
+    },
+    {
+      "from": "discover_conventions",
+      "to": "convention_configs module",
+      "type": "belongs_to",
+      "via": "calls _extract_config_conventions",
+      "created_by_task": "6"
+    },
+    {
+      "from": "discover_conventions",
+      "to": "convention_extractors module",
+      "type": "belongs_to",
+      "via": "calls all four extractor functions",
+      "created_by_task": "6"
+    },
+    {
+      "from": "discover_conventions",
+      "to": "convention_observations module",
+      "type": "belongs_to",
+      "via": "calls _integrate_observations",
+      "created_by_task": "6"
+    },
+    {
+      "from": "discover_conventions",
+      "to": "convention_templates module",
+      "type": "belongs_to",
+      "via": "calls _format_and_validate",
+      "created_by_task": "6"
+    },
+    {
+      "from": "lib/learn/project_knowledge.py",
+      "to": "lib/learn/conventions.py",
+      "type": "belongs_to",
+      "via": "imports _atomic_write_json and shared types from conventions.py",
+      "created_by_task": "10"
+    },
+    {
+      "from": "lib/context_bridge.sh",
+      "to": "lib/context/assembly.py",
+      "type": "belongs_to",
+      "via": "bridge calls assembly functions with new conventions/knowledge params",
+      "created_by_task": "12"
+    },
+    {
+      "from": "lib/context_bridge.sh",
+      "to": "lib/learn/conventions.py",
+      "type": "belongs_to",
+      "via": "bridge calls format_conventions_for_agent and format_knowledge_for_agent",
+      "created_by_task": "12"
+    },
+    {
+      "from": "lib/learn_bridge.sh",
+      "to": "lib/learn/conventions.py",
+      "type": "belongs_to",
+      "via": "learn_conventions() calls discover_conventions()",
+      "created_by_task": "13"
+    },
+    {
+      "from": "lib/learn_bridge.sh",
+      "to": "lib/learn/project_knowledge.py",
+      "type": "belongs_to",
+      "via": "learn_seed_knowledge() calls seed_knowledge()",
+      "created_by_task": "13"
+    }
+  ]
+}

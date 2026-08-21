@@ -1,0 +1,56 @@
+id: c-function
+language: c
+metadata:
+  produces: node
+  kind: function
+rule:
+  kind: function_definition
+
+---
+id: c-struct
+language: c
+metadata:
+  produces: node
+  kind: class
+rule:
+  kind: struct_specifier
+
+---
+id: c-union
+language: c
+metadata:
+  produces: node
+  kind: class
+rule:
+  kind: union_specifier
+
+---
+id: c-enum
+language: c
+metadata:
+  produces: node
+  kind: type
+rule:
+  kind: enum_specifier
+
+---
+id: c-constant
+language: c
+metadata:
+  produces: node
+  kind: constant
+rule:
+  kind: preproc_def
+  has:
+    field: name
+    kind: identifier
+    regex: "^[A-Z][A-Z0-9_]+$"
+
+---
+id: c-typedef
+language: c
+metadata:
+  produces: node
+  kind: type
+rule:
+  kind: type_definition

@@ -1,0 +1,319 @@
+#!/usr/bin/env bash
+#
+# speed — SPEED orchestration CLI for autonomous product development
+#
+# Usage: speed <command> [options]
+#
+# Commands:
+#   init                    Initialize project for SPEED development
+#   validate <specs-dir>    Cross-validate all specs for consistency
+#   plan <spec-file> [opts] Decompose a spec into a task DAG + contract
+#   verify                  Blind-verify the plan against the product spec
+#   run [options]           Execute pending tasks with parallel agents
+#   status                  Show SPEED state and progress
+#   coherence [--resolve]    Check cross-task consistency before integration
+#   integrate               Merge completed branches into main
+#   review [--task-id ID]   Run code review on completed tasks
+#   defect <spec-file>      Run full defect pipeline (triage → fix → review)
+#   learn [options]         Extract observations and discover conventions
+#   security                Run security audit on completed task diffs
+#   fix-nits [--task-id ID] Create a task to fix reviewer nits
+#   retry --task-id ID      Retry a failed task with human guidance
+#   recover                 Recover from crashed/stale state
+#   guardian [spec-file]     Run Product Guardian vision check
+#   audit <spec-file>       Audit a spec for structural completeness
+#   add-language <lang>     Generate ast-grep rules for a new language
+#   test-rules [lang|--all] Verify ast-grep rules against fixtures
+#   dashboard [start|stop]  Launch SPEED dashboard
+#   self-update             Update SPEED to the latest version
+#   self-uninstall          Remove SPEED and clean up shell config
+#   help                    Show this help message
+
+set -euo pipefail
+
+# ── Bootstrap ────────────────────────────────────────────────────
+# Resolve through symlinks so SCRIPT_DIR points to the real location
+# even when invoked via ~/.speed/bin/speed -> ../current/speed
+_speed_source="${BASH_SOURCE[0]}"
+while [[ -L "$_speed_source" ]]; do
+    _speed_link_dir="$(cd "$(dirname "$_speed_source")" && pwd)"
+    _speed_source="$(readlink "$_speed_source")"
+    # Handle relative symlinks
+    [[ "$_speed_source" != /* ]] && _speed_source="${_speed_link_dir}/${_speed_source}"
+done
+SCRIPT_DIR="$(cd "$(dirname "$_speed_source")" && pwd)"
+unset _speed_source _speed_link_dir
+export SPEED_CMD="${SCRIPT_DIR}/speed"
+
+source "${SCRIPT_DIR}/lib/config.sh"
+source "${SCRIPT_DIR}/lib/log.sh"
+source "${SCRIPT_DIR}/lib/deps.sh"
+source "${SCRIPT_DIR}/lib/cleanup.sh"
+source "${SCRIPT_DIR}/lib/progress.sh"
+source "${SCRIPT_DIR}/lib/git.sh"
+source "${SCRIPT_DIR}/lib/provider.sh"
+source "${SCRIPT_DIR}/lib/tasks.sh"
+source "${SCRIPT_DIR}/lib/grounding.sh"
+source "${SCRIPT_DIR}/lib/gates.sh"
+source "${SCRIPT_DIR}/lib/lock.sh"
+source "${SCRIPT_DIR}/lib/features.sh"
+source "${SCRIPT_DIR}/lib/actor.sh"
+source "${SCRIPT_DIR}/lib/multiplayer.sh"
+source "${SCRIPT_DIR}/lib/events.sh"
+source "${SCRIPT_DIR}/lib/ownership.sh"
+source "${SCRIPT_DIR}/lib/roster.sh"
+source "${SCRIPT_DIR}/lib/context_bridge.sh"
+source "${SCRIPT_DIR}/lib/security.sh"
+source "${SCRIPT_DIR}/lib/learn_bridge.sh"
+source "${SCRIPT_DIR}/lib/defects.sh"
+source "${SCRIPT_DIR}/lib/defect_triage.sh"
+[[ -f "${SCRIPT_DIR}/lib/defect_fix.sh" ]] && source "${SCRIPT_DIR}/lib/defect_fix.sh"
+[[ -f "${SCRIPT_DIR}/lib/defect_review.sh" ]] && source "${SCRIPT_DIR}/lib/defect_review.sh"
+
+# ── Multi-player detection ──────────────────────────────────────
+MP_ENABLED=""
+if mp_is_enabled; then
+    MP_ENABLED=true
+fi
+
+source "${SCRIPT_DIR}/lib/shared.sh"
+
+# ── Command modules ─────────────────────────────────────────
+for _cmd_file in "${SCRIPT_DIR}"/lib/cmd/*.sh; do
+    [[ -f "$_cmd_file" ]] && source "$_cmd_file"
+done
+unset _cmd_file
+
+# ── Cleanup trap ─────────────────────────────────────────────
+# Kill orphaned agent processes and remove temp files on exit/interrupt.
+trap cleanup_all EXIT INT TERM
+
+# ── Helpers ──────────────────────────────────────────────────────
+
+speed_help() {
+    echo ""
+    echo -e "${BOLD}speed${RESET} — SPEED orchestration for autonomous product development"
+    echo ""
+    echo -e "${BOLD}USAGE${RESET}"
+    echo "    speed <command> [options]"
+    echo ""
+    echo -e "${BOLD}WORKFLOW${RESET}"
+    echo -e "    ${COLOR_DIM}1.${RESET} ${COLOR_STEP}init${RESET}       → ${COLOR_DIM}Initialize project${RESET}"
+    echo -e "    ${COLOR_DIM}2.${RESET} ${COLOR_STEP}validate${RESET}   → ${COLOR_DIM}Cross-validate specs${RESET}"
+    echo -e "    ${COLOR_DIM}3.${RESET} ${COLOR_STEP}plan${RESET}       → ${COLOR_DIM}Guardian gate → Decompose spec into task DAG + contract${RESET}"
+    echo -e "    ${COLOR_DIM}4.${RESET} ${COLOR_STEP}verify${RESET}     → ${COLOR_DIM}Blind-check plan against spec${RESET}"
+    echo -e "    ${COLOR_DIM}5.${RESET} ${COLOR_STEP}run${RESET}        → ${COLOR_DIM}Execute tasks with parallel agents${RESET}"
+    echo -e "    ${COLOR_DIM}6.${RESET} ${COLOR_STEP}review${RESET}     → ${COLOR_DIM}Code review + Guardian gate on completed tasks${RESET}"
+    echo -e "    ${COLOR_DIM}7.${RESET} ${COLOR_STEP}coherence${RESET}  → ${COLOR_DIM}Cross-task consistency check${RESET}"
+    echo -e "    ${COLOR_DIM}8.${RESET} ${COLOR_STEP}integrate${RESET}  → ${COLOR_DIM}Merge + regression + contract + Guardian gate${RESET}"
+    echo ""
+    echo -e "${BOLD}COMMANDS${RESET}"
+    echo -e "    ${COLOR_STEP}init${RESET}                        Initialize project for SPEED development"
+    echo -e "    ${COLOR_STEP}validate${RESET} <specs-dir>         Cross-validate all specs for consistency"
+    echo -e "    ${COLOR_STEP}plan${RESET} <spec-file> [opts]      Decompose a product spec into task DAG + contract"
+    echo -e "    ${COLOR_STEP}verify${RESET}                       Blind-verify plan against product spec"
+    echo -e "    ${COLOR_STEP}run${RESET}  [options]               Execute pending tasks with parallel agents"
+    echo -e "    ${COLOR_STEP}status${RESET} [--defects]            Show SPEED state and progress"
+    echo -e "    ${COLOR_STEP}defect${RESET} <spec-file>            Run the full defect pipeline (triage → fix → review)"
+    echo -e "    ${COLOR_STEP}coherence${RESET} [--resolve]         Cross-task consistency check pre-integration"
+    echo -e "    ${COLOR_STEP}integrate${RESET}                    Merge completed branches + regression + contract"
+    echo -e "    ${COLOR_STEP}review${RESET} [--task-id ID]        Run code review on completed tasks"
+    echo -e "    ${COLOR_STEP}fix-nits${RESET} [--task-id ID]      Create a task to fix reviewer nits"
+    echo -e "    ${COLOR_STEP}retry${RESET}  --task-id ID --context Retry a failed task with human guidance"
+    echo -e "    ${COLOR_STEP}recover${RESET}                      Recover from crashed/stale SPEED state"
+    echo -e "    ${COLOR_STEP}clean${RESET}   [logs|all]            Remove logs or entire .speed/ state"
+    echo -e "    ${COLOR_STEP}guardian${RESET} [spec-file]           Run Product Guardian vision check"
+    echo -e "    ${COLOR_STEP}audit${RESET}   <spec-file>           Audit a spec for structural completeness"
+    echo -e "    ${COLOR_STEP}learn${RESET}  [options]              Extract observations and discover conventions"
+    echo -e "    ${COLOR_STEP}security${RESET} [--create-defects]   Run security audit on completed task diffs"
+    echo -e "    ${COLOR_STEP}new${RESET} <type> <name>           Scaffold a new spec from template"
+    echo -e "    ${COLOR_STEP}gates${RESET}   --task ID             Run quality gates for a task (used by Developer Agent mid-task)"
+    echo -e "    ${COLOR_STEP}add-language${RESET} <lang>          Generate ast-grep rules for a new language"
+    echo -e "    ${COLOR_STEP}test-rules${RESET}  [lang|--all]     Verify ast-grep rules against fixture files"
+    echo -e "    ${COLOR_STEP}help${RESET}                         Show this help message"
+    echo ""
+    echo -e "${BOLD}DASHBOARD${RESET}"
+    echo -e "    ${COLOR_STEP}dashboard${RESET} start [--port PORT] [--api-only]  Launch the SPEED dashboard"
+    echo -e "    ${COLOR_STEP}dashboard${RESET} stop                              Stop the dashboard"
+    echo -e "    ${COLOR_STEP}dashboard${RESET} status                            Show dashboard process status"
+    echo -e "    ${COLOR_STEP}dashboard${RESET} ingest                            Run data backfill without starting server"
+    echo ""
+    echo -e "${BOLD}MANAGEMENT${RESET}"
+    echo -e "    ${COLOR_STEP}self-update${RESET}                  Update SPEED to the latest version"
+    echo -e "    ${COLOR_STEP}self-uninstall${RESET}               Remove SPEED and clean up shell config"
+    echo ""
+    echo -e "${BOLD}GLOBAL OPTIONS${RESET}"
+    echo -e "    --feature NAME              Target a specific feature (auto-detected if omitted)"
+    echo -e "    --quiet                     Errors and final result only"
+    echo -e "    --verbose                   Show extra detail (gate output, agent commands)"
+    echo -e "    --debug                     Show internal state, timing, PID tracking"
+    echo -e "    --json                      Output structured JSON to stdout (logs to stderr)"
+    echo ""
+    echo -e "${BOLD}PLAN OPTIONS${RESET}"
+    echo -e "    --specs-dir DIR             Directory with related specs for cross-referencing"
+    echo -e "    --skip-audit                Skip the structural audit before planning"
+    echo -e "    --single-pass               Force single-pass planning (skip phase split)"
+    echo -e "    --force                     Bypass cache and force re-planning"
+    echo ""
+    echo -e "${BOLD}RUN OPTIONS${RESET}"
+    echo -e "    --max-parallel N            Max concurrent agents (default: ${DEFAULT_MAX_PARALLEL})"
+    echo -e "    --model MODEL               Developer model (default: ${MODEL_SUPPORT})"
+    echo -e "    --defect NAME               Run defect pipeline instead of feature tasks"
+    echo ""
+    echo -e "${BOLD}COHERENCE OPTIONS${RESET}"
+    echo -e "    --resolve                   Create a fix task from coherence recommendations"
+    echo ""
+    echo -e "${BOLD}INTEGRATE OPTIONS${RESET}"
+    echo -e "    --skip-tests                Skip post-integration regression tests"
+    echo -e "    --defect NAME               Integrate a defect instead of feature tasks"
+    echo ""
+    echo -e "${BOLD}RETRY OPTIONS${RESET}"
+    echo -e "    --task-id ID                Target a specific failed task (required)"
+    echo -e "    --context \"...\"             Human guidance for the retry (required)"
+    echo -e "    --escalate                  Upgrade model on retry (${MODEL_SUPPORT}→${MODEL_PLANNING})"
+    echo -e "    --reset-branch              Reset task branch before retrying"
+    echo -e "    --defect NAME               Retry a defect instead of a task"
+    echo ""
+    echo -e "${BOLD}LEARN OPTIONS${RESET}"
+    echo -e "    --conventions               Run convention discovery pipeline"
+    echo -e "    --seed-knowledge            Generate draft project knowledge entries"
+    echo -e "    --synthesize                Aggregate observations across all features"
+    echo -e "    --summary                   Show aggregate stats across features"
+    echo -e "    --post-merge                Diff task branches against merged HEAD"
+    echo -e "    --dry-run                   Run without writing changes"
+    echo ""
+    echo -e "${BOLD}GATES OPTIONS${RESET}"
+    echo -e "    --task ID                   Target task (required)"
+    echo -e "    --fast                      Syntax/lint/typecheck only"
+    echo -e "    --full                      All gates including grounding"
+    echo -e "    --worktree PATH             Specify worktree path explicitly"
+    echo ""
+    echo -e "${BOLD}GUARDIAN OPTIONS${RESET}"
+    echo -e "    SKIP_GUARDIAN=true             Skip guardian gates in plan/review/integrate"
+    echo ""
+    echo -e "${BOLD}PROVIDER SETTINGS${RESET}"
+    echo -e "    Settings for the active provider (${COLOR_DIM}current: ${_PROVIDER_NAME}${RESET})."
+    echo ""
+    echo -e "    CLAUDE_BIN=/path/to/claude        Path to Claude CLI binary (default: auto-detect)"
+    echo -e "    SPEED_CLAUDE_EFFORT=medium        Thinking depth: high, medium, low"
+    echo -e "    SPEED_CLAUDE_EFFORT_ARCHITECT=high Per-agent override (agent name uppercased)"
+    echo ""
+    echo -e "    Effort auto-detect: opus + input >50K chars defaults to medium."
+    echo -e "    Priority: per-agent env > global env > auto-detect > CLI default (high)."
+    echo ""
+    echo -e "${BOLD}MULTI-PLAYER${RESET}"
+    echo -e "    ${COLOR_STEP}mp-init${RESET}                      Initialize multi-player mode (shared/local split)"
+    echo -e "    ${COLOR_STEP}claim${RESET} <feature>               Claim ownership of a feature"
+    echo -e "    ${COLOR_STEP}release${RESET} <feature>             Release ownership of a feature"
+    echo -e "    ${COLOR_STEP}rebuild-state${RESET} [--apply]        Rebuild materialized state from event log"
+    echo -e "    ${COLOR_STEP}status --team${RESET}                 Show team roster and activity"
+    echo ""
+    echo -e "${BOLD}PARALLEL FEATURES${RESET}"
+    echo -e "    Each ${COLOR_STEP}speed plan${RESET} creates an isolated feature namespace."
+    echo -e "    Run multiple features in parallel across separate sessions:"
+    echo -e "    ${COLOR_DIM}Session 1:${RESET} speed plan specs/tech/auth.md && speed run"
+    echo -e "    ${COLOR_DIM}Session 2:${RESET} speed plan specs/tech/billing.md && speed run"
+    echo -e "    Use ${COLOR_STEP}--feature${RESET} to target a specific feature, or omit to auto-detect."
+    echo ""
+    echo -e "${BOLD}EXAMPLES${RESET}"
+    echo "    speed init"
+    echo "    speed validate specs/"
+    echo "    speed plan specs/tech/auth.md --specs-dir specs/"
+    echo "    speed run"
+    echo "    speed run --feature billing --max-parallel 3"
+    echo "    speed status"
+    echo "    speed review --feature auth"
+    echo "    speed coherence"
+    echo "    speed integrate"
+    echo "    speed clean feature auth"
+    echo "    speed new prd my-feature"
+    echo "    speed new defect invite-failure"
+    echo ""
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# ── Main ─────────────────────────────────────────────────────────
+
+main() {
+    local command="${1:-help}"
+    shift || true
+
+    # ── Extract global flags before dispatching ─────────────────
+    GLOBAL_FEATURE=""
+    local args=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --feature|-f)  GLOBAL_FEATURE="$2"; shift 2 ;;
+            --quiet)       VERBOSITY=0; shift ;;
+            --verbose)     VERBOSITY=2; shift ;;
+            --debug)       VERBOSITY=3; shift ;;
+            --json)        JSON_OUTPUT=true; VERBOSITY=0; shift ;;
+            *) args+=("$1"); shift ;;
+        esac
+    done
+    set -- "${args[@]+"${args[@]}"}"
+
+    # Track current command for roster and emit heartbeat
+    _SPEED_CURRENT_COMMAND="$command"
+    [[ "${MP_ENABLED:-}" == "true" ]] && roster_heartbeat
+
+    case "$command" in
+        init)      cmd_init "$@" ;;
+        validate)  cmd_validate "$@" ;;
+        plan)      cmd_plan "$@" ;;
+        verify)    cmd_verify "$@" ;;
+        run)       cmd_run "$@" ;;
+        security)  cmd_security "$@" ;;
+        status)    cmd_status "$@" ;;
+        defect)    cmd_defect "$@" ;;
+        coherence) cmd_coherence "$@" ;;
+        integrate) cmd_integrate "$@" ;;
+        review)    cmd_review "$@" ;;
+        fix-nits)  cmd_fix_nits "$@" ;;
+        retry)     cmd_retry "$@" ;;
+        recover)   cmd_recover "$@" ;;
+        new)       cmd_new "$@" ;;
+        guardian)   cmd_guardian "$@" ;;
+        audit)     cmd_audit "$@" ;;
+        verify-spec) cmd_verify_spec "$@" ;;
+        gates)     cmd_gates "$@" ;;
+        clean)     cmd_clean "$@" ;;
+        add-language) cmd_add_language "$@" ;;
+        test-rules)   cmd_test_rules "$@" ;;
+        learn)     cmd_learn "$@" ;;
+        mp-init)        cmd_mp_init "$@" ;;
+        rebuild-state)  cmd_rebuild_state "$@" ;;
+        claim)          cmd_claim "$@" ;;
+        release)        cmd_release "$@" ;;
+        whoami)         echo "$(actor_get) ($(actor_slug))" ;;
+        spec)           cmd_spec "$@" ;;
+        review-request) cmd_review_request "$@" ;;
+        review-judge)   cmd_review_judge "$@" ;;
+        review-status)  cmd_review_status "$@" ;;
+        sync)           cmd_sync "$@" ;;
+        serve)          cmd_serve "$@" ;;
+        dashboard) cmd_dashboard "$@" ;;
+        self-update)   cmd_self_update "$@" ;;
+        self-uninstall) cmd_self_uninstall "$@" ;;
+        help|--help|-h) speed_help ;;
+        *)
+            log_error "Unknown command: ${command}"
+            speed_help
+            exit 1
+            ;;
+    esac
+}
+
+main "$@"

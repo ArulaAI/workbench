@@ -1,0 +1,98 @@
+{
+  "id": "16",
+  "title": "Build EditorialGrid layout component",
+  "description": "Create `dashboard/frontend/components/landing/EditorialGrid.tsx`.\n\nA layout-only component that arranges children in the T-shape CSS grid.\n\nProps: `{ definePanel: ReactNode, judgePanel: ReactNode, executePanel: ReactNode, learnPanel: ReactNode }`\n\nCSS Grid:\n```css\n.editorial-grid {\n  display: grid;\n  grid-template-columns: 260px 1fr 320px;\n  grid-template-rows: 1fr 1fr;\n  gap: 16px;\n  padding: 24px;\n  height: 100%;\n}\n```\n\nGrid placement:\n- Define: `grid-column: 1; grid-row: 1 / 3;` (left, full height)\n- Judge: `grid-column: 2; grid-row: 1;` (top center)\n- Execute: `grid-column: 2; grid-row: 2;` (bottom center)\n- Learn: `grid-column: 3; grid-row: 1 / 3;` (right, full height)\n\nUse CSS modules or inline styles (follow project convention). Min-width 1280px on the grid container.",
+  "acceptance_criteria": "- CSS grid has template columns 260px 1fr 320px\n  verify_by: test\n- Define panel spans grid-row 1/3 in column 1\n  verify_by: test\n- Learn panel spans grid-row 1/3 in column 3\n  verify_by: test\n- Judge occupies row 1 column 2, Execute occupies row 2 column 2\n  verify_by: test\n- Gap is 16px, padding is 24px\n  verify_by: manual\n- Minimum width 1280px on container\n  verify_by: manual",
+  "depends_on": [
+    "9"
+  ],
+  "status": "done",
+  "branch": "speed/speed-dashboard-landing/task-16-build-editorialgrid-layout-component",
+  "agent_model": "sonnet",
+  "created_at": "2026-03-15T16:26:57Z",
+  "started_at": "2026-03-15T17:39:15Z",
+  "completed_at": "2026-03-15T17:41:54Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": null,
+  "files_touched": [
+    "dashboard/frontend/components/landing/EditorialGrid.tsx"
+  ],
+  "spec_references": [
+    {
+      "spec": "product",
+      "section": "Success Criteria",
+      "requirement": "T-shape layout: Define left (260px), Judge top center, Execute bottom center, Learn right (320px)"
+    },
+    {
+      "spec": "tech",
+      "section": "Component Architecture",
+      "requirement": "EditorialGrid (CSS grid: 260px | 1fr | 320px, rows: 1fr 1fr)"
+    },
+    {
+      "spec": "tech",
+      "section": "Key Decisions",
+      "requirement": "T-shape layout: center splits horizontally, sidebars span full height"
+    }
+  ],
+  "rationale": "EditorialGrid is pure layout with no data logic. Separated from the page component so layout can be snapshot-tested independently. Parallel with panel components since it uses ReactNode slots rather than importing panels directly.",
+  "gate_results": {
+    "checks": [
+      {
+        "name": "diff_non_empty",
+        "status": "pass"
+      },
+      {
+        "name": "declared_files",
+        "status": "pass"
+      },
+      {
+        "name": "scope",
+        "status": "warn",
+        "undeclared_files": [
+          "dashboard/frontend/components/landing/EditorialGrid.test.tsx"
+        ]
+      },
+      {
+        "name": "python_imports",
+        "status": "pass"
+      },
+      {
+        "name": "not_blocked",
+        "status": "pass"
+      },
+      {
+        "name": "test_coverage",
+        "status": "pass"
+      },
+      {
+        "name": "gate_evidence",
+        "status": "warn"
+      },
+      {
+        "name": "criteria",
+        "status": "pass"
+      },
+      {
+        "name": "secrets",
+        "status": "pass"
+      }
+    ],
+    "scope": {
+      "undeclared_files": [
+        "dashboard/frontend/components/landing/EditorialGrid.test.tsx"
+      ]
+    }
+  },
+  "decisions": [
+    "Used inline styles (not CSS modules or Tailwind utilities) for all grid-specific values — 260px/1fr/320px column tracks and fractional row spans have no Tailwind equivalents, and the project convention for design-token values is inline styles.",
+    "Added data-testid attributes to the four cell wrapper divs to enable direct style assertions in tests without relying on fragile DOM traversal.",
+    "Kept the component to a single exported function with no sub-components — it is pure layout with no conditional rendering logic."
+  ],
+  "concerns": [
+    "The test file is flagged as 'undeclared' by the scope gate (only EditorialGrid.tsx was declared). This is a gate-metadata gap, not a code problem — the test belongs alongside the component.",
+    "The git diff warning ('ambiguous argument main...branch') appears in both fast and full runs. This indicates the branch has no common ancestor visible in this worktree's git history; the gate treats it as a non-fatal warning and still passes."
+  ],
+  "review_verdict": "approve",
+  "reviewed_at": "2026-03-15T18:17:14Z"
+}

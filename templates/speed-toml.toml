@@ -1,0 +1,65 @@
+# speed.toml — SPEED project configuration
+# All values shown are defaults. Uncomment to override.
+
+[agent]
+# provider = "claude-code"       # or "codex-cli"
+# planning_model = "opus"        # high-stakes: architect, verifier, coherence
+# support_model = "sonnet"       # structured: guardian, reviewer, developer default
+# cli_command = "claude"          # shell command for the CLI provider
+# cli_models = ["opus", "sonnet"] # model tiers exposed by the CLI provider
+# ollama_base_url = "http://localhost:11434"  # ollama API (env var OLLAMA_API_BASE takes precedence)
+# api_providers = ["anthropic", "openai", "gemini"]  # which litellm API providers to check for models
+# ceremony_models = ["mistral:latest"]        # models for ceremony LLM tasks (all available if omitted)
+# timeout = 600                  # agent timeout in seconds
+# max_turns = 50                 # max turns for developer agents
+
+[worktree.symlinks]
+# Symlink these dirs from main repo into git worktrees.
+# key = relative path in worktree, value = relative path in main repo
+# "src/frontend/node_modules" = "src/frontend/node_modules"
+# "src/backend/.venv" = "src/backend/.venv"
+
+[subsystems]
+# Map subsystem names to glob patterns for quality gate targeting.
+# "frontend" = ["src/frontend/**"]
+# "backend" = ["src/backend/**"]
+
+[specs]
+# vision_file = "specs/product/overview.md"
+# auto_derive_siblings = true
+
+[ignore]
+# Directories and files to exclude from the project map and context index.
+# Gitignore-style globs. Use trailing / for directories.
+# patterns = [".yarn/", "cypress/", "dist/", "build/", "*.min.js"]
+
+[rate]
+# Rate limiting for agent API calls. Adjust if you hit provider throttling.
+# tpm_budget = 200000       # tokens per minute across all agents
+# rpm_budget = 5            # requests per minute across all agents
+
+[context]
+# Context pipeline tuning for spec alignment and related spec matching.
+# related_spec_budget = 15000     # max tokens for related spec context
+# related_spec_threshold = 0.05   # TF-IDF similarity threshold (0.0-1.0)
+# related_spec_candidate_cap = 50 # max candidate specs to evaluate
+
+[ui]
+# theme = "default"        # "default" or "colorblind"
+# ascii = false             # true = ASCII-only symbols (no Unicode)
+# verbosity = "normal"      # "quiet", "normal", "verbose", "debug"
+
+[security]
+# sast_cmd = "semgrep --config auto --json"   # static analysis command; receives files on stdin
+# sca_cmd = "npm audit --json"                # dependency scan command
+# severity_threshold = "medium"               # minimum severity to fail gate: low, medium, high, critical
+# secrets_patterns = ["AWS", "GITHUB_TOKEN", "GENERIC_SECRET"]   # secret key patterns to scan for
+# secrets_exclude = [".env*", "*.example", "tests/fixtures/**"]  # glob patterns to exclude from secrets scan
+
+[multiplayer]
+# Settings for multi-player mode (multiple developers on the same project).
+# stale_window = 3600          # seconds before unclaimed features auto-release (default: 1 hour)
+# serve_port = 4450            # port for the multiplayer sync server
+# sync_interval = 30           # seconds between state sync pulls
+# approval_threshold = 1       # number of approvals required for spec ceremonies
+# prune_days = 30              # days before old events are pruned from the log

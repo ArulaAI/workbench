@@ -1,0 +1,42 @@
+id: java-field-access
+language: java
+metadata:
+  produces: reference
+  ref_kind: attribute_access
+rule:
+  kind: field_access
+
+---
+id: java-import
+language: java
+metadata:
+  produces: reference
+  ref_kind: import
+  module_var: MODULE
+rule:
+  kind: import_declaration
+  pattern: import $MODULE;
+
+---
+id: java-import-static
+language: java
+metadata:
+  produces: reference
+  ref_kind: import
+  module_var: MODULE
+rule:
+  kind: import_declaration
+  pattern: import static $MODULE;
+
+---
+id: java-method-call
+language: java
+metadata:
+  produces: reference
+  ref_kind: call
+  name_var: FUNC
+rule:
+  kind: method_invocation
+  pattern: $FUNC($$$ARGS)
+
+The definitions file covers 10 rules across three categories:

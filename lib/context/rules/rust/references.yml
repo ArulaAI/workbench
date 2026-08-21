@@ -1,0 +1,36 @@
+id: rust-field-access
+language: rust
+metadata:
+  produces: reference
+  ref_kind: attribute_access
+rule:
+  kind: field_expression
+
+---
+id: rust-use
+language: rust
+metadata:
+  produces: reference
+  ref_kind: import
+  module_var: MODULE
+rule:
+  kind: use_declaration
+  pattern: use $MODULE;
+
+---
+id: rust-call
+language: rust
+metadata:
+  produces: reference
+  ref_kind: call
+  name_var: FUNC
+rule:
+  kind: call_expression
+  pattern: $FUNC($$$ARGS)
+
+Changes from the existing `definitions.yml`:
+- Added `rust-method` (function_item inside impl_item, mirroring go-method)
+- Added `rust-static` (static_item, same semantic kind as const)
+- Added `rust-macro` (macro_definition, produces a callable so kind=function)
+
+The `references.yml` covers all three required categories:

@@ -1,0 +1,42 @@
+id: cpp-field-access
+language: cpp
+metadata:
+  produces: reference
+  ref_kind: attribute_access
+rule:
+  kind: field_expression
+
+---
+id: cpp-include
+language: cpp
+metadata:
+  produces: reference
+  ref_kind: import
+  module_var: MODULE
+rule:
+  kind: preproc_include
+  pattern: '#include $MODULE'
+
+---
+id: cpp-using
+language: cpp
+metadata:
+  produces: reference
+  ref_kind: import
+  module_var: MODULE
+rule:
+  kind: using_declaration
+  pattern: using $MODULE
+
+---
+id: cpp-call
+language: cpp
+metadata:
+  produces: reference
+  ref_kind: call
+  name_var: FUNC
+rule:
+  kind: call_expression
+  pattern: $FUNC($$$ARGS)
+
+Changes compared to the existing `definitions.yml`:

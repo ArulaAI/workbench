@@ -1,0 +1,17 @@
+id: prisma-model
+language: prisma
+metadata:
+  produces: node
+  kind: class
+  orm: true
+rule:
+  kind: model_declaration
+
+---
+id: prisma-enum
+language: prisma
+metadata:
+  produces: node
+  kind: type
+rule:
+  kind: enum_declaration

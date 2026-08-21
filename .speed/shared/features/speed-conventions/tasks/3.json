@@ -1,0 +1,78 @@
+{
+  "id": "3",
+  "title": "Phase A: Mechanical extractors (A1–A4)",
+  "description": "Create `lib/learn/convention_extractors.py` with four extraction functions that produce `RawPattern` objects.\n\n**A1: `_extract_comodification(project_root: Path) -> list[RawPattern]`**\nRun `subprocess.run(['git', 'log', '--numstat', '--pretty=format:%H'], capture_output=True, cwd=project_root)` (argument list, not shell string). Parse output to build co-occurrence matrix of file pairs. Emit pairs where files are co-modified in 80%+ of commits touching either file. Also detect asymmetric pairs (A always touches B, but B doesn't always touch A). Handle edge cases: <10 commits (still compute, no divide-by-zero), no git history (return empty list), shallow clones (work with available history).\n\n**A2: `_extract_imports_and_naming(project_root: Path, csg: dict | None) -> list[RawPattern]`**\nUse `treesitter_extract.py` (existing, import from `lib.context.treesitter_extract`) for structured import data and function/class names. If CSG is provided, also read symbol names from `csg['symbols']`. Detect:\n- Test framework (pytest/vitest/jest) by import module names\n- Relative vs absolute import patterns per directory\n- Function naming: camelCase vs snake_case adherence per directory (regex: `^[a-z][a-z0-9]*(_[a-z0-9]+)*$` for snake_case, `^[a-z][a-zA-Z0-9]*$` for camelCase)\n- Class naming: PascalCase adherence\n- Test file naming: `test_*.py` prefix vs `*_test.py` suffix patterns\nWhen CSG is None, skip symbol-based naming analysis and rely on tree-sitter only.\n\n**A3: `_extract_import_graph(project_root: Path, csg: dict | None) -> list[RawPattern]`**\nIf CSG is None, return empty list immediately. Otherwise read CSG edges (type='imports') and clusters. Group edges by cluster to determine per-cluster import conventions (relative vs absolute). Detect hub files from CSG Impact layer stability scores.\n\n**A4: `_extract_dependency_usage(project_root: Path) -> list[RawPattern]`**\nRead lock files (requirements.txt, pyproject.toml [project.dependencies], package.json dependencies/devDependencies, Cargo.toml [dependencies], go.sum). Build dependency inventory. Search for wrapper modules: if file X imports library L and other files import X but never L directly, X is a wrapper convention.\n\nAll functions import `RawPattern` from `lib.learn.conventions`.",
+  "acceptance_criteria": "- A1 detects co-modification pairs at 80%+ threshold from git log output\n  verify_by: test\n- A1 detects asymmetric pairs (A→B but not B→A)\n  verify_by: test\n- A1 returns empty list when no git history exists (no .git directory)\n  verify_by: test\n- A1 handles <10 commits without divide-by-zero\n  verify_by: test\n- A1 uses subprocess.run with argument list, not shell=True\n  verify_by: lint\n- A2 detects test framework (pytest vs vitest vs jest) from import analysis\n  verify_by: test\n- A2 detects snake_case vs camelCase naming patterns per directory\n  verify_by: test\n- A2 works with csg=None (falls back to tree-sitter only)\n  verify_by: test\n- A3 returns empty list when csg is None\n  verify_by: test\n- A3 detects relative vs absolute import patterns per CSG cluster\n  verify_by: test\n- A4 detects wrapper modules from import chain analysis\n  verify_by: test\n- A4 parses requirements.txt and package.json dependency lists\n  verify_by: test\n- All functions return list[RawPattern] with correct type field values\n  verify_by: test",
+  "depends_on": [
+    "1"
+  ],
+  "status": "done",
+  "branch": "speed/speed-conventions/task-3-phase-a-mechanical-extractors-a1-a4",
+  "agent_model": "opus",
+  "created_at": "2026-03-14T16:03:48Z",
+  "started_at": "2026-03-16T02:50:16Z",
+  "completed_at": "2026-03-16T02:52:02Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": "{\"verdict\":\"request_changes\",\"spec_verification\":[{\"spec_quote\":\"\\\"naming_pascal\\\": \\\"Use PascalCase for {entity_type} in `{scope}`. \\\"\",\"spec_section\":\"Phase C template map (tech-spec-conventions.md:321)\",\"satisfied\":true,\"evidence\":\"convention_extractors.py:398 now emits type=\\\"naming_pascal\\\", which matches the template key exactly. Previously \\\"naming_pascal_class\\\" had no matching template and would have silently routed to candidates.json.\",\"notes\":\"The rename is correct. The old key was a spec violation.\"},{\"spec_quote\":\"\\\"naming_test_prefix\\\": \\\"Test files use `{prefix}` prefix in `{scope}`. \\\"\",\"spec_section\":\"Phase C template map (tech-spec-conventions.md:345)\",\"satisfied\":true,\"evidence\":\"convention_extractors.py:458 now emits type=\\\"naming_test_prefix\\\". Confirmed to match convention_templates.py:81 and :146.\",\"notes\":null},{\"spec_quote\":\"\\\"naming_test_suffix\\\": \\\"Test files use `{suffix}` suffix in `{scope}`. \\\"\",\"spec_section\":\"Phase C template map (tech-spec-conventions.md:347)\",\"satisfied\":true,\"evidence\":\"convention_extractors.py:470 now emits type=\\\"naming_test_suffix\\\". Confirmed to match convention_templates.py:85 and :147.\",\"notes\":null},{\"spec_quote\":\"All functions return list[RawPattern] with correct type field values\",\"spec_section\":\"AC-25\",\"satisfied\":\"partial\",\"evidence\":\"The three renamed types now align with the spec's template registry. However, the test suite at tests/test_convention_extractors.py:258 still checks p.type == \\\"naming_pascal_class\\\" and line 322 checks patterns[0].type == \\\"test_file_prefix\\\". Both assertions will now fail, meaning the tests — which are the stated verify_by mechanism for AC-25 — do not pass.\",\"notes\":\"The implementation is correct; the tests were not updated to match.\"},{\"spec_quote\":\"A1 detects co-modification pairs at 80%+ threshold from git log output / A1 uses subprocess.run with argument list, not shell=True\",\"spec_section\":\"AC-1, AC-9\",\"satisfied\":true,\"evidence\":\"Diff does not touch A1 logic. Existing implementation at lines 33–38 uses subprocess.run([\\\"git\\\", \\\"log\\\", ...]) with no shell=True. Threshold is 0.80 at line 99.\",\"notes\":null},{\"spec_quote\":\"A1 detects asymmetric pairs (A→B but not B→A)\",\"spec_section\":\"AC-3\",\"satisfied\":true,\"evidence\":\"Lines 131–158: separate branches for ratio_a >= threshold and ratio_b >= threshold with the other below, emitting type=\\\"comodification_asymmetric\\\".\",\"notes\":null},{\"spec_quote\":\"A1 returns empty list when no git history exists (no .git directory)\",\"spec_section\":\"AC-5\",\"satisfied\":true,\"evidence\":\"Lines 39–47: FileNotFoundError/OSError returns [], non-zero returncode returns [], empty output returns [].\",\"notes\":null},{\"spec_quote\":\"A1 handles <10 commits without divide-by-zero\",\"spec_section\":\"AC-7\",\"satisfied\":true,\"evidence\":\"Lines 108, 110: ratio_a and ratio_b guard with `if total_a > 0 else 0.0`.\",\"notes\":null},{\"spec_quote\":\"A2 detects test framework (pytest vs vitest vs jest) from import analysis\",\"spec_section\":\"AC-11\",\"satisfied\":true,\"evidence\":\"_TEST_FRAMEWORKS dict at lines 171–180 maps framework import names. _detect_test_frameworks emits type=\\\"test_framework\\\" per framework hit.\",\"notes\":null},{\"spec_quote\":\"A2 detects snake_case vs camelCase naming patterns per directory\",\"spec_section\":\"AC-13\",\"satisfied\":true,\"evidence\":\"_detect_naming_patterns lines 361–386: per-directory snake_count/camel_count with 0.70 threshold, emits \\\"naming_snake\\\" / \\\"naming_camel\\\".\",\"notes\":null},{\"spec_quote\":\"A2 works with csg=None (falls back to tree-sitter only)\",\"spec_section\":\"AC-15\",\"satisfied\":true,\"evidence\":\"Lines 210–212: the CSG supplement block is guarded by `if csg is not None`. None path skips it without error.\",\"notes\":null},{\"spec_quote\":\"A3 returns empty list when csg is None\",\"spec_section\":\"AC-17\",\"satisfied\":true,\"evidence\":\"Line 496: `if csg is None: return []`.\",\"notes\":null},{\"spec_quote\":\"A3 detects relative vs absolute import patterns per CSG cluster\",\"spec_section\":\"AC-19\",\"satisfied\":true,\"evidence\":\"Lines 539–593: per-cluster grouping with label-based relative/absolute detection and 0.70 threshold.\",\"notes\":null},{\"spec_quote\":\"A4 detects wrapper modules from import chain analysis\",\"spec_section\":\"AC-21\",\"satisfied\":true,\"evidence\":\"_detect_wrappers lines 767–868: identifies files that import a dependency and are the sole intermediary for that dependency, emitting type=\\\"wrapper_module\\\".\",\"notes\":null},{\"spec_quote\":\"A4 parses requirements.txt and package.json dependency lists\",\"spec_section\":\"AC-23\",\"satisfied\":true,\"evidence\":\"_parse_requirements_txt lines 653–671, _parse_package_json lines 702–718.\",\"notes\":null}],\"missing_from_spec\":[],\"out_of_scope\":[],\"issues\":[{\"severity\":\"major\",\"file\":\"tests/test_convention_extractors.py\",\"line\":258,\"message\":\"Test still checks p.type == \\\"naming_pascal_class\\\" but the code now emits \\\"naming_pascal\\\". This test will fail, breaking the verify_by: test contract for AC-13/AC-25.\",\"suggestion\":\"Update to: pascal = [p for p in patterns if p.type == \\\"naming_pascal\\\"]\"},{\"severity\":\"major\",\"file\":\"tests/test_convention_extractors.py\",\"line\":322,\"message\":\"Test still checks patterns[0].type == \\\"test_file_prefix\\\" but the code now emits \\\"naming_test_prefix\\\". Will produce a FAIL on the \\\"test file prefix pattern\\\" check.\",\"suggestion\":\"Update to check patterns[0].type == \\\"naming_test_prefix\\\"\"}],\"strengths\":[\"The three renames correctly align the emitted type keys with the Phase C template registry (convention_templates.py lines 39, 81, 85). The previous keys — \\\"naming_pascal_class\\\", \\\"test_file_prefix\\\", \\\"test_file_suffix\\\" — had no corresponding templates and would have silently routed to candidates.json instead of generating convention entries.\",\"Template key alignment is verified by cross-referencing convention_templates.py and tech-spec-conventions.md, both of which use the new names exclusively.\",\"Diff is minimal and surgical — only the three string literals changed, no surrounding logic altered.\"],\"defect_scope_check\":null}",
+  "files_touched": [
+    "lib/learn/convention_extractors.py"
+  ],
+  "gate_results": {
+    "checks": [
+      {
+        "name": "diff_non_empty",
+        "status": "pass"
+      },
+      {
+        "name": "declared_files",
+        "status": "pass"
+      },
+      {
+        "name": "scope",
+        "status": "warn",
+        "undeclared_files": [
+          "tests/test_convention_extractors.py (task 8)"
+        ]
+      },
+      {
+        "name": "python_imports",
+        "status": "pass"
+      },
+      {
+        "name": "not_blocked",
+        "status": "pass"
+      },
+      {
+        "name": "test_coverage",
+        "status": "pass"
+      },
+      {
+        "name": "gate_evidence",
+        "status": "warn"
+      },
+      {
+        "name": "criteria",
+        "status": "pass"
+      },
+      {
+        "name": "secrets",
+        "status": "pass"
+      }
+    ],
+    "scope": {
+      "undeclared_files": [
+        "tests/test_convention_extractors.py (task 8)"
+      ]
+    }
+  },
+  "decisions": [
+    "Modified tests/test_convention_extractors.py (owned by Task 8) under the cascading-fix exception: the type renames in convention_extractors.py directly broke two test assertions that referenced the old type names"
+  ],
+  "concerns": [
+    "tests/test_convention_extractors.py is owned by Task 8. The two edits are minimal (string literal updates only) and fall under the scope exception for cascading breakages from changes in declared files."
+  ],
+  "review_verdict": "approve",
+  "retry_count": 1,
+  "reviewed_at": "2026-03-17T05:09:28Z"
+}

@@ -1,0 +1,16 @@
+id: kotlin-import
+language: kotlin
+metadata:
+  produces: reference
+  ref_kind: import
+rule:
+  kind: import_header
+
+---
+id: kotlin-call
+language: kotlin
+metadata:
+  produces: reference
+  ref_kind: call
+rule:
+  kind: call_expression

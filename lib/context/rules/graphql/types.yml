@@ -1,0 +1,25 @@
+id: graphql-object-type
+language: graphql
+metadata:
+  produces: node
+  kind: class
+rule:
+  kind: object_type_definition
+
+---
+id: graphql-input-type
+language: graphql
+metadata:
+  produces: node
+  kind: type
+rule:
+  kind: input_object_type_definition
+
+---
+id: graphql-enum
+language: graphql
+metadata:
+  produces: node
+  kind: type
+rule:
+  kind: enum_type_definition

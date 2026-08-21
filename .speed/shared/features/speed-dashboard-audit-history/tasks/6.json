@@ -1,0 +1,69 @@
+{
+  "id": "6",
+  "title": "Create VerdictDot interactive button component",
+  "description": "Create `dashboard/frontend/components/editor/VerdictDot.tsx` — a button component replacing the existing static `fv-verdict-dot` spans.\n\nProps: `status` ('pass'|'warn'|'fail'), `selected` (boolean), `compareSelected` (boolean), `isLatest` (boolean), `onClick` (callback), `onShiftClick` (callback), `tooltip` (string), `tabIndex` (number).\n\nRendering rules:\n- Render as `<button>` with class `fv-verdict-dot` preserved for styling continuity.\n- Size: 6px default, 8px when `selected`, `compareSelected`, or `isLatest`.\n- Color: map status to `--color-emerald` / `--color-amber` / `--color-red`.\n- Opacity: 1.0 for latest/selected/compareSelected, 0.5 otherwise. Hover: 0.8.\n- Selection ring: `box-shadow: 0 0 0 2px var(--color-border)` when `selected`. `box-shadow: 0 0 0 2px var(--color-accent)` when `compareSelected`. Compare ring hover adds `--color-accent-glow` shadow.\n- Hit area: pad the `<button>` to at least 24x24px with the visual dot centered.\n- Pressed state: `transform: scale(0.9)`.\n- Focus: `outline: 2px solid var(--color-accent)` with 2px offset.\n- Tooltip: native `title` attribute set to `tooltip` prop.\n- Click handler: check `event.shiftKey` — if true, call `onShiftClick`; otherwise call `onClick`.\n\nAccessibility:\n- `aria-label=\"Audit run from {tooltip}, verdict: {status}\"`. When selected, append \", selected\".\n- `aria-pressed={selected || compareSelected}`.\n- `tabIndex` prop passed through for roving tabindex (caller controls).\n\nMotion: `transition: opacity 120ms ease-out, transform 120ms ease-out, box-shadow 120ms ease-out`. Under `prefers-reduced-motion: reduce`, set `transition: none`.\n\nExport the component as default and as named export `VerdictDot`.",
+  "acceptance_criteria": "- [test] VerdictDot renders a <button> element with class fv-verdict-dot\n- [test] aria-label includes relative timestamp and verdict status\n- [test] aria-pressed reflects selected or compareSelected state\n- [test] Click with shiftKey=true calls onShiftClick, not onClick\n- [test] Click without shiftKey calls onClick, not onShiftClick\n- [manual] Selected dot shows box-shadow ring using --color-border\n- [manual] Compare-selected dot shows box-shadow ring using --color-accent\n- [manual] Button hit area is at least 24x24px via padding\n- [manual] prefers-reduced-motion: reduce disables all transitions\n- [lint] No hardcoded color values — all colors reference CSS custom properties",
+  "depends_on": [],
+  "status": "pending",
+  "branch": "speed/speed-dashboard-audit-history/task-6-create-verdictdot-interactive-button-com",
+  "agent_model": "sonnet",
+  "created_at": "2026-03-25T22:18:31Z",
+  "started_at": "2026-03-26T02:08:17Z",
+  "completed_at": "2026-03-26T02:15:39Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": "{\"verdict\":\"request_changes\",\"spec_verification\":[{\"spec_quote\":\"VerdictDot renders a <button> element with class fv-verdict-dot\",\"spec_section\":\"Acceptance Criteria #1\",\"satisfied\":true,\"evidence\":\"VerdictDot.tsx:98 — className=\\\"fv-verdict-dot vd-btn\\\"\",\"notes\":null},{\"spec_quote\":\"aria-label includes relative timestamp and verdict status\",\"spec_section\":\"Acceptance Criteria #2 / Design Spec: aria-label=\\\"Audit run from {relativeTime}, verdict: {status}\\\"\",\"satisfied\":true,\"evidence\":\"VerdictDot.tsx:49-51 — `\\\"Audit run from ${tooltip}, verdict: ${status}\\\"` — format matches spec; relative timestamp is caller-supplied via the `tooltip` prop\",\"notes\":null},{\"spec_quote\":\"aria-pressed reflects selected or compareSelected state\",\"spec_section\":\"Acceptance Criteria #3 / Design Spec: aria-pressed=\\\"{selected || compareSelected}\\\"\",\"satisfied\":true,\"evidence\":\"VerdictDot.tsx:118 — aria-pressed={selected || compareSelected}\",\"notes\":null},{\"spec_quote\":\"Click with shiftKey=true calls onShiftClick, not onClick\",\"spec_section\":\"Acceptance Criteria #4\",\"satisfied\":true,\"evidence\":\"VerdictDot.tsx:53-58 — handleClick branches on e.shiftKey correctly\",\"notes\":null},{\"spec_quote\":\"Click without shiftKey calls onClick, not onShiftClick\",\"spec_section\":\"Acceptance Criteria #5\",\"satisfied\":true,\"evidence\":\"VerdictDot.tsx:56-57 — else branch calls onClick()\",\"notes\":null},{\"spec_quote\":\"Selected dot shows box-shadow ring using --color-border\",\"spec_section\":\"Acceptance Criteria #6 / Design Spec States: selected ring uses --color-border\",\"satisfied\":true,\"evidence\":\"VerdictDot.tsx:45-46 — `\\\"0 0 0 2px var(--color-border)\\\"`\",\"notes\":null},{\"spec_quote\":\"Compare-selected dot shows box-shadow ring using --color-accent\",\"spec_section\":\"Acceptance Criteria #7 / Design Spec States: compareSelected ring uses --color-accent\",\"satisfied\":true,\"evidence\":\"VerdictDot.tsx:41-44 — `\\\"0 0 0 2px var(--color-accent), 0 0 8px var(--color-accent-glow)\\\"`\",\"notes\":null},{\"spec_quote\":\"Button hit area is at least 24x24px via padding\",\"spec_section\":\"Acceptance Criteria #8 / Design Spec: Hit area: 24x24px minimum (visual dot is 6-8px centered within)\",\"satisfied\":\"partial\",\"evidence\":\"VerdictDot.tsx:69-71 / 103-104 — width:24, height:24 with padding:0. Hit area is 24x24 but achieved through fixed dimensions, not padding. The criterion's 'via padding' is not met literally, though the outcome (24x24 hit area) is.\",\"notes\":\"Functionally correct. 'Via padding' is likely the intended technique for the inner dot to visually stay small while the tap target stays large, which this achieves through fixed button dimensions instead. Acceptable.\"},{\"spec_quote\":\"prefers-reduced-motion: reduce disables all transitions\",\"spec_section\":\"Acceptance Criteria #9\",\"satisfied\":true,\"evidence\":\"VerdictDot.tsx:91-95 — @media (prefers-reduced-motion: reduce) { .vd-dot-inner { transition: none; } }\",\"notes\":null},{\"spec_quote\":\"No hardcoded color values — all colors reference CSS custom properties\",\"spec_section\":\"Acceptance Criteria #10\",\"satisfied\":true,\"evidence\":\"statusColor() returns CSS vars (lines 18-20). Box-shadow values use CSS vars (lines 43-46). No hex/rgb literals present.\",\"notes\":null}],\"missing_from_spec\":[],\"out_of_scope\":[{\"file\":\"dashboard/frontend/components/editor/VerdictDot.tsx\",\"line\":33,\"description\":\"useState(hovered) and the onMouseEnter/onMouseLeave handlers (lines 114-115) are unnecessary. The hover opacity change (line 38) could be handled entirely in CSS via :hover on .vd-btn and a CSS variable on the inner span, with no React state. This is over-engineering that adds re-render cost for something CSS handles natively.\"}],\"issues\":[{\"severity\":\"major\",\"file\":\"dashboard/frontend/components/editor/VerdictDot.tsx\",\"line\":109,\"message\":\"The inline style `outline: 'none'` on the button element (line 109) overrides the `.vd-btn:focus-visible` CSS rule at line 78-81. Inline styles have higher specificity than pseudo-class selectors, so the focus ring never renders for keyboard users.\",\"suggestion\":\"Remove `outline: 'none'` from the inline style object. The `.vd-btn` CSS class already sets `outline: none`, and `.vd-btn:focus-visible` re-enables it — but only if there's no inline style competing. The inline style must go.\"},{\"severity\":\"minor\",\"file\":\"dashboard/frontend/components/editor/VerdictDot.tsx\",\"line\":63,\"message\":\"All button layout properties are declared twice: once in the embedded <style> block (.vd-btn class, lines 65-77) and again as inline styles on the <button> element (lines 99-112). They are byte-for-byte duplicates.\",\"suggestion\":\"Remove the inline style object entirely from the <button>. The .vd-btn CSS class already handles all layout. Dynamic values (opacity, boxShadow, background color) that change per-render belong on the inner <span>, which is already correct.\"},{\"severity\":\"minor\",\"file\":\"dashboard/frontend/components/editor/VerdictDot.tsx\",\"line\":63,\"message\":\"Embedding a <style> tag inside the component renders a new <style> element into the DOM on every mount. In a verdict strip with many dots this creates many identical <style> tags.\",\"suggestion\":\"Move .vd-btn and .vd-dot-inner into globals.css as the CLAUDE.md project convention requires: 'The design system lives in dashboard/frontend/app/globals.css. Read that file before making any UI changes.' The prefers-reduced-motion media query belongs there too.\"},{\"severity\":\"nit\",\"file\":\"dashboard/frontend/components/editor/VerdictDot.tsx\",\"line\":33,\"message\":\"Hover state tracked in React (useState + mouse handlers) when CSS :hover would suffice. Causes a re-render on every mouse-enter/leave across every dot in the strip.\",\"suggestion\":\"Remove the hovered state and mouse handlers. Move the opacity rule to CSS: `.vd-btn:hover .vd-dot-inner { opacity: 0.8; }` The base opacity (0.5 vs 1.0) driven by `prominent` can stay as an inline style since it depends on props.\"}],\"strengths\":[\"Shift-click dispatch is clean and correct — single handleClick with a branch, no redundant event wiring.\",\"aria-label format matches the design spec exactly, including the appended ', selected' suffix.\",\"statusColor maps all three statuses exclusively to CSS custom properties — no hardcoded hex anywhere.\",\"compareSelected hover enhancement (accent-glow) is a nice layered detail consistent with the design spec's hover state description.\",\"tabIndex passed as prop is the right interface for roving tabindex — component stays dumb, parent owns focus management.\"]}",
+  "claimed_by": "sanjay",
+  "base_commit": "9977b6097f2fa8d0d140dcf5abe43194e6c80b98",
+  "files_touched": [
+    "dashboard/frontend/components/editor/VerdictDot.tsx"
+  ],
+  "started_by": "sanjay",
+  "gate_results": {
+    "checks": [
+      {
+        "name": "diff_non_empty",
+        "status": "pass"
+      },
+      {
+        "name": "declared_files",
+        "status": "pass"
+      },
+      {
+        "name": "scope",
+        "status": "pass"
+      },
+      {
+        "name": "python_imports",
+        "status": "pass"
+      },
+      {
+        "name": "not_blocked",
+        "status": "pass"
+      },
+      {
+        "name": "test_coverage",
+        "status": "warn",
+        "note": "deferred to sibling tasks"
+      },
+      {
+        "name": "gate_evidence",
+        "status": "warn"
+      },
+      {
+        "name": "criteria",
+        "status": "warn"
+      },
+      {
+        "name": "secrets",
+        "status": "pass"
+      },
+      {
+        "name": "syntax",
+        "status": "pass"
+      }
+    ],
+    "scope": {}
+  },
+  "review_verdict": "request_changes"
+}

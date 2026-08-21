@@ -1,0 +1,110 @@
+{
+  "id": "12",
+  "title": "Build JudgePanel component",
+  "description": "Create `dashboard/frontend/components/landing/JudgePanel.tsx`.\n\nProps: typed from the `judge` field of LandingViewData plus `narrative: string | null`.\n\nSub-components:\n- `PanelLabel` (imported from task 11): 'Judge' + feature name + formatted date.\n- `ReviewSummary`: renders `narrative` text when available, falls back to bullet-point summary of metrics when narrative is null (degraded mode per product spec).\n- `HeroMetrics`: four metrics in a row — coverage%, criteria passed/total, guardian verdict, critical decisions. Values in 28px IBM Plex Mono. Use `--accent` for the primary coverage metric only.\n- `DecisionCount`: amber highlight when `decisionsNeeded > 0`, calm secondary when 0.\n- Primary CTA button: 'Review & decide'. Uses `next/navigation` `useRouter().push('/outcome-review?feature=<name>')`. Styled as primary action with accent background.\n\nWhen `pendingReview` is null, show a calm empty state: 'No reviews pending' with `lastCompleted` summary if available.\n\nLayout: top center of grid. Internal padding 20px. `.surface` class.",
+  "acceptance_criteria": "- HeroMetrics renders coverage, criteria, guardian verdict, decisions in 28px mono\n  verify_by: test\n- CTA button navigates to /outcome-review?feature=<featureName>\n  verify_by: test\n- When pendingReview is null, renders empty state with lastCompleted info\n  verify_by: test\n- DecisionCount uses amber styling when decisionsNeeded > 0\n  verify_by: test\n- Narrative text renders when provided, bullet fallback when null\n  verify_by: test\n- Accent color used only on primary coverage metric value\n  verify_by: manual",
+  "depends_on": [
+    "11"
+  ],
+  "status": "done",
+  "branch": "speed/speed-dashboard-landing/task-12-build-judgepanel-component",
+  "agent_model": "sonnet",
+  "created_at": "2026-03-15T16:26:57Z",
+  "started_at": "2026-03-15T17:33:54Z",
+  "completed_at": "2026-03-15T17:37:06Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": null,
+  "files_touched": [
+    "dashboard/frontend/components/landing/JudgePanel.tsx"
+  ],
+  "spec_references": [
+    {
+      "spec": "product",
+      "section": "User Stories",
+      "requirement": "S2: Judge panel with summary narrative, hero metrics, decision count, primary CTA"
+    },
+    {
+      "spec": "product",
+      "section": "User Stories",
+      "requirement": "S5: CTA routes to Outcome Review with feature context"
+    },
+    {
+      "spec": "tech",
+      "section": "Component Architecture",
+      "requirement": "JudgePanel (grid-column:2, grid-row:1)"
+    },
+    {
+      "spec": "product",
+      "section": "Success Criteria",
+      "requirement": "Page degrades without LLM: bullet points replace narrative"
+    }
+  ],
+  "rationale": "JudgePanel is the most complex panel with hero metrics, narrative text, and CTA routing. Depends on task 11 because it imports PanelLabel. Separated from ExecutePanel because they occupy different grid cells and have independent interaction patterns.",
+  "assumptions": [
+    "CTA routes to /outcome-review which is built by a separate RFC — the route just needs to exist for the push to work",
+    "28px font size for hero metrics is set inline or via a local class, not a globals.css token (no .type-hero exists)"
+  ],
+  "gate_results": {
+    "checks": [
+      {
+        "name": "diff_non_empty",
+        "status": "pass"
+      },
+      {
+        "name": "declared_files",
+        "status": "pass"
+      },
+      {
+        "name": "scope",
+        "status": "warn",
+        "undeclared_files": [
+          "dashboard/frontend/components/landing/JudgePanel.test.tsx"
+        ]
+      },
+      {
+        "name": "python_imports",
+        "status": "pass"
+      },
+      {
+        "name": "not_blocked",
+        "status": "pass"
+      },
+      {
+        "name": "test_coverage",
+        "status": "pass"
+      },
+      {
+        "name": "gate_evidence",
+        "status": "warn"
+      },
+      {
+        "name": "criteria",
+        "status": "pass"
+      },
+      {
+        "name": "secrets",
+        "status": "pass"
+      }
+    ],
+    "scope": {
+      "undeclared_files": [
+        "dashboard/frontend/components/landing/JudgePanel.test.tsx"
+      ]
+    }
+  },
+  "decisions": [
+    "Used `.type-kpi-value` CSS class (already defined in globals.css at 28px IBM Plex Mono) with inline color override for accent vs neutral — avoids duplicating the font/size/weight triple per the design system rule.",
+    "EmptyState subtitle falls back to 'Quality review' when no pendingReview — gives PanelLabel a meaningful subtitle without fabricating data.",
+    "ReviewSummary bullet fallback omits guardian verdict bullet when null and omits decisions bullet when 0, keeping the list tight.",
+    "DecisionCount badge uses `type-badge` class consistent with DefinePanel severity badge pattern.",
+    "CTA button uses HTML entity `&amp;` for the ampersand in 'Review & decide' — renders correctly in both JSX and test assertions."
+  ],
+  "concerns": [
+    "Test file is flagged as undeclared by the scope check (warning only, not a failure) — same cosmetic issue as task 11.",
+    "Tests are syntactically correct but cannot run until vitest + @testing-library/react is installed; task 19 owns the test framework setup.",
+    "The 'Review & decide' button label uses `&amp;` in JSX which renders as '&' — test uses `/review & decide/i` regex which matches the rendered text correctly."
+  ],
+  "review_verdict": "approve",
+  "reviewed_at": "2026-03-15T18:12:02Z"
+}

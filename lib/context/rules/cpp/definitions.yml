@@ -1,0 +1,130 @@
+id: cpp-function
+language: cpp
+metadata:
+  produces: node
+  kind: function
+rule:
+  kind: function_definition
+
+---
+id: cpp-method
+language: cpp
+metadata:
+  produces: node
+  kind: method
+rule:
+  kind: function_definition
+  inside:
+    kind: class_specifier
+    stopBy: end
+
+---
+id: cpp-struct-method
+language: cpp
+metadata:
+  produces: node
+  kind: method
+rule:
+  kind: function_definition
+  inside:
+    kind: struct_specifier
+    stopBy: end
+
+---
+id: cpp-class
+language: cpp
+metadata:
+  produces: node
+  kind: class
+rule:
+  kind: class_specifier
+
+---
+id: cpp-struct
+language: cpp
+metadata:
+  produces: node
+  kind: class
+rule:
+  kind: struct_specifier
+
+---
+id: cpp-union
+language: cpp
+metadata:
+  produces: node
+  kind: class
+rule:
+  kind: union_specifier
+
+---
+id: cpp-enum
+language: cpp
+metadata:
+  produces: node
+  kind: type
+rule:
+  kind: enum_specifier
+
+---
+id: cpp-typedef
+language: cpp
+metadata:
+  produces: node
+  kind: type
+rule:
+  kind: type_definition
+
+---
+id: cpp-namespace
+language: cpp
+metadata:
+  produces: node
+  kind: class
+rule:
+  kind: namespace_definition
+
+---
+id: cpp-constant-macro
+language: cpp
+metadata:
+  produces: node
+  kind: constant
+rule:
+  kind: preproc_def
+  has:
+    field: name
+    kind: identifier
+    regex: "^[A-Z][A-Z0-9_]+$"
+
+---
+id: cpp-constant-constexpr
+language: cpp
+metadata:
+  produces: node
+  kind: constant
+rule:
+  kind: declaration
+  regex: "^\\s*(?:(?:static|inline)\\s+)*constexpr\\s+"
+
+---
+id: cpp-class-inherits
+language: cpp
+metadata:
+  produces: edge
+  edge_type: inherits
+rule:
+  kind: class_specifier
+  has:
+    kind: base_class_clause
+
+---
+id: cpp-struct-inherits
+language: cpp
+metadata:
+  produces: edge
+  edge_type: inherits
+rule:
+  kind: struct_specifier
+  has:
+    kind: base_class_clause

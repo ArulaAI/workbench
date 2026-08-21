@@ -1,0 +1,72 @@
+{
+  "id": "7",
+  "title": "Unit tests for Phase 0 config reading",
+  "description": "Create `tests/test_convention_configs.py` with comprehensive tests for `_extract_config_conventions`.\n\nUse `tmp_path` pytest fixture to create synthetic config files. Tests:\n\n**pyproject.toml parsing:**\n- [tool.ruff] with select=['I'] → import ordering convention\n- [tool.ruff] with select=['N'] → naming convention  \n- [tool.black] with line-length=88 → line length convention\n- Malformed TOML → warning logged, empty result\n- Empty pyproject.toml → empty result\n\n**.editorconfig parsing:**\n- indent_style=space, indent_size=4 → indentation convention\n- Multiple sections ([*.py], [*.js]) → separate convention entries per section\n\n**.eslintrc.json parsing:**\n- naming-convention rule → naming convention entry\n- Malformed JSON → warning logged, empty result\n\n**.prettierrc parsing:**\n- singleQuote: true, semi: false → formatting conventions\n\n**tsconfig.json parsing:**\n- strict: true → strict mode convention\n- paths aliases → path alias convention\n\n**Cross-cutting tests:**\n- Project with no config files → empty list, no errors\n- Each returned entry has source='config', confidence='established'\n- Each returned entry has canonical_example set to config file path\n- All returned entry IDs start with 'conv-'",
+  "acceptance_criteria": "- All config parser tests pass with synthetic config files\n  verify_by: test\n- Malformed config tests verify warning is logged (use caplog fixture)\n  verify_by: test\n- Empty config file tests verify empty list returned\n  verify_by: test\n- At least 15 test cases covering the 5 most common config types\n  verify_by: file_exists",
+  "depends_on": [
+    "2"
+  ],
+  "status": "done",
+  "branch": "speed/speed-conventions/task-7-unit-tests-for-phase-0-config-reading",
+  "agent_model": "sonnet",
+  "created_at": "2026-03-14T16:03:48Z",
+  "started_at": "2026-03-14T21:08:04Z",
+  "completed_at": "2026-03-14T21:11:50Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": null,
+  "files_touched": [
+    "tests/test_convention_configs.py"
+  ],
+  "gate_results": {
+    "checks": [
+      {
+        "name": "diff_non_empty",
+        "status": "pass"
+      },
+      {
+        "name": "declared_files",
+        "status": "pass"
+      },
+      {
+        "name": "scope",
+        "status": "pass"
+      },
+      {
+        "name": "python_imports",
+        "status": "pass"
+      },
+      {
+        "name": "not_blocked",
+        "status": "pass"
+      },
+      {
+        "name": "test_coverage",
+        "status": "pass"
+      },
+      {
+        "name": "gate_evidence",
+        "status": "warn"
+      },
+      {
+        "name": "criteria",
+        "status": "pass"
+      },
+      {
+        "name": "secrets",
+        "status": "pass"
+      }
+    ],
+    "scope": {}
+  },
+  "decisions": [
+    "Used pytest (tmp_path + caplog) as specified by the task, not the custom check() pattern used in other test files — both coexist fine.",
+    "For caplog assertions, used caplog.messages (formatted strings) rather than record.getMessage() — simpler and equally correct since logging.warning() is called with % args.",
+    "Malformed TOML test asserts entries == [] in both cases (tomllib available → parse error warning; tomllib unavailable → skip warning) since the file path always appears in the warning message."
+  ],
+  "concerns": [
+    "The 'No gate invocation evidence in agent output' warning is expected — this is a session-level check that looks for gate commands in the agent's terminal output log, not relevant to correctness."
+  ],
+  "review_verdict": "approve",
+  "reviewed_at": "2026-03-15T03:46:15Z"
+}

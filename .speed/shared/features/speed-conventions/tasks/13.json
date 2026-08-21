@@ -1,0 +1,77 @@
+{
+  "id": "13",
+  "title": "CLI integration: --conventions and --seed-knowledge flags",
+  "description": "Modify `lib/cmd/learn.sh` and `lib/learn_bridge.sh` to add the two new CLI flags and their bridge functions.\n\n**lib/cmd/learn.sh** — Add flag handling near the top of the command dispatch:\n- `--conventions` → calls `learn_conventions` and returns\n- `--seed-knowledge` → calls `learn_seed_knowledge` and returns\n\nAlso add automatic trigger hook: after the existing observation extraction flow completes (post-integrate), call `_should_run_discovery()` and if true, run `learn_conventions` automatically. The trigger check is a Python call to the `_should_run_discovery` function from `lib/learn/conventions.py` (created in task 6).\n\n**lib/learn_bridge.sh** — Add two new bridge functions:\n\n`learn_conventions()`: Executes a Python block that imports `discover_conventions` from `lib.learn.conventions`, constructs paths for `project_root`, `memory_dir`, and `csg_path`, calls `discover_conventions()`, and prints `result.summary()`.\n\n`learn_seed_knowledge()`: Executes a Python block that imports `seed_knowledge` from `lib.learn.project_knowledge`, calls `seed_knowledge(project_root, memory_dir)`, and prints a summary message: 'Generated N draft entries in project-knowledge-drafts.json. Review and promote to project-knowledge.json.'\n\nFollow the existing bridge function pattern in learn_bridge.sh: use `$(_learn_python)` for the Python interpreter, `sys.path.insert(0, os.environ.get('SPEED_DIR', '.'))` for path setup, and `os.environ.get('PROJECT_ROOT', '.')` for the project root.",
+  "acceptance_criteria": "- `speed learn --conventions` invokes learn_conventions bridge function\n- `speed learn --seed-knowledge` invokes learn_seed_knowledge bridge function\n- learn_conventions() calls discover_conventions() and prints summary\n- learn_seed_knowledge() calls seed_knowledge() and prints summary with draft count\n- Automatic trigger check runs after observation extraction in the standard learn flow\n- Bridge functions use existing _learn_python pattern for Python invocation\n- No syntax errors in learn.sh or learn_bridge.sh (bash -n check passes)\n- Existing learn.sh functionality (observation extraction) is unchanged",
+  "depends_on": [
+    "6",
+    "10"
+  ],
+  "status": "done",
+  "branch": "speed/speed-conventions/task-13-cli-integration-conventions-and-seed-kno",
+  "agent_model": "sonnet",
+  "created_at": "2026-03-14T16:03:48Z",
+  "started_at": "2026-03-15T02:37:25Z",
+  "completed_at": "2026-03-15T02:40:09Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": null,
+  "files_touched": [
+    "lib/cmd/learn.sh",
+    "lib/learn_bridge.sh"
+  ],
+  "gate_results": {
+    "checks": [
+      {
+        "name": "diff_non_empty",
+        "status": "pass"
+      },
+      {
+        "name": "declared_files",
+        "status": "pass"
+      },
+      {
+        "name": "scope",
+        "status": "pass"
+      },
+      {
+        "name": "python_imports",
+        "status": "pass"
+      },
+      {
+        "name": "not_blocked",
+        "status": "pass"
+      },
+      {
+        "name": "test_coverage",
+        "status": "pass"
+      },
+      {
+        "name": "gate_evidence",
+        "status": "warn"
+      },
+      {
+        "name": "criteria",
+        "status": "pass"
+      },
+      {
+        "name": "secrets",
+        "status": "pass"
+      }
+    ],
+    "scope": {}
+  },
+  "decisions": [
+    "Used os.environ.get('SPEED_DIR', '.') for sys.path setup and os.environ.get('PROJECT_ROOT', '.') for project_root per task spec, while using bash variable expansion for memory_dir (${STATE_DIR}/memory) consistent with existing functions",
+    "Auto-trigger uses 2>/dev/null to suppress Python errors silently — convention discovery is non-blocking and discovery failure shouldn't interrupt extraction output",
+    "Auto-trigger is skipped when dry_run=true to avoid side effects during dry runs",
+    "learn_conventions and learn_seed_knowledge take no parameters — they construct all paths internally, consistent with being top-level command functions",
+    "New flags are dispatched before --summary/--synthesize/--post-merge to allow early return without needing a feature context"
+  ],
+  "concerns": [
+    "The auto-trigger calls _should_run_discovery which is a private function (underscore prefix). If the conventions.py module changes its internal API, this call will silently fail (2>/dev/null). This is intentional — the trigger is best-effort.",
+    "learn_conventions uses SPEED_DIR env var for sys.path but existing functions use ${SCRIPT_DIR} bash expansion. Both reference the same directory but the env var approach is slightly less reliable if SPEED_DIR isn't set in all invocation contexts."
+  ],
+  "review_verdict": "approve",
+  "reviewed_at": "2026-03-15T03:59:54Z"
+}

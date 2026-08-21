@@ -1,0 +1,14 @@
+{
+  "expected_rules": [
+    "ts-arrow-function",
+    "ts-call",
+    "ts-class",
+    "ts-constant",
+    "ts-constant",
+    "ts-constant",
+    "ts-export-function",
+    "ts-function",
+    "ts-function",
+    "ts-method"
+  ]
+}

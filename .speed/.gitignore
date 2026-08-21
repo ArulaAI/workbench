@@ -1,0 +1,5 @@
+# Multi-player mode: only shared/ is committed, everything else is local
+*
+!shared/
+!shared/**
+!.gitignore

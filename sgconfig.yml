@@ -1,0 +1,37 @@
+ruleDirs:
+  - lib/context/rules
+
+customLanguages:
+  prisma:
+    libraryPath:
+      aarch64-apple-darwin: lib/context/data/grammars/prisma.dylib
+      aarch64-unknown-linux-gnu: lib/context/data/grammars/prisma.so
+      x86_64-unknown-linux-gnu: lib/context/data/grammars/prisma.so
+      x86_64-pc-windows-msvc: lib/context/data/grammars/prisma.dll
+    extensions: [prisma]
+    expandoChar: "$"
+  graphql:
+    libraryPath:
+      aarch64-apple-darwin: lib/context/data/grammars/graphql.dylib
+      aarch64-unknown-linux-gnu: lib/context/data/grammars/graphql.so
+      x86_64-unknown-linux-gnu: lib/context/data/grammars/graphql.so
+      x86_64-pc-windows-msvc: lib/context/data/grammars/graphql.dll
+    extensions: [graphql, gql]
+    expandoChar: "$"
+  protobuf:
+    libraryPath:
+      aarch64-apple-darwin: lib/context/data/grammars/protobuf.dylib
+      aarch64-unknown-linux-gnu: lib/context/data/grammars/protobuf.so
+      x86_64-unknown-linux-gnu: lib/context/data/grammars/protobuf.so
+      x86_64-pc-windows-msvc: lib/context/data/grammars/protobuf.dll
+    extensions: [proto]
+    expandoChar: "$"
+    languageSymbol: tree_sitter_proto
+  zig:
+    libraryPath:
+      aarch64-apple-darwin: lib/context/data/grammars/zig.dylib
+      aarch64-unknown-linux-gnu: lib/context/data/grammars/zig.so
+      x86_64-unknown-linux-gnu: lib/context/data/grammars/zig.so
+      x86_64-pc-windows-msvc: lib/context/data/grammars/zig.dll
+    extensions: [zig]
+    expandoChar: "$"

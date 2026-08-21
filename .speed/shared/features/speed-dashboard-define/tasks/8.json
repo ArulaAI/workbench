@@ -1,0 +1,125 @@
+{
+  "id": "8",
+  "title": "Build Define page shell with grid layout, column headers, and page states",
+  "description": "Create `dashboard/frontend/app/define/page.tsx` with the three-column grid shell, column headers, and all page-level states.\n\nImplement the `DefinePage` component:\n1. **urql query**: Use DEFINE_VIEW_QUERY from task 6. Handle loading, error, and data states.\n2. **Loading state**: Three-column skeleton grid using CardSkeleton. Column headers render immediately with '—' aggregate placeholders.\n3. **Error state**: Full-width .surface container with --color-red error text and violet Retry button.\n4. **Empty state**: 'No features found' message centered, with `speed plan` in code tag styled per design spec.\n5. **Populated state**: Vision warning (full variant) above grid when visionStatus is 'missing'. Three-column CSS grid with `grid-template-columns: 1fr 1fr 1fr` and `gap: 1px` on parent with `--color-border` background.\n6. **Column headers**: Three ColumnHeader components with Name (15px/600), Intent (12px/400), Aggregate (11px/400). Aggregates computed from data.\n   - Specified: '{N} of {M} have design specs'\n   - Built: '{N} complete, {M} executing, {P} unplanned'\n   - Gap: '{N} escalation(s) across {M} features'\n7. **Feature rows**: Map over features, render placeholder divs for SpecifiedCell/BuiltCell/GapCell (implemented in tasks 9-10).\n8. **Section divider**: 'Defects · {N}' between features and defects.\n9. **Responsive**: Single-column stack below 1024px. Column headers hidden, cell labels inline.\n10. **Accessibility**: role='grid' on feature grid, role='columnheader' on headers.\n11. **Reduced motion**: Respect prefers-reduced-motion.\n\nPage padding 24px. Column header padding 16px 20px 14px. No .surface class on grid cells.",
+  "acceptance_criteria": "- Page renders at /define route\n- Three-column CSS grid with 1fr 1fr 1fr layout renders\n- Column headers show three-layer pattern (Name, Intent, Aggregate) with correct typography\n- Loading state shows skeleton grid with CardSkeleton components\n- Error state shows error message with Retry button\n- Empty state shows 'No features found' message\n- Vision warning renders full-width when visionStatus is 'missing'\n- Section divider shows 'Defects · N' with correct count\n- Grid stacks to single column below 1024px\n- role='grid' on feature grid, role='columnheader' on headers\n- No hardcoded colors or font sizes outside token system",
+  "depends_on": [
+    "6",
+    "7"
+  ],
+  "status": "pending",
+  "branch": "speed/speed-dashboard-define/task-8-build-define-page-shell-with-grid-layout",
+  "agent_model": "opus",
+  "created_at": "2026-03-21T11:49:38Z",
+  "started_at": "2026-03-21T15:19:39Z",
+  "completed_at": "2026-03-21T15:25:11Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": "{\"verdict\":\"request_changes\",\"spec_verification\":[{\"spec_quote\":\"Page renders at /define route\",\"spec_section\":\"Acceptance Criteria #1\",\"satisfied\":false,\"evidence\":\"No diff provided. dashboard/frontend/app/define/page.tsx does not appear in the diff.\",\"notes\":\"Cannot verify route registration without the file.\"},{\"spec_quote\":\"Three-column CSS grid with 1fr 1fr 1fr layout renders\",\"spec_section\":\"Acceptance Criteria #2\",\"satisfied\":false,\"evidence\":\"No diff provided.\",\"notes\":null},{\"spec_quote\":\"Column headers show three-layer pattern (Name, Intent, Aggregate) with correct typography\",\"spec_section\":\"Acceptance Criteria #3\",\"satisfied\":false,\"evidence\":\"No diff provided.\",\"notes\":null},{\"spec_quote\":\"Loading state shows skeleton grid with CardSkeleton components\",\"spec_section\":\"Acceptance Criteria #4\",\"satisfied\":false,\"evidence\":\"No diff provided.\",\"notes\":null},{\"spec_quote\":\"Error state shows error message with Retry button\",\"spec_section\":\"Acceptance Criteria #5\",\"satisfied\":false,\"evidence\":\"No diff provided.\",\"notes\":null},{\"spec_quote\":\"Empty state shows 'No features found' message\",\"spec_section\":\"Acceptance Criteria #6\",\"satisfied\":false,\"evidence\":\"No diff provided.\",\"notes\":null},{\"spec_quote\":\"Vision warning renders full-width when visionStatus is 'missing'\",\"spec_section\":\"Acceptance Criteria #7\",\"satisfied\":false,\"evidence\":\"No diff provided.\",\"notes\":null},{\"spec_quote\":\"Section divider shows 'Defects · N' with correct count\",\"spec_section\":\"Acceptance Criteria #8\",\"satisfied\":false,\"evidence\":\"No diff provided.\",\"notes\":null},{\"spec_quote\":\"Grid stacks to single column below 1024px\",\"spec_section\":\"Acceptance Criteria #9\",\"satisfied\":false,\"evidence\":\"No diff provided.\",\"notes\":null},{\"spec_quote\":\"role='grid' on feature grid, role='columnheader' on headers\",\"spec_section\":\"Acceptance Criteria #10\",\"satisfied\":false,\"evidence\":\"No diff provided.\",\"notes\":null},{\"spec_quote\":\"No hardcoded colors or font sizes outside token system\",\"spec_section\":\"Acceptance Criteria #11\",\"satisfied\":false,\"evidence\":\"No diff provided.\",\"notes\":null}],\"missing_from_spec\":[],\"out_of_scope\":[],\"issues\":[{\"severity\":\"critical\",\"file\":\"dashboard/frontend/app/define/page.tsx\",\"line\":null,\"message\":\"The git diff is empty. Either the task file was never created, was not committed, or the diff extraction failed. No code exists to review.\",\"suggestion\":\"Confirm that the developer agent completed Task 8 and that the diff was captured correctly before re-running the review.\"}],\"strengths\":[]}",
+  "base_commit": "7ed4b169751e655eb28450aea043215ed898e0bf",
+  "files_touched": [
+    "dashboard/frontend/app/define/page.tsx"
+  ],
+  "spec_references": [
+    {
+      "spec": "design",
+      "section": "Layout Structure",
+      "requirement": "Three-column CSS grid, vision-warning region, column-headers, feature-grid, defect-divider, defect-grid"
+    },
+    {
+      "spec": "design",
+      "section": "Typography",
+      "requirement": "Column header typography: 15px/600, 12px/400, 11px/400"
+    },
+    {
+      "spec": "design",
+      "section": "States",
+      "requirement": "Empty, Loading, Populated, Error states"
+    },
+    {
+      "spec": "design",
+      "section": "Responsive Behavior",
+      "requirement": "Single column below 1024px"
+    },
+    {
+      "spec": "design",
+      "section": "Accessibility",
+      "requirement": "ARIA grid roles"
+    },
+    {
+      "spec": "product",
+      "section": "User Stories",
+      "requirement": "S2: column-level aggregates"
+    }
+  ],
+  "rationale": "The page shell defines the layout grid that all cell components render into. Uses opus because it coordinates multiple page states, responsive behavior, and accessibility in a single file. Depends on task 6 (GraphQL query) and task 7 (shared VisionWarning). Tasks 9-11 build the cell components that plug into this grid.",
+  "assumptions": [
+    "Next.js app router convention: file at app/define/page.tsx auto-registers /define route",
+    "urql useQuery hook is available from the existing GraphQL provider setup"
+  ],
+  "gate_results": {
+    "checks": [
+      {
+        "name": "diff_non_empty",
+        "status": "pass"
+      },
+      {
+        "name": "declared_files",
+        "status": "pass"
+      },
+      {
+        "name": "scope",
+        "status": "warn",
+        "undeclared_files": [
+          "dashboard/frontend/app/globals.css"
+        ]
+      },
+      {
+        "name": "python_imports",
+        "status": "pass"
+      },
+      {
+        "name": "not_blocked",
+        "status": "pass"
+      },
+      {
+        "name": "test_coverage",
+        "status": "pass"
+      },
+      {
+        "name": "gate_evidence",
+        "status": "warn"
+      },
+      {
+        "name": "criteria",
+        "status": "warn"
+      },
+      {
+        "name": "secrets",
+        "status": "pass"
+      },
+      {
+        "name": "syntax",
+        "status": "pass"
+      }
+    ],
+    "scope": {
+      "undeclared_files": [
+        "dashboard/frontend/app/globals.css"
+      ]
+    }
+  },
+  "decisions": [
+    "Added 6 new typography tokens to globals.css (.type-column-name, .type-column-intent, .type-column-aggregate, .type-section-title, .type-compact-label, .type-cell-label) to cover the 9px, 11px, 12px, and 15px text roles specific to the Define page. This is the minimum set needed — each maps to a distinct font/size/weight/color combination not covered by existing tokens.",
+    "Imported TypeScript interfaces from define.ts (DefineViewData, DefineFeature, DefineAggregates) instead of redeclaring them locally. This fixes all type mismatches flagged in review (nullable Built fields, sizingEstimate as number|null) and eliminates interface drift.",
+    "Used className='type-section-header' with a fontWeight:500 inline override for compact feature names rather than creating a dedicated .type-feature-name token. The 13px base comes from the token; only the weight differs from the 600 default.",
+    "For the Retry button, removed explicit fontSize:13 since it inherits from body's 13px base. Kept fontFamily and fontWeight as inline styles since button styling is contextual, not a reusable text role.",
+    "globals.css is undeclared in the task scope but required — page.tsx className references would point to nonexistent CSS classes without these tokens."
+  ],
+  "concerns": [
+    "sidebar.tsx (Task 13), header.tsx (Task 13), and DefinePanel.tsx (Task 7) were flagged as major missing items by the reviewer. All three are owned by other tasks and cannot be modified here. The reviewer should verify those tasks address the integration points.",
+    "The code element in EmptyState uses className='type-column-intent' for 12px sizing but overrides fontFamily to mono and color to accent. A dedicated .type-inline-code token might be cleaner, but other pages (spec-alignment, mission-control, budget) achieve inline code styling via Tailwind utilities with no shared token either, so this matches the existing pattern.",
+    "The defect row padding changed from 10px to 12px (10px is not on the 4px grid; 12px is). This is a placeholder that task 11 will replace entirely."
+  ],
+  "review_verdict": "request_changes"
+}

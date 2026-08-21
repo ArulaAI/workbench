@@ -1,0 +1,36 @@
+{
+  "id": "10",
+  "title": "cmd_security CLI command and speed dispatch",
+  "description": "Create `lib/cmd/security.sh` with the `cmd_security()` function and add `security)` to the command dispatch in the `speed` main script.\n\n**`lib/cmd/security.sh` — `cmd_security()`:**\n1. Initialize `create_defects=false` and `feature_name=\"${GLOBAL_FEATURE:-}\"`.\n2. Parse flags in a while loop:\n   - `--create-defects` → set `create_defects=true`\n   - `--feature` or `-f` → set `feature_name` from next arg\n   - Unknown flag → `log_error` and exit 1\n3. If `feature_name` is empty, try `_current_feature()` (reads `.speed/current`).\n4. If still empty: `log_error \"No active feature. Run speed plan first or specify --feature.\"` and exit 1.\n5. Print header: `log_header \"Security Audit — ${feature_name}\"`.\n6. Set `logs_dir` and `audit_file` paths.\n7. If `create_defects` is true AND `security_has_cached_audit` returns 0: log info about using cached results. Otherwise call `security_audit_run \"$feature_name\"`.\n8. If `audit_file` exists, call `security_print_banner \"$audit_file\"`. Otherwise print \"No security findings.\"\n9. If `create_defects` is true:\n   - If no `audit_file`: log error and exit 1.\n   - Read threshold from `TOML_SECURITY_SEVERITY_THRESHOLD` (default: \"medium\").\n   - Call `security_create_defects \"$audit_file\" \"$threshold\"`.\n\n**`speed` main script modifications:**\n1. Add `source \"${SCRIPT_DIR}/lib/cmd/security.sh\"` alongside the other `lib/cmd/*.sh` sources. Locate the block where other cmd files are sourced (near `lib/cmd/run.sh`, `lib/cmd/status.sh`, etc.).\n2. Add `security)` case to the command dispatch `case` statement, calling `cmd_security \"$@\"`. Place it alphabetically among existing commands.\n3. Ensure `lib/security.sh` is sourced before `lib/cmd/security.sh` (it provides the functions cmd_security calls).\n\nVerify the sourcing order: `lib/security.sh` must be sourced after `lib/config.sh`, `lib/log.sh`, `lib/provider.sh`, `lib/features.sh` (its dependencies from the tech spec comment header).",
+  "acceptance_criteria": "- lib/cmd/security.sh file exists\n  verify_by: file_exists\n- cmd_security function exists in lib/cmd/security.sh\n  verify_by: test\n- speed script contains 'security)' case in command dispatch\n  verify_by: test\n- speed security with no active feature and no --feature flag prints error and exits 1\n  verify_by: test\n- speed security --feature <name> runs audit on the specified feature\n  verify_by: test\n- speed security prints findings banner after audit completes\n  verify_by: test\n- speed security --create-defects calls security_create_defects\n  verify_by: test\n- speed security --create-defects uses cached audit when results are recent\n  verify_by: test\n- speed security --create-defects with no prior audit results exits with error\n  verify_by: test\n- Unknown flags produce an error message and exit 1\n  verify_by: test",
+  "depends_on": [
+    "9",
+    "1"
+  ],
+  "status": "done",
+  "branch": "speed/speed-security/task-10-cmd-security-cli-command-and-speed-dispa",
+  "agent_model": "sonnet",
+  "created_at": "2026-02-26T11:44:37Z",
+  "started_at": "2026-02-26T12:23:50Z",
+  "completed_at": "2026-02-26T12:28:25Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": null,
+  "files_touched": [
+    "lib/cmd/security.sh",
+    "speed"
+  ],
+  "decisions": [
+    "Used feature_get_active() for feature resolution instead of a custom _current_feature() — feature_get_active() is the established mechanism in features.sh and reads from .speed/active_feature",
+    "logs_dir and audit_file paths follow the pattern established in security.sh: ${STATE_DIR}/features/${feature_name}/logs/security-audit.json",
+    "security) dispatch placed between run) and status) alphabetically",
+    "lib/security.sh sourced after lib/context_bridge.sh (which provides _context_python()) and before the cmd module loop, satisfying the dependency order",
+    "Updated tests/test_security.sh from a single-file exec wrapper to a two-file runner to satisfy the grounding check's test coverage requirement for lib/cmd/security.sh"
+  ],
+  "concerns": [
+    "The grounding check flags tests/test_security.sh and tests/test_security_cmd.sh as undeclared files (2 undeclared = warning threshold, not hard failure). These are legitimate test files that accompany the new source file.",
+    "The 'No gate invocation evidence in agent output' warning is expected since this is a direct implementation, not a developer agent run with logs."
+  ],
+  "review_verdict": "approve",
+  "reviewed_at": "2026-02-26T16:50:57Z"
+}

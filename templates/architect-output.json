@@ -1,0 +1,130 @@
+{
+  "type": "object",
+  "required": ["tasks", "contract", "validation"],
+  "additionalProperties": false,
+  "properties": {
+    "tasks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "description", "acceptance_criteria", "depends_on", "agent_model", "files_touched"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique numeric task identifier (e.g. '1', '2', '3')"
+          },
+          "title": {
+            "type": "string",
+            "description": "Short descriptive title"
+          },
+          "description": {
+            "type": "string",
+            "description": "Detailed implementation description: file paths, function signatures, technical approach"
+          },
+          "acceptance_criteria": {
+            "type": "string",
+            "description": "Bullet-pointed list of testable conditions that define done"
+          },
+          "depends_on": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "IDs of tasks that must complete before this one"
+          },
+          "agent_model": {
+            "type": "string",
+            "description": "Model tier for this task (provider-specific, e.g. sonnet, opus, o3)"
+          },
+          "files_touched": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Files this task will create or modify (relative to project root)"
+          }
+        }
+      }
+    },
+    "contract": {
+      "type": "object",
+      "required": ["core_question", "entities", "relationships", "core_queries"],
+      "properties": {
+        "core_question": {
+          "type": "string",
+          "description": "The single most important question this feature answers, phrased as a data query"
+        },
+        "entities": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "type", "created_by_task", "key_fields"],
+            "properties": {
+              "name": { "type": "string", "description": "Entity name" },
+              "type": { "type": "string", "enum": ["database", "file", "function"], "description": "Entity type: database (table), file (path on disk), or function (callable within a file)" },
+              "table": { "type": "string", "description": "Database table name (required for database type)" },
+              "path": { "type": "string", "description": "File path relative to project root (required for file and function types)" },
+              "function": { "type": "string", "description": "Function or class name within the file (required for function type)" },
+              "created_by_task": { "type": "string", "description": "ID of the task that creates this entity" },
+              "key_fields": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "For database: column names. For file: structural properties. For function: key behaviors."
+              }
+            }
+          }
+        },
+        "relationships": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["from", "to", "type", "via", "created_by_task"],
+            "properties": {
+              "from": { "type": "string", "description": "Source table" },
+              "to": { "type": "string", "description": "Target table" },
+              "type": { "type": "string", "enum": ["belongs_to", "has_many", "many_to_many"] },
+              "via": { "type": "string", "description": "Foreign key column or join table name" },
+              "created_by_task": { "type": "string", "description": "ID of the task that creates this relationship" }
+            }
+          }
+        },
+        "core_queries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["description", "traversal", "answers"],
+            "properties": {
+              "description": { "type": "string", "description": "Human-readable query description" },
+              "traversal": { "type": "string", "description": "Join path (e.g. users -> team_members -> teams)" },
+              "answers": { "type": "string", "description": "What question this query answers" }
+            }
+          }
+        }
+      }
+    },
+    "validation": {
+      "type": "array",
+      "description": "Gaps or issues found across product spec, tech spec, and design spec. Empty array if clean.",
+      "items": {
+        "type": "object",
+        "required": ["severity", "issue", "product_requirement", "recommendation"],
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": ["critical", "warning", "note"],
+            "description": "critical = blocks task creation; warning = proceed but review; note = observation"
+          },
+          "issue": {
+            "type": "string",
+            "description": "What the gap or problem is"
+          },
+          "product_requirement": {
+            "type": "string",
+            "description": "The product spec requirement that is affected"
+          },
+          "recommendation": {
+            "type": "string",
+            "description": "How to address it"
+          }
+        }
+      }
+    }
+  }
+}

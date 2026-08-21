@@ -1,0 +1,113 @@
+{
+  "id": "12",
+  "title": "Build ExplorerPanel with document tree and keyboard shortcuts",
+  "description": "Create `dashboard/frontend/components/define/explorer-panel.tsx` with the slide-in document explorer.\n\nImplement ExplorerPanel component:\n- **Position**: `position: fixed`, left side, 260px width, z-index above grid\n- **Background**: --color-bg-elevated, shadow `8px 0 32px rgba(0,0,0,0.4)`\n- **Toggle**: Cmd+E (Mac) / Ctrl+E (Windows) keyboard shortcut\n- **Dismiss**: Escape key, close button click\n- **Focus trap**: When open, Tab cycles through explorer items only. Focus returns to trigger element on close.\n- **Document tree**: Features grouped with PRD/RFC/DSN indicators per feature. Each feature shows its name and which specs exist.\n- **Click behavior**: Clicking a spec navigates to Spec Editor with that spec loaded (use Next.js router)\n- **Animation**: `transform: translateX(-100%)` to `translateX(0)` over 200ms ease. Respects `prefers-reduced-motion` (instant transition).\n- **Accessibility**: `role='dialog'`, `aria-modal='true'`, `aria-label='Document explorer'`\n- **Close button**: --color-text-tertiary, hover --color-text\n- **Item hover**: `rgba(255,255,255,0.02)` background\n- **Internal scroll**: Content scrolls within panel, panel itself is fixed height (viewport height minus header)\n- **Padding**: 16px internal\n\nIntegrate into the Define page by updating `app/define/page.tsx`:\n- Add keyboard event listener and ExplorerPanel render\n- Import DefectRow from `@/components/define/defect-row` and SectionDivider from `@/components/define/section-divider`\n- Replace the placeholder divs in the defect section (lines 293-324) with SectionDivider and DefectRow components",
+  "acceptance_criteria": "- ExplorerPanel renders at 260px width with fixed positioning\n- Panel slides in on Cmd+E and slides out on Escape\n- Panel has focus trap when open\n- Document tree shows features grouped with spec indicators\n- Clicking a spec navigates to Spec Editor route\n- Close button dismisses panel\n- Panel uses role='dialog' with aria-modal='true'\n- Animation respects prefers-reduced-motion\n- Panel has --color-bg-elevated background with correct shadow\n- Defect section in page.tsx uses SectionDivider and DefectRow components (no placeholder divs)",
+  "depends_on": [
+    "9",
+    "10",
+    "11"
+  ],
+  "status": "done",
+  "branch": "speed/speed-dashboard-define/task-12-build-explorerpanel-with-document-tree-a",
+  "agent_model": "opus",
+  "created_at": "2026-03-21T11:49:38Z",
+  "started_at": null,
+  "completed_at": "2026-03-21T17:14:06Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": "{\"verdict\":\"request_changes\",\"spec_verification\":[{\"spec_quote\":\"ExplorerPanel renders at 260px width with fixed positioning\",\"spec_section\":\"Acceptance Criteria\",\"satisfied\":true,\"evidence\":\"explorer-panel.tsx: position: 'fixed', left: 0, width: 260. Test at line 31 asserts { position: 'fixed', left: '0px', width: '260px' }.\",\"notes\":\"\"},{\"spec_quote\":\"Panel slides in on Cmd+E and slides out on Escape\",\"spec_section\":\"Acceptance Criteria\",\"satisfied\":true,\"evidence\":\"Cmd+E handled in page.tsx via document keydown listener: (e.metaKey || e.ctrlKey) && e.key === 'e' → setExplorerOpen(prev => !prev). Escape handled in explorer-panel.tsx useEffect: e.key === 'Escape' → onClose(). Slide driven by transform: open ? 'translateX(0)' : 'translateX(-100%)'.\",\"notes\":\"Handler uses metaKey || ctrlKey, which covers both Mac (Cmd) and Windows/Linux (Ctrl). Acceptable cross-platform behavior.\"},{\"spec_quote\":\"Panel has focus trap when open\",\"spec_section\":\"Acceptance Criteria\",\"satisfied\":\"partial\",\"evidence\":\"Tab/Shift+Tab cycling implemented in explorer-panel.tsx useEffect: queries focusable elements within panelRef.current and wraps focus. On open, previous focus is saved and close button is focused via requestAnimationFrame. On close, focus is restored. Tests do not cover Tab cycling behavior.\",\"notes\":\"The panel is not marked inert or visibility:hidden when closed, so its DOM elements remain in the accessibility tree. A keyboard user pressing Tab before the panel opens could theoretically tab into it. Adding the 'inert' attribute when open=false would fully close this gap.\"},{\"spec_quote\":\"Document tree shows features grouped with spec indicators\",\"spec_section\":\"Acceptance Criteria\",\"satisfied\":\"partial\",\"evidence\":\"FeatureGroup renders feature.name with three SpecIndicator buttons. Features are passed as featureDocs mapped from the page's feature list, preserving per-spec existence/path data. Tests confirm feature names and all three indicators render.\",\"notes\":\"The spec indicator labels used are 'PRD', 'RFC', 'DSN'. The spec's Key Decisions section explicitly requires 'Product/Technical/Design' — see missing_from_spec entry.\"},{\"spec_quote\":\"Clicking a spec navigates to Spec Editor route\",\"spec_section\":\"Acceptance Criteria\",\"satisfied\":true,\"evidence\":\"handleSpecClick calls router.push('/spec-editor?path=...&type=...'). onClose() called immediately after. Missing specs have onClick={undefined} and tabIndex={-1} so they are not clickable. Tests cover both present-spec navigation (line 141) and missing-spec no-op (line 160).\",\"notes\":\"\"},{\"spec_quote\":\"Close button dismisses panel\",\"spec_section\":\"Acceptance Criteria\",\"satisfied\":true,\"evidence\":\"Close button with aria-label='Close document explorer', ref={closeButtonRef}, onClick={onClose}. Test at line 104 confirms click calls onClose.\",\"notes\":\"\"},{\"spec_quote\":\"Panel uses role='dialog' with aria-modal='true'\",\"spec_section\":\"Acceptance Criteria\",\"satisfied\":true,\"evidence\":\"Panel div has role='dialog', aria-modal='true', aria-label='Document explorer'. Tests at lines 28, 34, 40 each verify one of these attributes.\",\"notes\":\"\"},{\"spec_quote\":\"Animation respects prefers-reduced-motion\",\"spec_section\":\"Acceptance Criteria\",\"satisfied\":true,\"evidence\":\"const transition = prefersReducedMotion ? undefined : 'transform 0.2s ease'. The page passes prefersReducedMotion from its useSyncExternalStore/matchMedia hook. Tests confirm transition contains 'transform' when false and is empty string when true.\",\"notes\":\"\"},{\"spec_quote\":\"Panel has --color-bg-elevated background with correct shadow\",\"spec_section\":\"Acceptance Criteria\",\"satisfied\":true,\"evidence\":\"background: 'var(--color-bg-elevated)', boxShadow: '8px 0 32px rgba(0,0,0,0.4)'. Test at line 40 asserts background token. Shadow is not separately tested but is present in implementation.\",\"notes\":\"\"},{\"spec_quote\":\"Spec pills say 'Product/Technical/Design' not 'PRD/RFC/DSN' — Self-describing labels — IA principle #6: content is self-describing without column context.\",\"spec_section\":\"Key Decisions\",\"satisfied\":false,\"evidence\":\"FeatureGroup passes label='PRD', label='RFC', label='DSN' to SpecIndicator. The existing spec-pill.tsx component uses PillLabel = 'Product' | 'Technical' | 'Design', confirming this vocabulary was already established. ExplorerPanel creates a separate SpecIndicator component that ignores this convention.\",\"notes\":\"The rationale in the spec ('content is self-describing without column context') applies even more strongly to the ExplorerPanel, which operates outside the three-column grid. Abbreviated labels require the user to already know what PRD/RFC/DSN mean.\"}],\"missing_from_spec\":[{\"spec_quote\":\"Spec pills say 'Product/Technical/Design' not 'PRD/RFC/DSN'\",\"description\":\"ExplorerPanel's FeatureGroup uses abbreviated labels 'PRD', 'RFC', 'DSN'. Should use 'Product', 'Technical', 'Design' per the explicit key decision and consistent with the existing spec-pill.tsx PillLabel type.\"}],\"out_of_scope\":[{\"file\":\"dashboard/backend/resolvers/define_types.py\",\"line\":1,\"description\":\"This file was included in the diff provided to the reviewer but is NOT part of the task-12 branch. Running git diff feature/dashboard-human-surfaces...task-12 shows only explorer-panel.tsx, explorer-panel.test.tsx, and page.tsx. define_types.py was merged from a prior task. The provided diff appears to have been generated incorrectly.\"},{\"file\":\"dashboard/backend/tests/test_define_types.py\",\"line\":1,\"description\":\"Same as above — not part of the actual task-12 branch. Included in the provided diff by error.\"}],\"issues\":[{\"severity\":\"major\",\"file\":\"dashboard/frontend/components/define/explorer-panel.tsx\",\"line\":175,\"message\":\"SpecIndicator labels 'PRD', 'RFC', 'DSN' violate the spec's explicit key decision: 'Spec pills say Product/Technical/Design not PRD/RFC/DSN'. The existing spec-pill.tsx uses PillLabel = 'Product' | 'Technical' | 'Design', making this an inconsistency with the established component vocabulary as well as a spec violation.\",\"suggestion\":\"Change FeatureGroup to pass label='Product', label='Technical', label='Design'. Update the SpecIndicator aria-label template accordingly ('Product spec', 'Technical spec', 'Design spec'). Update tests to match new labels.\"},{\"severity\":\"minor\",\"file\":\"dashboard/frontend/components/define/explorer-panel.tsx\",\"line\":88,\"message\":\"When open=false the panel is off-screen via translateX(-100%) but its DOM elements are still in the accessibility tree and keyboard-focusable. A user tabbing through the page can reach buttons inside the hidden panel.\",\"suggestion\":\"Add the 'inert' attribute to the panel div when !open: inert={!open || undefined}. This removes all contained elements from tab order and the accessibility tree without disrupting the CSS transition.\"},{\"severity\":\"minor\",\"file\":\"dashboard/frontend/components/define/explorer-panel.test.tsx\",\"line\":1,\"message\":\"No test for Tab/Shift+Tab focus trapping. All other acceptance criteria have test coverage; focus trap does not.\",\"suggestion\":\"Add tests using userEvent.tab() to verify focus cycles within the panel and doesn't escape to the document body.\"},{\"severity\":\"nit\",\"file\":\"dashboard/frontend/components/define/explorer-panel.tsx\",\"line\":213,\"message\":\"aria-disabled={!isPresent} renders aria-disabled='false' on present specs. The attribute is redundant when false — aria-disabled='false' and no aria-disabled attribute are equivalent.\",\"suggestion\":\"aria-disabled={!isPresent || undefined} to omit the attribute entirely when the element is enabled.\"}],\"strengths\":[\"Focus save/restore around open/close is correctly implemented — previousFocusRef captures the trigger element and restores on close, and requestAnimationFrame ensures the close button receives focus after the DOM settles.\",\"Escape and close-button dismissal both delegate to onClose, keeping state ownership in the page. No internal open state in ExplorerPanel.\",\"prefersReducedMotion is passed as a prop rather than read inside the component, making it straightforwardly testable — and the test suite verifies both branches.\",\"handleSpecClick calls onClose immediately after pushing the route, so the panel doesn't linger on navigation.\",\"Test coverage is thorough for all acceptance criteria except focus trapping — aria attributes, positioning, animation, navigation, keyboard, and empty state are all covered.\"]}",
+  "base_commit": "7ed4b169751e655eb28450aea043215ed898e0bf",
+  "files_touched": [
+    "dashboard/frontend/components/define/explorer-panel.tsx",
+    "dashboard/frontend/app/define/page.tsx"
+  ],
+  "spec_references": [
+    {
+      "spec": "design",
+      "section": "Component Inventory",
+      "requirement": "ExplorerPanel: 260px slide-in, Cmd+E toggle, Escape dismiss, focus trap"
+    },
+    {
+      "spec": "design",
+      "section": "Interactions & Motion",
+      "requirement": "explorer-slide 200ms ease, reduced motion policy"
+    },
+    {
+      "spec": "design",
+      "section": "Elevation & Depth",
+      "requirement": "Explorer panel elevation level 2 with shadow"
+    },
+    {
+      "spec": "design",
+      "section": "Accessibility",
+      "requirement": "role=dialog, aria-modal, focus trap, arrow key navigation"
+    },
+    {
+      "spec": "product",
+      "section": "User Stories",
+      "requirement": "S7: navigate spec tree without leaving analytical view"
+    }
+  ],
+  "rationale": "The Explorer panel is the most interactive component with keyboard shortcuts, focus management, and animation. Depends on tasks 9-11 because it modifies page.tsx (which those tasks also reference), and the page should have its core grid content before adding the overlay. The dependency chain through page.tsx: task 8 creates it, tasks 9-11 provide cell components, task 12 adds the explorer overlay last.",
+  "assumptions": [
+    "Spec Editor route exists or will be a no-op navigation for now (out of scope per product spec)",
+    "Focus trap implemented with vanilla JS/React (no library dependency needed)"
+  ],
+  "timeout_count": 1,
+  "review_verdict": "approve",
+  "retry_count": 1,
+  "gate_results": {
+    "checks": [
+      {
+        "name": "diff_non_empty",
+        "status": "pass"
+      },
+      {
+        "name": "declared_files",
+        "status": "pass"
+      },
+      {
+        "name": "scope",
+        "status": "warn",
+        "undeclared_files": [
+          "dashboard/frontend/components/define/explorer-panel.test.tsx"
+        ]
+      },
+      {
+        "name": "python_imports",
+        "status": "pass"
+      },
+      {
+        "name": "not_blocked",
+        "status": "pass"
+      },
+      {
+        "name": "test_coverage",
+        "status": "pass"
+      },
+      {
+        "name": "gate_evidence",
+        "status": "warn"
+      },
+      {
+        "name": "criteria",
+        "status": "warn"
+      },
+      {
+        "name": "secrets",
+        "status": "pass"
+      },
+      {
+        "name": "syntax",
+        "status": "pass"
+      }
+    ],
+    "scope": {
+      "undeclared_files": [
+        "dashboard/frontend/components/define/explorer-panel.test.tsx"
+      ]
+    }
+  },
+  "reviewed_at": "2026-03-21T14:47:42Z"
+}

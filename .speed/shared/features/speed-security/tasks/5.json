@@ -1,0 +1,31 @@
+{
+  "id": "5",
+  "title": "Security Auditor agent definition",
+  "description": "Create `agents/security-auditor.md` following the established agent definition pattern used by existing agents in the `agents/` directory (12 files currently).\n\n**Agent metadata section:**\n- Model: `support_model` (sonnet by default). The tech spec notes opus may produce better findings for security analysis, but defaults to support_model for cost control. Document this tradeoff in a comment.\n- Tool access: Read-only. Explicitly list allowed tools: Read (file reading), Glob (file discovery), Grep (pattern search). Explicitly prohibit: file writes, shell execution, network requests.\n\n**Instructions section:**\n1. Role: You are a Security Auditor. You review source code for security vulnerabilities.\n2. Scope: Read all files provided in the prompt. Evaluate each file against OWASP Top 10 categories.\n3. Categories to check (with guidance for each):\n   - A01 Broken Access Control: missing auth checks on routes/handlers, missing authorization on sensitive operations\n   - A02 Cryptographic Failures: weak algorithms (MD5, SHA1 for security), hardcoded keys, missing TLS\n   - A03 Injection: SQL string concatenation, OS command injection, NoSQL injection, LDAP injection\n   - A05 Security Misconfiguration: debug flags in production, permissive CORS, default credentials\n   - A07 Auth Failures: weak password handling, session fixation, missing rate limiting\n   - A10 SSRF: URL construction from user input passed to HTTP clients\n4. For each finding, provide: severity, category, title, description, file, line, code snippet (max 200 chars), and remediation recommendation.\n5. Do NOT flag: test fixtures, example files, or intentional security-related test cases.\n\n**Output format section:**\nSpecify the exact JSON schema matching `security-audit.json`:\n```json\n{\n  \"feature\": \"string\",\n  \"timestamp\": \"ISO 8601\",\n  \"agent_model\": \"string\",\n  \"findings\": [{ \"id\": \"SEC-NNN\", \"severity\": \"...\", \"category\": \"...\", ... }],\n  \"summary\": { \"total\": N, \"by_severity\": { ... } }\n}\n```\nFinding IDs use format `SEC-NNN` (zero-padded). Valid severities: critical, high, medium, low, info. Valid categories: injection, auth, secrets, crypto, config, xss, path-traversal, info-disclosure.\n\nRationale: The agent definition must exist before Phase 2's `security_audit_run()` can invoke it. Defining it in Phase 1 lets Phase 2 focus purely on orchestration (prompt assembly, agent invocation, output parsing) without also designing the agent's behavior. Follows the same decoupling pattern as other agents: definition file is static, invocation logic is in lib/*.sh.\n\nAssumptions: The agent definition format follows the pattern of existing files in agents/ (e.g., agents/developer.md, agents/reviewer.md). Examine one existing agent file to match the frontmatter/metadata conventions.",
+  "acceptance_criteria": "- agents/security-auditor.md exists [verify: file_exists]\n- File specifies read-only tool access with explicit tool list (Read, Glob, Grep) [verify: manual]\n- File explicitly prohibits file writes, shell execution, and network requests [verify: manual]\n- File includes output JSON schema matching security-audit.json format with findings array [verify: manual]\n- File covers OWASP categories A01, A02, A03, A05, A07, A10 with per-category guidance [verify: manual]\n- Finding ID format specified as SEC-NNN [verify: manual]\n- Valid severity values enumerated: critical, high, medium, low, info [verify: manual]\n- Valid category values enumerated matching the tech spec list [verify: manual]",
+  "depends_on": [],
+  "status": "done",
+  "branch": "speed/speed-security/task-5-security-auditor-agent-definition",
+  "agent_model": "sonnet",
+  "created_at": "2026-02-26T11:44:36Z",
+  "started_at": "2026-02-26T11:54:43Z",
+  "completed_at": "2026-02-26T11:56:38Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": null,
+  "files_touched": [
+    "agents/security-auditor.md"
+  ],
+  "decisions": [
+    "Followed the pattern established by agents/triage.md and agents/audit.md for the Model & Tools section, including the inline comment documenting the support_model vs opus tradeoff",
+    "Added a severity guide table at the end to give concrete criteria for choosing between severity levels, since the tech spec schema lists valid values but doesn't define them",
+    "Excluded test fixtures via directory patterns (tests/, test/, __tests__) rather than file-by-file guidance, which is more actionable for the agent",
+    "Kept per-category guidance focused on what to look for rather than how to fix it, since remediation belongs in the finding's recommendation field"
+  ],
+  "concerns": [
+    "The grounding check emitted a warning about no gate invocation evidence in agent output. This is expected for a markdown-only task but may trigger a review flag upstream — worth noting.",
+    "The category list (injection, auth, secrets, crypto, config, xss, path-traversal, info-disclosure) includes xss and path-traversal which don't map directly to the six OWASP categories covered (A01/A02/A03/A05/A07/A10). These were carried over from the security-audit.json schema in the tech spec. The agent instructions cover the six named categories; the broader category enum in the output format allows findings that fall outside those six to still be classified correctly."
+  ],
+  "review_verdict": "approve",
+  "reviewed_at": "2026-02-26T16:35:39Z"
+}

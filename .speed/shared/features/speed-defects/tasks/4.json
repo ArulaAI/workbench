@@ -1,0 +1,25 @@
+{
+  "id": "4",
+  "title": "Developer Agent Defect Prompt Variants",
+  "description": "Modify `agents/developer.md` to add two defect-specific prompt sections that the pipeline injects at runtime when the Developer Agent operates in defect mode.\n\n**Section: Defect Reproduce Mode**\n\nInjected during the reproduce stage (moderate defects only). Instructions:\n- \"Write a failing test that demonstrates the defect described in the triage output.\"\n- \"Do NOT fix the bug. The test must fail against current code.\"\n- \"Look at existing tests near the affected files for patterns, fixtures, and conventions to follow.\"\n- Test strategy varies by defect_type (provided in triage output):\n  - `logic`: \"Use pytest (backend) or vitest + testing-library (frontend). Assert the correct/expected behavior — the test should fail because the code currently produces the wrong result.\"\n  - `visual`: \"Use vitest + testing-library for component state assertions. For layout/positioning bugs, use Playwright with screenshot comparison or element position assertions.\"\n  - `data`: \"Use pytest with test database fixtures that reproduce the data conditions from the defect report. Assert expected query results.\"\n- \"Reference `test_coverage_detail` from triage output to find existing test files and fixtures.\"\n\n**Section: Defect Fix Mode**\n\nInjected during the fix stage (all complexities). Instructions:\n- \"Apply a minimal fix for the defect described in the triage output.\"\n- \"Do not refactor surrounding code. Do not improve code quality. Do not add features.\"\n- \"The change should touch only files listed in `affected_files` from triage output.\"\n- \"For moderate defects: the failing test on this branch defines 'done' — make it pass.\"\n- \"For trivial defects: write a regression test alongside the fix if no test exists for the affected code path.\"\n- \"Follow `suggested_approach` from triage output as your starting point.\"\n\nBoth sections must be clearly delimited (e.g., with markdown headers or comment markers) so the pipeline can extract and inject them selectively.",
+  "acceptance_criteria": "- `agents/developer.md` contains a 'Defect Reproduce Mode' section [verify_by: test]\n- Reproduce section includes 'Do NOT fix the bug' instruction [verify_by: test]\n- Reproduce section documents test strategy for all three defect_types: logic, visual, data [verify_by: test]\n- `agents/developer.md` contains a 'Defect Fix Mode' section [verify_by: test]\n- Fix section includes 'minimal fix' and 'do not refactor' instructions [verify_by: test]\n- Fix section references affected_files and suggested_approach from triage output [verify_by: test]\n- Both sections are clearly delimited with markdown headers [verify_by: test]",
+  "depends_on": [],
+  "status": "done",
+  "branch": "speed/speed-defects/task-4-developer-agent-defect-prompt-variants",
+  "agent_model": "sonnet",
+  "created_at": "2026-02-24T08:09:52Z",
+  "started_at": "2026-02-24T08:38:02Z",
+  "completed_at": "2026-02-24T08:40:04Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": null,
+  "files_touched": [
+    "agents/developer.md"
+  ],
+  "decisions": [
+    "Both 'Defect: Reproduce' and 'Defect: Fix' sections were already present in the file from a prior commit. The only spec gap was the 'For trivial defects' instruction in the Fix section's Scope block — added it immediately after the 'For moderate defects' paragraph where it logically belongs."
+  ],
+  "concerns": [
+    "Quality gates couldn't run via './speed/speed gates -f speed-defects --task 4 --fast' because the worktree's local .speed/ directory doesn't exist — the feature config lives in the parent repo's .speed/. This is a markdown-only change with no code to lint or typecheck, so it doesn't affect correctness."
+  ]
+}

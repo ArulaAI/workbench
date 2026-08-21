@@ -1,0 +1,82 @@
+id: python-class
+language: python
+metadata:
+  produces: node
+  kind: class
+rule:
+  kind: class_definition
+
+---
+id: python-function
+language: python
+metadata:
+  produces: node
+  kind: function
+rule:
+  kind: function_definition
+
+---
+id: python-method
+language: python
+metadata:
+  produces: node
+  kind: method
+rule:
+  kind: function_definition
+  inside:
+    kind: class_definition
+    stopBy: end
+
+---
+id: python-decorated
+language: python
+metadata:
+  produces: node
+  kind: function
+rule:
+  kind: decorated_definition
+  has:
+    kind: function_definition
+    stopBy: neighbor
+
+---
+id: python-decorated-class
+language: python
+metadata:
+  produces: node
+  kind: class
+rule:
+  kind: decorated_definition
+  has:
+    kind: class_definition
+    stopBy: neighbor
+
+---
+id: python-constant
+language: python
+metadata:
+  produces: node
+  kind: constant
+rule:
+  pattern: $NAME = $VALUE
+  not:
+    inside:
+      any:
+        - kind: function_definition
+        - kind: class_definition
+      stopBy: end
+constraints:
+  NAME:
+    regex: "^[A-Z][A-Z0-9_]+$"
+
+---
+id: python-class-inherits
+language: python
+metadata:
+  produces: edge
+  edge_type: inherits
+rule:
+  kind: class_definition
+  has:
+    field: superclasses
+    kind: argument_list

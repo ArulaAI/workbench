@@ -1,0 +1,52 @@
+id: zig-function
+language: zig
+metadata:
+  produces: node
+  kind: function
+rule:
+  kind: function_declaration
+
+---
+id: zig-variable
+language: zig
+metadata:
+  produces: node
+  kind: variable
+rule:
+  kind: variable_declaration
+
+---
+id: zig-struct
+language: zig
+metadata:
+  produces: node
+  kind: class
+rule:
+  kind: struct_declaration
+
+---
+id: zig-union
+language: zig
+metadata:
+  produces: node
+  kind: type
+rule:
+  kind: union_declaration
+
+---
+id: zig-enum
+language: zig
+metadata:
+  produces: node
+  kind: type
+rule:
+  kind: enum_declaration
+
+---
+id: zig-error-set
+language: zig
+metadata:
+  produces: node
+  kind: type
+rule:
+  kind: error_set_declaration

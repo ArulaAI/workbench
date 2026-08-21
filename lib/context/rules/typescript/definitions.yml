@@ -1,0 +1,176 @@
+id: ts-class
+language: typescript
+metadata:
+  produces: node
+  kind: class
+rule:
+  kind: class_declaration
+
+---
+id: ts-abstract-class
+language: typescript
+metadata:
+  produces: node
+  kind: class
+rule:
+  kind: abstract_class_declaration
+
+---
+id: ts-interface
+language: typescript
+metadata:
+  produces: node
+  kind: interface
+rule:
+  kind: interface_declaration
+
+---
+id: ts-type-alias
+language: typescript
+metadata:
+  produces: node
+  kind: type
+rule:
+  kind: type_alias_declaration
+
+---
+id: ts-enum
+language: typescript
+metadata:
+  produces: node
+  kind: type
+rule:
+  kind: enum_declaration
+
+---
+id: ts-function
+language: typescript
+metadata:
+  produces: node
+  kind: function
+rule:
+  kind: function_declaration
+
+---
+id: ts-arrow-function
+language: typescript
+metadata:
+  produces: node
+  kind: function
+rule:
+  kind: variable_declarator
+  has:
+    field: value
+    kind: arrow_function
+
+---
+id: ts-generator
+language: typescript
+metadata:
+  produces: node
+  kind: function
+rule:
+  kind: generator_function_declaration
+
+---
+id: ts-method
+language: typescript
+metadata:
+  produces: node
+  kind: method
+rule:
+  kind: method_definition
+  inside:
+    kind: class_body
+    stopBy: neighbor
+
+---
+id: ts-export-function
+language: typescript
+metadata:
+  produces: node
+  kind: function
+rule:
+  kind: export_statement
+  has:
+    kind: function_declaration
+
+---
+id: ts-export-class
+language: typescript
+metadata:
+  produces: node
+  kind: class
+rule:
+  kind: export_statement
+  has:
+    kind: class_declaration
+
+---
+id: ts-class-extends
+language: typescript
+metadata:
+  produces: edge
+  edge_type: inherits
+rule:
+  kind: class_declaration
+  has:
+    kind: class_heritage
+    has:
+      kind: extends_clause
+
+---
+id: ts-abstract-class-extends
+language: typescript
+metadata:
+  produces: edge
+  edge_type: inherits
+rule:
+  kind: abstract_class_declaration
+  has:
+    kind: class_heritage
+    has:
+      kind: extends_clause
+
+---
+id: ts-class-implements
+language: typescript
+metadata:
+  produces: edge
+  edge_type: implements
+rule:
+  kind: class_declaration
+  has:
+    kind: class_heritage
+    has:
+      kind: implements_clause
+
+---
+id: ts-constant
+language: typescript
+metadata:
+  produces: node
+  kind: constant
+rule:
+  pattern: const $NAME = $VALUE
+  not:
+    inside:
+      any:
+        - kind: function_declaration
+        - kind: method_definition
+        - kind: arrow_function
+      stopBy: end
+constraints:
+  NAME:
+    regex: "^[A-Z][A-Z0-9_]+$"
+
+---
+id: ts-interface-extends
+language: typescript
+metadata:
+  produces: edge
+  edge_type: inherits
+rule:
+  kind: interface_declaration
+  has:
+    kind: extends_type_clause

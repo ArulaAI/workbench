@@ -1,0 +1,91 @@
+{
+  "id": "4",
+  "title": "Implement Execute panel reader",
+  "description": "Add `read_execute_panel(project_root: Path) -> LandingExecutePanel` to `dashboard/backend/resolvers/landing.py`. Logic:\n\n1. **Running features**: Glob `.speed/features/*/state.json`. Filter to `status == 'running'`. For each running feature, glob `.speed/features/{name}/tasks/*.json`. Count total tasks, count tasks with `status == 'completed'` or `status == 'done'`. Calculate progress_pct = (completed / total) * 100, clamped 0-100. Count tasks with `status == 'blocked'` for blocked_count.\n2. **Escalations**: From the blocked tasks above, filter those with a non-empty `escalation_question` field AND no `escalation_response` field (or empty response). Build LandingEscalation with feature name, task_id, task_title, question.\n\nSort running features by blocked_count descending (most urgent first). Sort escalations by feature name then task_id.",
+  "acceptance_criteria": "- read_execute_panel returns running features filtered to status='running'\n- progress_pct calculated as (completed tasks / total tasks) * 100\n- blocked_count reflects tasks with status='blocked'\n- Escalations include only blocked tasks with escalation_question and without escalation_response\n- Running features sorted by blocked_count descending\n- Returns empty lists when no running features exist\n- Handles features with zero tasks (0/0 progress, 0% pct)",
+  "depends_on": [
+    "3"
+  ],
+  "status": "done",
+  "branch": "speed/speed-dashboard-landing/task-4-implement-execute-panel-reader",
+  "agent_model": "sonnet",
+  "created_at": "2026-03-15T16:26:56Z",
+  "started_at": "2026-03-15T17:13:00Z",
+  "completed_at": "2026-03-15T19:43:59Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": "{\"verdict\":\"request_changes\",\"spec_verification\":[{\"spec_quote\":\"read_execute_panel returns running features filtered to status='running'\",\"spec_section\":\"Acceptance Criteria #1\",\"satisfied\":false,\"evidence\":\"No diff provided. No implementation exists.\",\"notes\":null},{\"spec_quote\":\"progress_pct calculated as (completed tasks / total tasks) * 100\",\"spec_section\":\"Acceptance Criteria #2\",\"satisfied\":false,\"evidence\":\"No diff provided.\",\"notes\":null},{\"spec_quote\":\"blocked_count reflects tasks with status='blocked'\",\"spec_section\":\"Acceptance Criteria #3\",\"satisfied\":false,\"evidence\":\"No diff provided.\",\"notes\":null},{\"spec_quote\":\"Escalations include only blocked tasks with escalation_question and without escalation_response\",\"spec_section\":\"Acceptance Criteria #4\",\"satisfied\":false,\"evidence\":\"No diff provided.\",\"notes\":null},{\"spec_quote\":\"Running features sorted by blocked_count descending\",\"spec_section\":\"Acceptance Criteria #5\",\"satisfied\":false,\"evidence\":\"No diff provided.\",\"notes\":null},{\"spec_quote\":\"Returns empty lists when no running features exist\",\"spec_section\":\"Acceptance Criteria #6\",\"satisfied\":false,\"evidence\":\"No diff provided.\",\"notes\":null},{\"spec_quote\":\"Handles features with zero tasks (0/0 progress, 0% pct)\",\"spec_section\":\"Acceptance Criteria #7\",\"satisfied\":false,\"evidence\":\"No diff provided.\",\"notes\":\"Zero-division guard is specifically required.\"}],\"missing_from_spec\":[{\"spec_quote\":\"All 7 acceptance criteria\",\"description\":\"The diff is empty. dashboard/backend/resolvers/landing.py has no new implementation for read_execute_panel.\"}],\"out_of_scope\":[],\"issues\":[{\"severity\":\"critical\",\"file\":\"dashboard/backend/resolvers/landing.py\",\"line\":null,\"message\":\"No implementation was submitted. The diff contains zero lines of change.\",\"suggestion\":\"Implement read_execute_panel in dashboard/backend/resolvers/landing.py covering all 7 acceptance criteria.\"}],\"strengths\":[],\"defect_scope_check\":null}",
+  "files_touched": [
+    "dashboard/backend/resolvers/landing.py"
+  ],
+  "spec_references": [
+    {
+      "spec": "tech",
+      "section": "Data Model - What the resolver reads",
+      "requirement": "Execute panel reads feature state and task files for progress and escalations"
+    },
+    {
+      "spec": "product",
+      "section": "User Stories - S4",
+      "requirement": "Running features with progress and escalation cards"
+    }
+  ],
+  "rationale": "Depends on task 3 for file ownership. Execute panel reads the most files (all task JSONs for running features) and introduces the escalation filtering logic that the mutation (task 6) also needs to understand.",
+  "assumptions": [
+    "Task completion status is either 'completed' or 'done' based on common patterns in the codebase. The spec doesn't enumerate all task status values.",
+    "Escalations that already have an escalation_response are considered resolved and excluded from the list."
+  ],
+  "gate_results": {
+    "checks": [
+      {
+        "name": "diff_non_empty",
+        "status": "pass"
+      },
+      {
+        "name": "declared_files",
+        "status": "pass"
+      },
+      {
+        "name": "scope",
+        "status": "pass"
+      },
+      {
+        "name": "python_imports",
+        "status": "pass"
+      },
+      {
+        "name": "not_blocked",
+        "status": "pass"
+      },
+      {
+        "name": "test_coverage",
+        "status": "pass"
+      },
+      {
+        "name": "gate_evidence",
+        "status": "warn"
+      },
+      {
+        "name": "criteria",
+        "status": "pass"
+      },
+      {
+        "name": "secrets",
+        "status": "pass"
+      }
+    ],
+    "scope": {}
+  },
+  "decisions": [
+    "Task completion statuses treated as 'completed' or 'done', consistent with the assumption documented in the task spec.",
+    "Escalation filtering: escalation_question must be non-empty AND escalation_response must be absent or empty. Uses `or ''` coercion so null and missing fields both count as empty.",
+    "_read_task_files extracted as a private helper to keep read_execute_panel readable and to match the pattern established by other private helpers in the file.",
+    "Graceful zero-task handling: progress_pct is 0.0 when tasks_total is 0, no division attempted."
+  ],
+  "concerns": [
+    "Test coverage deferred to Task 7 (test_landing.py), consistent with Tasks 2 and 3.",
+    "Task JSON field names (id, title, escalation_question, escalation_response) are inferred from the task description. If the actual schema uses different keys, Task 7 will surface it."
+  ],
+  "review_verdict": "approve",
+  "reviewed_at": "2026-03-16T02:27:03Z"
+}

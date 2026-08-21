@@ -1,0 +1,9 @@
+[agent]
+provider = "claude-code"
+cli_command = "claude"
+cli_models = ["opus", "sonnet"]
+planning_model = "opus"
+support_model = "sonnet"
+ollama_base_url = "http://localhost:11434"
+api_providers = ["anthropic", "openai", "gemini"]
+ceremony_models = ["gemma4:26b", "opus", "sonnet"]

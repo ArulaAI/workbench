@@ -1,0 +1,68 @@
+---
+---
+
+<section class="cta-section">
+  <code class="cta-install"><span class="prompt">&gt; </span>git clone https://github.com/speed-org/SPEED.git speed</code>
+  <a href="/docs/getting-started/" class="cta-link">Read the docs &rarr;</a>
+</section>
+
+<footer class="footer">
+  <span class="chevron">&gt;</span> SPEED &mdash; Spec to Production: Engineering, Experience, Design
+</footer>
+
+<style>
+  .cta-section {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 80px 32px 120px;
+    text-align: center;
+    border-top: 1px solid var(--color-border);
+  }
+
+  .cta-install {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 15px;
+    font-weight: 500;
+    color: var(--color-text);
+    background: var(--color-bg-elevated);
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    padding: 14px 28px;
+    margin-bottom: 20px;
+    letter-spacing: -0.01em;
+  }
+
+  .cta-install .prompt {
+    color: var(--color-accent);
+    user-select: none;
+  }
+
+  .cta-link {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--color-text-secondary);
+    text-decoration: none;
+    transition: color 0.15s;
+  }
+
+  .cta-link:hover { color: var(--color-text); }
+
+  .footer {
+    border-top: 1px solid var(--color-border);
+    padding: 24px 32px;
+    text-align: center;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--color-text-tertiary);
+  }
+
+  .footer .chevron { color: var(--color-accent); }
+
+  @media (max-width: 600px) {
+    .cta-section { padding: 60px 16px 80px; }
+    .cta-install { font-size: 13px; padding: 12px 20px; }
+  }
+</style>

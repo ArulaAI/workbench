@@ -1,0 +1,12 @@
+{
+  "expected_rules": [
+    "ruby-class",
+    "ruby-constant",
+    "ruby-constant",
+    "ruby-constant",
+    "ruby-constant",
+    "ruby-method",
+    "ruby-method",
+    "ruby-module"
+  ]
+}

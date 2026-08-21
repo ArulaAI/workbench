@@ -1,0 +1,84 @@
+{
+  "id": "16",
+  "title": "Fix coherence issues",
+  "description": "Fix the following cross-task coherence issues. Each recommendation is from the coherence checker's analysis of all completed task diffs against the spec.\n\n1. CRITICAL: Fix format_knowledge_for_agent() to read 'knowledge' field instead of 'content'/'text', and 'why_it_matters' instead of 'title'. Change line 661 to: content = entry.get('knowledge', '') and line 662 to: title = entry.get('why_it_matters', '')\n2. Fix detect_knowledge_gaps() to handle both list format and {entries: [...]} wrapper when reading project-knowledge.json. Change lines 300-306 to unwrap the 'entries' key if data is a dict.\n3. Add 'conflicts' key to conventions_data dict in discover_conventions() at line 508-511. Change to: conventions_data = {'conventions': [...], 'conflicts': conflicts, 'views': views}\n4. Add 'observation_count_at_run' and 'convention_violation_count_at_run' fields to the meta dict at conventions.py:498-505.\n5. Consider aligning the views format: either update the spec to match the array-of-objects implementation (which enables scope filtering), or restructure _build_views to produce pre-rendered strings per the spec.\n\nFollow spec schemas exactly for field names, types, and structure. Do not refactor beyond what the recommendations ask for.",
+  "acceptance_criteria": "- Each coherence recommendation is addressed or has a comment explaining why it was skipped\n- speed coherence passes after these fixes\n- No new lint/typecheck/test failures\n- All quality gates pass",
+  "depends_on": [
+    "12",
+    "5",
+    "1",
+    "6"
+  ],
+  "status": "done",
+  "branch": "speed/speed-conventions/task-16-fix-coherence-issues",
+  "agent_model": "sonnet",
+  "created_at": "2026-03-15T15:02:22Z",
+  "started_at": null,
+  "completed_at": "2026-03-15T20:35:22Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": "--- Attempt 1 ---\nFailed with: Quality gates failed\nHuman guidance: Scope check fixed: test file ownership violations are now warnings, not hard failures. Retry as-is.\n\n--- Attempt 2 ---\nFailed with: Quality gates failed\nHuman guidance: Fix quality gate failures",
+  "files_touched": [
+    "lib/context/assembly.py",
+    "lib/context_bridge.sh",
+    "lib/learn/convention_templates.py",
+    "lib/learn/conventions.py",
+    "lib/learn/project_knowledge.py"
+  ],
+  "gate_results": {
+    "checks": [
+      {
+        "name": "diff_non_empty",
+        "status": "pass"
+      },
+      {
+        "name": "declared_files",
+        "status": "pass"
+      },
+      {
+        "name": "scope",
+        "status": "warn",
+        "undeclared_files": [
+          "tests/test_convention_pipeline.py (task 9)"
+        ]
+      },
+      {
+        "name": "python_imports",
+        "status": "pass"
+      },
+      {
+        "name": "not_blocked",
+        "status": "pass"
+      },
+      {
+        "name": "test_coverage",
+        "status": "pass"
+      },
+      {
+        "name": "gate_evidence",
+        "status": "warn"
+      },
+      {
+        "name": "criteria",
+        "status": "pass"
+      },
+      {
+        "name": "secrets",
+        "status": "pass"
+      }
+    ],
+    "scope": {
+      "undeclared_files": [
+        "tests/test_convention_pipeline.py (task 9)"
+      ]
+    }
+  },
+  "failure_classification": {
+    "class": "pipeline",
+    "subclass": "decomposition_error",
+    "evidence": "Agent modified 1 file(s) owned by other tasks: tests/test_convention_pipeline.py (task 9)"
+  },
+  "review_verdict": "approve",
+  "retry_count": 2,
+  "reviewed_at": "2026-03-15T21:02:51Z"
+}

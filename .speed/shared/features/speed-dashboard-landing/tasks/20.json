@@ -1,0 +1,85 @@
+{
+  "id": "20",
+  "title": "Add landing page to sidebar and header navigation",
+  "description": "Modify `dashboard/frontend/components/layout/sidebar.tsx` and `dashboard/frontend/components/layout/header.tsx` to include the landing page in navigation.\n\nSidebar changes:\n- Add a nav item at the top of the list: label 'Home', icon (house/home icon matching existing icon set), route '/'.\n- Ensure active state highlights when on '/' route.\n\nHeader changes:\n- Add 'Home' to the view entries/breadcrumb system if the header uses one.\n- Ensure the header renders appropriately on the landing page (may need to check if the header shows a page title derived from the route).\n\nFollow the exact patterns used by existing nav items (Mission Control, Analytics, Budget, Topology, Spec Alignment). Match icon import style, active route detection, and list ordering conventions.",
+  "acceptance_criteria": "- Sidebar shows 'Home' nav item at the top of the list\n  verify_by: manual\n- Home nav item links to '/'\n  verify_by: test\n- Home nav item shows active state when on '/' route\n  verify_by: test\n- Header displays appropriate title for landing page\n  verify_by: manual\n- Existing nav items unchanged and still functional\n  verify_by: manual",
+  "depends_on": [
+    "17"
+  ],
+  "status": "done",
+  "branch": "speed/speed-dashboard-landing/task-20-add-landing-page-to-sidebar-and-header-n",
+  "agent_model": "sonnet",
+  "created_at": "2026-03-15T16:26:57Z",
+  "started_at": "2026-03-15T17:46:52Z",
+  "completed_at": "2026-03-15T17:47:52Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": null,
+  "files_touched": [
+    "dashboard/frontend/components/layout/sidebar.tsx",
+    "dashboard/frontend/components/layout/header.tsx"
+  ],
+  "spec_references": [
+    {
+      "spec": "tech",
+      "section": "File Impact",
+      "requirement": "sidebar.tsx: add nav items for new pages. header.tsx: add view entries for new pages."
+    }
+  ],
+  "rationale": "Navigation changes touch shared layout files used by every page. Depends on the landing page existing (task 17) so the route is valid. Sidebar and header are modified together in one task because they're tightly coupled (both reflect the same route set) and the change is small.",
+  "assumptions": [
+    "The sidebar and header nav patterns are consistent enough that both files can be modified in one ~15 minute task",
+    "The tech spec note 'See Define RFC for details' means the Define page RFC may also add nav items — this task adds only the Home/Landing entry"
+  ],
+  "gate_results": {
+    "checks": [
+      {
+        "name": "diff_non_empty",
+        "status": "pass"
+      },
+      {
+        "name": "declared_files",
+        "status": "pass"
+      },
+      {
+        "name": "scope",
+        "status": "pass"
+      },
+      {
+        "name": "python_imports",
+        "status": "pass"
+      },
+      {
+        "name": "not_blocked",
+        "status": "pass"
+      },
+      {
+        "name": "test_coverage",
+        "status": "pass"
+      },
+      {
+        "name": "gate_evidence",
+        "status": "warn"
+      },
+      {
+        "name": "criteria",
+        "status": "pass"
+      },
+      {
+        "name": "secrets",
+        "status": "pass"
+      }
+    ],
+    "scope": {}
+  },
+  "decisions": [
+    "Used `House` from lucide-react for the Home icon — it's in the same icon library as the existing nav icons.",
+    "Header title for '/' is 'Overview' rather than 'Home' to be consistent with the dashboard's pattern of descriptive titles (Mission Control, Codebase Topology, etc.) rather than generic labels.",
+    "Active state for '/' uses the same `pathname === item.href` exact-match check as all other nav items — no special handling needed since '/' won't prefix-match other routes."
+  ],
+  "concerns": [
+    "Acceptance criteria include test-verified items (Home links to '/', active state on '/') but task 19 owns the test file — those criteria will need to be validated there or manually."
+  ],
+  "review_verdict": "approve",
+  "reviewed_at": "2026-03-15T18:28:20Z"
+}

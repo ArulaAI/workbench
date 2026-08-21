@@ -1,0 +1,269 @@
+---
+// MissionControlMock.astro
+// Static mock of SPEED's Mission Control task DAG for docs site embedding.
+// Self-contained: all colors hardcoded from dashboard/frontend/app/globals.css.
+---
+
+<div class="mc-outer">
+  <!-- Progress header -->
+  <div class="mc-header">
+    <div class="mc-header-row">
+      <span class="mc-feature-name">user-auth</span>
+      <span class="mc-progress-label">2/5 complete</span>
+    </div>
+    <div class="mc-progress-track">
+      <div class="mc-progress-seg mc-seg-done" style="width: 40%"></div>
+      <div class="mc-progress-seg mc-seg-running" style="width: 20%"></div>
+      <div class="mc-progress-seg mc-seg-pending" style="width: 40%"></div>
+    </div>
+  </div>
+
+  <!-- DAG area -->
+  <div class="mc-dag-scroll">
+    <div class="mc-dag">
+      <!-- Edges (SVG overlay) -->
+      <svg class="mc-edges" viewBox="0 0 680 560" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="mc-arrow" viewBox="0 0 10 8" refX="10" refY="4"
+                  markerWidth="10" markerHeight="8" orient="auto">
+            <path d="M 0 0 L 10 4 L 0 8 z" fill="#55556a" />
+          </marker>
+        </defs>
+        <!-- T-1 → T-2 -->
+        <path d="M 340 64 C 340 112, 190 112, 190 156" stroke="#55556a" stroke-width="1.5" marker-end="url(#mc-arrow)" />
+        <!-- T-1 → T-4 (animated — target is running) -->
+        <path d="M 340 64 C 340 112, 490 112, 490 156" stroke="#55556a" stroke-width="1.5" marker-end="url(#mc-arrow)" class="mc-edge-animated" />
+        <!-- T-2 → T-3 -->
+        <path d="M 190 224 L 190 316" stroke="#55556a" stroke-width="1.5" marker-end="url(#mc-arrow)" />
+        <!-- T-3 → T-5 -->
+        <path d="M 190 384 C 190 432, 340 432, 340 476" stroke="#55556a" stroke-width="1.5" marker-end="url(#mc-arrow)" />
+        <!-- T-4 → T-5 -->
+        <path d="M 490 224 C 490 352, 340 352, 340 476" stroke="#55556a" stroke-width="1.5" marker-end="url(#mc-arrow)" />
+      </svg>
+
+      <!-- T-1: done -->
+      <div class="mc-node mc-node--done" style="left: 220px; top: 0px;">
+        <div class="mc-node-meta">#1 · sonnet</div>
+        <div class="mc-node-title">Define user and session models</div>
+      </div>
+
+      <!-- T-2: done -->
+      <div class="mc-node mc-node--done" style="left: 70px; top: 160px;">
+        <div class="mc-node-meta">#2 · sonnet</div>
+        <div class="mc-node-title">Create authentication API endpoints</div>
+      </div>
+
+      <!-- T-4: running -->
+      <div class="mc-node mc-node--running" style="left: 370px; top: 160px;">
+        <div class="mc-node-meta">#4 · opus</div>
+        <div class="mc-node-title">Implement session middleware</div>
+      </div>
+
+      <!-- T-3: pending -->
+      <div class="mc-node mc-node--pending" style="left: 70px; top: 320px;">
+        <div class="mc-node-meta">#3</div>
+        <div class="mc-node-title">Build login and signup UI</div>
+      </div>
+
+      <!-- T-5: pending -->
+      <div class="mc-node mc-node--pending" style="left: 220px; top: 480px;">
+        <div class="mc-node-meta">#5</div>
+        <div class="mc-node-title">Write integration tests</div>
+      </div>
+
+      <!-- Legend -->
+      <div class="mc-legend">
+        <div class="mc-legend-item"><span class="mc-dot mc-dot-done"></span> Done</div>
+        <div class="mc-legend-item"><span class="mc-dot mc-dot-running"></span> Running</div>
+        <div class="mc-legend-item"><span class="mc-dot mc-dot-pending"></span> Pending</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+  /* ── Outer wrapper ────────────────────────────────────────────────
+   * Dark island matching dashboard bg. Self-contained — no reliance
+   * on host page tokens.
+   */
+  .mc-outer {
+    max-width: 768px;
+    margin: 0 auto;
+    background: #0c0c10;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    box-shadow:
+      0 1px 2px rgba(0, 0, 0, 0.3),
+      0 0 0 1px rgba(0, 0, 0, 0.1);
+    overflow: hidden;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* ── Progress header ──────────────────────────────────────────── */
+
+  .mc-header {
+    padding: 16px 20px;
+    background: #1c1c27;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  }
+
+  .mc-header-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+  }
+
+  .mc-feature-name {
+    font-family: 'IBM Plex Mono', ui-monospace, monospace;
+    font-size: 13px;
+    font-weight: 600;
+    color: #e4e4e9;
+  }
+
+  .mc-progress-label {
+    font-size: 11px;
+    font-weight: 500;
+    color: #9494a3;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .mc-progress-track {
+    display: flex;
+    gap: 0.5px;
+    background: rgba(255, 255, 255, 0.04);
+    border-radius: 9999px;
+    overflow: hidden;
+    height: 4px;
+  }
+
+  .mc-progress-seg {
+    border-radius: inherit;
+  }
+
+  .mc-seg-done    { background: #44cc77; }
+  .mc-seg-running { background: #f0b232; }
+  .mc-seg-pending { background: #55556a; }
+
+  /* ── DAG area ─────────────────────────────────────────────────── */
+
+  .mc-dag-scroll {
+    overflow-x: auto;
+    padding: 24px;
+  }
+
+  .mc-dag {
+    position: relative;
+    width: 680px;
+    height: 560px;
+    margin: 0 auto;
+    background-image: radial-gradient(circle, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+    background-size: 20px 20px;
+  }
+
+  .mc-edges {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+  }
+
+  .mc-edge-animated {
+    stroke-dasharray: 6 4;
+    animation: mc-dash 0.8s linear infinite;
+  }
+
+  @keyframes mc-dash {
+    to { stroke-dashoffset: -10; }
+  }
+
+  /* ── Node cards ───────────────────────────────────────────────── */
+
+  .mc-node {
+    position: absolute;
+    width: 240px;
+    height: 64px;
+    background: #1c1c27;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+    padding: 8px 12px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 4px;
+  }
+
+  .mc-node--done    { border-left: 3px solid #44cc77; }
+  .mc-node--running {
+    border-left: 3px solid #f0b232;
+    animation: mc-glow 2s ease-in-out infinite;
+  }
+  .mc-node--pending { border-left: 3px solid #55556a; }
+
+  @keyframes mc-glow {
+    0%, 100% { box-shadow: 0 0 12px rgba(240, 178, 50, 0.20), 0 1px 3px rgba(0, 0, 0, 0.3); }
+    50%      { box-shadow: 0 0 20px rgba(240, 178, 50, 0.35), 0 1px 3px rgba(0, 0, 0, 0.3); }
+  }
+
+  .mc-node-meta {
+    font-family: 'IBM Plex Mono', ui-monospace, monospace;
+    font-size: 10px;
+    font-weight: 500;
+    color: #55556a;
+    line-height: 1.4;
+  }
+
+  .mc-node-title {
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 12px;
+    font-weight: 500;
+    color: #e4e4e9;
+    line-height: 1.4;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  /* ── Legend ────────────────────────────────────────────────────── */
+
+  .mc-legend {
+    position: absolute;
+    bottom: 12px;
+    right: 12px;
+    background: rgba(22, 22, 30, 0.85);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 255, 255, 0.03);
+    border-radius: 8px;
+    padding: 8px 12px;
+    display: flex;
+    gap: 12px;
+  }
+
+  .mc-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: 'IBM Plex Mono', ui-monospace, monospace;
+    font-size: 10px;
+    color: #55556a;
+  }
+
+  .mc-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 9999px;
+    flex-shrink: 0;
+  }
+
+  .mc-dot-done    { background: #44cc77; }
+  .mc-dot-running { background: #f0b232; }
+  .mc-dot-pending { background: #55556a; }
+</style>

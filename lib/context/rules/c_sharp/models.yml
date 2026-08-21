@@ -1,0 +1,54 @@
+id: ef-dbcontext
+language: csharp
+metadata:
+  produces: node
+  kind: class
+  orm: true
+rule:
+  kind: class_declaration
+  has:
+    kind: base_list
+    stopBy: neighbor
+    has:
+      stopBy: end
+      regex: "DbContext"
+
+---
+id: ef-dbset
+language: csharp
+metadata:
+  produces: node
+  kind: variable
+  orm: true
+rule:
+  kind: property_declaration
+  has:
+    kind: generic_name
+    stopBy: end
+    regex: "DbSet"
+  inside:
+    kind: class_declaration
+    stopBy: end
+
+---
+id: ef-entity-key
+language: csharp
+metadata:
+  produces: node
+  kind: variable
+  orm: true
+rule:
+  kind: property_declaration
+  has:
+    kind: attribute_list
+    stopBy: neighbor
+    has:
+      kind: attribute
+      stopBy: end
+      has:
+        kind: identifier
+        regex: "^Key$"
+        stopBy: end
+  inside:
+    kind: class_declaration
+    stopBy: end

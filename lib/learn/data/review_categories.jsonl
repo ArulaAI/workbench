@@ -1,0 +1,108 @@
+{"category": "correctness", "text": "injection via variable interpolation in shell string"}
+{"category": "correctness", "text": "unsanitized input passed to eval or exec"}
+{"category": "correctness", "text": "function silently fails on invalid input"}
+{"category": "correctness", "text": "silently swallows errors and returns empty"}
+{"category": "correctness", "text": "error is silently ignored with bare except"}
+{"category": "correctness", "text": "values are hardcoded regardless of actual data"}
+{"category": "correctness", "text": "always receive same value regardless of input"}
+{"category": "correctness", "text": "not available on macOS, silently fails"}
+{"category": "correctness", "text": "assumes values are lowercase, does not handle uppercase"}
+{"category": "correctness", "text": "race condition when concurrent tasks write same file"}
+{"category": "correctness", "text": "overwrites data when user sets custom config"}
+{"category": "correctness", "text": "replaces all defaults when any custom value is set"}
+{"category": "correctness", "text": "divergence from specification on edge case"}
+{"category": "correctness", "text": "false positive when whitespace matches both conditions"}
+{"category": "correctness", "text": "reports wrong count because it reads different source"}
+{"category": "correctness", "text": "count reports files read instead of files declared"}
+{"category": "correctness", "text": "does not call cleanup when setup fails"}
+{"category": "correctness", "text": "defines functions before sourcing required dependency"}
+{"category": "correctness", "text": "exits non-zero and leaves file empty"}
+{"category": "correctness", "text": "executes string as command instead of comparing value"}
+{"category": "correctness", "text": "output goes to stdout instead of the expected destination"}
+{"category": "spec_alignment", "text": "code says one thing but the spec says another"}
+{"category": "spec_alignment", "text": "implementation does not match spec-defined template"}
+{"category": "spec_alignment", "text": "log message wording differs from what spec prescribes"}
+{"category": "spec_alignment", "text": "missing element that the tech spec template defines"}
+{"category": "spec_alignment", "text": "product spec requirement not fully addressed"}
+{"category": "spec_alignment", "text": "spec lists additional items not covered by implementation"}
+{"category": "spec_alignment", "text": "references unresolved product spec question as if decided"}
+{"category": "spec_alignment", "text": "output format does not match spec-defined structure"}
+{"category": "spec_alignment", "text": "field or section placed in wrong location per spec template"}
+{"category": "convention", "text": "uses raw color utilities rather than design system tokens"}
+{"category": "convention", "text": "should use project wrapper instead of direct API call"}
+{"category": "convention", "text": "does not follow project naming convention"}
+{"category": "convention", "text": "violates project import style pattern"}
+{"category": "convention", "text": "uses generic library instead of canonical project helper"}
+{"category": "convention", "text": "bypasses the logging system with direct print or echo"}
+{"category": "scope", "text": "reformatted lines unrelated to this task"}
+{"category": "scope", "text": "change is out of scope for this task"}
+{"category": "scope", "text": "modifies files not declared in task specification"}
+{"category": "scope", "text": "changes beyond the task declared boundaries"}
+{"category": "scope", "text": "the diff is empty, nothing to review"}
+{"category": "testing", "text": "does not assert expected log entries for excluded files"}
+{"category": "testing", "text": "no test covers single source isolation scenario"}
+{"category": "testing", "text": "inspects source text rather than actually invoking function"}
+{"category": "testing", "text": "only asserts exit code without checking behavior"}
+{"category": "testing", "text": "missing test for edge case validation"}
+{"category": "testing", "text": "no test for error handling path"}
+{"category": "testing", "text": "test checks wrong thing or is self-fulfilling"}
+{"category": "testing", "text": "test asserts condition that was set up by the test itself"}
+{"category": "testing", "text": "missing test scenario that spec requires"}
+{"category": "testing", "text": "there is no test for this function or scenario"}
+{"category": "testing", "text": "no tests cover this new behavior"}
+{"category": "testing", "text": "acceptance criteria have no test coverage"}
+{"category": "testing", "text": "test setup leaks state into other tests"}
+{"category": "testing", "text": "test verifies implementation detail instead of behavior"}
+{"category": "testing", "text": "test does not assert the behavior it describes"}
+{"category": "maintainability", "text": "invisible tab character embedded in source code"}
+{"category": "maintainability", "text": "file naming inconsistency underscores vs hyphens"}
+{"category": "maintainability", "text": "summary uses alphabetical order not severity ranked"}
+{"category": "maintainability", "text": "repeats information already shown in parent element"}
+{"category": "maintainability", "text": "cleanup missing in test setup teardown pattern"}
+{"category": "maintainability", "text": "misleading comment does not match actual behavior"}
+{"category": "maintainability", "text": "test inlines setup code instead of reusing shared helper"}
+{"category": "maintainability", "text": "combines declaration and assignment on one line"}
+{"category": "maintainability", "text": "dead code stub left over from previous implementation"}
+{"category": "maintainability", "text": "file header documentation is incomplete or wrong"}
+{"category": "maintainability", "text": "dead code with no references or callers"}
+{"category": "maintainability", "text": "redundant check already performed by caller"}
+{"category": "maintainability", "text": "element or variable exists but serves no purpose"}
+{"category": "maintainability", "text": "misleading name does not match what it actually does"}
+{"category": "maintainability", "text": "verbose cast or type annotation that could be simplified"}
+{"category": "maintainability", "text": "docstring or comment does not match actual behavior"}
+{"category": "performance", "text": "spawns a subshell for every line in the file"}
+{"category": "performance", "text": "quadratic loop with nested iteration"}
+{"category": "performance", "text": "allocates new object on every iteration"}
+{"category": "performance", "text": "unnecessary disk roundtrip read after write"}
+{"category": "correctness", "text": "missing dependency in useEffect causes infinite re-render loop"}
+{"category": "correctness", "text": "wrong argument type passed to function causes silent failure"}
+{"category": "correctness", "text": "accesses optional property without null check and crashes"}
+{"category": "correctness", "text": "type assertion bypasses type guard and allows wrong type at runtime"}
+{"category": "correctness", "text": "error boundary catches all errors but provides no fallback UI"}
+{"category": "correctness", "text": "writes to shared state without holding lock or mutex"}
+{"category": "correctness", "text": "does not validate content type before parsing request body"}
+{"category": "correctness", "text": "unwrap or force-unwrap will panic on error in request handler"}
+{"category": "correctness", "text": "match or switch does not cover all variants and silently falls through"}
+{"category": "correctness", "text": "error message is identical for all error types so caller cannot distinguish failures"}
+{"category": "correctness", "text": "user input interpolated directly into SQL query allows injection"}
+{"category": "correctness", "text": "validates field but does not check uniqueness constraint"}
+{"category": "correctness", "text": "migration adds non-nullable column without default value"}
+{"category": "correctness", "text": "observer or listener registered but never removed causes duplicate callbacks"}
+{"category": "correctness", "text": "closure captures self strongly creating a retain cycle and memory leak"}
+{"category": "correctness", "text": "accesses parent component or activity directly breaking reusability"}
+{"category": "convention", "text": "debug logging left in committed code"}
+{"category": "convention", "text": "uses standard library logger instead of project structured logger"}
+{"category": "convention", "text": "management command uses print instead of framework output method"}
+{"category": "maintainability", "text": "dead hook or effect that sets value never read anywhere"}
+{"category": "maintainability", "text": "exported symbol missing required documentation comment"}
+{"category": "maintainability", "text": "field or method has wider visibility than actual usage requires"}
+{"category": "maintainability", "text": "docstring describes return type that does not match actual return type"}
+{"category": "testing", "text": "no test for fallback behavior when input is unknown or unexpected"}
+{"category": "testing", "text": "test queries generic element instead of verifying specific component"}
+{"category": "testing", "text": "test spy or mock created in setup without restore in teardown"}
+{"category": "testing", "text": "test asserts CSS class name or pixel value instead of visual outcome"}
+{"category": "testing", "text": "test omits mock that sibling test includes for same component"}
+{"category": "convention", "text": "magic string literal used where enum or named constant is expected"}
+{"category": "correctness", "text": "visual state diverges from accessibility attribute value"}
+{"category": "correctness", "text": "prop value not clamped or validated before rendering"}
+{"category": "maintainability", "text": "component repeats information already displayed by parent"}
