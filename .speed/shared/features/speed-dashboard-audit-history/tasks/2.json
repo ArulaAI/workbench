@@ -1,0 +1,80 @@
+{
+  "id": "2",
+  "title": "Create computeComparison and getPersistentIssues functions",
+  "description": "Add to `dashboard/frontend/components/editor/audit-history-utils.ts` two functions that build on `issueKey`.\n\n**`computeComparison(olderAudit: SpeedAuditResult, newerAudit: SpeedAuditResult): ComparisonResult`**\nAlgorithm:\n1. Build `Map<string, AuditIssue>` from olderAudit.issues using issueKey as key.\n2. Build `Map<string, AuditIssue>` from newerAudit.issues using issueKey as key.\n3. removed = iterate older map, collect entries whose key is absent from newer map.\n4. added = iterate newer map, collect entries whose key is absent from older map.\n5. unchanged = iterate newer map, collect entries whose key exists in older map.\nReturn `{ removed, unchanged, added }`.\n\n**`getPersistentIssues(latestAudit: SpeedAuditResult, previousAudit: SpeedAuditResult | null): Set<string>`**\nIf previousAudit is null, return empty Set. Otherwise build Sets of issueKeys from each audit's issues array. Return the intersection (keys present in both). \n\nImport SpeedAuditResult from the existing type definitions. Look in IntelPanel.tsx or the GraphQL types for the existing interface. The type has at minimum: `{ status: string, issues: AuditIssue[], sizing: object | null, ranAt: string }`.",
+  "acceptance_criteria": "- computeComparison with identical audits returns all issues in unchanged, empty removed and added [verify: test]\n- computeComparison with completely different audits returns all in removed and added, empty unchanged [verify: test]\n- computeComparison with mixed changes correctly categorizes each issue [verify: test]\n- computeComparison with both audits having empty issues arrays returns all groups empty [verify: test]\n- getPersistentIssues returns empty Set when previousAudit is null [verify: test]\n- getPersistentIssues returns correct issueKey strings for issues present in both audits [verify: test]\n- getPersistentIssues returns empty Set when no issues overlap [verify: test]",
+  "depends_on": [
+    "1"
+  ],
+  "status": "done",
+  "branch": "speed/speed-dashboard-audit-history/task-2-create-computecomparison-and-getpersiste",
+  "agent_model": "sonnet",
+  "created_at": "2026-03-25T22:18:30Z",
+  "started_at": "2026-03-26T02:09:49Z",
+  "completed_at": "2026-03-26T02:13:15Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": null,
+  "claimed_by": "sanjay",
+  "base_commit": "9977b6097f2fa8d0d140dcf5abe43194e6c80b98",
+  "files_touched": [
+    "dashboard/frontend/components/editor/audit-history-utils.ts"
+  ],
+  "started_by": "sanjay",
+  "gate_results": {
+    "checks": [
+      {
+        "name": "diff_non_empty",
+        "status": "pass"
+      },
+      {
+        "name": "declared_files",
+        "status": "pass"
+      },
+      {
+        "name": "scope",
+        "status": "pass"
+      },
+      {
+        "name": "python_imports",
+        "status": "pass"
+      },
+      {
+        "name": "not_blocked",
+        "status": "pass"
+      },
+      {
+        "name": "test_coverage",
+        "status": "pass"
+      },
+      {
+        "name": "gate_evidence",
+        "status": "warn"
+      },
+      {
+        "name": "criteria",
+        "status": "warn"
+      },
+      {
+        "name": "secrets",
+        "status": "pass"
+      },
+      {
+        "name": "syntax",
+        "status": "pass"
+      }
+    ],
+    "scope": {}
+  },
+  "decisions": [
+    "Imported SpeedAuditResult from @/lib/graphql/queries/editor (confirmed it has issues: AuditIssue[] field).",
+    "computeComparison builds two Maps keyed by issueKey, iterates olderMap for removed, newerMap for added/unchanged.",
+    "getPersistentIssues uses Set intersection: build Set<string> for each audit, return keys present in both."
+  ],
+  "concerns": [
+    "Test coverage deferred to Task 4 (audit-history-utils.test.ts) per original task plan."
+  ],
+  "review_verdict": "approve",
+  "reviewed_at": "2026-03-26T02:53:06Z",
+  "reviewed_by": "sanjay"
+}

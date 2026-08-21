@@ -1,0 +1,86 @@
+{
+  "id": "2",
+  "title": "Create Strawberry GraphQL type definitions for DefineView",
+  "description": "Create `dashboard/backend/resolvers/define_types.py` with all Strawberry type classes for the Define page.\n\nTypes to define (matching tech spec API Surface exactly):\n- `SpecIndicator`: exists (bool), path (Optional[str]), audit_status (str), warning_count (int), warnings (list[str])\n- `SpecifiedData`: product_spec (SpecIndicator), technical_spec (SpecIndicator), design_spec (SpecIndicator), open_questions (int), sizing_estimate (Optional[int])\n- `BuiltData`: coverage_pct (Optional[float]), criteria_passed (Optional[int]), criteria_total (Optional[int]), guardian_verdict (Optional[str]), task_progress (Optional[float]), tasks_done (Optional[int]), tasks_total (Optional[int]), blocked_count (int), completed_at (Optional[str])\n- `GapEscalation`: description (str), linked_warning_id (Optional[str])\n- `GapData`: escalation_count (int), escalations (list[GapEscalation]), unverifiable_count (int), rework_count (int)\n- `DefineFeature`: name (str), state (str), specified (SpecifiedData), built (BuiltData), gap (GapData)\n- `DefineDefect`: name (str), severity (str), status (str), description (str), impact (Optional[str]), filed_at (Optional[str])\n- `DefineAggregates`: design_spec_count (int), feature_count (int), audit_warning_count (int), open_question_count (int), escalation_count (int), completed_count (int), executing_count (int), unplanned_count (int)\n- `DefineView`: vision_status (str), vision_path (Optional[str]), features (list[DefineFeature]), defects (list[DefineDefect]), aggregates (DefineAggregates)\n\nFollow the same pattern as `dashboard/backend/resolvers/landing_types.py` for type definition style.",
+  "acceptance_criteria": "- All 9 Strawberry types are defined with @strawberry.type decorator\n- Field names use snake_case matching the tech spec\n- Optional fields use Optional[] type hints\n- List fields use list[] type hints\n- File imports strawberry\n- Types are importable from define_types",
+  "depends_on": [],
+  "status": "done",
+  "branch": "speed/speed-dashboard-define/task-2-create-strawberry-graphql-type-definitio",
+  "agent_model": "opus",
+  "created_at": "2026-03-21T11:49:37Z",
+  "started_at": "2026-03-21T17:01:01Z",
+  "completed_at": null,
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": "{\"verdict\":\"request_changes\",\"spec_verification\":[{\"spec_quote\":\"@strawberry.type\nclass SpecIndicator:\n    exists: bool\n    path: Optional[str]\n    audit_status: str          # \\\"clean\\\" | \\\"warning\\\" | \\\"error\\\"\n    warning_count: int\n    warnings: list[str]\",\"spec_section\":\"API Surface — GraphQL types\",\"satisfied\":true,\"evidence\":\"define_types.py:13-19 — all five fields present with exact type annotations. path: Optional[str] correctly nullable. warnings: list[str] uses modern lowercase form.\",\"notes\":\"Inline comment preserving the enum constraint (clean/warning/error) is a reasonable documentation choice.\"},{\"spec_quote\":\"@strawberry.type\nclass SpecifiedData:\n    product_spec: SpecIndicator\n    technical_spec: SpecIndicator\n    design_spec: SpecIndicator\n    open_questions: int\n    sizing_estimate: Optional[int]\",\"spec_section\":\"API Surface — GraphQL types\",\"satisfied\":true,\"evidence\":\"define_types.py:22-28 — five fields, correct nested types, sizing_estimate Optional[int].\",\"notes\":null},{\"spec_quote\":\"@strawberry.type\nclass BuiltData:\n    coverage_pct: Optional[float]\n    criteria_passed: Optional[int]\n    criteria_total: Optional[int]\n    guardian_verdict: Optional[str]\n    task_progress: Optional[float]\n    tasks_done: Optional[int]\n    tasks_total: Optional[int]\n    blocked_count: int\n    completed_at: Optional[str]\",\"spec_section\":\"API Surface — GraphQL types\",\"satisfied\":true,\"evidence\":\"define_types.py:33-43 — nine fields. blocked_count is non-optional int as specified. All eight other fields are Optional. Types match exactly.\",\"notes\":null},{\"spec_quote\":\"@strawberry.type\nclass GapEscalation:\n    description: str\n    linked_warning_id: Optional[str]\",\"spec_section\":\"API Surface — GraphQL types\",\"satisfied\":true,\"evidence\":\"define_types.py:48-50 — both fields present, linked_warning_id correctly Optional.\",\"notes\":null},{\"spec_quote\":\"@strawberry.type\nclass GapData:\n    escalation_count: int\n    escalations: list[GapEscalation]\n    unverifiable_count: int\n    rework_count: int\",\"spec_section\":\"API Surface — GraphQL types\",\"satisfied\":true,\"evidence\":\"define_types.py:54-58 — four fields, list[GapEscalation] correct.\",\"notes\":null},{\"spec_quote\":\"@strawberry.type\nclass DefineFeature:\n    name: str\n    state: str\n    specified: SpecifiedData\n    built: BuiltData\n    gap: GapData\",\"spec_section\":\"API Surface — GraphQL types\",\"satisfied\":true,\"evidence\":\"define_types.py:63-68 — five fields, all nested types correct.\",\"notes\":null},{\"spec_quote\":\"@strawberry.type\nclass DefineDefect:\n    name: str\n    severity: str\n    status: str\n    description: str\n    impact: Optional[str]\n    filed_at: Optional[str]\",\"spec_section\":\"API Surface — GraphQL types\",\"satisfied\":true,\"evidence\":\"define_types.py:73-80 — six fields, impact and filed_at correctly Optional.\",\"notes\":null},{\"spec_quote\":\"@strawberry.type\nclass DefineAggregates:\n    design_spec_count: int\n    feature_count: int\n    audit_warning_count: int\n    open_question_count: int\n    escalation_count: int\n    completed_count: int\n    executing_count: int\n    unplanned_count: int\",\"spec_section\":\"API Surface — GraphQL types\",\"satisfied\":true,\"evidence\":\"define_types.py:85-93 — eight fields, all non-optional ints as specified.\",\"notes\":null},{\"spec_quote\":\"@strawberry.type\nclass DefineView:\n    vision_status: str\n    vision_path: Optional[str]\n    features: list[DefineFeature]\n    defects: list[DefineDefect]\n    aggregates: DefineAggregates\",\"spec_section\":\"API Surface — GraphQL types\",\"satisfied\":true,\"evidence\":\"define_types.py:98-104 — five fields, vision_path Optional, list fields use correct nested types.\",\"notes\":null},{\"spec_quote\":\"def define_view(self, info: strawberry.types.Info, feature: Optional[str] = None) -> Optional[DefineView]:\n    project_root = info.context[\\\"project_root\\\"]\n    return define.get_define_view(project_root, feature)\",\"spec_section\":\"API Surface — Query field\",\"satisfied\":true,\"evidence\":\"schema.py:551-558 — signature matches spec exactly: Optional[str] = None parameter, Optional[DefineView] return, correct context key, delegates to define.get_define_view.\",\"notes\":\"This change belongs to task-3 ('register-define-view-query-field-in-grap'), not task-2. Including it here means task-3 will encounter a conflict when merging, or these changes will be duplicated.\"}],\"missing_from_spec\":[],\"out_of_scope\":[{\"file\":\"dashboard/backend/schema.py\",\"line\":551,\"description\":\"Adding the define_view query field and importing DefineView/define resolver is explicitly scoped to task-3 ('register-define-view-query-field-in-grap') per the git history. task-3 is already merged into feature/dashboard-human-surfaces (commit 758b74e). Including this in task-2 either duplicates the work or will conflict during task-3's merge.\"},{\"file\":\"dashboard/frontend/app/define/page.tsx\",\"line\":1,\"description\":\"A 587-line frontend page component has no connection to 'Create Strawberry GraphQL type definitions for DefineView.' The spec's File Impact table lists this as a wholly separate deliverable: 'New file. Three-column grid with feature rows, defect rows, explorer.' The diff is truncated at 500 lines, making it impossible to review the full file. Frontend scaffolding belongs in a frontend task after resolver and schema work is stable.\"}],\"issues\":[{\"severity\":\"major\",\"file\":\"dashboard/frontend/app/define/page.tsx\",\"line\":1,\"message\":\"587-line frontend page is entirely out of scope for a type-definitions task. The diff is truncated at 500 lines, so the reviewer cannot verify the last ~87 lines. A partial review creates false confidence.\",\"suggestion\":\"Remove from this branch. Open a dedicated frontend task for app/define/page.tsx once the resolver and schema are merged and stable.\"},{\"severity\":\"minor\",\"file\":\"dashboard/backend/schema.py\",\"line\":549,\"message\":\"schema.py changes (import define, import DefineView, add define_view field) belong to task-3. task-3 is already merged per git log (commit 758b74e). These changes will either conflict or arrive as a no-op duplicate.\",\"suggestion\":\"Drop the schema.py hunk from this branch and let task-3 own it entirely.\"},{\"severity\":\"nit\",\"file\":\"dashboard/backend/tests/test_define_types.py\",\"line\":3,\"message\":\"Docstring says 'all 10 required type definitions' but EXPECTED_CLASSES has 9 entries, the spec defines 9 types, and the implementation has 9. The acceptance criteria itself has an off-by-one error that was propagated here. (A follow-on commit 2ad23d6 on the parent branch already corrected this to '9', so the diff being reviewed still contains the stale '10'.)\",\"suggestion\":\"Change '10' to '9' in the module docstring.\"}],\"strengths\":[\"define_types.py is a precise 1:1 match to the spec's API Surface section. Every field name, snake_case convention, Optional qualifier, and list annotation is correct with no omissions or additions.\",\"AST-based test strategy is well-chosen: it verifies structural correctness without requiring Strawberry to be importable in the test environment, making it safe to run in CI without the full backend dependency stack.\",\"Inline enum comments on constrained string fields (audit_status, guardian_verdict, vision_status, severity) document allowed values at the definition site without adding runtime overhead or coupling to a separate constants file.\",\"list[GapEscalation] and list[str] use the modern Python 3.9+ lowercase built-in form rather than typing.List, which is correct for the target runtime and consistent with the existing codebase style.\"]}\n\n--- Attempt 2 ---\nFailed with: Quality gates failed\nHuman guidance: Previous scope violations were false positives caused by a diff-base bug that has been fixed. Build the Strawberry type definitions as specified.\n\n--- Attempt 3 ---\nFailed with: Quality gates failed\nHuman guidance: define_types.py is correct and already on the integration branch. The diff_non_empty gate now detects absorbed work via fork-point diff. Do not recreate the file. Commit as-is and let the gate verify absorption.",
+  "base_commit": "7ed4b169751e655eb28450aea043215ed898e0bf",
+  "files_touched": [
+    "dashboard/backend/resolvers/define_types.py"
+  ],
+  "spec_references": [
+    {
+      "spec": "tech",
+      "section": "API Surface",
+      "requirement": "GraphQL types: SpecIndicator, SpecifiedData, BuiltData, GapData, GapEscalation, DefineFeature, DefineDefect, DefineAggregates, DefineView"
+    }
+  ],
+  "rationale": "Types are a pure data definition with no logic, so they're fast to implement and have zero dependencies. Every other backend task imports these types. Separated from the resolver (task 1) to allow parallel work on schema registration (task 3) once types exist.",
+  "decisions": [
+    "Reverted specs/design/speed-dashboard-define.md to its pre-task state using git to restore the content from before the previous task run's baseline commit. The 240-line rewrite was flagged as out of scope by the reviewer.",
+    "Fixed task_progress comment from '0.0-1.0' to '0.0-100.0 (computed as tasksDone/tasksTotal * 100)' to match the spec's Validation Rules table."
+  ],
+  "concerns": [
+    "The scope gate shows a warning for specs/design/speed-dashboard-define.md as an undeclared file. This is unavoidable since reverting the out-of-scope change requires touching that file."
+  ],
+  "review_verdict": "approve",
+  "timeout_count": 2,
+  "retry_count": 3,
+  "failure_classification": {
+    "class": "complexity",
+    "subclass": "exceeded_capacity",
+    "evidence": "Task timed out even after escalation to higher-capability model"
+  },
+  "gate_results": {
+    "checks": [
+      {
+        "name": "diff_non_empty",
+        "status": "pass",
+        "absorbed": true
+      },
+      {
+        "name": "declared_files",
+        "status": "pass"
+      },
+      {
+        "name": "scope",
+        "status": "pass"
+      },
+      {
+        "name": "python_imports",
+        "status": "pass"
+      },
+      {
+        "name": "not_blocked",
+        "status": "pass"
+      },
+      {
+        "name": "test_coverage",
+        "status": "pass"
+      },
+      {
+        "name": "gate_evidence",
+        "status": "warn"
+      },
+      {
+        "name": "criteria",
+        "status": "warn"
+      },
+      {
+        "name": "secrets",
+        "status": "pass"
+      }
+    ],
+    "scope": {}
+  },
+  "reviewed_at": "2026-03-21T17:21:07Z"
+}

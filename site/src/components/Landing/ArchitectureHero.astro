@@ -1,0 +1,1753 @@
+---
+---
+<section class="architecture-hero">
+  <nav class="ghost-nav">
+    <div class="nav-brand">
+      <a href="/"><b>&gt;</b>SPEED</a> // <a href="/docs/getting-started/">GET_STARTED</a>
+    </div>
+    <div class="nav-links">
+      <a href="/docs/getting-started/">Documentation</a>
+      <span class="sep">//</span>
+      <a href="/docs/design-philosophy/">Philosophy</a>
+      <span class="sep">//</span>
+      <a href="https://github.com/sanjayk/SPEED" class="nav-icon" aria-label="GitHub">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+      </a>
+    </div>
+    <div class="nav-session">SESSION: 0x8a92 // DEP_GRAPH_LIVE</div>
+  </nav>
+
+  <div class="main-split">
+    <div class="product-intro">
+      <div class="tagline">Spec to Production</div>
+      <h1>Context First.</h1>
+
+      <div class="value-prop">
+        <h2>One Surface, Whole Team</h2>
+        <p>
+          Product, design, and engineering work inside the same system. Specs,
+          tasks, and code share context instead of living across disconnected
+          tools.
+        </p>
+      </div>
+
+      <div class="value-prop">
+        <h2>Parallel Execution, Gated Output</h2>
+        <p>
+          Specs decompose into task DAGs. Independent tasks run concurrently
+          in isolated worktrees, gated by automated verification.
+        </p>
+
+        <div class="highlight-box">
+          <div class="tagline" style="margin-bottom: 8px; font-size: 9px;">
+            Core Foundation
+          </div>
+          <b>CODEBASE SEMANTIC GRAPH</b>
+          <p style="margin-top: 8px; font-size: 12px;">
+            Your technical stack as a navigable map. Functions, classes, call
+            chains, domain clusters, impact radii. Extracted via tree-sitter,
+            rebuilt every commit. The single source of truth agents build on.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <div class="visualization" id="viz-container">
+      <canvas id="dot-matrix"></canvas>
+    </div>
+  </div>
+
+  <div class="footer-system">
+    <div class="command-bar">
+      <a href="/docs/getting-started/" class="cmd-item"><b>[F1]</b> SETUP_GUIDE</a>
+      <a href="/docs/codebase-semantic-graph/" class="cmd-item cmd-active"><b>[F2]</b> CSG_CORE</a>
+      <a href="/docs/context-pipeline/" class="cmd-item"><b>[F3]</b> CONTEXT_PIPELINE</a>
+      <div style="flex-grow: 1;"></div>
+      <div class="cmd-item dim">FPS: <span id="fps">60</span> // HEAP: 84MB</div>
+    </div>
+    <div class="metadata-bar">
+      <div class="meta-left">
+        <span class="version">v2.0.4-beta</span>
+        <span class="sep">//</span>
+        <a href="/docs/writing-specs/" class="meta-link">MAN: speed(1)</a>
+      </div>
+      <div class="meta-right">
+        <a href="https://github.com/sanjayk/SPEED" class="meta-link">[GITHUB.COM/sanjayk/SPEED]</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<style>
+  .architecture-hero {
+    height: 100vh;
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    background-color: var(--color-bg);
+    color: var(--color-text);
+    font-family: var(--font-mono, 'IBM Plex Mono', monospace);
+    position: relative;
+    border: 1px solid color-mix(in srgb, var(--color-accent) 12%, transparent);
+    overflow: hidden;
+  }
+
+  .ghost-nav {
+    flex-shrink: 0;
+    height: 32px;
+    background: var(--color-bg-card);
+    border-bottom: 1px solid color-mix(in srgb, var(--color-accent) 12%, transparent);
+    display: flex;
+    align-items: center;
+    padding: 0 16px;
+    font-size: 11px;
+    color: var(--color-text-tertiary);
+    z-index: 100;
+    justify-content: space-between;
+  }
+  .nav-brand b {
+    color: var(--color-accent);
+    font-weight: 600;
+    margin-right: 8px;
+  }
+  .nav-brand a {
+    color: var(--color-text);
+    text-decoration: none;
+    transition: color 0.15s;
+  }
+  .nav-brand a:hover {
+    color: var(--color-accent);
+  }
+
+  .nav-links {
+    display: flex;
+    gap: 24px;
+    align-items: center;
+  }
+  .nav-links a {
+    color: var(--color-text-secondary);
+    text-decoration: none;
+    transition: color 0.15s;
+  }
+  .nav-links a:hover {
+    color: var(--color-text);
+  }
+  .nav-icon {
+    display: flex;
+    align-items: center;
+    color: var(--color-text-tertiary) !important;
+  }
+  .nav-icon:hover {
+    color: var(--color-text) !important;
+  }
+
+  .nav-session {
+    color: var(--color-text-tertiary);
+  }
+
+  .main-split {
+    flex: 1;
+    display: flex;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .product-intro {
+    width: 40%;
+    min-width: 450px;
+    padding: 60px;
+    border-right: 1px solid color-mix(in srgb, var(--color-accent) 12%, transparent);
+    background: linear-gradient(90deg, var(--color-bg-elevated) 0%, transparent 100%);
+    z-index: 50;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    overflow-y: auto; /* Internal scrolling if content is too long */
+    scrollbar-width: none;
+  }
+  .product-intro::-webkit-scrollbar { display: none; }
+
+  .tagline {
+    font-size: 10px;
+    color: var(--color-accent);
+    text-transform: uppercase;
+    letter-spacing: 0.3em;
+    margin-bottom: 24px;
+  }
+
+  h1 {
+    font-size: 42px;
+    font-weight: 700;
+    letter-spacing: -0.04em;
+    line-height: 1;
+    margin-bottom: 40px;
+    text-transform: uppercase;
+  }
+
+  .value-prop {
+    margin-bottom: 48px;
+  }
+
+  .value-prop h2 {
+    font-size: 14px;
+    color: var(--color-text);
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .value-prop h2::before {
+    content: '';
+    width: 4px;
+    height: 4px;
+    background: var(--color-accent);
+    box-shadow: 0 0 10px var(--color-accent);
+  }
+
+
+  .value-prop p {
+    font-size: 13px;
+    color: var(--color-text-tertiary);
+    line-height: 1.6;
+  }
+
+  .highlight-box {
+    background: var(--color-border-light);
+    border: 1px solid color-mix(in srgb, var(--color-accent) 20%, transparent);
+    padding: 24px;
+    border-left: 2px solid var(--color-accent);
+    margin-top: 20px;
+  }
+
+  .highlight-box b {
+    color: var(--color-accent);
+  }
+
+  .visualization {
+    flex-grow: 1;
+    position: relative;
+    background-color: #1a1a1e;
+    overflow: hidden;
+  }
+
+  #dot-matrix {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+
+  .footer-system {
+    background: var(--color-bg-card);
+    border-top: 1px solid color-mix(in srgb, var(--color-accent) 12%, transparent);
+  }
+
+  .command-bar {
+    height: 42px;
+    display: flex;
+    align-items: center;
+    padding: 0 16px;
+    font-size: 11px;
+    gap: 24px;
+    border-bottom: 1px solid var(--color-border);
+  }
+  .cmd-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    color: var(--color-text-tertiary);
+    text-decoration: none;
+    transition: color 0.15s;
+    user-select: none;
+  }
+  .cmd-item b {
+    color: var(--color-text-secondary);
+    font-weight: 500;
+  }
+  .cmd-item:hover {
+    color: var(--color-text);
+  }
+  .cmd-item:hover b {
+    color: var(--color-accent);
+  }
+  .cmd-active {
+    color: var(--color-accent) !important;
+    background: var(--color-border-light);
+    height: 100%;
+    padding: 0 12px;
+    border-left: 1px solid color-mix(in srgb, var(--color-accent) 20%, transparent);
+    border-right: 1px solid color-mix(in srgb, var(--color-accent) 20%, transparent);
+  }
+  .cmd-active b {
+    color: var(--color-accent) !important;
+  }
+
+  .metadata-bar {
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 16px;
+    font-size: 9px;
+    color: var(--color-text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .meta-left, .meta-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .meta-link {
+    color: var(--color-text-tertiary);
+    text-decoration: none;
+    transition: color 0.15s;
+  }
+  .meta-link:hover {
+    color: var(--color-text-secondary);
+    text-decoration: underline;
+  }
+  .sep {
+    color: var(--color-border);
+    user-select: none;
+  }
+  .version {
+    color: var(--color-accent);
+    opacity: 0.8;
+  }
+
+  .dim {
+    color: var(--color-text-tertiary);
+  }
+
+  @media (max-width: 1100px) {
+    .product-intro {
+      width: 450px;
+      padding: 40px;
+    }
+  }
+
+  @media (max-width: 768px) {
+    .architecture-hero {
+      height: auto;
+      min-height: 100dvh;
+    }
+
+    .ghost-nav {
+      height: 32px;
+      padding: 0 12px;
+    }
+    .nav-links a:not(.nav-icon) {
+      display: none;
+    }
+    .nav-links .sep {
+      display: none;
+    }
+    .nav-links {
+      gap: 0;
+    }
+    .nav-session {
+      display: none;
+    }
+
+    .main-split {
+      flex-direction: column;
+      overflow: visible;
+    }
+
+    .product-intro {
+      width: 100%;
+      min-width: 0;
+      padding: 32px 20px;
+      border-right: none;
+      border-bottom: 1px solid color-mix(in srgb, var(--color-accent) 12%, transparent);
+      background: var(--color-bg-elevated);
+    }
+
+    h1 {
+      font-size: 28px;
+      margin-bottom: 28px;
+    }
+
+    .tagline {
+      margin-bottom: 16px;
+    }
+
+    .value-prop {
+      margin-bottom: 28px;
+    }
+
+    .highlight-box {
+      padding: 16px;
+    }
+
+    .visualization {
+      height: 280px;
+      flex-grow: 0;
+      flex-shrink: 0;
+    }
+
+    .command-bar {
+      gap: 12px;
+      overflow-x: auto;
+      scrollbar-width: none;
+      white-space: nowrap;
+    }
+    .command-bar::-webkit-scrollbar { display: none; }
+
+    .metadata-bar {
+      flex-wrap: wrap;
+      height: auto;
+      min-height: 28px;
+      padding: 4px 12px;
+      gap: 4px 12px;
+    }
+    .meta-right {
+      display: none;
+    }
+  }
+</style>
+
+<script>
+  const canvas = document.getElementById('dot-matrix') as HTMLCanvasElement;
+  const vizContainer = document.getElementById('viz-container');
+  const fpsDisplay = document.getElementById('fps');
+
+  if (canvas && vizContainer) {
+    const ctx = canvas.getContext('2d')!;
+    const dpr = window.devicePixelRatio || 1;
+
+    // Grid parameters (recalculated on resize)
+    let DOT_RADIUS = 1.5;
+    let SPACING = 5;
+    let PADDING = 16;
+
+    let cols = 0;
+    let rows = 0;
+    let dirty = true;
+
+    // Grid state: each cell is {r,g,b,a} or null (off)
+    let grid: ({r:number,g:number,b:number,a:number} | null)[][] = [];
+
+    // Read CSS colors
+    const style = getComputedStyle(document.documentElement);
+    function cssColor(name: string): {r:number,g:number,b:number} {
+      const raw = style.getPropertyValue(name).trim();
+      const tmp = document.createElement('div');
+      tmp.style.color = raw;
+      document.body.appendChild(tmp);
+      const computed = getComputedStyle(tmp).color;
+      document.body.removeChild(tmp);
+      const m = computed.match(/(\d+)/g);
+      if (m) return { r: +m[0], g: +m[1], b: +m[2] };
+      return { r: 0, g: 204, b: 170 };
+    }
+
+    const TEAL = cssColor('--color-accent');
+    const GOLD = cssColor('--color-amber');
+    const GREEN = cssColor('--color-emerald');
+    const RED = cssColor('--color-red');
+    const MUTED = cssColor('--color-text-tertiary');
+
+    // ── Intelligence layer: types and state ──
+    interface NetworkNode {
+      r: number; c: number;       // grid position
+      radius: number;             // cluster radius (hubs=3, secondary=1-2)
+      brightness: number;         // 0..1, animated
+      hub: boolean;
+    }
+    interface NetworkEdge {
+      from: number; to: number;   // indices into networkNodes
+      path: {r:number,c:number}[];// Bresenham path
+      lit: boolean;               // whether illuminated yet
+      pulsePos: number;           // 0..1, traveling pulse position (-1 = none)
+    }
+    interface StreamParticle {
+      r: number; c: number;       // current position (float)
+      dr: number; dc: number;     // direction per frame
+      targetIdx: number;          // target node index
+      color: {r:number,g:number,b:number};
+      trail: {r:number,c:number}[];
+      alive: boolean;
+    }
+
+    let networkNodes: NetworkNode[] = [];
+    let networkEdges: NetworkEdge[] = [];
+    let streamParticles: StreamParticle[] = [];
+
+    // ── Scene 3: Product Live types and state ──
+    interface UserDot {
+      r: number; c: number;
+      tr: number; tc: number;
+      speed: number;
+      color: {r:number,g:number,b:number};
+      trail: {r:number,c:number}[];
+      dwelling: number;
+      alive: boolean;
+    }
+
+    let scene3Users: UserDot[] = [];
+    let lastScene3Phase = -1;
+    let appLayout: {
+      left: number; right: number; top: number; bottom: number;
+      navTop: number; navBottom: number;
+      sideLeft: number; sideRight: number; sideTop: number; sideBottom: number;
+      hasSidebar: boolean;
+      cards: {left: number; right: number; top: number; bottom: number}[];
+      smallGrid: boolean;
+    } | null = null;
+
+    // Seeded PRNG (simple LCG)
+    function seededRandom(seed: number): () => number {
+      let s = seed | 0;
+      return () => {
+        s = (s * 1664525 + 1013904223) & 0x7fffffff;
+        return s / 0x7fffffff;
+      };
+    }
+
+    // Bresenham line between two grid points
+    function bresenhamLine(r0: number, c0: number, r1: number, c1: number): {r:number,c:number}[] {
+      const points: {r:number,c:number}[] = [];
+      let dr = Math.abs(r1 - r0), dc = Math.abs(c1 - c0);
+      let sr = r0 < r1 ? 1 : -1, sc = c0 < c1 ? 1 : -1;
+      let err = dc - dr;
+      let cr = r0, cc = c0;
+      while (true) {
+        points.push({r: cr, c: cc});
+        if (cr === r1 && cc === c1) break;
+        const e2 = 2 * err;
+        if (e2 > -dr) { err -= dr; cc += sc; }
+        if (e2 < dc) { err += dc; cr += sr; }
+      }
+      return points;
+    }
+
+    // Generate network graph from grid dimensions
+    function generateNetwork() {
+      networkNodes = [];
+      networkEdges = [];
+      streamParticles = [];
+
+      const seed = cols * 1000 + rows;
+      const rng = seededRandom(seed);
+
+      // Bounding ellipse center and radii (offset right for text space)
+      const cx = Math.floor(cols * 0.55);
+      const cy = Math.floor(rows * 0.45);
+      const rx = Math.floor(cols * 0.3);
+      const ry = Math.floor(rows * 0.3);
+
+      const smallGrid = cols < 80 || rows < 60;
+
+      // Hub positions (normalized within ellipse)
+      const hubOffsets = [
+        {dr: 0, dc: 0},          // center
+        {dr: -0.7, dc: -0.6},    // upper-left
+        {dr: -0.7, dc: 0.6},     // upper-right
+        {dr: 0.7, dc: -0.6},     // lower-left
+        {dr: 0.7, dc: 0.6},      // lower-right
+        {dr: 0, dc: -0.8},       // mid-left
+        {dr: 0, dc: 0.8},        // mid-right
+      ];
+
+      for (const h of hubOffsets) {
+        const nr = Math.floor(cy + h.dr * ry);
+        const nc = Math.floor(cx + h.dc * rx);
+        if (nr >= 2 && nr < rows - 2 && nc >= 2 && nc < cols - 2) {
+          networkNodes.push({ r: nr, c: nc, radius: 3, brightness: 0, hub: true });
+        }
+      }
+
+      // Secondary nodes scattered inside ellipse
+      const secondaryCount = smallGrid ? 5 : 15 + Math.floor(rng() * 6);
+      for (let i = 0; i < secondaryCount; i++) {
+        const angle = rng() * Math.PI * 2;
+        const dist = 0.3 + rng() * 0.6; // avoid center cluster
+        const nr = Math.floor(cy + Math.sin(angle) * dist * ry);
+        const nc = Math.floor(cx + Math.cos(angle) * dist * rx);
+        if (nr >= 2 && nr < rows - 2 && nc >= 2 && nc < cols - 2) {
+          // Check minimum distance from existing nodes
+          let tooClose = false;
+          for (const n of networkNodes) {
+            const d = Math.sqrt((n.r - nr) ** 2 + (n.c - nc) ** 2);
+            if (d < 4) { tooClose = true; break; }
+          }
+          if (!tooClose) {
+            networkNodes.push({ r: nr, c: nc, radius: 1 + Math.floor(rng() * 2), brightness: 0, hub: false });
+          }
+        }
+      }
+
+      // Edges: connect each node to nearest neighbors
+      for (let i = 0; i < networkNodes.length; i++) {
+        const node = networkNodes[i];
+        const maxEdges = node.hub ? 3 : 2;
+
+        // Find distances to all other nodes
+        const dists: {idx: number, dist: number}[] = [];
+        for (let j = 0; j < networkNodes.length; j++) {
+          if (i === j) continue;
+          const other = networkNodes[j];
+          const d = Math.sqrt((node.r - other.r) ** 2 + (node.c - other.c) ** 2);
+          dists.push({idx: j, dist: d});
+        }
+        dists.sort((a, b) => a.dist - b.dist);
+
+        let edgeCount = 0;
+        for (const {idx} of dists) {
+          if (edgeCount >= maxEdges) break;
+          // Avoid duplicate edges
+          const exists = networkEdges.some(e =>
+            (e.from === i && e.to === idx) || (e.from === idx && e.to === i)
+          );
+          if (!exists) {
+            const path = bresenhamLine(node.r, node.c, networkNodes[idx].r, networkNodes[idx].c);
+            networkEdges.push({ from: i, to: idx, path, lit: false, pulsePos: -1 });
+          }
+          edgeCount++;
+        }
+      }
+
+      // Scene 3 layout
+      computeAppLayout();
+      scene3Users = [];
+    }
+
+    // Draw a node as a dot cluster
+    function drawNode(node: NetworkNode, brightness: number) {
+      const b = Math.max(0, Math.min(1, brightness));
+      if (b <= 0) return;
+      const color = node.hub ? TEAL : GREEN;
+      setPixel(node.r, node.c, color, b);
+      if (node.radius >= 2) {
+        setPixel(node.r - 1, node.c, color, b * 0.7);
+        setPixel(node.r + 1, node.c, color, b * 0.7);
+        setPixel(node.r, node.c - 1, color, b * 0.7);
+        setPixel(node.r, node.c + 1, color, b * 0.7);
+      }
+      if (node.radius >= 3) {
+        setPixel(node.r - 1, node.c - 1, color, b * 0.4);
+        setPixel(node.r - 1, node.c + 1, color, b * 0.4);
+        setPixel(node.r + 1, node.c - 1, color, b * 0.4);
+        setPixel(node.r + 1, node.c + 1, color, b * 0.4);
+        setPixel(node.r - 2, node.c, color, b * 0.25);
+        setPixel(node.r + 2, node.c, color, b * 0.25);
+        setPixel(node.r, node.c - 2, color, b * 0.25);
+        setPixel(node.r, node.c + 2, color, b * 0.25);
+      }
+    }
+
+    // Draw an edge with optional traveling pulse
+    function drawEdge(edge: NetworkEdge, alpha: number, pulsePos: number = -1) {
+      if (alpha <= 0) return;
+      const path = edge.path;
+      for (let i = 0; i < path.length; i++) {
+        const frac = path.length > 1 ? i / (path.length - 1) : 0;
+        let a = alpha * 0.3; // base edge brightness
+        // Pulse highlight
+        if (pulsePos >= 0) {
+          const dist = Math.abs(frac - pulsePos);
+          if (dist < 0.15) {
+            a = alpha * (0.3 + 0.7 * (1 - dist / 0.15));
+          }
+        }
+        setPixel(path[i].r, path[i].c, TEAL, a);
+      }
+    }
+
+    // Spawn stream particles from canvas edges toward network nodes
+    // Throttled: only spawns when enough time has passed since last spawn
+    let lastSpawnTime = 0;
+    function spawnStreamParticles(count: number, now: number) {
+      if (networkNodes.length === 0) return;
+      // Spawn at most every 200ms (~5 spawns/sec)
+      if (now - lastSpawnTime < 200) return;
+      lastSpawnTime = now;
+      for (let i = 0; i < count; i++) {
+        if (streamParticles.length >= 60) break;
+        const targetIdx = Math.floor(Math.random() * networkNodes.length);
+        const target = networkNodes[targetIdx];
+        const side = Math.floor(Math.random() * 4);
+        let sr: number, sc: number;
+        let color: {r:number,g:number,b:number};
+        switch (side) {
+          case 0: sr = 0; sc = Math.floor(Math.random() * cols); color = TEAL; break;
+          case 1: sr = Math.floor(Math.random() * rows); sc = cols - 1; color = GOLD; break;
+          case 2: sr = rows - 1; sc = Math.floor(Math.random() * cols); color = GREEN; break;
+          default: sr = Math.floor(Math.random() * rows); sc = 0; color = MUTED; break;
+        }
+        const dist = Math.sqrt((target.r - sr) ** 2 + (target.c - sc) ** 2);
+        const speed = 0.6;
+        const dr = ((target.r - sr) / dist) * speed;
+        const dc = ((target.c - sc) / dist) * speed;
+        streamParticles.push({ r: sr, c: sc, dr, dc, targetIdx, color, trail: [], alive: true });
+      }
+    }
+
+    // Update and cull stream particles
+    function updateStreamParticles() {
+      for (const p of streamParticles) {
+        if (!p.alive) continue;
+        // Save trail
+        p.trail.push({r: Math.round(p.r), c: Math.round(p.c)});
+        if (p.trail.length > 5) p.trail.shift();
+        // Move
+        p.r += p.dr;
+        p.c += p.dc;
+        // Check arrival
+        const target = networkNodes[p.targetIdx];
+        if (target) {
+          const dist = Math.sqrt((target.r - p.r) ** 2 + (target.c - p.c) ** 2);
+          if (dist < 3) p.alive = false;
+        }
+        // Check bounds
+        if (p.r < -2 || p.r > rows + 2 || p.c < -2 || p.c > cols + 2) p.alive = false;
+      }
+      streamParticles = streamParticles.filter(p => p.alive);
+    }
+
+    // Draw stream particles with trails
+    function drawStreamParticles() {
+      for (const p of streamParticles) {
+        // Draw trail
+        for (let i = 0; i < p.trail.length; i++) {
+          const a = (i + 1) / (p.trail.length + 1) * 0.4;
+          setPixel(p.trail[i].r, p.trail[i].c, p.color, a);
+        }
+        // Draw head
+        setPixel(Math.round(p.r), Math.round(p.c), p.color, 0.9);
+      }
+    }
+
+    // 5x7 pixel font bitmaps
+    const FONT: Record<string, number[]> = {
+      'A': [0x04,0x0A,0x11,0x1F,0x11,0x11,0x11],
+      'B': [0x1E,0x11,0x11,0x1E,0x11,0x11,0x1E],
+      'C': [0x0E,0x11,0x10,0x10,0x10,0x11,0x0E],
+      'D': [0x1E,0x11,0x11,0x11,0x11,0x11,0x1E],
+      'E': [0x1F,0x10,0x10,0x1E,0x10,0x10,0x1F],
+      'F': [0x1F,0x10,0x10,0x1E,0x10,0x10,0x10],
+      'G': [0x0E,0x11,0x10,0x17,0x11,0x11,0x0F],
+      'H': [0x11,0x11,0x11,0x1F,0x11,0x11,0x11],
+      'I': [0x0E,0x04,0x04,0x04,0x04,0x04,0x0E],
+      'J': [0x01,0x01,0x01,0x01,0x01,0x11,0x0E],
+      'K': [0x11,0x12,0x14,0x18,0x14,0x12,0x11],
+      'L': [0x10,0x10,0x10,0x10,0x10,0x10,0x1F],
+      'M': [0x11,0x1B,0x15,0x15,0x11,0x11,0x11],
+      'N': [0x11,0x19,0x15,0x13,0x11,0x11,0x11],
+      'O': [0x0E,0x11,0x11,0x11,0x11,0x11,0x0E],
+      'P': [0x1E,0x11,0x11,0x1E,0x10,0x10,0x10],
+      'Q': [0x0E,0x11,0x11,0x11,0x15,0x12,0x0D],
+      'R': [0x1E,0x11,0x11,0x1E,0x14,0x12,0x11],
+      'S': [0x0E,0x11,0x10,0x0E,0x01,0x11,0x0E],
+      'T': [0x1F,0x04,0x04,0x04,0x04,0x04,0x04],
+      'U': [0x11,0x11,0x11,0x11,0x11,0x11,0x0E],
+      'V': [0x11,0x11,0x11,0x11,0x0A,0x0A,0x04],
+      'W': [0x11,0x11,0x11,0x15,0x15,0x1B,0x11],
+      'X': [0x11,0x11,0x0A,0x04,0x0A,0x11,0x11],
+      'Y': [0x11,0x11,0x0A,0x04,0x04,0x04,0x04],
+      'Z': [0x1F,0x01,0x02,0x04,0x08,0x10,0x1F],
+      '0': [0x0E,0x11,0x13,0x15,0x19,0x11,0x0E],
+      '1': [0x04,0x0C,0x04,0x04,0x04,0x04,0x0E],
+      '2': [0x0E,0x11,0x01,0x06,0x08,0x10,0x1F],
+      '3': [0x0E,0x11,0x01,0x06,0x01,0x11,0x0E],
+      '4': [0x02,0x06,0x0A,0x12,0x1F,0x02,0x02],
+      '5': [0x1F,0x10,0x1E,0x01,0x01,0x11,0x0E],
+      '6': [0x06,0x08,0x10,0x1E,0x11,0x11,0x0E],
+      '7': [0x1F,0x01,0x02,0x04,0x08,0x08,0x08],
+      '8': [0x0E,0x11,0x11,0x0E,0x11,0x11,0x0E],
+      '9': [0x0E,0x11,0x11,0x0F,0x01,0x02,0x0C],
+      '>': [0x10,0x08,0x04,0x02,0x04,0x08,0x10],
+      ':': [0x00,0x04,0x04,0x00,0x04,0x04,0x00],
+      '/': [0x01,0x01,0x02,0x04,0x08,0x10,0x10],
+      '.': [0x00,0x00,0x00,0x00,0x00,0x04,0x04],
+      '_': [0x00,0x00,0x00,0x00,0x00,0x00,0x1F],
+      '[': [0x0E,0x08,0x08,0x08,0x08,0x08,0x0E],
+      ']': [0x0E,0x02,0x02,0x02,0x02,0x02,0x0E],
+      ' ': [0x00,0x00,0x00,0x00,0x00,0x00,0x00],
+      '-': [0x00,0x00,0x00,0x0E,0x00,0x00,0x00],
+      '+': [0x00,0x04,0x04,0x1F,0x04,0x04,0x00],
+    };
+
+    // Special rendered symbols (not from font bitmap)
+    const CHAR_W = 5;
+    const CHAR_H = 7;
+    const CHAR_GAP = 1;
+    const LINE_GAP = 2;
+
+    function clearGrid() {
+      grid = [];
+      for (let r = 0; r < rows; r++) {
+        grid[r] = [];
+        for (let c = 0; c < cols; c++) {
+          grid[r][c] = null;
+        }
+      }
+      dirty = true;
+    }
+
+    function setPixel(row: number, col: number, color: {r:number,g:number,b:number}, a = 1) {
+      if (row >= 0 && row < rows && col >= 0 && col < cols) {
+        grid[row][col] = { ...color, a };
+        dirty = true;
+      }
+    }
+
+    function drawChar(ch: string, col: number, row: number, color: {r:number,g:number,b:number}, a = 1) {
+      const upper = ch.toUpperCase();
+      // Special symbols rendered as single glyphs
+      if (upper === '\u2713' || upper === '✓') {
+        // Checkmark in 5x7
+        const check = [0x00,0x01,0x01,0x02,0x12,0x0C,0x00];
+        for (let dy = 0; dy < 7; dy++) {
+          for (let dx = 0; dx < 5; dx++) {
+            if (check[dy] & (0x10 >> dx)) setPixel(row + dy, col + dx, color, a);
+          }
+        }
+        return;
+      }
+      if (upper === '\u2717' || upper === '✗') {
+        // X mark in 5x7
+        const xm = [0x00,0x11,0x0A,0x04,0x0A,0x11,0x00];
+        for (let dy = 0; dy < 7; dy++) {
+          for (let dx = 0; dx < 5; dx++) {
+            if (xm[dy] & (0x10 >> dx)) setPixel(row + dy, col + dx, color, a);
+          }
+        }
+        return;
+      }
+      if (upper === '→') {
+        const arrow = [0x00,0x04,0x02,0x1F,0x02,0x04,0x00];
+        for (let dy = 0; dy < 7; dy++) {
+          for (let dx = 0; dx < 5; dx++) {
+            if (arrow[dy] & (0x10 >> dx)) setPixel(row + dy, col + dx, color, a);
+          }
+        }
+        return;
+      }
+      if (upper === '█') {
+        for (let dy = 0; dy < 7; dy++) {
+          for (let dx = 0; dx < 5; dx++) {
+            setPixel(row + dy, col + dx, color, a);
+          }
+        }
+        return;
+      }
+      if (upper === '░') {
+        for (let dy = 0; dy < 7; dy++) {
+          for (let dx = 0; dx < 5; dx++) {
+            if ((dy + dx) % 2 === 0) setPixel(row + dy, col + dx, color, a * 0.3);
+          }
+        }
+        return;
+      }
+
+      const bitmap = FONT[upper];
+      if (!bitmap) return;
+      for (let dy = 0; dy < CHAR_H; dy++) {
+        for (let dx = 0; dx < CHAR_W; dx++) {
+          if (bitmap[dy] & (0x10 >> dx)) {
+            setPixel(row + dy, col + dx, color, a);
+          }
+        }
+      }
+    }
+
+    function drawText(text: string, col: number, row: number, color: {r:number,g:number,b:number}, a = 1) {
+      let cx = col;
+      for (const ch of text) {
+        drawChar(ch, cx, row, color, a);
+        cx += CHAR_W + CHAR_GAP;
+      }
+    }
+
+    function textWidth(text: string): number {
+      return text.length * (CHAR_W + CHAR_GAP) - CHAR_GAP;
+    }
+
+    function drawProgressBar(col: number, row: number, total: number, filled: number, fillColor: {r:number,g:number,b:number}) {
+      for (let i = 0; i < total; i++) {
+        const bx = col + i * (CHAR_W + CHAR_GAP);
+        if (i < filled) {
+          drawChar('█', bx, row, fillColor);
+        } else {
+          drawChar('░', bx, row, MUTED, 0.4);
+        }
+      }
+    }
+
+    function resize() {
+      const rect = vizContainer.getBoundingClientRect();
+      canvas.width = rect.width * dpr;
+      canvas.height = rect.height * dpr;
+
+      // Scale grid to fit: on small containers, shrink dots and spacing
+      const minDim = Math.min(rect.width, rect.height);
+      if (minDim < 350) {
+        SPACING = 3;
+        DOT_RADIUS = 0.8;
+        PADDING = 8;
+      } else if (minDim < 500) {
+        SPACING = 4;
+        DOT_RADIUS = 1.2;
+        PADDING = 12;
+      } else {
+        SPACING = 5;
+        DOT_RADIUS = 1.5;
+        PADDING = 16;
+      }
+
+      cols = Math.floor((rect.width - PADDING * 2) / SPACING);
+      rows = Math.floor((rect.height - PADDING * 2) / SPACING);
+      clearGrid();
+      generateNetwork();
+      dirty = true;
+    }
+
+    function render() {
+      if (!dirty) return;
+      dirty = false;
+
+      const w = canvas.width;
+      const h = canvas.height;
+      ctx.clearRect(0, 0, w, h);
+
+      const offsetX = PADDING * dpr;
+      const offsetY = PADDING * dpr;
+      const sp = SPACING * dpr;
+      const rad = DOT_RADIUS * dpr;
+
+      // Draw all dots
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          const cx = offsetX + c * sp;
+          const cy = offsetY + r * sp;
+          const cell = grid[r][c];
+
+          if (cell) {
+            // Lit dot with glow
+            ctx.save();
+            ctx.shadowColor = `rgba(${cell.r},${cell.g},${cell.b},${cell.a * 0.6})`;
+            ctx.shadowBlur = 4 * dpr;
+            ctx.fillStyle = `rgba(${cell.r},${cell.g},${cell.b},${cell.a})`;
+            ctx.beginPath();
+            ctx.arc(cx, cy, rad, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+          } else {
+            // Off dot
+            ctx.fillStyle = 'rgba(255,255,255,0.04)';
+            ctx.beginPath();
+            ctx.arc(cx, cy, rad * 0.7, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+      }
+    }
+
+    // Animation sequence: intelligence phases prepended before pipeline
+    const PHASES = [
+      // Intelligence layer (phases 0-5)
+      { name: 'scan',       duration: 3500 },
+      { name: 'graph',      duration: 4000 },
+      { name: 'connect',    duration: 4000 },
+      { name: 'reinforce',  duration: 4000 },
+      { name: 'ready',      duration: 2500 },
+      { name: 'intel_hold', duration: 2000 },
+      // Pipeline layer (phases 6-12)
+      { name: 'init',     duration: 1500 },
+      { name: 'validate', duration: 2000 },
+      { name: 'plan',     duration: 2000 },
+      { name: 'execute',  duration: 4000 },
+      { name: 'gates',    duration: 1500 },
+      { name: 'ship',     duration: 2000 },
+      { name: 'hold',     duration: 2000 },
+      // Scene 3: Product Live (phases 13-18)
+      { name: 'app_frame',   duration: 3000 },
+      { name: 'app_content', duration: 3500 },
+      { name: 'app_users',   duration: 5000 },
+      { name: 'app_pulse',   duration: 3000 },
+      { name: 'app_hold',    duration: 2000 },
+      { name: 'app_fade',    duration: 2000 },
+    ];
+    const TOTAL_DURATION = PHASES.reduce((s, p) => s + p.duration, 0);
+
+    let loopStart = 0;
+    let animFrame = 0;
+
+    // Text start positions
+    const TX = 3;   // left margin in grid cols
+    const TY = 3;   // top margin in grid rows
+    const LINE_H = CHAR_H + LINE_GAP;
+
+    function typeText(text: string, col: number, row: number, color: {r:number,g:number,b:number}, progress: number) {
+      const charCount = Math.floor(text.length * progress);
+      const partial = text.substring(0, charCount);
+      drawText(partial, col, row, color);
+      // Cursor blink
+      if (progress < 1 && Math.floor(Date.now() / 300) % 2 === 0) {
+        const cursorCol = col + charCount * (CHAR_W + CHAR_GAP);
+        drawChar('█', cursorCol, row, color, 0.6);
+      }
+    }
+
+    function getPhaseInfo(elapsed: number): { phase: string, t: number } {
+      let acc = 0;
+      for (const p of PHASES) {
+        if (elapsed < acc + p.duration) {
+          return { phase: p.name, t: (elapsed - acc) / p.duration };
+        }
+        acc += p.duration;
+      }
+      return { phase: 'hold', t: 1 };
+    }
+
+    // ── Intelligence layer animation ──
+    function animateIntelligence(phase: string, t: number, phaseIndex: number, now: number) {
+      // Text position: bottom-left with enough room for 3 lines + padding
+      const textRow = rows - 22;
+      const textCol = 3;
+
+      // Phase 0: Scan - streams converge from edges, gentle buildup
+      if (phase === 'scan') {
+        const spawnCount = t < 0.3 ? 1 : 2;
+        spawnStreamParticles(spawnCount, now);
+        updateStreamParticles();
+        drawStreamParticles();
+        // Text types in slowly
+        typeText('> INDEXING PRODUCT', textCol, textRow, TEAL, Math.min(1, t * 1.2));
+        if (t > 0.5) {
+          const items = ['SPECS', 'CODE', 'DEPS', 'ARCH'];
+          const visibleCount = Math.min(items.length, Math.floor((t - 0.5) / 0.12) + 1);
+          let labelCol = textCol + 2;
+          for (let i = 0; i < visibleCount; i++) {
+            const color = i === 0 ? TEAL : i === 1 ? GREEN : i === 2 ? GOLD : MUTED;
+            drawText(items[i], labelCol, textRow + LINE_H, color);
+            labelCol += textWidth(items[i]) + CHAR_W * 2;
+          }
+        }
+      }
+
+      // Phase 1: Graph - nodes appear (building the context graph)
+      if (phase === 'graph') {
+        if (t < 0.3) {
+          spawnStreamParticles(1, now);
+          updateStreamParticles();
+          drawStreamParticles();
+        }
+        const nodeProgress = Math.min(1, t * 0.9);
+        const visibleNodes = Math.floor(nodeProgress * networkNodes.length);
+        for (let i = 0; i < visibleNodes; i++) {
+          const node = networkNodes[i];
+          node.brightness = Math.min(0.8, node.brightness + 0.02);
+          drawNode(node, node.brightness);
+        }
+        // Text: building the semantic graph
+        drawText('> BUILDING CONTEXT', textCol, textRow, TEAL);
+        const nodeCount = Math.floor(nodeProgress * 247);
+        drawText('MODULES: ' + String(nodeCount).padStart(3, ' '), textCol + 2, textRow + LINE_H, GOLD);
+      }
+
+      // Phase 2: Connect - edges illuminate (mapping relationships)
+      if (phase === 'connect') {
+        for (const node of networkNodes) {
+          drawNode(node, node.brightness);
+        }
+        const edgeProgress = Math.min(1, t * 0.85);
+        const visibleEdges = Math.floor(edgeProgress * networkEdges.length);
+        for (let i = 0; i < networkEdges.length; i++) {
+          const edge = networkEdges[i];
+          if (i < visibleEdges) {
+            edge.lit = true;
+            const edgeT = (t * networkEdges.length - i) / 2;
+            const pulsePos = edgeT > 0 && edgeT < 1 ? edgeT : -1;
+            drawEdge(edge, 0.8, pulsePos);
+            if (pulsePos > 0.85) {
+              const destNode = networkNodes[edge.to];
+              if (destNode) {
+                destNode.brightness = Math.min(1, destNode.brightness + 0.1);
+              }
+            }
+          }
+        }
+        // Text: mapping dependencies and relationships
+        drawText('> MAPPING DEPENDENCIES', textCol, textRow, TEAL);
+        const edgeCount = Math.floor(edgeProgress * 891);
+        drawText('RELATIONS: ' + String(edgeCount).padStart(3, ' '), textCol + 2, textRow + LINE_H, GOLD);
+      }
+
+      // Phase 3: Reinforce - radial waves (cross-referencing)
+      if (phase === 'reinforce') {
+        const cycle = Math.floor(t * 3);
+        const cycleT = (t * 3) - cycle;
+        const waveRadius = cycleT;
+
+        const cx = cols * 0.55;
+        const cy = rows * 0.45;
+        const maxR = Math.sqrt(cols * cols + rows * rows) * 0.4;
+
+        for (const node of networkNodes) {
+          const distFromCenter = Math.sqrt((node.r - cy) ** 2 + (node.c - cx) ** 2);
+          const normalizedDist = distFromCenter / maxR;
+          if (normalizedDist <= waveRadius) {
+            node.brightness = Math.min(1, node.brightness + 0.15 / (cycle + 1));
+          }
+          drawNode(node, node.brightness);
+        }
+
+        for (const edge of networkEdges) {
+          if (edge.lit) {
+            const speed = 1 + cycle * 0.5;
+            const pulsePos = (cycleT * speed) % 1;
+            drawEdge(edge, 0.6 + cycle * 0.15, pulsePos);
+          }
+        }
+
+        if (cycleT > 0.9 && cycle < 2) {
+          const rng = seededRandom(cycle * 777 + Math.floor(t * 100));
+          for (let attempt = 0; attempt < 3; attempt++) {
+            const i = Math.floor(rng() * networkNodes.length);
+            const j = Math.floor(rng() * networkNodes.length);
+            if (i !== j) {
+              const exists = networkEdges.some(e =>
+                (e.from === i && e.to === j) || (e.from === j && e.to === i)
+              );
+              if (!exists) {
+                const path = bresenhamLine(
+                  networkNodes[i].r, networkNodes[i].c,
+                  networkNodes[j].r, networkNodes[j].c
+                );
+                networkEdges.push({ from: i, to: j, path, lit: true, pulsePos: -1 });
+              }
+            }
+          }
+        }
+
+        // Text: cross-referencing across the product
+        drawText('> CROSS-REFERENCING', textCol, textRow, TEAL);
+        const labels = ['SPECS', 'PATTERNS', 'CONTRACTS'];
+        const label = labels[Math.min(cycle, labels.length - 1)];
+        drawText('PASS ' + (cycle + 1) + '/3', textCol + 2, textRow + LINE_H, GOLD);
+        drawText(label, textCol + 2 + textWidth('PASS N/3') + CHAR_W * 2, textRow + LINE_H, TEAL);
+      }
+
+      // Phase 4: Ready - peak brightness, simultaneous pulse
+      if (phase === 'ready') {
+        const pulse = 0.8 + 0.2 * Math.sin(t * Math.PI * 3);
+        for (const node of networkNodes) {
+          node.brightness = pulse;
+          drawNode(node, node.brightness);
+        }
+        for (const edge of networkEdges) {
+          drawEdge(edge, pulse, -1);
+        }
+        // Text: intelligence layer is online
+        drawText('CONTEXT LOCKED', textCol, textRow, GREEN);
+        drawText('READY', textCol + 2, textRow + LINE_H, TEAL);
+      }
+
+      // Phase 5: Intel hold - fade to black
+      if (phase === 'intel_hold') {
+        const fadeAlpha = Math.max(0, 1 - t * 0.8);
+        for (const node of networkNodes) {
+          drawNode(node, node.brightness * fadeAlpha);
+        }
+        for (const edge of networkEdges) {
+          drawEdge(edge, fadeAlpha * 0.8, -1);
+        }
+        if (fadeAlpha > 0.3) {
+          drawText('CONTEXT LOCKED', textCol, textRow, GREEN);
+          drawText('READY', textCol + 2, textRow + LINE_H, TEAL);
+        }
+      }
+    }
+
+    // ── Pipeline animation (existing logic, unchanged) ──
+    function animatePipeline(phase: string, t: number, pipelineIndex: number) {
+      // pipelineIndex: 0=init, 1=validate, 2=plan, 3=execute, 4=gates, 5=ship, 6=hold
+
+      // Phase 1: Init
+      if (pipelineIndex >= 0) {
+        if (phase === 'init') {
+          typeText('> SPEED V2.0.4', TX, TY, TEAL, Math.min(1, t * 2.5));
+          if (t > 0.5) {
+            drawText('AUTONOMOUS ENGINE', TX + 2, TY + LINE_H, MUTED);
+          }
+        } else {
+          drawText('> SPEED V2.0.4', TX, TY, TEAL);
+          drawText('AUTONOMOUS ENGINE', TX + 2, TY + LINE_H, MUTED);
+        }
+      }
+
+      // Phase 2: Validate
+      const line2 = TY + LINE_H * 2;
+      if (pipelineIndex >= 1) {
+        if (phase === 'validate') {
+          if (t < 0.5) {
+            typeText('> VALIDATING SPEC...', TX, line2, TEAL, t * 2);
+          } else {
+            drawText('> VALIDATING SPEC...', TX, line2, TEAL);
+            drawText('→ SPEC VALID', TX + 2, line2 + LINE_H, GREEN);
+            drawChar('✓', TX + 2 + textWidth('→ SPEC VALID') + CHAR_GAP + CHAR_W, line2 + LINE_H, GREEN);
+          }
+        } else if (pipelineIndex > 1) {
+          drawText('→ SPEC VALID', TX + 2, line2, GREEN);
+          drawChar('✓', TX + 2 + textWidth('→ SPEC VALID') + CHAR_GAP + CHAR_W, line2, GREEN);
+        }
+      }
+
+      // Phase 3: Plan
+      const line3 = (pipelineIndex > 1) ? line2 + LINE_H : line2 + LINE_H * 2;
+      if (pipelineIndex >= 2) {
+        if (phase === 'plan') {
+          if (t < 0.4) {
+            typeText('> PLANNING...', TX, line3, TEAL, t * 2.5);
+          } else {
+            drawText('> PLANNING...', TX, line3, TEAL);
+            const nRow = line3 + LINE_H;
+            drawText('5', TX + 2, nRow, GOLD);
+            drawText('TASKS', TX + 2 + (CHAR_W + CHAR_GAP) * 2, nRow, TEAL);
+            drawText('3', TX + 2 + (CHAR_W + CHAR_GAP) * 8, nRow, GOLD);
+            drawText('PARALLEL', TX + 2 + (CHAR_W + CHAR_GAP) * 10, nRow, TEAL);
+          }
+        } else if (pipelineIndex > 2) {
+          drawText('5', TX + 2, line3, GOLD);
+          drawText('TASKS', TX + 2 + (CHAR_W + CHAR_GAP) * 2, line3, TEAL);
+          drawText('3', TX + 2 + (CHAR_W + CHAR_GAP) * 8, line3, GOLD);
+          drawText('PARALLEL', TX + 2 + (CHAR_W + CHAR_GAP) * 10, line3, TEAL);
+        }
+      }
+
+      // Phase 4: Execute
+      const line4 = (pipelineIndex > 2) ? line3 + LINE_H : line3 + LINE_H * 2;
+      const BAR_LEN = 8;
+      const LABEL_W = 9;
+      if (pipelineIndex >= 3) {
+        const barCol = TX + 2 + LABEL_W * (CHAR_W + CHAR_GAP);
+        const checkCol = barCol + BAR_LEN * (CHAR_W + CHAR_GAP) + CHAR_W;
+
+        const rowModels  = line4;
+        const rowApi     = line4 + LINE_H;
+        const rowTests   = line4 + LINE_H * 2;
+        const rowRetry   = line4 + LINE_H * 3;
+        const rowQueries = line4 + LINE_H * 4;
+
+        if (phase === 'execute') {
+          drawText('MODELS  ', TX + 2, rowModels, TEAL);
+          if (t >= 0) {
+            const p = Math.min(1, t / 0.55);
+            drawProgressBar(barCol, rowModels, BAR_LEN, Math.floor(p * BAR_LEN), TEAL);
+            if (p >= 1) drawChar('✓', checkCol, rowModels, GREEN);
+          }
+
+          drawText('API     ', TX + 2, rowApi, TEAL);
+          if (t >= 0.05) {
+            const p = Math.min(1, (t - 0.05) / 0.55);
+            drawProgressBar(barCol, rowApi, BAR_LEN, Math.floor(p * BAR_LEN), TEAL);
+            if (p >= 1) drawChar('✓', checkCol, rowApi, GREEN);
+          }
+
+          drawText('TESTS   ', TX + 2, rowTests, TEAL);
+          if (t < 0.35) {
+            const p = Math.max(0, (t - 0.08) / (0.35 - 0.08));
+            drawProgressBar(barCol, rowTests, BAR_LEN, Math.floor(p * BAR_LEN), TEAL);
+          } else {
+            drawProgressBar(barCol, rowTests, BAR_LEN, Math.floor(BAR_LEN / 2), RED);
+            drawChar('✗', checkCol, rowTests, RED);
+
+            if (t > 0.43 && t < 0.55) {
+              drawText('TESTS   ', TX + 2, rowRetry, TEAL);
+              drawText('→ RETRY', barCol, rowRetry, GOLD);
+            } else if (t >= 0.55) {
+              const p = Math.min(1, (t - 0.55) / 0.30);
+              drawText('TESTS   ', TX + 2, rowRetry, TEAL);
+              drawProgressBar(barCol, rowRetry, BAR_LEN, Math.floor(p * BAR_LEN), GREEN);
+              if (p >= 1) drawChar('✓', checkCol, rowRetry, GREEN);
+            }
+          }
+
+          drawText('QUERIES ', TX + 2, rowQueries, TEAL);
+          if (t >= 0.10) {
+            const p = Math.min(1, (t - 0.10) / 0.55);
+            drawProgressBar(barCol, rowQueries, BAR_LEN, Math.floor(p * BAR_LEN), TEAL);
+            if (p >= 1) drawChar('✓', checkCol, rowQueries, GREEN);
+          }
+        } else if (pipelineIndex > 3) {
+          const completedRows = [
+            { label: 'MODELS  ', row: rowModels },
+            { label: 'API     ', row: rowApi },
+            { label: 'TESTS   ', row: rowTests },
+            { label: 'QUERIES ', row: rowQueries },
+          ];
+          completedRows.forEach(({ label, row }) => {
+            drawText(label, TX + 2, row, TEAL);
+            drawProgressBar(barCol, row, BAR_LEN, BAR_LEN, GREEN);
+            drawChar('✓', checkCol, row, GREEN);
+          });
+        }
+      }
+
+      // Phase 5: Gates
+      const line5 = line4 + LINE_H * 5;
+      if (pipelineIndex >= 4) {
+        if (phase === 'gates') {
+          typeText('> GATES', TX, line5, TEAL, Math.min(1, t * 3));
+          if (t > 0.3) {
+            drawText('23/23', TX + (CHAR_W + CHAR_GAP) * 8, line5, GOLD);
+            if (t > 0.6) {
+              drawText('PASS', TX + (CHAR_W + CHAR_GAP) * 14, line5, GREEN);
+            }
+          }
+        } else if (pipelineIndex > 4) {
+          drawText('> GATES', TX, line5, TEAL);
+          drawText('23/23', TX + (CHAR_W + CHAR_GAP) * 8, line5, GOLD);
+          drawText('PASS', TX + (CHAR_W + CHAR_GAP) * 14, line5, GREEN);
+        }
+      }
+
+      // Phase 6: Ship
+      const line6 = line5 + LINE_H;
+      if (pipelineIndex >= 5) {
+        if (phase === 'ship') {
+          if (t < 0.4) {
+            drawText('> REVIEW', TX, line6, TEAL);
+            if (t > 0.15) drawChar('✓', TX + textWidth('> REVIEW') + CHAR_GAP + CHAR_W, line6, GREEN);
+            if (t > 0.25) {
+              drawText('COHERENCE', TX + textWidth('> REVIEW') + (CHAR_W + CHAR_GAP) * 3, line6, TEAL);
+            }
+            if (t > 0.35) {
+              drawChar('✓', TX + textWidth('> REVIEW') + (CHAR_W + CHAR_GAP) * 3 + textWidth('COHERENCE') + CHAR_GAP + CHAR_W, line6, GREEN);
+            }
+          } else {
+            drawText('> REVIEW', TX, line6, TEAL);
+            drawChar('✓', TX + textWidth('> REVIEW') + CHAR_GAP + CHAR_W, line6, GREEN);
+            drawText('COHERENCE', TX + textWidth('> REVIEW') + (CHAR_W + CHAR_GAP) * 3, line6, TEAL);
+            drawChar('✓', TX + textWidth('> REVIEW') + (CHAR_W + CHAR_GAP) * 3 + textWidth('COHERENCE') + CHAR_GAP + CHAR_W, line6, GREEN);
+
+            const line7 = line6 + LINE_H;
+            typeText('> MERGED TO MAIN', TX, line7, TEAL, Math.min(1, (t - 0.4) * 2.5));
+            if (t > 0.75) {
+              drawChar('✓', TX + textWidth('> MERGED TO MAIN') + CHAR_GAP + CHAR_W, line7, GREEN);
+            }
+            if (t > 0.8 && t < 0.95) {
+              for (let r = 0; r < rows; r++) {
+                for (let c = 0; c < cols; c++) {
+                  if (grid[r][c]) {
+                    grid[r][c]!.a = Math.min(1, grid[r][c]!.a * 1.3);
+                  }
+                }
+              }
+              dirty = true;
+            }
+          }
+        } else if (pipelineIndex > 5) {
+          drawText('> REVIEW', TX, line6, TEAL);
+          drawChar('✓', TX + textWidth('> REVIEW') + CHAR_GAP + CHAR_W, line6, GREEN);
+          drawText('COHERENCE', TX + textWidth('> REVIEW') + (CHAR_W + CHAR_GAP) * 3, line6, TEAL);
+          drawChar('✓', TX + textWidth('> REVIEW') + (CHAR_W + CHAR_GAP) * 3 + textWidth('COHERENCE') + CHAR_GAP + CHAR_W, line6, GREEN);
+          drawText('> MERGED TO MAIN', TX, line6 + LINE_H, TEAL);
+          drawChar('✓', TX + textWidth('> MERGED TO MAIN') + CHAR_GAP + CHAR_W, line6 + LINE_H, GREEN);
+        }
+      }
+
+      // Phase 7: Hold + fade
+      if (phase === 'hold') {
+        const fadeAlpha = Math.max(0, 1 - t);
+        for (let r = 0; r < rows; r++) {
+          for (let c = 0; c < cols; c++) {
+            if (grid[r][c]) {
+              grid[r][c]!.a *= fadeAlpha;
+            }
+          }
+        }
+        dirty = true;
+      }
+    }
+
+    // ── Scene 3: Product Live ──
+    const USER_COLORS = [TEAL, GOLD, GREEN, {r:160,g:130,b:200}, {r:200,g:140,b:120}];
+
+    function computeAppLayout() {
+      const small = cols < 80 || rows < 60;
+      const left = Math.floor(cols * 0.08);
+      const right = Math.floor(cols * 0.92);
+      const top = Math.floor(rows * 0.06);
+      const bottom = Math.floor(rows * 0.70);
+
+      const navTop = top;
+      const navBottom = top + 2;
+
+      const hasSidebar = !small;
+      const sideLeft = left;
+      const sideRight = hasSidebar ? left + Math.floor((right - left) * 0.18) : left;
+      const sideTop = navBottom + 1;
+      const sideBottom = bottom;
+
+      const contentLeft = hasSidebar ? sideRight + 1 : left;
+      const cards: {left: number; right: number; top: number; bottom: number}[] = [];
+      const cardTop = navBottom + 2;
+      const cardMidX = Math.floor((contentLeft + right) / 2);
+      const cardMidY = Math.floor((cardTop + bottom) * 0.55);
+
+      if (small) {
+        const cardMid = Math.floor((cardTop + bottom) / 2);
+        cards.push({ left: contentLeft + 2, right: right - 2, top: cardTop + 1, bottom: cardMid - 1 });
+        cards.push({ left: contentLeft + 2, right: right - 2, top: cardMid + 1, bottom: bottom - 1 });
+      } else {
+        cards.push({ left: contentLeft + 2, right: cardMidX - 2, top: cardTop + 1, bottom: cardMidY - 1 });
+        cards.push({ left: cardMidX + 2, right: right - 2, top: cardTop + 1, bottom: cardMidY - 1 });
+        cards.push({ left: contentLeft + 2, right: right - 2, top: cardMidY + 2, bottom: bottom - 1 });
+      }
+
+      appLayout = {
+        left, right, top, bottom,
+        navTop, navBottom,
+        sideLeft, sideRight, sideTop, sideBottom,
+        hasSidebar, cards, smallGrid: small
+      };
+    }
+
+    function drawWireframe(scene3Index: number, t: number) {
+      if (!appLayout) return;
+      const al = appLayout;
+      const frameP = scene3Index === 0 ? t : 1;
+
+      // Nav bar sweep left-to-right
+      const navW = al.right - al.left;
+      const navFill = Math.floor(navW * Math.min(1, frameP * 1.5));
+      for (let c = al.left; c < al.left + navFill; c++) {
+        setPixel(al.navTop, c, MUTED, 0.3);
+        setPixel(al.navBottom, c, MUTED, 0.15);
+      }
+      // Logo
+      if (frameP > 0.2) {
+        for (let c = al.left + 2; c < Math.min(al.left + 5, al.right); c++) {
+          setPixel(al.navTop + 1, c, TEAL, 0.6);
+        }
+      }
+      // Nav link placeholders
+      if (frameP > 0.4) {
+        for (let i = 0; i < 3; i++) {
+          const nc = al.right - 12 + i * 4;
+          if (nc > al.left && nc < al.right) {
+            setPixel(al.navTop + 1, nc, MUTED, 0.3);
+            setPixel(al.navTop + 1, nc + 1, MUTED, 0.3);
+          }
+        }
+      }
+
+      // Sidebar drop top-to-bottom
+      if (al.hasSidebar) {
+        const sideP = scene3Index === 0 ? Math.max(0, (frameP - 0.3) / 0.7) : 1;
+        const sideH = al.sideBottom - al.sideTop;
+        const sideFill = Math.floor(sideH * Math.min(1, sideP * 1.3));
+        for (let r = al.sideTop; r < al.sideTop + sideFill; r++) {
+          setPixel(r, al.sideRight, MUTED, 0.1);
+        }
+        // Menu items
+        for (let i = 0; i < 5; i++) {
+          const mr = al.sideTop + 3 + i * 3;
+          if (mr >= al.sideTop + sideFill || mr >= al.sideBottom) break;
+          const mc = i === 0 ? TEAL : MUTED;
+          const ma = i === 0 ? 0.5 : 0.2;
+          const mLen = Math.floor((al.sideRight - al.sideLeft) * 0.7);
+          for (let c = al.sideLeft + 2; c < al.sideLeft + 2 + mLen; c++) {
+            setPixel(mr, c, mc, ma);
+          }
+        }
+      }
+
+      // Card corners (L-shaped markers)
+      const cornerP = scene3Index === 0 ? Math.max(0, (frameP - 0.5) / 0.5) : 1;
+      if (cornerP > 0) {
+        const cAlpha = 0.5 * Math.min(1, cornerP * 2);
+        const cLen = 3;
+        for (const card of al.cards) {
+          for (let i = 0; i < cLen; i++) {
+            setPixel(card.top, card.left + i, TEAL, cAlpha);
+            setPixel(card.top + i, card.left, TEAL, cAlpha);
+          }
+          for (let i = 0; i < cLen; i++) {
+            setPixel(card.top, card.right - i, TEAL, cAlpha);
+            setPixel(card.top + i, card.right, TEAL, cAlpha);
+          }
+          for (let i = 0; i < cLen; i++) {
+            setPixel(card.bottom, card.left + i, TEAL, cAlpha);
+            setPixel(card.bottom - i, card.left, TEAL, cAlpha);
+          }
+          for (let i = 0; i < cLen; i++) {
+            setPixel(card.bottom, card.right - i, TEAL, cAlpha);
+            setPixel(card.bottom - i, card.right, TEAL, cAlpha);
+          }
+          // Faint background wash
+          for (let r = card.top + 1; r < card.bottom; r++) {
+            for (let c = card.left + 1; c < card.right; c++) {
+              setPixel(r, c, MUTED, 0.06);
+            }
+          }
+        }
+      }
+    }
+
+    function drawCardContent(scene3Index: number, t: number) {
+      if (!appLayout) return;
+      const al = appLayout;
+      const contentP = scene3Index <= 0 ? 0 : scene3Index === 1 ? t : 1;
+      if (contentP <= 0) return;
+
+      const oscillate = scene3Index === 3 ? Math.sin(t * Math.PI * 4) * 0.08 : 0;
+      const rng = seededRandom(12345);
+
+      // Card 0: Metric bars
+      const c0 = al.cards[0];
+      if (c0) {
+        const barCount = al.smallGrid ? 3 : 4;
+        const barSpacing = Math.max(3, Math.floor((c0.bottom - c0.top - 6) / barCount));
+        for (let i = 0; i < barCount; i++) {
+          const barRow = c0.top + 3 + i * barSpacing;
+          if (barRow >= c0.bottom - 2) break;
+          const maxLen = c0.right - c0.left - 10;
+          const baseLen = 0.4 + rng() * 0.5;
+          const barLen = Math.floor(maxLen * (baseLen + oscillate) * Math.min(1, contentP * 1.5));
+          setPixel(barRow, c0.left + 3, MUTED, 0.3);
+          setPixel(barRow, c0.left + 4, MUTED, 0.3);
+          for (let c = c0.left + 7; c < c0.left + 7 + barLen && c < c0.right - 2; c++) {
+            setPixel(barRow, c, TEAL, 0.5);
+            setPixel(barRow + 1, c, TEAL, 0.3);
+          }
+        }
+      }
+
+      // Card 1: Vertical chart bars
+      const c1 = al.cards.length > 1 ? al.cards[1] : null;
+      if (c1) {
+        const chartBot = c1.bottom - 2;
+        const chartTop = c1.top + 3;
+        const chartLeft = c1.left + 3;
+        const chartRight = c1.right - 2;
+        const barCount = al.smallGrid ? 5 : Math.min(8, Math.floor((chartRight - chartLeft) / 3));
+        const barSpacing = Math.max(2, Math.floor((chartRight - chartLeft) / barCount));
+        for (let i = 0; i < barCount; i++) {
+          const bc = chartLeft + i * barSpacing + 1;
+          const maxH = chartBot - chartTop;
+          const baseH = 0.3 + rng() * 0.6;
+          const barH = Math.floor(maxH * (baseH + oscillate) * Math.min(1, contentP * 1.5));
+          for (let r = chartBot - barH; r <= chartBot; r++) {
+            if (r >= chartTop) setPixel(r, bc, GREEN, 0.5);
+          }
+        }
+      }
+
+      // Card 2: Table rows
+      const c2 = al.cards.length > 2 ? al.cards[2] : null;
+      if (c2) {
+        const tableTop = c2.top + 2;
+        const rowCount = Math.min(4, Math.floor((c2.bottom - tableTop) / 3));
+        const visRows = Math.floor(rowCount * Math.min(1, contentP * 1.3));
+        for (let i = 0; i < visRows; i++) {
+          const rr = tableTop + i * 3;
+          if (rr >= c2.bottom - 1) break;
+          const seg1 = Math.floor((c2.right - c2.left) * 0.15);
+          for (let c = c2.left + 3; c < c2.left + 3 + seg1; c++) {
+            setPixel(rr, c, TEAL, i === 0 ? 0.5 : 0.3);
+          }
+          const segStart = c2.left + 3 + seg1 + 3;
+          const seg2 = Math.floor((c2.right - c2.left) * 0.5);
+          for (let c = segStart; c < segStart + seg2 && c < c2.right - 2; c++) {
+            setPixel(rr, c, MUTED, 0.2);
+          }
+        }
+      }
+    }
+
+    function pickUserTarget(): {tr: number, tc: number} {
+      if (!appLayout) return {tr: 0, tc: 0};
+      const al = appLayout;
+      if (al.hasSidebar && Math.random() < 0.2) {
+        return {
+          tr: al.sideTop + 3 + Math.floor(Math.random() * Math.max(1, al.sideBottom - al.sideTop - 6)),
+          tc: al.sideLeft + 2 + Math.floor(Math.random() * Math.max(1, al.sideRight - al.sideLeft - 4))
+        };
+      }
+      const card = al.cards[Math.floor(Math.random() * al.cards.length)];
+      return {
+        tr: card.top + 2 + Math.floor(Math.random() * Math.max(1, card.bottom - card.top - 4)),
+        tc: card.left + 3 + Math.floor(Math.random() * Math.max(1, card.right - card.left - 6))
+      };
+    }
+
+    function updateAndDrawUsers(scene3Index: number, t: number) {
+      if (!appLayout) return;
+      const al = appLayout;
+      const maxUsers = al.smallGrid ? 3 : 5;
+      const spawnTimes = [0.05, 0.15, 0.25, 0.40, 0.55];
+
+      // Spawn during app_users
+      if (scene3Index === 2) {
+        for (let i = scene3Users.length; i < maxUsers; i++) {
+          if (i < spawnTimes.length && t >= spawnTimes[i]) {
+            const tgt = pickUserTarget();
+            scene3Users.push({
+              r: tgt.tr, c: tgt.tc,
+              tr: tgt.tr, tc: tgt.tc,
+              speed: 0.08 + Math.random() * 0.07,
+              color: USER_COLORS[i % USER_COLORS.length],
+              trail: [],
+              dwelling: Math.floor(40 + Math.random() * 60),
+              alive: true
+            });
+          }
+        }
+      }
+
+      for (const u of scene3Users) {
+        if (!u.alive) continue;
+        if (u.dwelling > 0) {
+          u.dwelling--;
+          u.r += (Math.random() - 0.5) * 0.3;
+          u.c += (Math.random() - 0.5) * 0.3;
+          if (u.dwelling === 0) {
+            const tgt = pickUserTarget();
+            u.tr = tgt.tr;
+            u.tc = tgt.tc;
+          }
+        } else {
+          const dr = u.tr - u.r;
+          const dc = u.tc - u.c;
+          const dist = Math.sqrt(dr * dr + dc * dc);
+          if (dist < 1.5) {
+            u.r = u.tr;
+            u.c = u.tc;
+            u.dwelling = Math.floor(40 + Math.random() * 60);
+          } else {
+            u.r += (dr / dist) * u.speed;
+            u.c += (dc / dist) * u.speed;
+          }
+        }
+
+        u.trail.push({r: Math.round(u.r), c: Math.round(u.c)});
+        const maxTrail = al.smallGrid ? 2 : 4;
+        if (u.trail.length > maxTrail) u.trail.shift();
+        for (let i = 0; i < u.trail.length; i++) {
+          const a = (i + 1) / (u.trail.length + 1) * 0.3;
+          setPixel(u.trail[i].r, u.trail[i].c, u.color, a);
+        }
+
+        const pr = Math.round(u.r);
+        const pc = Math.round(u.c);
+        setPixel(pr, pc, u.color, 0.8);
+        if (!al.smallGrid) {
+          setPixel(pr + 1, pc, u.color, 0.7);
+          setPixel(pr, pc + 1, u.color, 0.7);
+          setPixel(pr + 1, pc + 1, u.color, 0.6);
+        }
+      }
+    }
+
+    function drawScene3Text(scene3Index: number, t: number) {
+      const textRow = rows - 22;
+      const textCol = 3;
+
+      if (scene3Index === 0) {
+        typeText('> DEPLOYING', textCol, textRow, TEAL, Math.min(1, t * 1.5));
+        if (t > 0.4) drawText('BUILD 0X3FA2', textCol + 2, textRow + LINE_H, MUTED);
+      } else if (scene3Index === 1) {
+        drawText('> POPULATING UI', textCol, textRow, TEAL);
+        drawText('COMPONENTS: 24', textCol + 2, textRow + LINE_H, GOLD);
+      } else if (scene3Index === 2) {
+        drawText('> PRODUCT LIVE', textCol, textRow, GREEN);
+        drawText('USERS: ' + scene3Users.length, textCol + 2, textRow + LINE_H, TEAL);
+      } else if (scene3Index === 3) {
+        const sessions = Math.floor(47 + t * 1200);
+        drawText('SESSIONS: ' + String(sessions).padStart(4, ' '), textCol, textRow, TEAL);
+        drawText('0 ERRORS', textCol + 2, textRow + LINE_H, GREEN);
+        drawChar('✓', textCol + 2 + textWidth('0 ERRORS') + CHAR_GAP + CHAR_W, textRow + LINE_H, GREEN);
+      } else if (scene3Index >= 4) {
+        drawText('SESSIONS: 1247', textCol, textRow, TEAL);
+        drawText('0 ERRORS', textCol + 2, textRow + LINE_H, GREEN);
+        drawChar('✓', textCol + 2 + textWidth('0 ERRORS') + CHAR_GAP + CHAR_W, textRow + LINE_H, GREEN);
+      }
+    }
+
+    function animateProductLive(phase: string, t: number, scene3Index: number, now: number) {
+      if (scene3Index === 0 && lastScene3Phase !== 0) {
+        scene3Users = [];
+      }
+      lastScene3Phase = scene3Index;
+
+      drawWireframe(scene3Index, t);
+      if (scene3Index >= 1) drawCardContent(scene3Index, t);
+      if (scene3Index >= 2) updateAndDrawUsers(scene3Index, t);
+      drawScene3Text(scene3Index, t);
+
+      if (phase === 'app_pulse') {
+        const pulseA = 0.95 + 0.05 * Math.sin(t * Math.PI * 6);
+        for (let r = 0; r < rows; r++) {
+          for (let c = 0; c < cols; c++) {
+            if (grid[r][c]) grid[r][c]!.a *= pulseA;
+          }
+        }
+        dirty = true;
+      }
+
+      if (phase === 'app_fade') {
+        const fadeA = Math.max(0, 1 - t);
+        for (let r = 0; r < rows; r++) {
+          for (let c = 0; c < cols; c++) {
+            if (grid[r][c]) grid[r][c]!.a *= fadeA;
+          }
+        }
+        dirty = true;
+      }
+    }
+
+    function animateFrame(now: number) {
+      animFrame = requestAnimationFrame(animateFrame);
+
+      if (!loopStart) loopStart = now;
+      const elapsed = (now - loopStart) % TOTAL_DURATION;
+      const { phase, t } = getPhaseInfo(elapsed);
+
+      clearGrid();
+
+      const phaseIndex = PHASES.findIndex(p => p.name === phase);
+      const INTEL_PHASES = 6;
+      const PIPELINE_PHASES = 7;
+
+      if (phaseIndex < INTEL_PHASES) {
+        lastScene3Phase = -1;
+        animateIntelligence(phase, t, phaseIndex, now);
+      } else if (phaseIndex < INTEL_PHASES + PIPELINE_PHASES) {
+        lastScene3Phase = -1;
+        const pipelineIndex = phaseIndex - INTEL_PHASES;
+        animatePipeline(phase, t, pipelineIndex);
+      } else {
+        const scene3Index = phaseIndex - INTEL_PHASES - PIPELINE_PHASES;
+        animateProductLive(phase, t, scene3Index, now);
+      }
+
+      render();
+    }
+
+    // FPS counter
+    let lastFPSUpdate = 0;
+    let frames = 0;
+    function updateFPS(time: number) {
+      frames++;
+      if (time > lastFPSUpdate + 1000) {
+        if (fpsDisplay) fpsDisplay.innerText = Math.round((frames * 1000) / (time - lastFPSUpdate)).toString();
+        lastFPSUpdate = time;
+        frames = 0;
+      }
+      requestAnimationFrame(updateFPS);
+    }
+
+    resize();
+    window.addEventListener('resize', resize);
+    animFrame = requestAnimationFrame(animateFrame);
+    requestAnimationFrame(updateFPS);
+  }
+</script>

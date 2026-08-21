@@ -1,0 +1,63 @@
+id: scala-class
+language: scala
+metadata:
+  produces: node
+  kind: class
+rule:
+  kind: class_definition
+
+---
+id: scala-trait
+language: scala
+metadata:
+  produces: node
+  kind: type
+rule:
+  kind: trait_definition
+
+---
+id: scala-object
+language: scala
+metadata:
+  produces: node
+  kind: class
+rule:
+  kind: object_definition
+
+---
+id: scala-enum
+language: scala
+metadata:
+  produces: node
+  kind: type
+rule:
+  kind: enum_definition
+
+---
+id: scala-function
+language: scala
+metadata:
+  produces: node
+  kind: method
+rule:
+  kind: function_definition
+
+---
+id: scala-val
+language: scala
+metadata:
+  produces: node
+  kind: variable
+rule:
+  kind: val_definition
+
+---
+id: scala-class-extends
+language: scala
+metadata:
+  produces: edge
+  edge_type: inherits
+rule:
+  kind: class_definition
+  has:
+    kind: extends_clause

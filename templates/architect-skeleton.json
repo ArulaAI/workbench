@@ -1,0 +1,64 @@
+{
+  "type": "object",
+  "required": ["tasks", "validation"],
+  "additionalProperties": false,
+  "properties": {
+    "tasks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "description", "depends_on", "agent_model", "files_touched"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique numeric task identifier (e.g. '1', '2', '3')"
+          },
+          "title": {
+            "type": "string",
+            "description": "Short descriptive title"
+          },
+          "description": {
+            "type": "string",
+            "description": "Detailed implementation description: file paths, function signatures, technical approach"
+          },
+          "depends_on": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "IDs of tasks that must complete before this one"
+          },
+          "agent_model": {
+            "type": "string",
+            "description": "Model tier for this task (e.g. sonnet, opus)"
+          },
+          "files_touched": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Files this task will create or modify (relative to project root)"
+          }
+        }
+      }
+    },
+    "validation": {
+      "type": "array",
+      "description": "Gaps or issues found across specs. Empty array if clean.",
+      "items": {
+        "type": "object",
+        "required": ["severity", "issue", "product_requirement", "recommendation"],
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": ["critical", "warning", "note"]
+          },
+          "issue": { "type": "string" },
+          "product_requirement": { "type": "string" },
+          "recommendation": { "type": "string" }
+        }
+      }
+    },
+    "cross_cutting_concerns": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

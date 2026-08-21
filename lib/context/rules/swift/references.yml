@@ -1,0 +1,16 @@
+id: swift-import
+language: swift
+metadata:
+  produces: reference
+  ref_kind: import
+rule:
+  kind: import_declaration
+
+---
+id: swift-call
+language: swift
+metadata:
+  produces: reference
+  ref_kind: call
+rule:
+  kind: call_expression

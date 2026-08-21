@@ -1,0 +1,57 @@
+id: ruby-class
+language: ruby
+metadata:
+  produces: node
+  kind: class
+rule:
+  kind: class
+
+---
+id: ruby-module
+language: ruby
+metadata:
+  produces: node
+  kind: class
+rule:
+  kind: module
+
+---
+id: ruby-method
+language: ruby
+metadata:
+  produces: node
+  kind: method
+rule:
+  kind: method
+
+---
+id: ruby-singleton-method
+language: ruby
+metadata:
+  produces: node
+  kind: method
+rule:
+  kind: singleton_method
+
+---
+id: ruby-constant
+language: ruby
+metadata:
+  produces: node
+  kind: constant
+rule:
+  kind: assignment
+  has:
+    field: left
+    kind: constant
+
+---
+id: ruby-class-inherits
+language: ruby
+metadata:
+  produces: edge
+  edge_type: inherits
+rule:
+  kind: class
+  has:
+    kind: superclass

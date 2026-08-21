@@ -1,0 +1,28 @@
+{
+  "id": "5",
+  "title": "Reviewer Agent Defect Prompt Variant",
+  "description": "Modify `agents/reviewer.md` to add a defect-specific review section injected at runtime when the Reviewer operates on a defect fix.\n\n**Section: Defect Fix Review**\n\nThe reviewer receives: the diff, the defect report, and the triage output. Review criteria:\n\n1. **Defect addressed**: Does the fix resolve the specific issue described in the defect report and triage hypothesis? Does the failing test (if present, moderate only) now pass for the right reason?\n\n2. **Scope containment**: Are all changed files within the `affected_files` list from triage? Flag any file outside that scope. Flag any new functionality, renamed variables for style, reformatted code, or updated comments unrelated to the defect.\n\n3. **No new behavior**: Does the fix introduce any behavior not present before, beyond correcting the defect? New API endpoints, new UI states, changed return types, or modified interfaces beyond what the fix requires should all be flagged.\n\n4. **Regression risk**: Based on `regression_risks` from triage, does the fix appear safe? Are the changed code paths covered by the existing test suite?\n\nOutput format should match the existing Reviewer output structure (pass/fail with issues list), extended with a `scope_violations` array listing any files or changes outside the declared defect scope.\n\nThe section must be clearly delimited so the pipeline can extract and inject it selectively.",
+  "acceptance_criteria": "- `agents/reviewer.md` contains a 'Defect Fix Review' section [verify_by: test]\n- Section includes scope containment check against affected_files [verify_by: test]\n- Section includes 'no new behavior' criterion [verify_by: test]\n- Section references regression_risks from triage output [verify_by: test]\n- Section specifies scope_violations output array [verify_by: test]\n- Section is clearly delimited with a markdown header [verify_by: test]",
+  "depends_on": [],
+  "status": "done",
+  "branch": "speed/speed-defects/task-5-reviewer-agent-defect-prompt-variant",
+  "agent_model": "sonnet",
+  "created_at": "2026-02-24T08:09:53Z",
+  "started_at": "2026-02-24T08:40:05Z",
+  "completed_at": "2026-02-24T08:43:38Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": null,
+  "files_touched": [
+    "agents/reviewer.md"
+  ],
+  "decisions": [
+    "Used HTML comment markers (<!-- BEGIN: DEFECT FIX REVIEW --> / <!-- END: DEFECT FIX REVIEW -->) as delimiters rather than just markdown headers — these are machine-readable for pipeline extraction without breaking the document's markdown structure.",
+    "Kept defect_scope_check as an object with both scope_ok and large_diff fields, rather than replacing it. The scope_violations array is additive, giving the orchestrator a structured list of specific violations rather than just a boolean.",
+    "Restructured the four criteria into named bold headings (not a numbered list) to match the style used in developer.md's Defect Fix section.",
+    "The section header uses '## Defect Fix Review' to match the naming convention used in the task description and downstream pipeline references in task 8."
+  ],
+  "concerns": [
+    "The gates infrastructure (./speed/speed gates) couldn't be run because the .speed/ feature directory doesn't exist in this worktree. The change is markdown-only so there's nothing to lint/typecheck/test, but the gate invocation audit will show a failure to initialize rather than passing gates."
+  ]
+}

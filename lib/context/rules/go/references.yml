@@ -1,0 +1,40 @@
+id: go-selector
+language: go
+metadata:
+  produces: reference
+  ref_kind: attribute_access
+rule:
+  kind: selector_expression
+
+---
+id: go-import
+language: go
+metadata:
+  produces: reference
+  ref_kind: import
+  module_var: MODULE
+rule:
+  kind: import_spec
+  pattern: $MODULE
+
+---
+id: go-import-aliased
+language: go
+metadata:
+  produces: reference
+  ref_kind: import
+  module_var: MODULE
+rule:
+  kind: import_spec
+  pattern: $ALIAS $MODULE
+
+---
+id: go-call
+language: go
+metadata:
+  produces: reference
+  ref_kind: call
+  name_var: FUNC
+rule:
+  kind: call_expression
+  pattern: $FUNC($$$ARGS)

@@ -1,0 +1,118 @@
+<svg width="800" height="400" viewBox="0 0 800 400" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="800" height="400" rx="12" fill="#2a2a2e"/>
+
+  <defs>
+    <marker id="a" viewBox="0 0 8 6" refX="8" refY="3" markerWidth="8" markerHeight="6" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#00ccaa" opacity="0.5"/>
+    </marker>
+    <marker id="ag" viewBox="0 0 8 6" refX="8" refY="3" markerWidth="8" markerHeight="6" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#44cc77" opacity="0.5"/>
+    </marker>
+    <marker id="ar" viewBox="0 0 8 6" refX="8" refY="3" markerWidth="8" markerHeight="6" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#cc6666" opacity="0.5"/>
+    </marker>
+  </defs>
+
+  <!-- Title -->
+  <text x="400" y="28" text-anchor="middle" fill="#f0f0f0" font-family="IBM Plex Mono, monospace" font-size="12" font-weight="600" letter-spacing="0.1em">RESILIENCE FLEET</text>
+  <text x="400" y="46" text-anchor="middle" fill="#68686e" font-family="Inter, sans-serif" font-size="10">Worktree isolation → agent pipeline → verified merge</text>
+
+  <!-- ════════════════════════════════════════════ -->
+  <!-- ROW 1: BUILD PIPELINE (left → right)        -->
+  <!-- ════════════════════════════════════════════ -->
+
+  <!-- Worktree (col 1) -->
+  <rect x="50" y="70" width="112" height="52" rx="8" fill="#363638" stroke="#00ccaa" stroke-opacity="0.4"/>
+  <text x="106" y="94" text-anchor="middle" fill="#00ccaa" font-family="IBM Plex Mono, monospace" font-size="11" font-weight="600">Worktree</text>
+  <text x="106" y="110" text-anchor="middle" fill="#68686e" font-family="Inter, sans-serif" font-size="9">git isolate</text>
+
+  <!-- Arrow → -->
+  <line x1="162" y1="96" x2="243" y2="96" stroke="#00ccaa" stroke-opacity="0.3" stroke-width="1.5" marker-end="url(#a)"/>
+
+  <!-- Architect (col 2) -->
+  <rect x="246" y="70" width="112" height="52" rx="8" fill="#363638" stroke="#44bbee" stroke-opacity="0.4"/>
+  <text x="302" y="94" text-anchor="middle" fill="#44bbee" font-family="IBM Plex Mono, monospace" font-size="11" font-weight="600">Architect</text>
+  <text x="302" y="110" text-anchor="middle" fill="#68686e" font-family="Inter, sans-serif" font-size="9">plan + decompose</text>
+
+  <!-- Arrow → -->
+  <line x1="358" y1="96" x2="439" y2="96" stroke="#00ccaa" stroke-opacity="0.3" stroke-width="1.5" marker-end="url(#a)"/>
+
+  <!-- Plan Verifier (col 3) -->
+  <rect x="442" y="70" width="112" height="52" rx="8" fill="#363638" stroke="#44bbee" stroke-opacity="0.4"/>
+  <text x="498" y="90" text-anchor="middle" fill="#44bbee" font-family="IBM Plex Mono, monospace" font-size="10" font-weight="600">Plan Verifier</text>
+  <text x="498" y="106" text-anchor="middle" fill="#68686e" font-family="Inter, sans-serif" font-size="9">validate plan</text>
+
+  <!-- Arrow → -->
+  <line x1="554" y1="96" x2="635" y2="96" stroke="#00ccaa" stroke-opacity="0.3" stroke-width="1.5" marker-end="url(#a)"/>
+
+  <!-- Developer (col 4) -->
+  <rect x="638" y="70" width="112" height="52" rx="8" fill="#363638" stroke="#44cc77" stroke-opacity="0.4"/>
+  <text x="694" y="94" text-anchor="middle" fill="#44cc77" font-family="IBM Plex Mono, monospace" font-size="11" font-weight="600">Developer</text>
+  <text x="694" y="110" text-anchor="middle" fill="#68686e" font-family="Inter, sans-serif" font-size="9">implement task</text>
+
+  <!-- ════════════════════════════════════════════ -->
+  <!-- U-TURN CONNECTOR (right margin)             -->
+  <!-- ════════════════════════════════════════════ -->
+  <path d="M 750 96 H 766 Q 778 96 778 108 V 232 Q 778 244 766 244 H 750"
+        stroke="#00ccaa" stroke-opacity="0.2" stroke-width="1.5" fill="none" marker-end="url(#a)"/>
+
+  <!-- ════════════════════════════════════════════ -->
+  <!-- ROW 2: VERIFY PIPELINE (right → left)       -->
+  <!-- ════════════════════════════════════════════ -->
+
+  <!-- Quality Gates (col 4) -->
+  <rect x="638" y="218" width="112" height="52" rx="8" fill="#363638" stroke="#ffcc33" stroke-opacity="0.45"/>
+  <text x="694" y="241" text-anchor="middle" fill="#ffcc33" font-family="IBM Plex Mono, monospace" font-size="11" font-weight="600">Gates</text>
+  <text x="694" y="257" text-anchor="middle" fill="#68686e" font-family="Inter, sans-serif" font-size="9">lint · types · test</text>
+
+  <!-- PASS arrow ← (Gates to Reviewer) -->
+  <line x1="638" y1="237" x2="557" y2="237" stroke="#44cc77" stroke-opacity="0.4" stroke-width="1.5" marker-end="url(#ag)"/>
+  <text x="598" y="229" text-anchor="middle" fill="#44cc77" font-family="Inter, sans-serif" font-size="8" font-weight="600">PASS</text>
+
+  <!-- Reviewer (col 3) -->
+  <rect x="442" y="218" width="112" height="52" rx="8" fill="#363638" stroke="#aa66cc" stroke-opacity="0.4"/>
+  <text x="498" y="242" text-anchor="middle" fill="#aa66cc" font-family="IBM Plex Mono, monospace" font-size="11" font-weight="600">Reviewer</text>
+  <text x="498" y="258" text-anchor="middle" fill="#68686e" font-family="Inter, sans-serif" font-size="9">audit diff</text>
+
+  <!-- Arrow ← -->
+  <line x1="442" y1="244" x2="361" y2="244" stroke="#00ccaa" stroke-opacity="0.3" stroke-width="1.5" marker-end="url(#a)"/>
+
+  <!-- Coherence (col 2) -->
+  <rect x="246" y="218" width="112" height="52" rx="8" fill="#363638" stroke="#aa66cc" stroke-opacity="0.4"/>
+  <text x="302" y="242" text-anchor="middle" fill="#aa66cc" font-family="IBM Plex Mono, monospace" font-size="11" font-weight="600">Coherence</text>
+  <text x="302" y="258" text-anchor="middle" fill="#68686e" font-family="Inter, sans-serif" font-size="9">interface stability</text>
+
+  <!-- Arrow ← to Merge -->
+  <line x1="246" y1="244" x2="135" y2="244" stroke="#00ccaa" stroke-opacity="0.3" stroke-width="1.5" marker-end="url(#a)"/>
+
+  <!-- Merge ✓ (col 1) -->
+  <circle cx="106" cy="244" r="24" fill="#363638" stroke="#44cc77" stroke-opacity="0.5"/>
+  <text x="106" y="240" text-anchor="middle" fill="#44cc77" font-family="IBM Plex Mono, monospace" font-size="14" font-weight="700">✓</text>
+  <text x="106" y="255" text-anchor="middle" fill="#44cc77" font-family="Inter, sans-serif" font-size="8">merge</text>
+
+  <!-- ════════════════════════════════════════════ -->
+  <!-- FAILURE / RETRY LOOP                        -->
+  <!-- ════════════════════════════════════════════ -->
+
+  <!-- FAIL drops from Gates -->
+  <line x1="694" y1="270" x2="694" y2="300" stroke="#cc6666" stroke-opacity="0.4" stroke-width="1.5" marker-end="url(#ar)"/>
+  <text x="708" y="290" fill="#cc6666" font-family="Inter, sans-serif" font-size="8" font-weight="600">FAIL</text>
+
+  <!-- Failure Analyst box -->
+  <rect x="612" y="305" width="164" height="44" rx="8" fill="#363638" stroke="#cc6666" stroke-opacity="0.25"/>
+  <text x="694" y="324" text-anchor="middle" fill="#cc6666" font-family="IBM Plex Mono, monospace" font-size="10" font-weight="600">Failure Analyst</text>
+  <text x="694" y="339" text-anchor="middle" fill="#68686e" font-family="Inter, sans-serif" font-size="9">classify → dispatch Debugger</text>
+
+  <!-- Retry path: curves up from FA, through the col3-col4 gap, back to Developer -->
+  <path d="M 612 327 H 586 Q 574 327 574 315 V 110 Q 574 96 586 96 H 635"
+        stroke="#cc6666" stroke-opacity="0.25" stroke-width="1.5" stroke-dasharray="5 3" fill="none" marker-end="url(#ar)"/>
+  <text x="566" y="205" fill="#cc6666" font-family="Inter, sans-serif" font-size="8" font-weight="600" text-anchor="end">RETRY</text>
+
+  <!-- Escalation alternatives -->
+  <text x="694" y="368" text-anchor="middle" fill="#3a3a40" font-family="Inter, sans-serif" font-size="9">or: escalate model · request human</text>
+
+  <!-- ════════════════════════════════════════════ -->
+  <!-- BOTTOM ANNOTATION                           -->
+  <!-- ════════════════════════════════════════════ -->
+  <text x="400" y="393" text-anchor="middle" fill="#333338" font-family="Inter, sans-serif" font-size="9">Each task runs in an isolated worktree · agents share spec and gate results only</text>
+</svg>

@@ -1,0 +1,33 @@
+{
+  "id": "2",
+  "title": "Defect Report Template",
+  "description": "Create `templates/defect-report.md`, the structured template users fill out before running `speed defect`. The template must include all fields that `parse_defect_report()` (Task 1) expects to extract, with inline guidance for each field.\n\n**Template structure:**\n\n```markdown\n# Defect: <title>\n\nSeverity: <P0 | P1 | P2 | P3>\nRelated Feature: <feature-name matching a spec in specs/product/>\n\n## Observed Behavior\n<What actually happens. Be specific: include error messages, wrong values, broken UI states.>\n\n## Expected Behavior\n<What should happen instead, per the spec or reasonable user expectation.>\n\n## Reproduction Steps\n<Numbered steps to trigger the bug. Include preconditions (user state, data setup).>\n\n## Additional Context (optional)\n<Screenshots, log snippets, environment details, frequency of occurrence.>\n```\n\nSeverity guide (as a comment block at the top of the template):\n- P0: System down or data loss. Blocks all users.\n- P1: Major feature broken. Workaround exists but painful.\n- P2: Feature partially broken. Minor impact or edge case.\n- P3: Cosmetic or minor inconvenience. No functional impact.\n\nThe template should also include a brief comment explaining that `Related Feature` must match a spec filename in `specs/product/` (without the .md extension).",
+  "acceptance_criteria": "- `templates/defect-report.md` exists [verify_by: file_exists]\n- Template contains `Severity:` field with P0-P3 options documented [verify_by: test]\n- Template contains `Related Feature:` field [verify_by: test]\n- Template contains `## Observed Behavior` section [verify_by: test]\n- Template contains `## Expected Behavior` section [verify_by: test]\n- Template contains `## Reproduction Steps` section [verify_by: test]\n- Template includes severity level descriptions (P0 through P3) [verify_by: test]",
+  "depends_on": [],
+  "status": "done",
+  "branch": "speed/speed-defects/task-2-defect-report-template",
+  "agent_model": "sonnet",
+  "created_at": "2026-02-24T08:09:52Z",
+  "started_at": "2026-02-24T10:51:40Z",
+  "completed_at": "2026-02-24T10:53:02Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": "--- Attempt 1 ---\nFailed with: Quality gates failed\nHuman guidance: The gate command\n   path was wrong. It has been fixed. Run the gate commands exactly as shown in\n   your Quality Checks section.\n\n--- Attempt 2 ---\nFailed with: Quality gates failed\nHuman guidance: The gate evidence grounding check was\n  blocking all tasks. It has been fixed to a warning. No code changes needed —\n  just re-run gates.",
+  "files_touched": [
+    "templates/defect-report.md"
+  ],
+  "failure_classification": {
+    "class": "unclassified",
+    "subclass": "unknown",
+    "evidence": "No classification rule matched"
+  },
+  "review_verdict": null,
+  "retry_count": 2,
+  "decisions": [
+    "Added numbered example steps (1. Step 1, 2. Step 2, 3. Bug manifests) under Reproduction Steps to give users a concrete scaffold to fill in rather than just a placeholder comment.",
+    "Used an HTML comment block for the severity guide and Related Feature instructions so the guidance appears in the raw template but does not render in the filed report."
+  ],
+  "concerns": [
+    "The gate invocation evidence warning appeared — this is expected since the first two attempts ran gates in the wrong directory. The warning is non-blocking per the human guidance note."
+  ]
+}

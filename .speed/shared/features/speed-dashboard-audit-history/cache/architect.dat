@@ -1,0 +1,400 @@
+{
+  "tasks": [
+    {
+      "id": "1",
+      "title": "Create formatRelativeTime and issueKey utility functions",
+      "description": "Create `dashboard/frontend/components/editor/audit-history-utils.ts` with two pure utility functions.\n\n**`formatRelativeTime(isoString: string): string`**\nConverts an ISO 8601 timestamp to a human-readable relative time string:\n- Empty/invalid input returns 'unknown'\n- < 60 seconds ago returns 'just now'\n- < 60 minutes ago returns 'Nm ago' (e.g. '5m ago')\n- < 24 hours ago returns 'Nh ago' (e.g. '3h ago')\n- < 7 days ago returns 'Nd ago' (e.g. '2d ago')\n- >= 7 days ago returns short date 'Mar 15' using Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' })\n\nCompute the diff as `Date.now() - new Date(isoString).getTime()`. Check `isNaN` on the parsed date for invalid input.\n\n**`issueKey(issue: AuditIssue): string`**\nProduces a composite string key for matching issues across runs. Format: `${section}::${identifier}` where identifier is `ruleId` if available, otherwise first 80 chars of `message`. Import the `AuditIssue` type from the existing codebase. Check IntelPanel.tsx or the GraphQL types directory for the type definition. If `AuditIssue` does not have a `ruleId` field, use `section + '::' + message.slice(0, 80)`.\n\nExport both functions as named exports. Also export a `ComparisonResult` interface placeholder (just the type, implementation in task 2): `{ removed: AuditIssue[], unchanged: AuditIssue[], added: AuditIssue[] }`.",
+      "files_touched": [
+        "dashboard/frontend/components/editor/audit-history-utils.ts"
+      ],
+      "depends_on": [],
+      "agent_model": "sonnet",
+      "acceptance_criteria": "- formatRelativeTime('') returns 'unknown' [verify: test]\n- formatRelativeTime with invalid date string returns 'unknown' [verify: test]\n- formatRelativeTime with timestamp 30s ago returns 'just now' [verify: test]\n- formatRelativeTime with timestamp 5min ago returns '5m ago' [verify: test]\n- formatRelativeTime with timestamp 3h ago returns '3h ago' [verify: test]\n- formatRelativeTime with timestamp 2d ago returns '2d ago' [verify: test]\n- formatRelativeTime with timestamp 10d ago returns short date like 'Mar 15' [verify: test]\n- issueKey produces different keys for issues with same section but different messages [verify: test]\n- issueKey produces identical keys for the same issue across two audit runs [verify: test]\n- File exports formatRelativeTime, issueKey, and ComparisonResult as named exports [verify: lint]"
+    },
+    {
+      "id": "2",
+      "title": "Create computeComparison and getPersistentIssues functions",
+      "description": "Add to `dashboard/frontend/components/editor/audit-history-utils.ts` two functions that build on `issueKey`.\n\n**`computeComparison(olderAudit: SpeedAuditResult, newerAudit: SpeedAuditResult): ComparisonResult`**\nAlgorithm:\n1. Build `Map<string, AuditIssue>` from olderAudit.issues using issueKey as key.\n2. Build `Map<string, AuditIssue>` from newerAudit.issues using issueKey as key.\n3. removed = iterate older map, collect entries whose key is absent from newer map.\n4. added = iterate newer map, collect entries whose key is absent from older map.\n5. unchanged = iterate newer map, collect entries whose key exists in older map.\nReturn `{ removed, unchanged, added }`.\n\n**`getPersistentIssues(latestAudit: SpeedAuditResult, previousAudit: SpeedAuditResult | null): Set<string>`**\nIf previousAudit is null, return empty Set. Otherwise build Sets of issueKeys from each audit's issues array. Return the intersection (keys present in both). \n\nImport SpeedAuditResult from the existing type definitions. Look in IntelPanel.tsx or the GraphQL types for the existing interface. The type has at minimum: `{ status: string, issues: AuditIssue[], sizing: object | null, ranAt: string }`.",
+      "files_touched": [
+        "dashboard/frontend/components/editor/audit-history-utils.ts"
+      ],
+      "depends_on": [
+        "1"
+      ],
+      "agent_model": "sonnet",
+      "acceptance_criteria": "- computeComparison with identical audits returns all issues in unchanged, empty removed and added [verify: test]\n- computeComparison with completely different audits returns all in removed and added, empty unchanged [verify: test]\n- computeComparison with mixed changes correctly categorizes each issue [verify: test]\n- computeComparison with both audits having empty issues arrays returns all groups empty [verify: test]\n- getPersistentIssues returns empty Set when previousAudit is null [verify: test]\n- getPersistentIssues returns correct issueKey strings for issues present in both audits [verify: test]\n- getPersistentIssues returns empty Set when no issues overlap [verify: test]"
+    },
+    {
+      "id": "3",
+      "title": "Create useAuditHistory state management hook",
+      "description": "Create `dashboard/frontend/components/editor/use-audit-history.ts` with a custom React hook that manages all audit history selection state.\n\n**`useAuditHistory(auditCount: number)`** returns `AuditHistoryState`.\n\nState variables:\n- `selectedRunIndex: number` (useState, init 0)\n- `compareIndices: [number, number] | null` (useState, init null)\n\nDerived:\n- `isComparing: boolean` = compareIndices !== null\n\nActions (wrap each in useCallback with appropriate deps):\n- `selectRun(index: number)`: clamp index to [0, auditCount-1]. If index === current selectedRunIndex, reset to 0 (toggle off). Otherwise set selectedRunIndex to clamped index. Always clear compareIndices.\n- `shiftSelectRun(index: number)`: if auditCount < 2, return (no-op). Clamp index. If compareIndices is null, create tuple from [selectedRunIndex, index] sorted ascending (lower index = newer run). If the two indices are equal, return (can't compare run with itself). Set compareIndices, clear selectedRunIndex to 0. If compareIndices is already set and index matches one existing entry, clear compareIndices (cancel comparison). If index is new, replace the higher-numbered (older) entry in the tuple.\n- `exitComparison()`: set compareIndices to null, set selectedRunIndex to 0.\n- `resetToLatest()`: set compareIndices to null, set selectedRunIndex to 0.\n\nEffects:\n- Clamping effect: useEffect watching auditCount. If selectedRunIndex >= auditCount, set to Math.max(0, auditCount - 1). If compareIndices has any index >= auditCount, clear compareIndices.\n- Escape handler: useEffect adding keydown listener on document. On Escape: if isComparing, call exitComparison. Else if selectedRunIndex !== 0, call resetToLatest. Cleanup removes listener.\n\nExport the `AuditHistoryState` interface and the hook as default export.",
+      "files_touched": [
+        "dashboard/frontend/components/editor/use-audit-history.ts"
+      ],
+      "depends_on": [],
+      "agent_model": "sonnet",
+      "acceptance_criteria": "- Initial state: selectedRunIndex=0, compareIndices=null, isComparing=false [verify: test]\n- selectRun(1) sets selectedRunIndex to 1 [verify: test]\n- selectRun with same index toggles back to 0 [verify: test]\n- selectRun(5) with auditCount=3 clamps to 2 [verify: test]\n- selectRun clears any active compareIndices [verify: test]\n- shiftSelectRun is no-op when auditCount < 2 [verify: test]\n- shiftSelectRun with two different valid indices enters comparison mode [verify: test]\n- shiftSelectRun on existing compare index cancels comparison [verify: test]\n- Escape exits comparison mode on first press, deselects on second [verify: test]\n- selectedRunIndex auto-clamps when auditCount shrinks [verify: test]\n- compareIndices cleared when auditCount makes indices invalid [verify: test]\n- AuditHistoryState type is exported [verify: lint]"
+    },
+    {
+      "id": "4",
+      "title": "Unit tests for audit history utility functions",
+      "description": "Create `dashboard/frontend/components/editor/audit-history-utils.test.ts` with comprehensive vitest unit tests.\n\nUse `vi.useFakeTimers()` and `vi.setSystemTime()` to control Date.now() for formatRelativeTime tests. Create a helper `isoAgo(ms: number)` that returns `new Date(Date.now() - ms).toISOString()`.\n\n**describe('formatRelativeTime')**\n- it('returns unknown for empty string')\n- it('returns unknown for invalid date')\n- it('returns just now for 0 seconds ago')\n- it('returns just now for 30 seconds ago')\n- it('returns just now for 59 seconds ago')\n- it('returns 1m ago at 60 second boundary')\n- it('returns 45m ago for 45 minutes')\n- it('returns 1h ago at 60 minute boundary')\n- it('returns 23h ago for 23 hours')\n- it('returns 1d ago at 24 hour boundary')\n- it('returns 6d ago for 6 days')\n- it('returns short date at 7 day boundary')\n- it('returns short date for 30 days ago')\n- it('handles future timestamps gracefully')\n\n**describe('issueKey')**\n- it('generates key from section and ruleId')\n- it('falls back to message truncation without ruleId')\n- it('produces different keys for different messages in same section')\n- it('produces same key for identical issues')\n- it('handles empty section gracefully')\n\n**describe('computeComparison')**\n- it('returns empty groups for empty audits')\n- it('puts all issues in unchanged for identical audits')\n- it('puts issues in removed and added for completely different audits')\n- it('correctly categorizes mixed changes')\n- it('treats issue moved to different section as removed + added')\n\n**describe('getPersistentIssues')**\n- it('returns empty set for null previous')\n- it('returns empty set for no overlap')\n- it('returns all keys for full overlap')\n- it('returns only shared keys for partial overlap')\n\nConstruct mock SpeedAuditResult objects inline with minimal required fields.",
+      "files_touched": [
+        "dashboard/frontend/components/editor/audit-history-utils.test.ts"
+      ],
+      "depends_on": [
+        "2"
+      ],
+      "agent_model": "sonnet",
+      "acceptance_criteria": "- All formatRelativeTime boundary and edge case tests pass [verify: test]\n- All issueKey uniqueness and identity tests pass [verify: test]\n- All computeComparison categorization tests pass [verify: test]\n- All getPersistentIssues intersection tests pass [verify: test]\n- Tests use vitest describe/it/expect and vi.useFakeTimers [verify: lint]\n- No import errors from audit-history-utils.ts [verify: lint]"
+    },
+    {
+      "id": "5",
+      "title": "Unit tests for useAuditHistory hook",
+      "description": "Create `dashboard/frontend/components/editor/use-audit-history.test.ts` with hook tests.\n\nUse `renderHook` and `act` from `@testing-library/react`. Use `fireEvent.keyDown(document, { key: 'Escape' })` for keyboard tests.\n\n**describe('useAuditHistory')**\n\n**describe('initial state')**\n- it('starts with selectedRunIndex=0, compareIndices=null, isComparing=false')\n\n**describe('selectRun')**\n- it('sets selectedRunIndex to given index')\n- it('toggles back to 0 when selecting current index')\n- it('clamps to auditCount-1 when index exceeds bounds')\n- it('clears compareIndices when selecting a run')\n\n**describe('shiftSelectRun')**\n- it('is no-op when auditCount is 1')\n- it('enters comparison mode with sorted indices')\n- it('cancels comparison when clicking existing compare index')\n- it('replaces older index when third dot shift-clicked')\n- it('prevents comparing a run with itself')\n\n**describe('escape key')**\n- it('exits comparison mode on first Escape')\n- it('deselects run on Escape when not comparing')\n- it('is no-op at default state')\n- it('handles two rapid Escape presses correctly')\n\n**describe('clamping')**\n- it('clamps selectedRunIndex when auditCount decreases')\n- it('clears compareIndices when auditCount makes indices invalid')\n- it('handles auditCount going to 0')\n\nFor rerender tests (clamping), use `renderHook` with `initialProps` and call `rerender({ auditCount: newValue })`.",
+      "files_touched": [
+        "dashboard/frontend/components/editor/use-audit-history.test.ts"
+      ],
+      "depends_on": [
+        "3"
+      ],
+      "agent_model": "sonnet",
+      "acceptance_criteria": "- All selectRun state transition tests pass [verify: test]\n- All shiftSelectRun comparison mode entry/exit tests pass [verify: test]\n- Escape key two-level exit tests pass [verify: test]\n- Index clamping on auditCount decrease tests pass [verify: test]\n- Self-comparison prevention test passes [verify: test]\n- Tests use renderHook and act from @testing-library/react [verify: lint]\n- Hook imported correctly from use-audit-history.ts [verify: lint]"
+    },
+    {
+      "id": "6",
+      "title": "Create VerdictDot interactive button component",
+      "description": "Create `dashboard/frontend/components/editor/VerdictDot.tsx` — a button component replacing the existing static `fv-verdict-dot` spans.\n\nProps: `status` ('pass'|'warn'|'fail'), `selected` (boolean), `compareSelected` (boolean), `isLatest` (boolean), `onClick` (callback), `onShiftClick` (callback), `tooltip` (string), `tabIndex` (number).\n\nRendering rules:\n- Render as `<button>` with class `fv-verdict-dot` preserved for styling continuity.\n- Size: 6px default, 8px when `selected`, `compareSelected`, or `isLatest`.\n- Color: map status to `--color-emerald` / `--color-amber` / `--color-red`.\n- Opacity: 1.0 for latest/selected/compareSelected, 0.5 otherwise. Hover: 0.8.\n- Selection ring: `box-shadow: 0 0 0 2px var(--color-border)` when `selected`. `box-shadow: 0 0 0 2px var(--color-accent)` when `compareSelected`. Compare ring hover adds `--color-accent-glow` shadow.\n- Hit area: pad the `<button>` to at least 24x24px with the visual dot centered.\n- Pressed state: `transform: scale(0.9)`.\n- Focus: `outline: 2px solid var(--color-accent)` with 2px offset.\n- Tooltip: native `title` attribute set to `tooltip` prop.\n- Click handler: check `event.shiftKey` — if true, call `onShiftClick`; otherwise call `onClick`.\n\nAccessibility:\n- `aria-label=\"Audit run from {tooltip}, verdict: {status}\"`. When selected, append \", selected\".\n- `aria-pressed={selected || compareSelected}`.\n- `tabIndex` prop passed through for roving tabindex (caller controls).\n\nMotion: `transition: opacity 120ms ease-out, transform 120ms ease-out, box-shadow 120ms ease-out`. Under `prefers-reduced-motion: reduce`, set `transition: none`.\n\nExport the component as default and as named export `VerdictDot`.",
+      "acceptance_criteria": "- [test] VerdictDot renders a <button> element with class fv-verdict-dot\n- [test] aria-label includes relative timestamp and verdict status\n- [test] aria-pressed reflects selected or compareSelected state\n- [test] Click with shiftKey=true calls onShiftClick, not onClick\n- [test] Click without shiftKey calls onClick, not onShiftClick\n- [manual] Selected dot shows box-shadow ring using --color-border\n- [manual] Compare-selected dot shows box-shadow ring using --color-accent\n- [manual] Button hit area is at least 24x24px via padding\n- [manual] prefers-reduced-motion: reduce disables all transitions\n- [lint] No hardcoded color values — all colors reference CSS custom properties",
+      "depends_on": [],
+      "agent_model": "sonnet",
+      "files_touched": [
+        "dashboard/frontend/components/editor/VerdictDot.tsx"
+      ]
+    },
+    {
+      "id": "7",
+      "title": "Create RunHeader and ComparisonHeader banner components",
+      "description": "Create two small presentational components in separate files.\n\n**`dashboard/frontend/components/editor/RunHeader.tsx`**\n\nProps: `relativeTime` (string), `onBackToLatest` (callback).\n\nRenders a horizontal bar with:\n- Left: \"Viewing audit from {relativeTime}\" in `--font-mono`, 10px, weight 400, `--color-text-tertiary`.\n- Right: \"← Latest\" link in `--font-mono`, 10px, weight 500, `--color-accent`. On click calls `onBackToLatest`.\n- Background: `var(--color-bg)`. Border-bottom: `1px solid var(--color-border)`.\n- Padding: `6px 12px`.\n- `role=\"status\"`, `aria-live=\"polite\"` on the container.\n- Entry animation: opacity 0→1 + max-height 0→40px over 150ms ease. Exit: reverse in 100ms ease-in. Under reduced motion, instant.\n\n**`dashboard/frontend/components/editor/ComparisonHeader.tsx`**\n\nProps: `olderTime` (string), `newerTime` (string), `olderCount` (number), `newerCount` (number).\n\nRenders a stacked layout:\n- Row 1: \"Comparing: {olderTime} → {newerTime}\" in `--font-mono`, 11px, weight 500, `--color-text`.\n- Row 2: \"{olderCount} issues → {newerCount} issues\" in `--font-mono`, 11px, weight 500. Delta shown as parenthesized signed integer: `(−3)` or `(+2)` or `(0)`. Color: `--color-emerald` if newerCount < olderCount, `--color-red` if greater, `--color-text-tertiary` if equal.\n- Background: `var(--color-bg)`. Padding: `10px 12px`.\n- `role=\"status\"`, `aria-live=\"polite\"`. Screen reader announcement: \"Comparing audit from {olderTime} with {newerTime}. {olderCount} issues to {newerCount} issues.\"\n- Same entry/exit animation as RunHeader.\n\nBoth components export named and default exports.",
+      "acceptance_criteria": "- [test] RunHeader renders relative timestamp text and Latest link\n- [test] RunHeader Latest link uses --color-accent and calls onBackToLatest on click\n- [test] RunHeader has role=status and aria-live=polite\n- [test] ComparisonHeader renders both timestamps and issue counts with delta\n- [test] ComparisonHeader delta uses --color-emerald when issues decreased\n- [test] ComparisonHeader delta uses --color-red when issues increased\n- [test] ComparisonHeader has role=status and aria-live=polite\n- [lint] No hardcoded color or font values — all reference CSS custom properties",
+      "depends_on": [],
+      "agent_model": "sonnet",
+      "files_touched": [
+        "dashboard/frontend/components/editor/RunHeader.tsx",
+        "dashboard/frontend/components/editor/ComparisonHeader.tsx"
+      ]
+    },
+    {
+      "id": "8",
+      "title": "Create ComparisonView grouped findings component",
+      "description": "Create `dashboard/frontend/components/editor/ComparisonView.tsx`.\n\nProps: `olderAudit` (SpeedAuditResult), `newerAudit` (SpeedAuditResult), `onExit` (callback).\n\nInternal logic:\n- Import `computeComparison` from `./audit-history-utils` (created in Task 2). Call it with the two audits to get `{ removed, unchanged, added }` arrays.\n- Render three sections in order: Removed, Unchanged, Added.\n\nSection rendering:\n- Each section has a header using existing `fv-group-header` class pattern: `--font-mono`, 10px, weight 500, `--color-text-tertiary`. Text: \"Removed\", \"Unchanged\", or \"Added\".\n- Section gap: `4px` between sections.\n- If a section has zero items, render \"(none)\" in `--font-sans`, 12px, `--color-text-tertiary`, italic.\n- Each section group gets `role=\"group\"` with `aria-label`: \"Removed findings\", \"Unchanged findings\", \"Added findings\".\n\nFinding row rendering:\n- Removed rows: text in `--color-emerald` at 60% opacity with `text-decoration: line-through`. Background tint: `rgba(68, 204, 119, 0.08)`.\n- Added rows: text in `--color-red` at 80% opacity. Background tint: `rgba(239, 68, 100, 0.08)`.\n- Unchanged rows: standard finding text styling (`--color-text-secondary`, 13px, `--font-sans`).\n- Row padding: `8px 12px`. Hover: `--color-bg-card-hover` background.\n- Each row shows severity icon and truncated message (truncate at 65 chars with ellipsis).\n\nFooter: \"Exit comparison\" link at bottom. `--font-sans`, 11px, `--color-text-tertiary`. Hover: `--color-text-secondary`. On click: call `onExit`.\n\nThe entire component is wrapped in a scrollable container. Content swap uses the existing `fvFadeIn` animation (150ms ease, opacity 0→1).",
+      "acceptance_criteria": "- [test] ComparisonView renders Removed, Unchanged, Added sections in that order\n- [test] Empty section displays (none) text\n- [test] Exit comparison link calls onExit callback on click\n- [test] Each section group has role=group and appropriate aria-label\n- [test] computeComparison is imported from audit-history-utils, not reimplemented\n- [test] Finding messages truncated at 65 chars with ellipsis\n- [manual] Removed rows have line-through text decoration and emerald tint background\n- [manual] Added rows have red-tinted background at rgba(239, 68, 100, 0.08)",
+      "depends_on": [
+        "2"
+      ],
+      "agent_model": "sonnet",
+      "files_touched": [
+        "dashboard/frontend/components/editor/ComparisonView.tsx"
+      ]
+    },
+    {
+      "id": "9",
+      "title": "Integrate audit history into IntelPanel",
+      "description": "Modify `dashboard/frontend/components/editor/IntelPanel.tsx` to wire all Phase 1 utilities and Phase 2 components into the existing Findings tab.\n\nImports to add:\n- `useAuditHistory` from `./use-audit-history` (Task 3)\n- `formatRelativeTime`, `getPersistentIssues` from `./audit-history-utils` (Tasks 1, 2)\n- `VerdictDot` from `./VerdictDot` (Task 6)\n- `RunHeader` from `./RunHeader` (Task 7)\n- `ComparisonHeader` from `./ComparisonHeader` (Task 7)\n- `ComparisonView` from `./ComparisonView` (Task 8)\n\n**Hook wiring:**\nCall `useAuditHistory(recentAudits)` at the top of the Findings tab render path. Destructure `selectedRunIndex`, `compareIndices`, `selectRun`, `addCompareIndex`, `clearSelection`, `clearComparison`, `selectedAudit`, `isComparing`.\n\n**Verdict dots replacement:**\nReplace existing `<span className=\"fv-verdict-dot\">` elements with `<VerdictDot>` components. For each audit in `recentAudits`, render a VerdictDot with:\n- `status={audit.status}`, `selected={selectedRunIndex === i}`, `compareSelected={compareIndices?.includes(i)}`, `isLatest={i === 0}`\n- `onClick={() => selectRun(i)}`, `onShiftClick={() => addCompareIndex(i)}`\n- `tooltip={formatRelativeTime(audit.ranAt)}`\n\nWrap the dots in a container with `role=\"toolbar\"`, `aria-label=\"Audit history\"`, `aria-orientation=\"horizontal\"`. Implement roving tabindex: track `focusedDotIndex` in local state. Only the focused dot gets `tabIndex={0}`, others get `tabIndex={-1}`. Arrow Left/Right move focus, wrapping at boundaries. Enter/Space activate the focused dot.\n\n**Persistent issue count:**\nWhen viewing latest (selectedRunIndex === 0) and recentAudits.length >= 2, compute `persistentIssues = getPersistentIssues(recentAudits[0], recentAudits[1])`. If persistentIssues.size > 0, display count in verdict summary area using `--color-amber`.\n\n**Run header:**\nRender `<RunHeader>` between verdict strip and findings list when `selectedRunIndex !== 0 && !isComparing`. Pass `relativeTime={formatRelativeTime(selectedAudit.ranAt)}` and `onBackToLatest={() => selectRun(0)}`.\n\n**Comparison mode:**\nWhen `isComparing`, render `<ComparisonHeader>` with both audits' timestamps and issue counts. Below it, render `<ComparisonView>` with the two selected audits and `onExit={clearComparison}`. Hide the normal findings list.\n\n**Findings list modification:**\nWhen not comparing, pass `recentAudits[selectedRunIndex]` to `buildFindings` instead of always `recentAudits[0]`. The previous audit for delta is `recentAudits[selectedRunIndex + 1]` (may be undefined). Apply `fvFadeIn` animation class to the findings list container on content swap.\n\n**Persistent badge on finding rows:**\nIn the normal findings list, for each finding check if its issueKey is in the `persistentIssues` set. If so, append a \"persistent\" badge: `--font-sans`, 11px, weight 500, `--color-amber` text on `rgba(240, 178, 50, 0.12)` background. Only show on latest view (selectedRunIndex === 0).\n\n**Sizing card:**\nUpdate the existing sizing card to show `selectedAudit.sizing` instead of always latest. In comparison mode, if both audits have sizing and they differ, show both sizing cards stacked. If identical, show one.\n\n**Keyboard navigation:**\nAdd a keydown handler on the Findings tab container:\n- Escape: if `isComparing`, call `clearComparison`. Else if `selectedRunIndex !== 0`, call `clearSelection`. Else no-op.\n\n**Edge states:**\n- 0 audits: render no dots, no findings. Show \"No audit results yet\" centered in `--font-sans`, 12px, `--color-text-tertiary`.\n- 1 audit: single dot at full opacity, shift-click is a no-op (handled by hook). No persistent badge.\n- Error state: if recentAudits query fails, show \"Failed to load audit history\" in `--color-red` with \"Retry\" link in `--color-accent`. Hide verdict strip.\n\n**Index clamping:**\nDefensive check: `const safeIndex = Math.min(selectedRunIndex, recentAudits.length - 1)` before any recentAudits access.",
+      "acceptance_criteria": "- [test] Clicking a non-latest verdict dot loads that run's findings in the panel\n- [test] Shift-clicking two dots shows ComparisonView with Removed/Unchanged/Added sections\n- [test] ComparisonHeader shows issue count delta between two selected runs\n- [test] Escape exits comparison mode first, then deselects run (two-level)\n- [test] Persistent issue count displayed in verdict summary when > 0\n- [test] Persistent badge appears on finding rows matching previous run by issueKey\n- [test] Sizing card updates to show selected run's sizing data\n- [test] 0-audit state shows 'No audit results yet' with no dots rendered\n- [test] 1-audit state renders single dot, shift-click is no-op\n- [test] Arrow Left/Right navigates between dots using roving tabindex\n- [test] Verdict strip has role=toolbar and aria-label='Audit history'\n- [test] formatRelativeTime output shown as tooltip on each dot\n- [test] RunHeader appears when viewing non-latest run with correct timestamp\n- [manual] Selected dot has a visible 2px ring",
+      "depends_on": [
+        "2",
+        "3",
+        "6",
+        "7",
+        "8"
+      ],
+      "agent_model": "opus",
+      "files_touched": [
+        "dashboard/frontend/components/editor/IntelPanel.tsx"
+      ]
+    },
+    {
+      "id": "10",
+      "title": "Component tests for VerdictDot, RunHeader, ComparisonHeader, and ComparisonView",
+      "description": "Create test files for the four new components using vitest + React Testing Library.\n\n**`dashboard/frontend/components/editor/VerdictDot.test.tsx`** (13 tests)\n1. Renders a `<button>` element with class `fv-verdict-dot`\n2. `aria-label` contains tooltip text and status\n3. `aria-pressed` is true when `selected=true`\n4. `aria-pressed` is true when `compareSelected=true`\n5. `aria-pressed` is false when neither selected nor compareSelected\n6. Click without shift key fires `onClick`, not `onShiftClick`\n7. Click with `shiftKey=true` fires `onShiftClick`, not `onClick`\n8. Dot renders at 6px size when default (not selected, not latest)\n9. Dot renders at 8px size when `selected=true`\n10. Dot renders at 8px size when `isLatest=true`\n11. Native `title` attribute matches `tooltip` prop\n12. Opacity is 0.5 when not selected and not latest\n13. Opacity is 1.0 when `isLatest=true`\n\n**`dashboard/frontend/components/editor/RunHeader.test.tsx`** (5 tests)\n1. Renders relative time text\n2. Renders Latest link\n3. Clicking Latest link fires `onBackToLatest`\n4. Container has `role=\"status\"` and `aria-live=\"polite\"`\n5. Latest link text content is correct\n\n**`dashboard/frontend/components/editor/ComparisonHeader.test.tsx`** (6 tests)\n1. Renders both timestamps\n2. Renders both issue counts with arrow\n3. Delta shows negative with emerald styling when issues decreased\n4. Delta shows positive with red styling when issues increased\n5. Delta shows zero with tertiary styling when equal\n6. Container has `aria-live=\"polite\"`\n\n**`dashboard/frontend/components/editor/ComparisonView.test.tsx`** (10 tests)\n1. Renders Removed, Unchanged, Added section headers\n2. Removed section contains issues only in older audit\n3. Added section contains issues only in newer audit\n4. Unchanged section contains issues in both audits\n5. Empty section shows \"(none)\" text\n6. Both audits with identical issues: only Unchanged populated\n7. Exit comparison link calls `onExit` on click\n8. Each section has `role=\"group\"` with correct `aria-label`\n9. Finding messages longer than 65 chars are truncated\n10. Removed rows have line-through text decoration\n\nUse mock `SpeedAuditResult` objects with controlled issues for deterministic assertions.",
+      "acceptance_criteria": "- [test] VerdictDot.test.tsx has 13 passing tests covering rendering, accessibility, and click handling\n- [test] RunHeader.test.tsx has 5 passing tests covering rendering, callback, and ARIA\n- [test] ComparisonHeader.test.tsx has 6 passing tests covering rendering, delta colors, and ARIA\n- [test] ComparisonView.test.tsx has 10 passing tests covering section grouping, empty states, and exit\n- [lint] All tests use React Testing Library queries (getByRole, getByText), not implementation details\n- [lint] No test imports from IntelPanel.tsx — components tested in isolation",
+      "depends_on": [
+        "6",
+        "7",
+        "8"
+      ],
+      "agent_model": "sonnet",
+      "files_touched": [
+        "dashboard/frontend/components/editor/VerdictDot.test.tsx",
+        "dashboard/frontend/components/editor/RunHeader.test.tsx",
+        "dashboard/frontend/components/editor/ComparisonHeader.test.tsx",
+        "dashboard/frontend/components/editor/ComparisonView.test.tsx"
+      ]
+    },
+    {
+      "id": "11",
+      "title": "Integration tests for IntelPanel audit history behavior",
+      "description": "Create `dashboard/frontend/components/editor/IntelPanel.audit-history.test.tsx` with integration tests that verify the wired-up audit history behavior within IntelPanel.\n\nTest setup: render IntelPanel (or the Findings tab section) with mock `recentAudits` data via GraphQL mock provider. Create fixture sets:\n- `threeRunFixture`: 3 audits with varying statuses and overlapping/unique issues\n- `oneRunFixture`: 1 audit\n- `zeroRunFixture`: empty array\n\n15 tests:\n1. Dot click swaps findings: click second dot, verify findings list shows that run's issues\n2. Clicking selected dot returns to latest: click dot 2 twice, verify revert\n3. Shift-click enters comparison: shift-click dot 1 then dot 3, verify ComparisonView renders\n4. Comparison shows correct delta: verify ComparisonHeader renders correct counts and sign\n5. Escape exits comparison first: enter comparison, press Escape, verify comparison gone\n6. Escape exits run selection: select dot 2, press Escape, verify return to latest\n7. 0-run empty state: render with empty array, verify \"No audit results yet\" and no dots\n8. 1-run no comparison: render with 1 audit, shift-click is no-op\n9. Persistent badge on latest: runs sharing an issue show \"persistent\" badge on latest view\n10. Persistent badge absent on historical: click dot 2, verify no persistent badges\n11. RunHeader appears for non-latest: click dot 2, verify RunHeader with timestamp\n12. RunHeader Latest link returns to latest: click link, verify findings revert\n13. Sizing card shows selected run: click dot 2, verify sizing data matches\n14. Arrow keys navigate dots: focus strip, ArrowRight moves focus\n15. Index clamping: select dot 3, re-render with 2 audits, verify no crash\n\nAll tests use `fireEvent.click`, `fireEvent.keyDown`, and RTL queries. Mock the GraphQL `recentAudits` query response.",
+      "acceptance_criteria": "- [test] 15 integration tests pass covering all audit history user flows\n- [test] Dot click correctly swaps the findings list content\n- [test] Shift-click two dots renders ComparisonView\n- [test] Escape implements two-level exit (comparison first, then selection)\n- [test] 0-run and 1-run edge cases handled without errors\n- [test] Persistent badge appears only on latest view for shared issues\n- [test] Index clamping prevents out-of-bounds crash on audit prune\n- [lint] Tests use GraphQL mock provider, not direct state manipulation",
+      "depends_on": [
+        "9"
+      ],
+      "agent_model": "sonnet",
+      "files_touched": [
+        "dashboard/frontend/components/editor/IntelPanel.audit-history.test.tsx"
+      ]
+    }
+  ],
+  "contract": {
+    "entities": [
+      {
+        "name": "formatRelativeTime utility",
+        "type": "function",
+        "path": "dashboard/frontend/components/editor/audit-history-utils.ts",
+        "function": "formatRelativeTime",
+        "created_by_task": "1",
+        "key_fields": [
+          "converts ISO timestamp to relative string",
+          "handles edge cases: future, empty, boundary values",
+          "returns just now, Nm ago, Nh ago, Nd ago, or short date"
+        ]
+      },
+      {
+        "name": "issueKey utility",
+        "type": "function",
+        "path": "dashboard/frontend/components/editor/audit-history-utils.ts",
+        "function": "issueKey",
+        "created_by_task": "1",
+        "key_fields": [
+          "composite key from ruleId + section",
+          "used for matching issues across audit runs"
+        ]
+      },
+      {
+        "name": "computeComparison utility",
+        "type": "function",
+        "path": "dashboard/frontend/components/editor/audit-history-utils.ts",
+        "function": "computeComparison",
+        "created_by_task": "2",
+        "key_fields": [
+          "accepts two SpeedAuditResult objects",
+          "returns removed unchanged added issue groups",
+          "uses issueKey for matching"
+        ]
+      },
+      {
+        "name": "getPersistentIssues utility",
+        "type": "function",
+        "path": "dashboard/frontend/components/editor/audit-history-utils.ts",
+        "function": "getPersistentIssues",
+        "created_by_task": "2",
+        "key_fields": [
+          "accepts latest and previous audit",
+          "returns Set of issueKeys present in both"
+        ]
+      },
+      {
+        "name": "useAuditHistory hook",
+        "type": "function",
+        "path": "dashboard/frontend/components/editor/use-audit-history.ts",
+        "function": "useAuditHistory",
+        "created_by_task": "3",
+        "key_fields": [
+          "selectedRunIndex state with clamping",
+          "compareIndices state with validation",
+          "selectRun shiftSelectRun exitComparison resetToLatest actions",
+          "Escape key handler with two-level exit"
+        ]
+      },
+      {
+        "name": "audit-history-utils test file",
+        "type": "file",
+        "path": "dashboard/frontend/components/editor/audit-history-utils.test.ts",
+        "created_by_task": "4",
+        "key_fields": [
+          "formatRelativeTime edge cases",
+          "issueKey uniqueness",
+          "computeComparison correctness",
+          "getPersistentIssues correctness"
+        ]
+      },
+      {
+        "name": "use-audit-history test file",
+        "type": "file",
+        "path": "dashboard/frontend/components/editor/use-audit-history.test.ts",
+        "created_by_task": "5",
+        "key_fields": [
+          "selectedRunIndex clamping",
+          "compareIndices validation",
+          "escape key two-level exit",
+          "shift-click state transitions"
+        ]
+      },
+      {
+        "name": "VerdictDot",
+        "type": "function",
+        "path": "dashboard/frontend/components/editor/VerdictDot.tsx",
+        "function": "VerdictDot",
+        "created_by_task": "6",
+        "key_fields": [
+          "status prop (pass|warn|fail)",
+          "selected ring via --color-border",
+          "compareSelected ring via --color-accent",
+          "button element with aria-label and aria-pressed",
+          "24x24px minimum hit area",
+          "native title tooltip"
+        ]
+      },
+      {
+        "name": "RunHeader",
+        "type": "function",
+        "path": "dashboard/frontend/components/editor/RunHeader.tsx",
+        "function": "RunHeader",
+        "created_by_task": "7",
+        "key_fields": [
+          "relativeTime display",
+          "onBackToLatest callback",
+          "aria-live polite",
+          "--color-bg background with border-bottom"
+        ]
+      },
+      {
+        "name": "ComparisonHeader",
+        "type": "function",
+        "path": "dashboard/frontend/components/editor/ComparisonHeader.tsx",
+        "function": "ComparisonHeader",
+        "created_by_task": "7",
+        "key_fields": [
+          "olderTime and newerTime display",
+          "olderCount and newerCount with delta",
+          "delta color (emerald decrease, red increase)",
+          "aria-live polite"
+        ]
+      },
+      {
+        "name": "ComparisonView",
+        "type": "function",
+        "path": "dashboard/frontend/components/editor/ComparisonView.tsx",
+        "function": "ComparisonView",
+        "created_by_task": "8",
+        "key_fields": [
+          "Removed/Unchanged/Added grouped sections",
+          "onExit callback",
+          "removed row emerald tint",
+          "added row red tint",
+          "aria group labels per section"
+        ]
+      },
+      {
+        "name": "IntelPanel audit history integration",
+        "type": "file",
+        "path": "dashboard/frontend/components/editor/IntelPanel.tsx",
+        "created_by_task": "9",
+        "key_fields": [
+          "useAuditHistory hook wired",
+          "VerdictDot buttons replace spans",
+          "RunHeader conditional on selectedRunIndex !== 0",
+          "ComparisonView conditional on compareIndices",
+          "persistent badge on FindingRow",
+          "sizing card respects selectedRunIndex",
+          "Escape two-level exit",
+          "arrow key roving tabindex",
+          "0-run and 1-run fallback states"
+        ]
+      },
+      {
+        "name": "VerdictDot tests",
+        "type": "file",
+        "path": "dashboard/frontend/components/editor/VerdictDot.test.tsx",
+        "created_by_task": "10",
+        "key_fields": [
+          "renders button element",
+          "aria-label includes timestamp and status",
+          "click fires onClick",
+          "shift-click fires onShiftClick",
+          "selected ring visible",
+          "compare-selected ring visible"
+        ]
+      },
+      {
+        "name": "ComparisonView tests",
+        "type": "file",
+        "path": "dashboard/frontend/components/editor/ComparisonView.test.tsx",
+        "created_by_task": "10",
+        "key_fields": [
+          "renders removed/unchanged/added sections",
+          "empty section shows (none)",
+          "exit button fires onExit",
+          "delta color correct"
+        ]
+      },
+      {
+        "name": "IntelPanel audit history integration tests",
+        "type": "file",
+        "path": "dashboard/frontend/components/editor/IntelPanel.audit-history.test.tsx",
+        "created_by_task": "11",
+        "key_fields": [
+          "dot click swaps findings",
+          "shift-click enters comparison",
+          "escape exits comparison then selection",
+          "0-run shows empty message",
+          "1-run no compare",
+          "persistent badge renders"
+        ]
+      }
+    ],
+    "relationships": []
+  },
+  "validation": [
+    {
+      "severity": "warning",
+      "issue": "Product spec AH3 (net issue count trend across runs in verdict strip) has no explicit function in the tech spec. The comparison mode shows delta between two selected runs, but AH3 asks for a visible trend across all runs without entering comparison mode.",
+      "product_requirement": "AH3: As a spec author, I want to see a net issue count trend across runs",
+      "recommendation": "Phase 2 should include a task for rendering issue counts alongside verdict dots in the verdict strip. The design spec's Verdict counts typography entry at 10px mono suggests this is intended."
+    },
+    {
+      "severity": "warning",
+      "issue": "Tech spec says issueKey uses section + message[:80]. Design spec says matching uses ruleId + section. Inconsistent keying strategies.",
+      "product_requirement": "AH2/AH4: Comparison and persistent issue detection depend on correct issue matching",
+      "recommendation": "Task 1 instructs the developer to prefer ruleId + section when ruleId exists, falling back to message truncation. Developer should inspect AuditIssue type for actual available fields."
+    },
+    {
+      "severity": "note",
+      "issue": "Arrow key navigation between dots is deferred to Phase 2 since it requires rendered button elements with roving tabindex.",
+      "product_requirement": "In Scope: Keyboard navigation (Escape to exit, arrow keys between dots)",
+      "recommendation": "Phase 2 tasks should implement roving tabindex on verdict strip buttons. Phase 1 handles only Escape."
+    },
+    {
+      "severity": "note",
+      "issue": "Product spec success criterion 'Works with both audit-*.json and plan-audit-*.json files' depends on the backend recentAudits query behavior, not frontend logic.",
+      "product_requirement": "Works with both audit-*.json and plan-audit-*.json files",
+      "recommendation": "Verify in Phase 2 integration that recentAudits returns both file types. No Phase 1 action needed since tech spec confirms existing query handles this."
+    },
+    {
+      "severity": "warning",
+      "issue": "Product spec requires 'Works with both audit-*.json and plan-audit-*.json files' but neither tech spec nor design spec addresses dual-file-pattern support explicitly",
+      "product_requirement": "Success Criteria: Works with both audit-*.json and plan-audit-*.json files",
+      "recommendation": "The recentAudits GraphQL query (shipped) likely already handles both file patterns since it reads from disk. Verify in the backend resolver that both patterns are included. No frontend change needed — the data arrives as SpeedAuditResult regardless of source file pattern."
+    },
+    {
+      "severity": "warning",
+      "issue": "Product spec requires 'Keyboard navigation: arrow keys between dots' but tech spec's API Surface section does not mention arrow key handling. Design spec covers it in detail.",
+      "product_requirement": "In Scope: Keyboard navigation (Escape to exit, arrow keys between dots)",
+      "recommendation": "Arrow key navigation is fully specified in the design spec's Accessibility section with roving tabindex pattern. Task 9 implements it. No spec gap, just an omission in the tech spec's summary."
+    },
+    {
+      "severity": "note",
+      "issue": "Design spec references --color-accent-glow token for compare-selected dot hover state. Token existence in globals.css is unverified.",
+      "product_requirement": "Success Criteria: Shift-click on two dots enters comparison mode",
+      "recommendation": "Task 6 (VerdictDot) includes an assumption about this token. If it doesn't exist in globals.css, use box-shadow with --color-accent at reduced opacity as fallback."
+    },
+    {
+      "severity": "note",
+      "issue": "No product spec mentions the error state (GraphQL query failure). Design spec defines it. Tech spec is silent.",
+      "product_requirement": "Success Criteria: Panel falls back gracefully when fewer than 2 audit runs exist",
+      "recommendation": "The error state is good defensive design included in Task 9. Product spec's 'falls back gracefully' reasonably covers error conditions."
+    }
+  ],
+  "cross_cutting_concerns": []
+}

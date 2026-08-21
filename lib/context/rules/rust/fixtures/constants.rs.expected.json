@@ -1,0 +1,21 @@
+{
+  "expected_rules": [
+    "rust-const",
+    "rust-const",
+    "rust-enum",
+    "rust-function",
+    "rust-function",
+    "rust-function",
+    "rust-impl",
+    "rust-impl",
+    "rust-impl-trait",
+    "rust-macro",
+    "rust-method",
+    "rust-method",
+    "rust-static",
+    "rust-static",
+    "rust-struct",
+    "rust-trait",
+    "rust-type-alias"
+  ]
+}

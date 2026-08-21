@@ -1,0 +1,101 @@
+{
+  "id": "13",
+  "title": "Update sidebar navigation and landing panel link",
+  "description": "Modify two existing files to integrate the Define page into the dashboard navigation:\n\n**1. `dashboard/frontend/components/layout/sidebar.tsx`**\nAdd a 'Define' nav item that links to `/define`. Place it logically near the existing 'Spec Alignment' entry. Keep 'Spec Alignment' as a separate entry (it's a drill-down from Define's Built column, not a replacement).\n\n**2. `dashboard/frontend/components/layout/header.tsx`**\nAdd a view entry for the Define page so the header shows 'Define' when on the `/define` route. Follow the existing pattern for other pages.\n\nNote: DefinePanel.tsx was already updated in task 7 to extract VisionWarning. The SurfaceLink href change from `/spec-alignment` to `/define` should also be done in task 7 since that task already touches DefinePanel.tsx. If task 7 did not make this change, add it here as a separate modification to DefinePanel.tsx.\n\nActually, re-checking: task 7 touches DefinePanel.tsx for VisionWarning extraction. The SurfaceLink href update (`/spec-alignment` → `/define`) should be included in task 7 to avoid a second task touching the same file. Record as assumption.",
+  "acceptance_criteria": "- Sidebar shows 'Define' nav item linking to /define\n- 'Spec Alignment' entry remains in sidebar\n- Header displays 'Define' when on /define route\n- Navigation to /define works from sidebar click\n- No type errors in modified files",
+  "depends_on": [
+    "7"
+  ],
+  "status": "done",
+  "branch": "speed/speed-dashboard-define/task-13-update-sidebar-navigation-and-landing-pa",
+  "agent_model": "sonnet",
+  "created_at": "2026-03-21T11:49:38Z",
+  "started_at": "2026-03-21T12:01:18Z",
+  "completed_at": "2026-03-21T12:03:28Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": null,
+  "base_commit": "7ed4b169751e655eb28450aea043215ed898e0bf",
+  "files_touched": [
+    "dashboard/frontend/components/layout/sidebar.tsx",
+    "dashboard/frontend/components/layout/header.tsx"
+  ],
+  "spec_references": [
+    {
+      "spec": "tech",
+      "section": "File Impact",
+      "requirement": "sidebar.tsx: Add Define nav item. header.tsx: Add view entry for Define page"
+    },
+    {
+      "spec": "tech",
+      "section": "Existing Infrastructure",
+      "requirement": "Sidebar navigation: add Define entry, keep Spec Alignment"
+    }
+  ],
+  "rationale": "Navigation changes are small but touch shared layout files. Depends on task 7 because that task modifies DefinePanel.tsx (which links to /define), and we need the link target to exist conceptually. Sidebar and header are touched together since they're both layout navigation concerns and neither is touched by other tasks.",
+  "assumptions": [
+    "Task 7 includes the SurfaceLink href change from /spec-alignment to /define in DefinePanel.tsx since it already modifies that file"
+  ],
+  "gate_results": {
+    "checks": [
+      {
+        "name": "diff_non_empty",
+        "status": "pass"
+      },
+      {
+        "name": "declared_files",
+        "status": "pass"
+      },
+      {
+        "name": "scope",
+        "status": "warn",
+        "undeclared_files": [
+          "dashboard/frontend/components/landing/DefinePanel.tsx"
+        ]
+      },
+      {
+        "name": "python_imports",
+        "status": "pass"
+      },
+      {
+        "name": "not_blocked",
+        "status": "pass"
+      },
+      {
+        "name": "test_coverage",
+        "status": "pass"
+      },
+      {
+        "name": "gate_evidence",
+        "status": "warn"
+      },
+      {
+        "name": "criteria",
+        "status": "warn"
+      },
+      {
+        "name": "secrets",
+        "status": "pass"
+      },
+      {
+        "name": "syntax",
+        "status": "pass"
+      }
+    ],
+    "scope": {
+      "undeclared_files": [
+        "dashboard/frontend/components/landing/DefinePanel.tsx"
+      ]
+    }
+  },
+  "decisions": [
+    "Used BookOpen icon for Define nav item — it represents spec/documentation work better than alternatives like Layers or FileText.",
+    "Placed Define between Topology and Spec Alignment in the sidebar, matching the task's instruction to position it near Spec Alignment.",
+    "Updated DefinePanel.tsx SurfaceLink href from /spec-alignment to /define as authorized by the task description (task 7 confirmed it left this change here)."
+  ],
+  "concerns": [
+    "DefinePanel.tsx is formally owned by task 7 in the scope list, but the task description and task 7's completion notes both explicitly delegate the SurfaceLink href change here. The undeclared file warning in gates confirms it was caught and flagged as expected."
+  ],
+  "review_verdict": "approve",
+  "reviewed_at": "2026-03-21T13:31:03Z"
+}

@@ -1,0 +1,18 @@
+{
+  "expected_rules": [
+    "cpp-class",
+    "cpp-constant-constexpr",
+    "cpp-constant-constexpr",
+    "cpp-constant-macro",
+    "cpp-constant-macro",
+    "cpp-constant-macro",
+    "cpp-enum",
+    "cpp-function",
+    "cpp-function",
+    "cpp-function",
+    "cpp-method",
+    "cpp-namespace",
+    "cpp-struct",
+    "cpp-typedef"
+  ]
+}

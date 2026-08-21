@@ -1,0 +1,284 @@
+{
+  "core_question": "What is the spec coverage, execution state, and gap analysis for every feature in the project portfolio?",
+  "entities": [
+    {
+      "name": "DefineView resolver",
+      "type": "function",
+      "path": "dashboard/backend/resolvers/define.py",
+      "function": "get_define_view",
+      "created_by_task": "1",
+      "key_fields": [
+        "reads specs/, .speed/features/, .speed/defects/",
+        "returns DefineView with features, defects, aggregates",
+        "computes audit at query time"
+      ]
+    },
+    {
+      "name": "Spec audit helpers",
+      "type": "function",
+      "path": "dashboard/backend/resolvers/define.py",
+      "function": "_audit_spec",
+      "created_by_task": "1",
+      "key_fields": [
+        "parses markdown for required sections",
+        "returns SpecIndicator with audit_status and warnings",
+        "handles empty/missing/malformed files"
+      ]
+    },
+    {
+      "name": "DefineView GraphQL types",
+      "type": "function",
+      "path": "dashboard/backend/resolvers/define_types.py",
+      "function": "DefineView",
+      "created_by_task": "2",
+      "key_fields": [
+        "DefineView",
+        "DefineFeature",
+        "SpecIndicator",
+        "SpecifiedData",
+        "BuiltData",
+        "GapData",
+        "GapEscalation",
+        "DefineDefect",
+        "DefineAggregates"
+      ]
+    },
+    {
+      "name": "define_view query field",
+      "type": "function",
+      "path": "dashboard/backend/schema.py",
+      "function": "define_view",
+      "created_by_task": "3",
+      "key_fields": [
+        "strawberry query field",
+        "optional feature filter argument",
+        "imports from define resolver"
+      ]
+    },
+    {
+      "name": "Define resolver unit tests",
+      "type": "file",
+      "path": "dashboard/backend/tests/test_define.py",
+      "created_by_task": "4",
+      "key_fields": [
+        "empty project",
+        "fully populated project",
+        "vision status variants",
+        "audit computation",
+        "edge cases for malformed JSON"
+      ]
+    },
+    {
+      "name": "Define schema integration tests",
+      "type": "file",
+      "path": "dashboard/backend/tests/test_schema_define.py",
+      "created_by_task": "5",
+      "key_fields": [
+        "GraphQL query returns valid response",
+        "feature filtering",
+        "null handling for missing data"
+      ]
+    },
+    {
+      "name": "Define GraphQL query",
+      "type": "file",
+      "path": "dashboard/frontend/lib/graphql/queries/define.ts",
+      "created_by_task": "6",
+      "key_fields": [
+        "DEFINE_VIEW_QUERY",
+        "all nested types",
+        "optional feature variable"
+      ]
+    },
+    {
+      "name": "Shared VisionWarning component",
+      "type": "function",
+      "path": "dashboard/frontend/components/shared/vision-warning.tsx",
+      "function": "VisionWarning",
+      "created_by_task": "7",
+      "key_fields": [
+        "extracted from DefinePanel.tsx",
+        "variant prop for card-width vs full-width",
+        "dashed border, gradient bg, red icon, violet CTA"
+      ]
+    },
+    {
+      "name": "Shared coverageColor utility",
+      "type": "function",
+      "path": "dashboard/frontend/lib/utils/colors.ts",
+      "function": "coverageColor",
+      "created_by_task": "7",
+      "key_fields": [
+        "moved from spec-alignment/page.tsx",
+        "emerald >=80%, amber >=50%, red <50%"
+      ]
+    },
+    {
+      "name": "Define page column headers and grid shell",
+      "type": "function",
+      "path": "dashboard/frontend/app/define/page.tsx",
+      "function": "DefinePage",
+      "created_by_task": "8",
+      "key_fields": [
+        "three-column CSS grid 1fr 1fr 1fr",
+        "ColumnHeader components",
+        "loading/empty/error states",
+        "urql query integration"
+      ]
+    },
+    {
+      "name": "SpecifiedCell component",
+      "type": "function",
+      "path": "dashboard/frontend/components/define/specified-cell.tsx",
+      "function": "SpecifiedCell",
+      "created_by_task": "9",
+      "key_fields": [
+        "feature name, state badge, spec pills",
+        "audit warnings display",
+        "open questions count",
+        "compact variant for unplanned"
+      ]
+    },
+    {
+      "name": "SpecPill component",
+      "type": "function",
+      "path": "dashboard/frontend/components/define/spec-pill.tsx",
+      "function": "SpecPill",
+      "created_by_task": "9",
+      "key_fields": [
+        "three states: present/warning/missing",
+        "emerald/amber/dashed styling"
+      ]
+    },
+    {
+      "name": "StateBadge component",
+      "type": "function",
+      "path": "dashboard/frontend/components/define/state-badge.tsx",
+      "function": "StateBadge",
+      "created_by_task": "9",
+      "key_fields": [
+        "COMPLETE/EXECUTING/WRITING/UNPLANNED",
+        "per-state color tokens"
+      ]
+    },
+    {
+      "name": "BuiltCell component",
+      "type": "function",
+      "path": "dashboard/frontend/components/define/built-cell.tsx",
+      "function": "BuiltCell",
+      "created_by_task": "10",
+      "key_fields": [
+        "hero 24px coverage for complete",
+        "progress bar for executing",
+        "italic placeholder for unplanned/writing"
+      ]
+    },
+    {
+      "name": "GapCell component",
+      "type": "function",
+      "path": "dashboard/frontend/components/define/gap-cell.tsx",
+      "function": "GapCell",
+      "created_by_task": "10",
+      "key_fields": [
+        "escalation count and descriptions",
+        "unverifiable count",
+        "rework count",
+        "RefMarker rendering"
+      ]
+    },
+    {
+      "name": "DefectRow component",
+      "type": "function",
+      "path": "dashboard/frontend/components/define/defect-row.tsx",
+      "function": "DefectRow",
+      "created_by_task": "11",
+      "key_fields": [
+        "three-column layout",
+        "severity badge with P0-P3 colors",
+        "P3 row opacity 0.45",
+        "description and impact columns"
+      ]
+    },
+    {
+      "name": "ExplorerPanel component",
+      "type": "function",
+      "path": "dashboard/frontend/components/define/explorer-panel.tsx",
+      "function": "ExplorerPanel",
+      "created_by_task": "12",
+      "key_fields": [
+        "260px slide-in from left",
+        "Cmd+E toggle",
+        "Escape dismiss",
+        "focus trap",
+        "document tree grouped by feature"
+      ]
+    },
+    {
+      "name": "Updated sidebar with Define entry",
+      "type": "function",
+      "path": "dashboard/frontend/components/layout/sidebar.tsx",
+      "function": "Sidebar",
+      "created_by_task": "13",
+      "key_fields": [
+        "Define nav item added",
+        "Spec Alignment kept as separate or sub entry"
+      ]
+    },
+    {
+      "name": "Updated DefinePanel link",
+      "type": "function",
+      "path": "dashboard/frontend/components/landing/DefinePanel.tsx",
+      "function": "DefinePanel",
+      "created_by_task": "13",
+      "key_fields": [
+        "SurfaceLink href changed from /spec-alignment to /define",
+        "VisionWarning extracted to shared component"
+      ]
+    }
+  ],
+  "relationships": [
+    {
+      "from": "define_view query field",
+      "to": "DefineView resolver",
+      "type": "belongs_to",
+      "via": "schema.py imports and calls get_define_view",
+      "created_by_task": "3"
+    },
+    {
+      "from": "DefineView resolver",
+      "to": "DefineView GraphQL types",
+      "type": "belongs_to",
+      "via": "resolver returns DefineView type instances",
+      "created_by_task": "2"
+    },
+    {
+      "from": "Define page column headers and grid shell",
+      "to": "Define GraphQL query",
+      "type": "belongs_to",
+      "via": "page.tsx imports DEFINE_VIEW_QUERY",
+      "created_by_task": "8"
+    }
+  ],
+  "core_queries": [
+    {
+      "description": "Full portfolio view: all features with spec coverage, execution state, and gap analysis",
+      "traversal": "specs/ + .speed/features/ + .speed/defects/ → get_define_view() → DefineView → features[], defects[], aggregates",
+      "answers": "What is the spec coverage, build progress, and gap status for every feature in the project?"
+    },
+    {
+      "description": "Filtered feature view for a single feature",
+      "traversal": "defineView(feature: name) → filtered features[] + recomputed aggregates",
+      "answers": "What is the detailed spec/build/gap status for a specific feature?"
+    },
+    {
+      "description": "Product vision status check",
+      "traversal": "specs/product/overview.md → _read_vision_status() → visionStatus field",
+      "answers": "Is the product vision defined, placeholder, or missing?"
+    },
+    {
+      "description": "Portfolio-level aggregates",
+      "traversal": "features[] → DefineAggregates (designSpecCount, completedCount, escalationCount, etc.)",
+      "answers": "How many features have design specs, how many are complete vs executing vs unplanned, how many escalations exist?"
+    }
+  ]
+}

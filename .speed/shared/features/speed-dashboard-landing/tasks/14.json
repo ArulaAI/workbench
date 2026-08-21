@@ -1,0 +1,93 @@
+{
+  "id": "14",
+  "title": "Build LearnPanel component",
+  "description": "Create `dashboard/frontend/components/landing/LearnPanel.tsx`.\n\nProps: typed from the `learn` field of LandingViewData.\n\nSub-components:\n- `PanelLabel` (imported): 'Learn' + 'Patterns and improvement'.\n- `CoverageTrend`: list of feature rows. Each row: feature name (truncated to ~20 chars) + mini horizontal bar (max-width 100px, filled proportionally to `coveragePct`) + percentage in mono. Sorted by coverage descending.\n- `Insights`: list of insight cards. Each card has a type indicator (green dot for 'good', amber dot for 'warn') + text. Max ~5 visible, no scroll needed for V1.\n- `EscalationTrend`: list of feature rows with feature name + count badge. Higher counts get amber treatment.\n\nEmpty state: 'No learning data yet' when all sub-arrays are empty.\n\nLayout: right sidebar, 320px width (controlled by parent grid), spans full height. Internal padding 20px. `.surface` class.",
+  "acceptance_criteria": "- CoverageTrend renders mini bars with widths proportional to coveragePct\n  verify_by: test\n- Insights render with correct green/amber dot based on type\n  verify_by: test\n- EscalationTrend renders feature names with count badges\n  verify_by: test\n- Empty state renders when all learn arrays are empty\n  verify_by: test\n- Coverage features sorted descending by percentage\n  verify_by: test",
+  "depends_on": [
+    "11"
+  ],
+  "status": "done",
+  "branch": "speed/speed-dashboard-landing/task-14-build-learnpanel-component",
+  "agent_model": "sonnet",
+  "created_at": "2026-03-15T16:26:57Z",
+  "started_at": "2026-03-15T17:37:07Z",
+  "completed_at": "2026-03-15T17:39:14Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": null,
+  "files_touched": [
+    "dashboard/frontend/components/landing/LearnPanel.tsx"
+  ],
+  "spec_references": [
+    {
+      "spec": "product",
+      "section": "User Stories",
+      "requirement": "S6: Learn panel with coverage trends, insights, escalation trend"
+    },
+    {
+      "spec": "tech",
+      "section": "Component Architecture",
+      "requirement": "LearnPanel (grid-column:3, grid-row:1/3)"
+    }
+  ],
+  "rationale": "LearnPanel is read-only with no interactions, making it the simplest panel. Parallel with JudgePanel and ExecutePanel since they all only share the PanelLabel dependency from task 11.",
+  "gate_results": {
+    "checks": [
+      {
+        "name": "diff_non_empty",
+        "status": "pass"
+      },
+      {
+        "name": "declared_files",
+        "status": "pass"
+      },
+      {
+        "name": "scope",
+        "status": "warn",
+        "undeclared_files": [
+          "dashboard/frontend/components/landing/LearnPanel.test.tsx"
+        ]
+      },
+      {
+        "name": "python_imports",
+        "status": "pass"
+      },
+      {
+        "name": "not_blocked",
+        "status": "pass"
+      },
+      {
+        "name": "test_coverage",
+        "status": "pass"
+      },
+      {
+        "name": "gate_evidence",
+        "status": "warn"
+      },
+      {
+        "name": "criteria",
+        "status": "pass"
+      },
+      {
+        "name": "secrets",
+        "status": "pass"
+      }
+    ],
+    "scope": {
+      "undeclared_files": [
+        "dashboard/frontend/components/landing/LearnPanel.test.tsx"
+      ]
+    }
+  },
+  "decisions": [
+    "Props are spread directly from LearnPanel type (matching task 17's expected usage: <LearnPanel {...data.learn} />)",
+    "Escalation amber threshold set at count >= 3 — 'higher counts' needs a concrete threshold; 3 is the smallest value that semantically reads as 'multiple escalations'",
+    "Feature name truncation uses CSS 'truncate' class + fixed maxWidth rather than JS substring — more robust for dynamic content",
+    "Insight dot uses aria-label (good/warning) for accessibility and test targeting, following the same pattern as PanelLabel tests",
+    "visibleInsights = insights.slice(0, 5) implements the 'max ~5 visible, no scroll needed for V1' requirement"
+  ],
+  "concerns": [
+    "Test framework (vitest + @testing-library/react) is not yet installed in the frontend — tests are syntactically correct but will not run until task 19 establishes the setup (same concern noted by task 11)",
+    "LearnPanel.test.tsx is flagged as 'undeclared' by the scope check (warning, not failure) — cosmetic, same as task 11"
+  ]
+}

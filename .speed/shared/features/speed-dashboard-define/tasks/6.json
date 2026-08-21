@@ -1,0 +1,90 @@
+{
+  "id": "6",
+  "title": "Create frontend GraphQL query definition for Define page",
+  "description": "Create `dashboard/frontend/lib/graphql/queries/define.ts` with the DEFINE_VIEW_QUERY.\n\nFollow the pattern of existing query files like `analytics.ts` and `budget.ts` in the same directory.\n\nExport a `gql` tagged template literal containing the full defineView query with all nested fields as specified in the tech spec's Basic Example section. Include the optional `$feature: String` variable.\n\nAll field names should use camelCase (GraphQL convention) matching the Strawberry auto-conversion from snake_case Python types.",
+  "acceptance_criteria": "- DEFINE_VIEW_QUERY is exported as a gql tagged template literal\n- Query includes optional $feature: String variable\n- Query requests all fields: visionStatus, visionPath, features with nested specified/built/gap, defects, aggregates\n- Field names use camelCase matching Strawberry's auto-conversion\n- File follows the same pattern as existing query files in the directory",
+  "depends_on": [],
+  "status": "done",
+  "branch": "speed/speed-dashboard-define/task-6-create-frontend-graphql-query-definition",
+  "agent_model": "sonnet",
+  "created_at": "2026-03-21T11:49:37Z",
+  "started_at": "2026-03-21T14:48:53Z",
+  "completed_at": "2026-03-21T15:19:33Z",
+  "agent_pid": null,
+  "error": "Quality gates failed",
+  "review_feedback": "{\"verdict\":\"request_changes\",\"spec_verification\":[{\"spec_quote\":\"dashboard/frontend/lib/graphql/queries/define.ts | New file. DEFINE_VIEW_QUERY. | New\",\"spec_section\":\"File Impact table\",\"satisfied\":\"partial\",\"evidence\":\"define.ts exists in the repo at dashboard/frontend/lib/graphql/queries/define.ts and exports DEFINE_VIEW_QUERY as a gql tagged template literal. However, the file does not appear in the task-6 diff at all — it was created by an earlier task (likely task-3, already merged into feature/dashboard-human-surfaces). Task 6's diff contains no file matching the primary acceptance criterion.\",\"notes\":\"The query file exists and the task's goal is achieved in the repo, but the diff for this task does not demonstrate the work. If define.ts was pre-existing when task-6 branched, the task was redundant. If it was supposed to be created here, it was delivered in the wrong task.\"},{\"spec_quote\":\"DEFINE_VIEW_QUERY is exported as a gql tagged template literal\",\"spec_section\":\"Task Acceptance Criteria\",\"satisfied\":true,\"evidence\":\"define.ts line 81: export const DEFINE_VIEW_QUERY = gql`...`; — correct pattern, matches landing.ts and other query files.\",\"notes\":\"Satisfied in the repo, absent from the diff.\"},{\"spec_quote\":\"Query includes optional $feature: String variable\",\"spec_section\":\"Task Acceptance Criteria\",\"satisfied\":true,\"evidence\":\"define.ts line 82: query DefineView($feature: String) with defineView(feature: $feature) on line 83. Variable declared and passed correctly.\",\"notes\":null},{\"spec_quote\":\"Query requests all fields: visionStatus, visionPath, features with nested specified/built/gap, defects, aggregates\",\"spec_section\":\"Task Acceptance Criteria\",\"satisfied\":true,\"evidence\":\"define.ts lines 84-153 request all top-level fields and all nested fields including full SpecDoc expansion for each of productSpec/technicalSpec/designSpec, all BuiltData fields, GapData with nested escalations, all DefectData fields, and all DefineAggregates fields.\",\"notes\":null},{\"spec_quote\":\"Field names use camelCase matching Strawberry's auto-conversion\",\"spec_section\":\"Task Acceptance Criteria\",\"satisfied\":true,\"evidence\":\"All GraphQL field names in the query use camelCase (visionStatus, visionPath, coveragePct, criteriaPassed, guardianVerdict, taskProgress, tasksDone, tasksTotal, blockedCount, linkedWarningId, escalationCount, unverifiableCount, reworkCount, designSpecCount, auditWarningCount, openQuestionCount, escalationCount, completedCount, executingCount, unplannedCount). These match Strawberry's snake_case → camelCase conversion.\",\"notes\":null},{\"spec_quote\":\"File follows the same pattern as existing query files in the directory\",\"spec_section\":\"Task Acceptance Criteria\",\"satisfied\":true,\"evidence\":\"define.ts imports gql from 'urql', exports TypeScript interfaces, and exports the query as a named const — identical pattern to landing.ts, spec-alignment.ts, and other files in the directory.\",\"notes\":null},{\"spec_quote\":\"coverage_pct: Optional[float] ... criteria_passed: Optional[int] ... guardian_verdict: Optional[str] ... task_progress: Optional[float] ... tasks_done: Optional[int] ... tasks_total: Optional[int]\",\"spec_section\":\"API Surface — BuiltData type definition\",\"satisfied\":false,\"evidence\":\"define.ts BuiltData interface (lines 19-29) types coveragePct, criteriaPassed, criteriaTotal, guardianVerdict, taskProgress, tasksDone, and tasksTotal as non-nullable number or string. The backend types declare all seven as Optional. At runtime these will be null for features that haven't been executed, and TypeScript will not catch the null access.\",\"notes\":\"This is a type safety gap. Any component consuming BuiltData that reads these fields without null guards will throw at runtime for unplanned or writing-state features.\"},{\"spec_quote\":\"impact: Optional[str] ... filed_at: Optional[str]\",\"spec_section\":\"API Surface — DefineDefect type\",\"satisfied\":false,\"evidence\":\"define.ts DefectData interface (lines 51-58) types impact and filedAt as string (non-nullable). The backend DefineDefect type marks both as Optional[str]. The spec's Basic Example also shows these as nullable: 'impact: nullable string' and 'filedAt: ISO string'.\",\"notes\":\"Same null safety issue as BuiltData fields.\"},{\"spec_quote\":\"sizing_estimate: Optional[int]\",\"spec_section\":\"API Surface — SpecifiedData type\",\"satisfied\":false,\"evidence\":\"define.ts SpecifiedData interface (line 16) types sizingEstimate as string | null. The backend declares sizing_estimate: Optional[int]. Should be number | null.\",\"notes\":\"Wrong TypeScript primitive type — string vs number. Code consuming this field and passing it to a numeric display will surface NaN or incorrect rendering.\"}],\"missing_from_spec\":[{\"spec_quote\":\"dashboard/frontend/lib/graphql/queries/define.ts | New file. DEFINE_VIEW_QUERY. | New\",\"description\":\"The define.ts file is absent from the task-6 diff. It exists in the repo (created by an earlier merged task), but this task's deliverable is not demonstrated by the submitted diff.\"}],\"out_of_scope\":[{\"file\":\"dashboard/backend/resolvers/define_types.py\",\"line\":1,\"description\":\"Strawberry type definitions. These belong to a backend types task, not the frontend query definition task. The spec lists define_types.py as a prerequisite that feeds into schema.py — it has no connection to the frontend DEFINE_VIEW_QUERY file that Task 6 is about.\"},{\"file\":\"dashboard/backend/schema.py\",\"line\":549,\"description\":\"Registering the define_view query field. The task-6 branch name is 'task-3-register-define-view-query-field-in-grap' on the already-merged commit. This work appears in the git log as already delivered. Including it here either means it was done twice or the diff is from a branch that predates the merge.\"},{\"file\":\"dashboard/backend/tests/test_define_types.py\",\"line\":1,\"description\":\"Structural tests for define_types.py. Nothing in the Task 6 acceptance criteria calls for backend type tests. This belongs with the backend types or resolver task.\"},{\"file\":\"dashboard/frontend/app/define/page.tsx\",\"line\":1,\"description\":\"The full Define page UI. The spec lists this as its own file impact: 'app/define/page.tsx | New file. Three-column grid with feature rows, defect rows, explorer.' This is a separate frontend task, not the query definition task. The 587-line file (truncated in the diff) contains the entire component tree, all TypeScript interfaces, and rendering logic — far exceeding the scope of creating a GraphQL query file.\"}],\"issues\":[{\"severity\":\"major\",\"file\":\"dashboard/frontend/lib/graphql/queries/define.ts\",\"line\":19,\"message\":\"BuiltData interface marks coveragePct, criteriaPassed, criteriaTotal, guardianVerdict, taskProgress, tasksDone, and tasksTotal as non-nullable, but the backend declares all seven as Optional. These will be null for features in 'writing' or 'unplanned' state.\",\"suggestion\":\"Change to: coveragePct: number | null; criteriaPassed: number | null; criteriaTotal: number | null; guardianVerdict: string | null; taskProgress: number | null; tasksDone: number | null; tasksTotal: number | null;\"},{\"severity\":\"major\",\"file\":\"dashboard/frontend/lib/graphql/queries/define.ts\",\"line\":51,\"message\":\"DefectData.impact and DefectData.filedAt typed as non-nullable string, but backend defines both as Optional[str]. The spec's Basic Example explicitly shows impact as nullable and filedAt as nullable ISO string.\",\"suggestion\":\"Change to: impact: string | null; filedAt: string | null;\"},{\"severity\":\"major\",\"file\":\"dashboard/frontend/lib/graphql/queries/define.ts\",\"line\":16,\"message\":\"SpecifiedData.sizingEstimate typed as string | null but the backend type is Optional[int]. This is the wrong TypeScript primitive.\",\"suggestion\":\"Change to: sizingEstimate: number | null;\"},{\"severity\":\"minor\",\"file\":\"dashboard/frontend/app/define/page.tsx\",\"line\":1,\"message\":\"page.tsx re-declares all TypeScript interfaces locally (SpecInfo, Specified, Built, Gap, etc.) instead of importing them from @/lib/graphql/queries/define where they are already exported. This creates two sources of truth that will drift.\",\"suggestion\":\"Import DefineViewData, DefineFeature, BuiltData, etc. from @/lib/graphql/queries/define instead of redeclaring them.\"},{\"severity\":\"minor\",\"file\":\"dashboard/frontend/app/define/page.tsx\",\"line\":34,\"message\":\"Same nullable mismatch as in define.ts — local Built interface marks coveragePct, criteriaPassed, etc. as non-nullable number. This will cause runtime errors when features return null for these fields.\",\"suggestion\":\"If interfaces are kept local, apply the same nullable corrections listed for define.ts above.\"},{\"severity\":\"minor\",\"file\":\"dashboard/backend/tests/test_define_types.py\",\"line\":4,\"message\":\"Docstring says '10 required type definitions' but EXPECTED_CLASSES contains 9 entries. The commit 2ad23d6 ('Fix test_define_types.py docstring: 10 → 9 type definitions') was supposed to fix this but the diff shows the '10' still present.\",\"suggestion\":\"Change '10' to '9' in the module docstring.\"}],\"strengths\":[\"DEFINE_VIEW_QUERY requests every field specified in the spec's Basic Example with correct camelCase naming and complete nesting — productSpec/technicalSpec/designSpec each expand all five SpecIndicator fields, gap expands escalations, aggregates covers all eight fields.\",\"The $feature variable is correctly declared as optional (String without !) and passed through to defineView(feature: $feature), matching the backend signature.\",\"define_types.py precisely matches the spec's API Surface section — every type, field name, Optional annotation, and comment on enum values (audit_status, guardian_verdict, severity) is correct.\",\"test_define_types.py uses AST parsing to avoid requiring Strawberry in the test environment, making the structural checks runnable anywhere without the backend dependencies.\"]}\n\n--- Attempt 1 ---\nFailed with: Quality gates failed\nHuman guidance: Previous scope violations were false positives caused by a diff-base bug that has been fixed. Build the frontend GraphQL query definition as specified.",
+  "base_commit": "7ed4b169751e655eb28450aea043215ed898e0bf",
+  "files_touched": [
+    "dashboard/frontend/lib/graphql/queries/define.ts"
+  ],
+  "spec_references": [
+    {
+      "spec": "tech",
+      "section": "Basic Example",
+      "requirement": "DEFINE_VIEW_QUERY with all nested types"
+    },
+    {
+      "spec": "tech",
+      "section": "File Impact",
+      "requirement": "New file: dashboard/frontend/lib/graphql/queries/define.ts"
+    }
+  ],
+  "rationale": "The query definition is a standalone frontend artifact with no dependencies on other frontend tasks. Creating it early allows the page task to import it immediately.",
+  "gate_results": {
+    "checks": [
+      {
+        "name": "diff_non_empty",
+        "status": "pass"
+      },
+      {
+        "name": "declared_files",
+        "status": "pass"
+      },
+      {
+        "name": "scope",
+        "status": "pass"
+      },
+      {
+        "name": "python_imports",
+        "status": "pass"
+      },
+      {
+        "name": "not_blocked",
+        "status": "pass"
+      },
+      {
+        "name": "test_coverage",
+        "status": "pass"
+      },
+      {
+        "name": "gate_evidence",
+        "status": "warn"
+      },
+      {
+        "name": "criteria",
+        "status": "warn"
+      },
+      {
+        "name": "secrets",
+        "status": "pass"
+      },
+      {
+        "name": "syntax",
+        "status": "pass"
+      }
+    ],
+    "scope": {}
+  },
+  "decisions": [
+    "Modeled interfaces after spec-alignment.ts (the closest peer — same optional variable pattern). SpecDoc is a shared interface reused for productSpec/technicalSpec/designSpec to avoid repetition. DefineViewData wraps the query root so consumers can type useQuery<DefineViewData>.",
+    "The design spec change flagged by the reviewer was already absent from this refreshed branch — no revert was needed."
+  ],
+  "concerns": [],
+  "review_verdict": "approve",
+  "failure_classification": {
+    "class": "pipeline",
+    "subclass": "decomposition_error",
+    "evidence": "Agent modified 16 file(s) owned by other tasks: dashboard/backend/resolvers/define.py (task 1), dashboard/backend/resolvers/define_types.py (task 2), dashboard/backend/schema.py (task 3), dashboard/frontend/app/define/page.tsx (task 8), dashboard/frontend/app/spec-alignment/page.tsx (task 7)"
+  },
+  "reviewed_at": "2026-03-21T17:22:28Z"
+}

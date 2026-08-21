@@ -1,0 +1,30 @@
+{
+  "id": "9",
+  "title": "CLI Commands: defect and status --defects",
+  "description": "Modify the main `speed` script to add the `cmd_defect()` command and the `--defects` flag to `cmd_status()`. Source the new library files.\n\n**Sourcing:**\nAdd source statements for `lib/defects.sh`, `lib/defect_triage.sh`, `lib/defect_fix.sh`, `lib/defect_review.sh` alongside existing library sources.\n\n**`cmd_defect()`** — Entry point for `speed defect <path>`\n\nArgument parsing:\n- Require exactly one positional argument: path to defect spec file\n- Validate the file exists, exit with 'Defect spec not found: <path>' if missing\n- Validate the resolved path does not escape the project root: use `realpath` to resolve the absolute path and verify it is prefixed by the project root directory. Exit with 'Invalid spec path: <path>' if it escapes.\n\nFlow:\n1. Call `triage_defect <spec_path>` from lib/defect_triage.sh\n2. The triage function handles routing internally (trivial auto-continues, moderate stops, complex escalates)\n3. For trivial defects where triage returns 0 (auto-continue): immediately call `fix_defect <name>`, then call `integrate_defect <name>`\n4. Print final status\n\nRegister `defect` as a subcommand in the main dispatch case statement.\n\n**`cmd_status()` modification** — Add `--defects` flag\n\nWhen `--defects` flag is present:\n1. Call `list_defects` from lib/defects.sh\n2. Format output as a table:\n   ```\n   Defects:\n     <name>    <severity>  <complexity>  <status>   <branch or note>\n   ```\n3. For resolved defects, show '(merged)' instead of branch\n4. For escalated defects, show '→ specs/product/<name>.md'\n5. If no defects exist, print 'No defects found.'\n\nAdd `--defects` to the status subcommand's flag parsing.\n\n**Error handling:**\n- Missing spec path → 'Usage: speed defect <path-to-defect-spec>'\n- Spec file not found → 'Defect spec not found: <path>'\n- Any triage/fix/integrate error → propagate the error message from the library function",
+  "acceptance_criteria": "- `speed defect` without arguments prints usage message and exits non-zero [verify_by: test]\n- `speed defect nonexistent.md` exits with 'Defect spec not found: nonexistent.md' [verify_by: test]\n- `speed defect <path>` with a path that escapes the project root exits with 'Invalid spec path: <path>' [verify_by: test]\n- `speed defect specs/defects/valid.md` invokes triage_defect with the spec path [verify_by: test]\n- Trivial defect auto-continues through fix and integrate after triage [verify_by: test]\n- Moderate defect stops after triage with 'Run: speed run --defect <name>' message [verify_by: test]\n- `speed status --defects` prints formatted defect table [verify_by: test]\n- `speed status --defects` shows '(merged)' for resolved defects [verify_by: test]\n- `speed status --defects` shows escalation path for escalated defects [verify_by: test]\n- `speed status --defects` prints 'No defects found.' when .speed/defects/ is empty [verify_by: test]\n- `defect` subcommand is registered in the main dispatch [verify_by: test]",
+  "depends_on": [
+    "6"
+  ],
+  "status": "done",
+  "branch": "speed/speed-defects/task-9-cli-commands-defect-and-status-defects",
+  "agent_model": "sonnet",
+  "created_at": "2026-02-24T08:09:53Z",
+  "started_at": "2026-02-24T12:55:22Z",
+  "completed_at": "2026-02-24T12:59:46Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": null,
+  "files_touched": [
+    "speed"
+  ],
+  "decisions": [
+    "Used conditional sourcing for lib/defect_fix.sh and lib/defect_review.sh ([[ -f ]] && source) since those files don't exist yet — avoids breaking the script while still wiring up the sources when those tasks land",
+    "list_defects() already handles the resolved/(merged) and escalated path formatting internally in defects.sh, so cmd_status --defects just calls it and wraps the output with the 'Defects:' header",
+    "cmd_status() --defects early-returns before the feature/task machinery runs, so it works with no active feature"
+  ],
+  "concerns": [
+    "fix_defect and integrate_defect are not yet defined (lib/defect_fix.sh not created). The trivial auto-continue path in cmd_defect() will fail at runtime until Task 7/8 land. This is expected — Task 9 wires the CLI entry points, downstream tasks provide the implementations.",
+    "The scope gate flags tests/test_defect_cli.sh as undeclared — test files are expected additions per Task 6's precedent"
+  ]
+}

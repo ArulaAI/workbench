@@ -1,0 +1,80 @@
+{
+  "id": "5",
+  "title": "Unit tests for useAuditHistory hook",
+  "description": "Create `dashboard/frontend/components/editor/use-audit-history.test.ts` with hook tests.\n\nUse `renderHook` and `act` from `@testing-library/react`. Use `fireEvent.keyDown(document, { key: 'Escape' })` for keyboard tests.\n\n**describe('useAuditHistory')**\n\n**describe('initial state')**\n- it('starts with selectedRunIndex=0, compareIndices=null, isComparing=false')\n\n**describe('selectRun')**\n- it('sets selectedRunIndex to given index')\n- it('toggles back to 0 when selecting current index')\n- it('clamps to auditCount-1 when index exceeds bounds')\n- it('clears compareIndices when selecting a run')\n\n**describe('shiftSelectRun')**\n- it('is no-op when auditCount is 1')\n- it('enters comparison mode with sorted indices')\n- it('cancels comparison when clicking existing compare index')\n- it('replaces older index when third dot shift-clicked')\n- it('prevents comparing a run with itself')\n\n**describe('escape key')**\n- it('exits comparison mode on first Escape')\n- it('deselects run on Escape when not comparing')\n- it('is no-op at default state')\n- it('handles two rapid Escape presses correctly')\n\n**describe('clamping')**\n- it('clamps selectedRunIndex when auditCount decreases')\n- it('clears compareIndices when auditCount makes indices invalid')\n- it('handles auditCount going to 0')\n\nFor rerender tests (clamping), use `renderHook` with `initialProps` and call `rerender({ auditCount: newValue })`.",
+  "acceptance_criteria": "- All selectRun state transition tests pass [verify: test]\n- All shiftSelectRun comparison mode entry/exit tests pass [verify: test]\n- Escape key two-level exit tests pass [verify: test]\n- Index clamping on auditCount decrease tests pass [verify: test]\n- Self-comparison prevention test passes [verify: test]\n- Tests use renderHook and act from @testing-library/react [verify: lint]\n- Hook imported correctly from use-audit-history.ts [verify: lint]",
+  "depends_on": [
+    "3"
+  ],
+  "status": "pending",
+  "branch": "speed/speed-dashboard-audit-history/task-5-unit-tests-for-useaudithistory-hook",
+  "agent_model": "sonnet",
+  "created_at": "2026-03-25T22:18:31Z",
+  "started_at": "2026-03-26T02:15:40Z",
+  "completed_at": "2026-03-26T02:17:21Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": "{\"verdict\":\"request_changes\",\"spec_verification\":[{\"spec_quote\":\"selectedRunIndex: Integer, 0 <= index < recentAudits.length. Clamped if audits are pruned between renders.\",\"spec_section\":\"Tech RFC — Validation Rules\",\"satisfied\":true,\"evidence\":\"use-audit-history.test.ts:109–128 — three clamping tests cover shrink, compare-index invalidation, and auditCount→0\",\"notes\":null},{\"spec_quote\":\"compareIndices: Tuple of two distinct integers within bounds, or null. compareIndices[0] < compareIndices[1] (older first).\",\"spec_section\":\"Tech RFC — Validation Rules\",\"satisfied\":true,\"evidence\":\"use-audit-history.test.ts:59–65 — 'enters comparison mode with sorted indices' asserts toEqual([0, 3]) with selectedRunIndex=0 as the lower bound\",\"notes\":null},{\"spec_quote\":\"Cannot compare with fewer than 2 audit runs (shift-click is no-op)\",\"spec_section\":\"Tech RFC — Validation Rules (Invalid transitions)\",\"satisfied\":true,\"evidence\":\"use-audit-history.test.ts:50–56 — 'is no-op when auditCount is 1'\",\"notes\":null},{\"spec_quote\":\"Clicking the same dot twice cancels comparison.\",\"spec_section\":\"Tech RFC — Validation Rules (Shift-click target)\",\"satisfied\":true,\"evidence\":\"use-audit-history.test.ts:67–75 — 'cancels comparison when clicking existing compare index'; also covered by 'prevents comparing a run with itself'\",\"notes\":null},{\"spec_quote\":\"Escape or 'Exit comparison' returns to inactive\",\"spec_section\":\"Tech RFC — State Machine\",\"satisfied\":true,\"evidence\":\"use-audit-history.test.ts:90–106 — 'exits comparison mode on first Escape', 'handles two rapid Escape presses correctly'\",\"notes\":null},{\"spec_quote\":\"Click latest or Escape returns to default.\",\"spec_section\":\"Tech RFC — State Machine (Run selection)\",\"satisfied\":\"partial\",\"evidence\":\"use-audit-history.test.ts:108–116 — 'deselects run on Escape when not comparing' passes. But 'click latest' (clicking index 0 while a non-zero index is selected) has no direct test. The 'toggles back to 0 when selecting current index' test (line 22–27) covers clicking the ALREADY-SELECTED non-latest dot, which is a different transition the spec does not explicitly define.\",\"notes\":\"No test for: start at selectedRunIndex=2, then selectRun(0) → verify selectedRunIndex=0. This is the canonical 'click latest to return to default' flow from the spec's state machine.\"},{\"spec_quote\":\"Entering comparison clears single selection.\",\"spec_section\":\"Tech RFC — State Machine (Comparison mode transitions)\",\"satisfied\":false,\"evidence\":\"The hook correctly resets selectedRunIndex to 0 on line 41 of use-audit-history.ts. But no test exercises this path: there is no test that (1) selects a non-zero run, then (2) shift-clicks a different run, then (3) asserts selectedRunIndex was reset to 0. All comparison-entry tests start from default state (selectedRunIndex=0), so this side effect cannot be observed.\",\"notes\":\"This is the critical gap. The behavior exists in the hook but is not tested.\"}],\"missing_from_spec\":[{\"spec_quote\":\"Entering comparison clears single selection.\",\"description\":\"No test covers the transition: selectRun(N) → shiftSelectRun(M) → assert selectedRunIndex === 0. The test suite starts all comparison-entry tests from default state, so the 'clears single selection' side effect is never observable.\"}],\"out_of_scope\":[{\"file\":\"dashboard/frontend/components/editor/use-audit-history.test.ts\",\"line\":1,\"description\":\"The test RFC's 'Files Produced' table lists 5 files, all under __tests__/editor/. This file is colocated with the source instead. The RFC also has no entry for use-audit-history.test.ts at all — hook state logic was expected to be exercised via VerdictDots.test.tsx and RunSelection.test.tsx component tests, not a standalone hook unit test. The task explicitly owns this file, so the scope extension appears intentional, but the file location deviates from the RFC's test placement convention.\"},{\"file\":\"dashboard/frontend/components/editor/use-audit-history.test.ts\",\"line\":77,\"description\":\"'replaces older index when third dot shift-clicked' tests a replacement strategy (keep lower anchor, replace higher) that is not defined anywhere in the product spec, tech RFC, or test RFC. The spec says what makes comparison mode invalid (same index, out of bounds) but does not specify what happens when a third dot is shift-clicked while already in comparison mode. This behavior is reasonable UX but the test is asserting implementation detail rather than a spec requirement.\"}],\"issues\":[{\"severity\":\"major\",\"file\":\"dashboard/frontend/components/editor/use-audit-history.test.ts\",\"line\":1,\"message\":\"Missing test: 'entering comparison resets single selection'. The tech RFC requires 'Entering comparison clears single selection' but no test verifies that shiftSelectRun resets a non-zero selectedRunIndex to 0.\",\"suggestion\":\"Add a test inside the 'shiftSelectRun' describe block: selectRun(2) to set selectedRunIndex=2, then shiftSelectRun(4), then assert selectedRunIndex === 0 alongside isComparing === true.\"},{\"severity\":\"minor\",\"file\":\"dashboard/frontend/components/editor/use-audit-history.test.ts\",\"line\":1,\"message\":\"beforeEach and afterEach are imported but never used.\",\"suggestion\":\"Remove them from the vitest import. The hook's keydown listener is self-cleaning via useEffect teardown; renderHook unmounts between tests automatically.\"},{\"severity\":\"nit\",\"file\":\"dashboard/frontend/components/editor/use-audit-history.test.ts\",\"line\":3,\"message\":\"fireEvent is imported from @testing-library/dom rather than @testing-library/react.\",\"suggestion\":\"Move fireEvent into the @testing-library/react import on line 2. React Testing Library re-exports it and importing from the lower-level package is inconsistent with how the rest of the test file uses RTL.\"}],\"strengths\":[\"Escape key tests use fireEvent.keyDown on document — correctly mirrors how the hook registers the listener, not on a DOM node the hook doesn't own.\",\"The clamping describe block uses rerender correctly to simulate auditCount changing across renders, which is the right tool for useEffect dependency testing.\",\"The 'handles two rapid Escape presses correctly' test includes an explanatory comment that traces the selectedRunIndex reset inside shiftSelectRun — this is exactly the kind of non-obvious reasoning future readers need.\"]}",
+  "claimed_by": "sanjay",
+  "base_commit": "9977b6097f2fa8d0d140dcf5abe43194e6c80b98",
+  "files_touched": [
+    "dashboard/frontend/components/editor/use-audit-history.test.ts"
+  ],
+  "started_by": "sanjay",
+  "gate_results": {
+    "checks": [
+      {
+        "name": "diff_non_empty",
+        "status": "pass"
+      },
+      {
+        "name": "declared_files",
+        "status": "pass"
+      },
+      {
+        "name": "scope",
+        "status": "pass"
+      },
+      {
+        "name": "python_imports",
+        "status": "pass"
+      },
+      {
+        "name": "not_blocked",
+        "status": "pass"
+      },
+      {
+        "name": "test_coverage",
+        "status": "pass"
+      },
+      {
+        "name": "gate_evidence",
+        "status": "warn"
+      },
+      {
+        "name": "criteria",
+        "status": "warn"
+      },
+      {
+        "name": "secrets",
+        "status": "pass"
+      },
+      {
+        "name": "syntax",
+        "status": "pass"
+      }
+    ],
+    "scope": {}
+  },
+  "decisions": [
+    "Used `fireEvent` from `@testing-library/dom` rather than `@testing-library/react` since the DOM package exports it and avoids any React-wrapping overhead for document-level events.",
+    "For 'replaces older index' test: entered comparison via shiftSelectRun(3) from selectedRunIndex=0, producing [0,3], then shift-clicked 4 — since 4 > lower(0), the hook keeps lower=0 and replaces higher, yielding [0,4].",
+    "For 'two rapid Escape presses': after exitComparison resets selectedRunIndex to 0, the second Escape is a true no-op — asserted both selectedRunIndex=0 and compareIndices=null to confirm stable state.",
+    "Rerender-based clamping tests use `renderHook` with `initialProps` and call `rerender({ auditCount: newValue })` as specified in the task."
+  ],
+  "concerns": [
+    "Full gates show 'Lint / Type check / Tests — not configured for both' — these gates appear to be unregistered in the SPEED config for this subsystem, so they were skipped rather than run. The tests themselves are syntactically valid and follow existing project patterns; if vitest is invoked directly (`npx vitest run`) they should pass.",
+    "The `shiftSelectRun` 'replaces older index' test relies on the hook starting at selectedRunIndex=0. If a consumer pre-navigates before calling shiftSelectRun, the replace semantics depend on which index is lower — documented in Task 3's decisions."
+  ],
+  "review_verdict": "request_changes"
+}

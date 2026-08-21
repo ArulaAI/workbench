@@ -1,0 +1,16 @@
+id: zig-builtin-call
+language: zig
+metadata:
+  produces: reference
+  ref_kind: call
+rule:
+  kind: builtin_function
+
+---
+id: zig-call
+language: zig
+metadata:
+  produces: reference
+  ref_kind: call
+rule:
+  kind: call_expression

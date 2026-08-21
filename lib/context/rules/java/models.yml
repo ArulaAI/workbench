@@ -1,0 +1,56 @@
+id: jpa-entity
+language: java
+metadata:
+  produces: node
+  kind: class
+  orm: true
+rule:
+  kind: class_declaration
+  has:
+    kind: marker_annotation
+    stopBy: neighbor
+    has:
+      kind: identifier
+      regex: "^Entity$"
+      stopBy: end
+
+---
+id: jpa-column
+language: java
+metadata:
+  produces: node
+  kind: variable
+  orm: true
+rule:
+  kind: field_declaration
+  has:
+    kind: marker_annotation
+    stopBy: neighbor
+    has:
+      kind: identifier
+      regex: "^Column$"
+      stopBy: end
+  inside:
+    kind: class_declaration
+    stopBy: end
+
+---
+id: jpa-relationship
+language: java
+metadata:
+  produces: node
+  kind: variable
+  orm: true
+  relationship: true
+rule:
+  kind: field_declaration
+  has:
+    kind: marker_annotation
+    stopBy: neighbor
+    has:
+      kind: identifier
+      regex: "^(ManyToOne|OneToMany|OneToOne|ManyToMany)$"
+      stopBy: end
+  inside:
+    kind: class_declaration
+    stopBy: end

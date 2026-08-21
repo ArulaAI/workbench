@@ -1,0 +1,41 @@
+id: python-attribute-access
+language: python
+metadata:
+  produces: reference
+  ref_kind: attribute_access
+rule:
+  kind: attribute
+
+---
+id: python-import-from
+language: python
+metadata:
+  produces: reference
+  ref_kind: import
+  module_var: MODULE
+  symbols_var: NAMES
+rule:
+  kind: import_from_statement
+  pattern: from $MODULE import $$$NAMES
+
+---
+id: python-import
+language: python
+metadata:
+  produces: reference
+  ref_kind: import
+  module_var: MODULE
+rule:
+  kind: import_statement
+  pattern: import $MODULE
+
+---
+id: python-call
+language: python
+metadata:
+  produces: reference
+  ref_kind: call
+  name_var: FUNC
+rule:
+  kind: call
+  pattern: $FUNC($$$ARGS)

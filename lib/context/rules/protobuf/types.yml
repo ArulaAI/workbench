@@ -1,0 +1,25 @@
+id: protobuf-message
+language: protobuf
+metadata:
+  produces: node
+  kind: class
+rule:
+  kind: message
+
+---
+id: protobuf-enum
+language: protobuf
+metadata:
+  produces: node
+  kind: type
+rule:
+  kind: enum
+
+---
+id: protobuf-service
+language: protobuf
+metadata:
+  produces: node
+  kind: class
+rule:
+  kind: service

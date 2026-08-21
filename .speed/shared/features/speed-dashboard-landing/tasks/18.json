@@ -1,0 +1,94 @@
+{
+  "id": "18",
+  "title": "Add schema-level integration tests for landing resolver",
+  "description": "Extend `dashboard/backend/tests/test_landing.py` (created in Phase 1 task 7) with schema integration tests.\n\nTests to add:\n1. Execute `landingView` query through the Strawberry test client. Verify the response shape matches the full GraphQL query from the spec (all four panels, all fields).\n2. Execute `landingView` query with empty project (no .speed/ directory). Verify all panels return empty lists, no errors.\n3. Execute `respondToEscalation` mutation through the test client. Verify success response and file written.\n4. Execute `respondToEscalation` mutation for non-blocked task. Verify `success: false`.\n5. Execute `landingView` with corrupted `state.json` in one feature. Verify that feature is skipped, others still returned.\n6. Verify `narrative` field returns `null` when LLM provider is mocked to timeout (>5s).\n\nUse Strawberry's test client pattern. Create temp directories with fixture data for each test case. Mock `provider_chat()` for narrative tests.",
+  "acceptance_criteria": "- Test: landingView query returns all four panels with correct field shapes\n  verify_by: test\n- Test: empty project returns empty lists in all panels\n  verify_by: test\n- Test: respondToEscalation mutation writes response to task JSON\n  verify_by: test\n- Test: respondToEscalation on non-blocked task returns success: false\n  verify_by: test\n- Test: corrupted state.json skips feature without crashing\n  verify_by: test\n- Test: LLM timeout returns null narrative, other fields intact\n  verify_by: test\n- All tests pass with pytest\n  verify_by: test",
+  "depends_on": [
+    "8"
+  ],
+  "status": "done",
+  "branch": "speed/speed-dashboard-landing/task-18-add-schema-level-integration-tests-for-l",
+  "agent_model": "sonnet",
+  "created_at": "2026-03-15T16:26:57Z",
+  "started_at": "2026-03-15T18:58:00Z",
+  "completed_at": "2026-03-17T05:22:18Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": "{\"verdict\":\"request_changes\",\"spec_verification\":[{\"spec_quote\":\"Test: landingView query returns all four panels with correct field shapes\",\"spec_section\":\"Acceptance Criteria #1\",\"satisfied\":false,\"evidence\":\"No diff available — no test file was created or modified.\",\"notes\":\"Cannot verify without implementation.\"},{\"spec_quote\":\"Test: empty project returns empty lists in all panels\",\"spec_section\":\"Acceptance Criteria #3\",\"satisfied\":false,\"evidence\":\"No diff available.\",\"notes\":null},{\"spec_quote\":\"Test: respondToEscalation mutation writes response to task JSON\",\"spec_section\":\"Acceptance Criteria #5\",\"satisfied\":false,\"evidence\":\"No diff available.\",\"notes\":null},{\"spec_quote\":\"Test: respondToEscalation on non-blocked task returns success: false\",\"spec_section\":\"Acceptance Criteria #7\",\"satisfied\":false,\"evidence\":\"No diff available.\",\"notes\":null},{\"spec_quote\":\"Test: corrupted state.json skips feature without crashing\",\"spec_section\":\"Acceptance Criteria #9\",\"satisfied\":false,\"evidence\":\"No diff available.\",\"notes\":null},{\"spec_quote\":\"Test: LLM timeout returns null narrative, other fields intact\",\"spec_section\":\"Acceptance Criteria #11\",\"satisfied\":false,\"evidence\":\"No diff available.\",\"notes\":null},{\"spec_quote\":\"All tests pass with pytest\",\"spec_section\":\"Acceptance Criteria #13\",\"satisfied\":false,\"evidence\":\"No diff available — no tests were written to run.\",\"notes\":null}],\"missing_from_spec\":[{\"spec_quote\":\"Test: landingView query returns all four panels with correct field shapes\",\"description\":\"No schema-level integration tests exist in dashboard/backend/tests/test_landing.py for the landingView query path.\"},{\"spec_quote\":\"Test: respondToEscalation mutation writes response to task JSON\",\"description\":\"Mutation integration tests are entirely absent.\"},{\"spec_quote\":\"Test: LLM timeout returns null narrative, other fields intact\",\"description\":\"LLM timeout resilience test not implemented.\"},{\"spec_quote\":\"Test: corrupted state.json skips feature without crashing\",\"description\":\"Corrupted state resilience test not implemented.\"}],\"out_of_scope\":[],\"issues\":[{\"severity\":\"critical\",\"file\":\"dashboard/backend/tests/test_landing.py\",\"line\":null,\"message\":\"No diff was produced. The task file (dashboard/backend/tests/test_landing.py) was not modified or created. All seven acceptance criteria are unmet.\",\"suggestion\":\"Implement all six test cases listed in the acceptance criteria. Tests should exercise the full schema path: execute GraphQL queries/mutations against the assembled schema, not just call resolver functions directly (those belong in the Phase 1 unit tests from task 7).\"}],\"strengths\":[]}",
+  "files_touched": [
+    "dashboard/backend/tests/test_landing.py"
+  ],
+  "spec_references": [
+    {
+      "spec": "tech",
+      "section": "Test Plan",
+      "requirement": "Unit tests for all panel readers, escalation mutation, and LLM narrative"
+    },
+    {
+      "spec": "tech",
+      "section": "Acceptance Criteria",
+      "requirement": "Items 1-9: resolver behavior for all panels, empty states, mutation, and LLM"
+    },
+    {
+      "spec": "tech",
+      "section": "Risks and Coverage",
+      "requirement": "Resolver reads stale or corrupt state.json — unit test malformed JSON"
+    }
+  ],
+  "rationale": "Schema-level tests verify the full path from GraphQL query through resolver to response. Separated from Phase 1 unit tests (task 7) because these require the schema wiring from task 8. The tests validate the integration seam between types, resolvers, and schema.",
+  "assumptions": [
+    "Phase 1 task 7 created test_landing.py with unit tests for individual panel readers — this task adds schema-level integration tests to the same file"
+  ],
+  "gate_results": {
+    "checks": [
+      {
+        "name": "diff_non_empty",
+        "status": "pass"
+      },
+      {
+        "name": "declared_files",
+        "status": "pass"
+      },
+      {
+        "name": "scope",
+        "status": "pass"
+      },
+      {
+        "name": "python_imports",
+        "status": "pass"
+      },
+      {
+        "name": "not_blocked",
+        "status": "pass"
+      },
+      {
+        "name": "test_coverage",
+        "status": "pass"
+      },
+      {
+        "name": "gate_evidence",
+        "status": "warn"
+      },
+      {
+        "name": "criteria",
+        "status": "warn"
+      },
+      {
+        "name": "secrets",
+        "status": "pass"
+      },
+      {
+        "name": "syntax",
+        "status": "pass"
+      }
+    ],
+    "scope": {}
+  },
+  "decisions": [
+    "escalationTrend len==1 assertion was actually correct (onboarding is in coverage_trend so _read_escalation_trend always creates an entry, even with count=0). Added explicit feature/count assertions to document this behavior instead of changing the length check.",
+    "test_narrative_null_on_llm_timeout fixture used 'billing' spec + 'payments' running feature (different names) so the running feature's status:running doesn't exclude the spec from draft_specs — a name collision would filter it out via the 'running excluded' rule in read_define_panel."
+  ],
+  "concerns": [],
+  "review_verdict": "approve",
+  "reviewed_at": "2026-03-17T05:38:47Z"
+}

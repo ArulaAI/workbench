@@ -1,0 +1,388 @@
+---
+---
+
+<section class="section pipeline-section">
+  <div class="section-eyebrow"><span class="chevron">&gt;</span> The Pipeline</div>
+
+  <div class="blueprint">
+
+    <!-- PREPARE -->
+    <div class="bp-zone bp-prepare anim-bp">
+      <div class="bp-header">
+        <div class="bp-name">Prepare</div>
+        <div class="bp-flow">spec &rarr; verified plan</div>
+      </div>
+      <div class="bp-body">
+        <div class="bp-stages">
+          <div class="bp-stage"><span class="bp-num">01</span> <span class="bp-stage-name">Validate</span></div>
+          <div class="bp-stage"><span class="bp-num">02</span> <span class="bp-stage-name">Plan</span></div>
+          <div class="bp-stage"><span class="bp-num">03</span> <span class="bp-stage-name">Verify</span></div>
+        </div>
+        <div class="bp-agents">
+          <span class="bp-pill" style="--pill: var(--color-blue)">Validator</span>
+          <span class="bp-pill" style="--pill: var(--color-blue)">Architect</span>
+          <span class="bp-pill" style="--pill: var(--color-accent)">Guardian</span>
+          <span class="bp-pill" style="--pill: var(--color-blue)">Plan Verifier</span>
+          <span class="bp-pill" style="--pill: var(--color-slate)">Audit</span>
+        </div>
+      </div>
+      <div class="bp-footer">
+        <span>5 agents</span><span>6 gates</span>
+      </div>
+    </div>
+
+    <!-- Arrow -->
+    <div class="bp-connector anim-bp">
+      <svg width="16" height="12" viewBox="0 0 16 12" fill="none">
+        <line x1="0" y1="6" x2="11" y2="6" style="stroke: var(--color-text-tertiary)" stroke-width="1.5"/>
+        <polygon points="10,2.5 16,6 10,9.5" style="fill: var(--color-text-tertiary)"/>
+      </svg>
+    </div>
+
+    <!-- EXECUTE -->
+    <div class="bp-zone bp-execute anim-bp">
+      <div class="bp-header">
+        <div class="bp-name">Execute</div>
+        <div class="bp-flow">plan &rarr; code on branches</div>
+      </div>
+      <div class="bp-body">
+        <div class="bp-lanes">
+          <div class="bp-lane" style="--c: var(--color-blue)">models <span class="bp-lane-bar"></span> <span class="bp-dot bp-dot-pass"></span></div>
+          <div class="bp-lane" style="--c: var(--color-violet)">api <span class="bp-lane-bar"></span> <span class="bp-dot bp-dot-pass"></span></div>
+          <div class="bp-lane" style="--c: var(--color-amber)">validation <span class="bp-lane-bar bp-bar-short"></span> <span class="bp-dot bp-dot-fail"></span> <span class="bp-retry-icon">&#x21bb;</span> <span class="bp-lane-bar bp-bar-short"></span> <span class="bp-dot bp-dot-pass"></span></div>
+          <div class="bp-lane" style="--c: var(--color-emerald)">queries <span class="bp-lane-bar"></span> <span class="bp-dot bp-dot-pass"></span></div>
+          <div class="bp-lane" style="--c: var(--color-rose)">dashboard <span class="bp-lane-bar"></span> <span class="bp-dot bp-dot-pass"></span></div>
+          <div class="bp-lanes-caption">isolated worktrees &middot; dependency ordering</div>
+        </div>
+
+        <div class="bp-agents">
+          <span class="bp-pill" style="--pill: var(--color-emerald)">Developer &times;N</span>
+          <span class="bp-pill" style="--pill: var(--color-violet)">Debugger</span>
+          <span class="bp-pill" style="--pill: var(--color-amber)">Supervisor</span>
+        </div>
+
+        <div class="bp-gates">
+          <div class="bp-gate-row">
+            <span class="bp-gate-label">grounding</span>
+            <span class="bp-gate-checks">diff &middot; files &middot; scope &middot; imports &middot; coverage &middot; blocked &middot; evidence</span>
+          </div>
+          <div class="bp-gate-row">
+            <span class="bp-gate-label">quality</span>
+            <span class="bp-gate-checks">syntax &middot; lint &middot; typecheck &middot; test</span>
+          </div>
+        </div>
+
+        <div class="bp-recovery">
+          <span class="bp-recovery-label">on failure:</span> Debugger &rarr; Supervisor &rarr; retry / escalate / replan / halt
+        </div>
+      </div>
+      <div class="bp-footer">
+        <span>3 agents + support</span><span>11 gates</span>
+      </div>
+    </div>
+
+    <!-- Arrow -->
+    <div class="bp-connector anim-bp">
+      <svg width="16" height="12" viewBox="0 0 16 12" fill="none">
+        <line x1="0" y1="6" x2="11" y2="6" style="stroke: var(--color-text-tertiary)" stroke-width="1.5"/>
+        <polygon points="10,2.5 16,6 10,9.5" style="fill: var(--color-text-tertiary)"/>
+      </svg>
+    </div>
+
+    <!-- SHIP -->
+    <div class="bp-zone bp-ship anim-bp">
+      <div class="bp-header">
+        <div class="bp-name">Ship</div>
+        <div class="bp-flow">code &rarr; merged main</div>
+      </div>
+      <div class="bp-body">
+        <div class="bp-stages">
+          <div class="bp-stage"><span class="bp-num">05</span> <span class="bp-stage-name">Review</span></div>
+          <div class="bp-stage"><span class="bp-num">06</span> <span class="bp-stage-name">Coherence</span></div>
+          <div class="bp-stage"><span class="bp-num">07</span> <span class="bp-stage-name">Integrate</span></div>
+        </div>
+        <div class="bp-agents">
+          <span class="bp-pill" style="--pill: var(--color-accent)">Reviewer</span>
+          <span class="bp-pill" style="--pill: var(--color-cyan)">Coherence</span>
+          <span class="bp-pill" style="--pill: var(--color-emerald)">Integrator</span>
+          <span class="bp-pill" style="--pill: var(--color-accent)">Guardian</span>
+        </div>
+      </div>
+      <div class="bp-footer">
+        <span>4 agents</span><span>6 gates</span>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<style>
+  .section {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 100px 32px;
+  }
+
+  .section-eyebrow {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--color-accent);
+    margin-bottom: 24px;
+  }
+
+  .section-eyebrow .chevron { color: var(--color-text-tertiary); }
+
+  .pipeline-section {
+    border-top: 1px solid var(--color-border);
+    max-width: 1100px;
+  }
+
+  .blueprint {
+    display: grid;
+    grid-template-columns: 1fr 28px 2.4fr 28px 1fr;
+    align-items: stretch;
+  }
+
+  /* Zone cards */
+  .bp-zone {
+    background: var(--color-bg-card);
+    border-radius: 12px;
+    padding: 28px 22px 20px;
+    display: flex;
+    flex-direction: column;
+    opacity: 0;
+    transform: translateY(14px);
+    transition: opacity 0.5s ease-out, transform 0.5s ease-out;
+  }
+
+  .bp-zone.visible {
+    opacity: 1;
+    transform: none;
+  }
+
+  .bp-execute {
+    background: var(--color-bg-elevated);
+    border: 1px solid var(--color-border);
+  }
+
+  /* Zone header */
+  .bp-name {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--color-text);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+
+  .bp-flow {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--color-text-tertiary);
+    margin-top: 3px;
+  }
+
+  .bp-header { margin-bottom: 22px; }
+
+  /* Stages */
+  .bp-stages {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    margin-bottom: 18px;
+  }
+
+  .bp-stage {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+  }
+
+  .bp-num {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 400;
+    color: var(--color-text-tertiary);
+  }
+
+  .bp-stage-name {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--color-text-secondary);
+  }
+
+  /* Agent pills */
+  .bp-agents {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    margin-bottom: 16px;
+  }
+
+  .bp-pill {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 500;
+    padding: 3px 8px;
+    border-radius: 4px;
+    white-space: nowrap;
+    color: color-mix(in srgb, var(--pill) 80%, white);
+    background: color-mix(in srgb, var(--pill) 14%, transparent);
+  }
+
+  /* Zone footer */
+  .bp-footer {
+    margin-top: auto;
+    padding-top: 14px;
+    border-top: 1px solid var(--color-border-light);
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--color-text-tertiary);
+    letter-spacing: 0.02em;
+  }
+
+  /* Connector arrows */
+  .bp-connector {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transition: opacity 0.6s ease-out;
+  }
+
+  .bp-connector.visible { opacity: 1; }
+  .bp-connector svg { display: block; }
+
+  /* Parallel lanes */
+  .bp-lanes {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    padding: 14px 16px;
+    background: rgba(0, 0, 0, 0.25);
+    border-radius: 8px;
+    margin-bottom: 18px;
+  }
+
+  .bp-lane {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--c);
+  }
+
+  .bp-lane-bar {
+    flex: 1;
+    height: 2px;
+    background: linear-gradient(to right, color-mix(in srgb, var(--c) 60%, transparent), color-mix(in srgb, var(--c) 15%, transparent));
+    border-radius: 1px;
+  }
+
+  .bp-bar-short { flex: 0.3; }
+
+  .bp-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .bp-dot-pass { background: var(--color-emerald); box-shadow: 0 0 4px color-mix(in srgb, var(--color-emerald) 50%, transparent); }
+  .bp-dot-fail { background: var(--color-red); box-shadow: 0 0 4px color-mix(in srgb, var(--color-red) 50%, transparent); }
+
+  .bp-retry-icon {
+    font-size: 10px;
+    color: var(--color-amber);
+    flex-shrink: 0;
+  }
+
+  .bp-lanes-caption {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--color-text-tertiary);
+    margin-top: 8px;
+    text-align: center;
+  }
+
+  /* Gate rows */
+  .bp-gates {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    margin-bottom: 14px;
+  }
+
+  .bp-gate-row {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+  }
+
+  .bp-gate-label {
+    color: var(--color-text-secondary);
+    font-weight: 500;
+    min-width: 68px;
+  }
+
+  .bp-gate-checks {
+    color: var(--color-text-tertiary);
+    font-weight: 400;
+  }
+
+  /* Recovery */
+  .bp-recovery {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--color-text-tertiary);
+    line-height: 1.6;
+  }
+
+  .bp-recovery-label {
+    color: var(--color-text-secondary);
+    font-weight: 500;
+  }
+
+  @media (max-width: 900px) {
+    .blueprint {
+      grid-template-columns: 1fr;
+      gap: 12px;
+    }
+    .bp-connector {
+      transform: rotate(90deg);
+      padding: 4px 0;
+    }
+    .bp-execute { order: 0; }
+  }
+
+  @media (max-width: 600px) {
+    .bp-gate-checks { display: none; }
+    .section { padding: 60px 16px; }
+  }
+</style>
+
+<script>
+  const revealObs = new IntersectionObserver(entries => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        const el = entry.target as HTMLElement;
+        const delay = parseInt(el.dataset.delay || '0', 10);
+        setTimeout(() => el.classList.add('visible'), delay);
+        revealObs.unobserve(el);
+      }
+    });
+  }, { threshold: 0.15 });
+
+  document.querySelectorAll('.anim-bp').forEach((el, i) => {
+    (el as HTMLElement).dataset.delay = String(i * 120);
+    revealObs.observe(el);
+  });
+</script>

@@ -1,0 +1,72 @@
+{
+  "id": "2",
+  "title": "Phase 0: Config file reading and convention extraction",
+  "description": "Create `lib/learn/convention_configs.py` with `_extract_config_conventions(project_root: Path) -> list[ConventionEntry]`.\n\nScans the project root for 16 supported config file types and maps their rules to ConventionEntry objects with `confidence='established'` and `source='config'`.\n\nConfig files to support (parsed with appropriate readers):\n- `.editorconfig` — custom INI-like parser for indent_style, indent_size, charset, trim_trailing_whitespace, insert_final_newline\n- `pyproject.toml` — tomllib for [tool.ruff], [tool.black], [tool.pylint] sections. Extract import ordering (isort), line length, naming rules, banned imports\n- `.flake8` / `setup.cfg` — configparser for [flake8] section\n- `.eslintrc.*` / `eslint.config.*` — JSON/YAML/JS config. Extract naming-convention rules, import rules, banned patterns\n- `.prettierrc` / `prettier.config.*` — JSON/YAML. Extract tabs/spaces, semicolons, quote style\n- `biome.json` — JSON. Extract formatter + linter config\n- `tsconfig.json` — JSON. Extract strict mode, path aliases, module resolution\n- `.golangci.yml` — YAML. Extract linter rules\n- `clippy.toml` / `.clippy.conf` — TOML. Extract lint levels\n- `checkstyle.xml` / `pmd.xml` — XML. Extract naming and style rules\n- `.rubocop.yml` — YAML. Extract naming, style, layout rules\n- `.clang-format` / `.clang-tidy` — YAML-like. Extract brace style, indent, naming\n- `stylecop.json` — JSON. Extract naming and layout\n- `.shellcheckrc` — line-based. Extract disabled checks\n\nEach parser must handle: missing file (skip silently), empty file (skip silently), malformed content (log warning via `logging.warning()`, return empty list). The `canonical_example` for each convention is the config file path itself.\n\nImport `ConventionEntry` from `lib.learn.conventions`.",
+  "acceptance_criteria": "- _extract_config_conventions returns list[ConventionEntry] with source='config' and confidence='established' for each detected config\n  verify_by: test\n- pyproject.toml with [tool.ruff] section containing select=['I'] produces a convention entry about import ordering\n  verify_by: test\n- .editorconfig with indent_style=space, indent_size=4 produces convention entry about indentation\n  verify_by: test\n- Missing config file produces no error and no convention entry\n  verify_by: test\n- Malformed config file (invalid TOML/JSON/YAML) logs warning and returns empty list for that config type\n  verify_by: test\n- Empty config file (0 bytes) returns empty list for that config type\n  verify_by: test\n- Each ConventionEntry has canonical_example set to the config file path\n  verify_by: test",
+  "depends_on": [
+    "1"
+  ],
+  "status": "pending",
+  "branch": "speed/speed-conventions/task-2-phase-0-config-file-reading-and-conventi",
+  "agent_model": "sonnet",
+  "created_at": "2026-03-14T16:03:48Z",
+  "started_at": null,
+  "completed_at": "2026-03-16T02:50:15Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": "{\"verdict\":\"request_changes\",\"spec_verification\":[{\"spec_quote\":\"Checks 16 config file types. For each type:\",\"spec_section\":\"Phase 0: Config reading — _extract_config_conventions docstring (pre-diff)\",\"satisfied\":false,\"evidence\":\"The diff changes the function docstring from 16 to 17. The implementation at lines 1126–1129 calls `_collect` twice for Python linting — once for `.flake8` and once for `setup.cfg` — treating them as two separate config types. This inflates the count to 17.\",\"notes\":\"The docstring update is factually accurate to the code, but the code itself deviates from the spec. The spec groups them as one logical entry: '`.flake8` / `setup.cfg [flake8]`'. The module-level docstring at line 3 still says '16 supported config file types', creating an internal inconsistency the diff does not resolve.\"},{\"spec_quote\":\"`.flake8` / `setup.cfg [flake8]` | Python | Linting rules, max line length, ignored errors\",\"spec_section\":\"Phase 0 config table (single row covering both files)\",\"satisfied\":\"partial\",\"evidence\":\"Both `.flake8` (line 1128) and `setup.cfg` (line 1129) are handled, which is correct. However, the spec presents them as one logical config type. The implementation handles them as two independent `_collect` calls — meaning if a project has both files, both are processed and can produce independent (possibly conflicting) convention entries. The spec's intent appears to be: support the flake8 config regardless of which file it lives in, not: process both files simultaneously.\",\"notes\":\"No deduplication or mutual-exclusion logic exists between `.flake8` and `setup.cfg`. A project with both files will get two sets of flake8-derived conventions.\"},{\"spec_quote\":\"_extract_config_conventions returns list[ConventionEntry] with source='config' and confidence='established' for each detected config\",\"spec_section\":\"Task Acceptance Criteria #1\",\"satisfied\":true,\"evidence\":\"test_all_entries_source_is_config (line 197) and test_all_entries_confidence_is_established (line 207) in tests/test_convention_configs.py verify this directly. Implementation is in the base branch, not this diff.\",\"notes\":null},{\"spec_quote\":\"pyproject.toml with [tool.ruff] section containing select=['I'] produces a convention entry about import ordering\",\"spec_section\":\"Task Acceptance Criteria #2\",\"satisfied\":true,\"evidence\":\"test_pyproject_ruff_select_I_yields_import_ordering (line 29) covers this. Not in this diff; in base.\",\"notes\":null},{\"spec_quote\":\".editorconfig with indent_style=space, indent_size=4 produces convention entry about indentation\",\"spec_section\":\"Task Acceptance Criteria #3\",\"satisfied\":true,\"evidence\":\"test_editorconfig_indent_style_space (line 79) and test_editorconfig_indent_size_4 (line 88) cover this.\",\"notes\":null},{\"spec_quote\":\"Missing config file produces no error and no convention entry\",\"spec_section\":\"Task Acceptance Criteria #4\",\"satisfied\":true,\"evidence\":\"test_no_config_files_returns_empty_no_error (line 191) covers this.\",\"notes\":null},{\"spec_quote\":\"Malformed config file (invalid TOML/JSON/YAML) logs warning and returns empty list for that config type\",\"spec_section\":\"Task Acceptance Criteria #5\",\"satisfied\":true,\"evidence\":\"Each config type has a malformed-input test (e.g., test_pyproject_malformed_toml_warns_empty line 56, test_flake8_malformed_ini_warns_empty line 252, test_eslintrc_malformed_json_warns_empty line 123, etc.).\",\"notes\":null},{\"spec_quote\":\"Empty config file (0 bytes) returns empty list for that config type\",\"spec_section\":\"Task Acceptance Criteria #6\",\"satisfied\":true,\"evidence\":\"Each config type has an empty-file test (e.g., test_pyproject_empty_returns_empty line 67, test_flake8_empty_returns_empty line 263, etc.).\",\"notes\":null},{\"spec_quote\":\"Each ConventionEntry has canonical_example set to the config file path\",\"spec_section\":\"Task Acceptance Criteria #7\",\"satisfied\":true,\"evidence\":\"test_all_entries_canonical_example_is_config_file_path (line 217) verifies this.\",\"notes\":null}],\"missing_from_spec\":[{\"spec_quote\":\"Reads: 16 config file types [EXISTING files]\",\"description\":\"The implementation processes 17 config sources by treating `.flake8` and `setup.cfg` as independent entries. The spec counts them as one logical type. No deduplication logic handles the case where both files coexist in the same project.\"}],\"out_of_scope\":[{\"file\":\"lib/learn/convention_configs.py\",\"line\":1129,\"description\":\"`_collect(results, root / 'setup.cfg', ...)` as a separate entry from `.flake8` expands the supported config types from 16 (spec) to 17. The spec table lists '`.flake8` / `setup.cfg [flake8]`' as one combined entry. Processing both simultaneously without deduplication goes beyond spec scope.\"}],\"issues\":[{\"severity\":\"minor\",\"file\":\"lib/learn/convention_configs.py\",\"line\":3,\"message\":\"Module docstring still says '16 supported config file types' after the function docstring was updated to 17. The diff only updated line 1115; line 3 remains inconsistent.\",\"suggestion\":\"Either update the module docstring to 17 (matching the implementation) or revert the implementation to 16 by making `.flake8` and `setup.cfg` mutually exclusive (pick first found), then leave both docstrings at 16.\"},{\"severity\":\"major\",\"file\":\"lib/learn/convention_configs.py\",\"line\":1128,\"message\":\"`.flake8` and `setup.cfg` are both unconditionally collected as independent config sources. If both exist, two sets of flake8-derived conventions are produced for the same project. The spec groups them as one logical type and the existing pattern for similar situations (ESLint, Prettier, golangci, clippy, etc.) uses a `for name in (...): break` pattern to pick the first match.\",\"suggestion\":\"Apply the same first-found pattern: iterate `('.flake8', 'setup.cfg')` and break after the first hit. This brings the count back to 16 per spec and eliminates duplicate convention generation.\"}],\"strengths\":[\"The docstring change is accurate to the current implementation — 17 is factually correct given the two separate flake8 `_collect` calls.\",\"Test coverage is comprehensive: every config type has a happy-path test, a malformed-input test, and an empty-file test. All seven acceptance criteria are covered.\",\"The pattern of using first-found iteration for config variants (ESLint, Prettier, golangci, clippy, rubocop, StyleCop) is consistent and correct throughout the rest of the function.\"]}",
+  "files_touched": [
+    "lib/learn/convention_configs.py"
+  ],
+  "gate_results": {
+    "checks": [
+      {
+        "name": "diff_non_empty",
+        "status": "pass"
+      },
+      {
+        "name": "declared_files",
+        "status": "pass"
+      },
+      {
+        "name": "scope",
+        "status": "pass"
+      },
+      {
+        "name": "python_imports",
+        "status": "pass"
+      },
+      {
+        "name": "not_blocked",
+        "status": "pass"
+      },
+      {
+        "name": "test_coverage",
+        "status": "pass"
+      },
+      {
+        "name": "gate_evidence",
+        "status": "warn"
+      },
+      {
+        "name": "criteria",
+        "status": "pass"
+      },
+      {
+        "name": "secrets",
+        "status": "pass"
+      }
+    ],
+    "scope": {}
+  },
+  "decisions": [
+    "The test file (tests/test_convention_configs.py) is owned by Task 7 per scope rules, so it cannot be created in this task. The grounding scope check enforces this boundary and rejects any commit touching that file.",
+    "Fixed the minor docstring inaccuracy flagged by the reviewer: 'Checks 16 config file types' → 'Checks 17 config file types' (the implementation handles .flake8 and setup.cfg independently plus .shellcheckrc as the 17th type).",
+    "All other review concerns (the nit about indent_size=0 grammar) were left as-is per the 'avoid over-engineering' constraint — valid input will always produce grammatically correct output."
+  ],
+  "concerns": [
+    "Seven ACs (2, 4, 6, 8, 10, 12, 14) require 'verify_by: test'. These tests belong to Task 7 (tests/test_convention_configs.py), which the task spec and scope enforcement confirm. The review's 'request_changes' was driven by the absence of tests, but creating them here violates the declared file ownership. Task 7 must be run to satisfy those ACs."
+  ],
+  "review_verdict": "request_changes",
+  "retry_count": 1
+}

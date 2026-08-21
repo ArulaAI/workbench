@@ -1,0 +1,224 @@
+{
+  "core_question": "Can SPEED triage a defect report, route it by complexity (trivial/moderate/complex), execute the appropriate fix pipeline, and resolve it through structured stages with quality gates?",
+  "entities": [
+    {
+      "name": "defect_state_library",
+      "type": "file",
+      "path": "lib/defects.sh",
+      "created_by_task": "1",
+      "key_fields": [
+        "init_defect_dir",
+        "parse_defect_report",
+        "create_defect_state",
+        "read_defect_state",
+        "transition_defect_state",
+        "write_triage_output",
+        "read_triage_output",
+        "list_defects",
+        "validate_defect_report",
+        "get_defect_branch",
+        "VALID_TRANSITIONS"
+      ]
+    },
+    {
+      "name": "defect_state_tests",
+      "type": "file",
+      "path": "tests/test_defect_state.sh",
+      "created_by_task": "1",
+      "key_fields": [
+        "test_state_creation",
+        "test_valid_transitions",
+        "test_invalid_transitions",
+        "test_report_parsing",
+        "test_triage_validation"
+      ]
+    },
+    {
+      "name": "defect_report_template",
+      "type": "file",
+      "path": "templates/defect-report.md",
+      "created_by_task": "2",
+      "key_fields": [
+        "Severity",
+        "Related Feature",
+        "Observed Behavior",
+        "Expected Behavior",
+        "Reproduction Steps"
+      ]
+    },
+    {
+      "name": "triage_agent_definition",
+      "type": "file",
+      "path": "agents/triage.md",
+      "created_by_task": "3",
+      "key_fields": [
+        "investigation_phase_prompt",
+        "classification_phase_prompt",
+        "triage_json_schema",
+        "complexity_criteria",
+        "defect_type_classification"
+      ]
+    },
+    {
+      "name": "developer_defect_reproduce_prompt",
+      "type": "file",
+      "path": "agents/developer.md",
+      "created_by_task": "4",
+      "key_fields": [
+        "Defect Reproduce Mode",
+        "failing_test_instruction",
+        "test_strategy_by_defect_type",
+        "no_fix_constraint"
+      ]
+    },
+    {
+      "name": "developer_defect_fix_prompt",
+      "type": "file",
+      "path": "agents/developer.md",
+      "created_by_task": "4",
+      "key_fields": [
+        "Defect Fix Mode",
+        "minimal_change_instruction",
+        "affected_files_scope",
+        "suggested_approach_reference"
+      ]
+    },
+    {
+      "name": "reviewer_defect_prompt",
+      "type": "file",
+      "path": "agents/reviewer.md",
+      "created_by_task": "5",
+      "key_fields": [
+        "Defect Fix Review",
+        "defect_addressed_check",
+        "scope_containment_check",
+        "no_new_behavior_check",
+        "scope_violations_output"
+      ]
+    },
+    {
+      "name": "triage_pipeline",
+      "type": "file",
+      "path": "lib/defect_triage.sh",
+      "created_by_task": "6",
+      "key_fields": [
+        "triage_defect",
+        "resolve_related_specs",
+        "build_investigation_prompt",
+        "build_classification_prompt",
+        "escalate_to_feature",
+        "route_by_complexity",
+        "print_triage_summary"
+      ]
+    },
+    {
+      "name": "fix_pipeline",
+      "type": "file",
+      "path": "lib/defect_fix.sh",
+      "created_by_task": "7",
+      "key_fields": [
+        "create_defect_branch",
+        "reproduce_defect",
+        "fix_defect",
+        "run_defect_quality_gates",
+        "check_grounding_gates"
+      ]
+    },
+    {
+      "name": "review_pipeline",
+      "type": "file",
+      "path": "lib/defect_review.sh",
+      "created_by_task": "8",
+      "key_fields": [
+        "review_defect_fix",
+        "check_guardian_threshold",
+        "run_defect_guardian",
+        "integrate_defect"
+      ]
+    },
+    {
+      "name": "cmd_defect",
+      "type": "function",
+      "path": "speed",
+      "function": "cmd_defect",
+      "created_by_task": "9",
+      "key_fields": [
+        "spec_path_validation",
+        "triage_invocation",
+        "trivial_auto_continue"
+      ]
+    },
+    {
+      "name": "defect_status_display",
+      "type": "function",
+      "path": "speed",
+      "function": "cmd_status",
+      "created_by_task": "9",
+      "key_fields": [
+        "defects_flag",
+        "formatted_defect_table",
+        "severity_complexity_display"
+      ]
+    },
+    {
+      "name": "defect_run_support",
+      "type": "function",
+      "path": "speed",
+      "function": "cmd_run",
+      "created_by_task": "10",
+      "key_fields": [
+        "defect_flag",
+        "complexity_routing",
+        "reproduce_then_fix"
+      ]
+    },
+    {
+      "name": "defect_integrate_support",
+      "type": "function",
+      "path": "speed",
+      "function": "cmd_integrate",
+      "created_by_task": "10",
+      "key_fields": [
+        "defect_flag",
+        "review_before_integrate",
+        "guardian_check"
+      ]
+    },
+    {
+      "name": "defect_retry_support",
+      "type": "function",
+      "path": "speed",
+      "function": "cmd_retry",
+      "created_by_task": "10",
+      "key_fields": [
+        "defect_flag",
+        "context_flag",
+        "escalate_flag",
+        "rerun_failed_stage"
+      ]
+    }
+  ],
+  "relationships": [],
+  "core_queries": [
+    {
+      "description": "List all defects with their current state, severity, and complexity",
+      "traversal": "speed status --defects → lib/defects.sh::list_defects → .speed/defects/*/state.json",
+      "answers": "What defects exist and what state is each in?"
+    },
+    {
+      "description": "Retrieve triage classification and root cause hypothesis for a defect",
+      "traversal": ".speed/defects/<name>/triage.json → complexity, affected_files, root_cause_hypothesis",
+      "answers": "What did the Triage Agent determine about a specific defect?"
+    },
+    {
+      "description": "Determine the pipeline path for a defect based on its complexity classification",
+      "traversal": "triage.json::complexity → route_by_complexity → trivial(fix→integrate) | moderate(reproduce→fix→review→integrate) | complex(escalate)",
+      "answers": "What stages will a defect go through and what human gates apply?"
+    },
+    {
+      "description": "Check if a defect fix stayed within scope of affected files",
+      "traversal": "git diff → check_grounding_gates → compare against triage.json::affected_files",
+      "answers": "Did the fix modify only the files identified during triage?"
+    }
+  ]
+}

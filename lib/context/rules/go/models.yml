@@ -1,0 +1,19 @@
+id: gorm-model
+language: go
+metadata:
+  produces: node
+  kind: class
+  orm: true
+rule:
+  kind: type_spec
+  has:
+    field: type
+    kind: struct_type
+    stopBy: end
+    has:
+      kind: field_declaration
+      stopBy: end
+      has:
+        kind: qualified_type
+        regex: "gorm\\.Model"
+        stopBy: end

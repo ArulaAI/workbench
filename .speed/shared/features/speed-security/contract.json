@@ -1,0 +1,324 @@
+{
+  "entities": [
+    {
+      "name": "emit (security section handling)",
+      "type": "function",
+      "path": "lib/toml.py",
+      "function": "emit",
+      "created_by_task": "1",
+      "key_fields": [
+        "TOML_SECURITY_SAST_CMD",
+        "TOML_SECURITY_SCA_CMD",
+        "TOML_SECURITY_SEVERITY_THRESHOLD",
+        "TOML_SECURITY_SECRETS_PATTERNS",
+        "TOML_SECURITY_SECRETS_EXCLUDE"
+      ]
+    },
+    {
+      "name": "speed-toml template with security section",
+      "type": "file",
+      "path": "templates/speed-toml.toml",
+      "created_by_task": "1",
+      "key_fields": [
+        "[security] section",
+        "sast_cmd",
+        "sca_cmd",
+        "severity_threshold",
+        "secrets_patterns",
+        "secrets_exclude"
+      ]
+    },
+    {
+      "name": "TOML security config tests",
+      "type": "file",
+      "path": "tests/test_toml_security.py",
+      "created_by_task": "1",
+      "key_fields": [
+        "test_security_section_emits_all_vars",
+        "test_missing_security_section_no_vars",
+        "test_array_fields_space_separated"
+      ]
+    },
+    {
+      "name": "_severity_at_or_above",
+      "type": "function",
+      "path": "lib/security.sh",
+      "function": "_severity_at_or_above",
+      "created_by_task": "2",
+      "key_fields": [
+        "severity ranking comparison",
+        "returns 0 if first >= second"
+      ]
+    },
+    {
+      "name": "security_sast_parse",
+      "type": "function",
+      "path": "lib/security.sh",
+      "function": "security_sast_parse",
+      "created_by_task": "2",
+      "key_fields": [
+        "Semgrep JSON normalization",
+        "Bandit JSON normalization",
+        "empty array on invalid input"
+      ]
+    },
+    {
+      "name": "security_sca_parse",
+      "type": "function",
+      "path": "lib/security.sh",
+      "function": "security_sca_parse",
+      "created_by_task": "2",
+      "key_fields": [
+        "npm audit JSON normalization",
+        "pip-audit JSON normalization",
+        "empty array on invalid input"
+      ]
+    },
+    {
+      "name": "security_print_banner",
+      "type": "function",
+      "path": "lib/security.sh",
+      "function": "security_print_banner",
+      "created_by_task": "2",
+      "key_fields": [
+        "severity breakdown display",
+        "per-finding detail lines",
+        "warn-not-block message"
+      ]
+    },
+    {
+      "name": "security parse tests",
+      "type": "file",
+      "path": "tests/test_security_parse.sh",
+      "created_by_task": "2",
+      "key_fields": [
+        "test_sast_parse_semgrep",
+        "test_sast_parse_bandit",
+        "test_sca_parse_npm",
+        "test_sca_parse_pip_audit",
+        "test_severity_comparison"
+      ]
+    },
+    {
+      "name": "grounding_check_secrets",
+      "type": "function",
+      "path": "lib/grounding.sh",
+      "function": "grounding_check_secrets",
+      "created_by_task": "3",
+      "key_fields": [
+        "pattern matching for 7 secret types",
+        "glob-based file exclusion",
+        "never echoes secret values",
+        "writes secrets-scan.log",
+        "returns 1 on detection"
+      ]
+    },
+    {
+      "name": "secrets scanner tests",
+      "type": "file",
+      "path": "tests/test_secrets_scanner.sh",
+      "created_by_task": "3",
+      "key_fields": [
+        "test_detects_aws_key",
+        "test_detects_github_token",
+        "test_clean_files_pass",
+        "test_excludes_env_files",
+        "test_no_secret_in_output"
+      ]
+    },
+    {
+      "name": "check_security_section",
+      "type": "function",
+      "path": "lib/security-audit-check.sh",
+      "function": "check_security_section",
+      "created_by_task": "4",
+      "key_fields": [
+        "case-insensitive heading match",
+        "detects empty section",
+        "returns warning-level finding"
+      ]
+    },
+    {
+      "name": "check_security_sections_in_specs",
+      "type": "function",
+      "path": "lib/security-audit-check.sh",
+      "function": "check_security_sections_in_specs",
+      "created_by_task": "4",
+      "key_fields": [
+        "iterates all .md files in directory",
+        "collects and returns warnings"
+      ]
+    },
+    {
+      "name": "security audit check tests",
+      "type": "file",
+      "path": "tests/test_security-audit-check.sh",
+      "created_by_task": "4",
+      "key_fields": [
+        "test_missing_section_warns",
+        "test_present_section_ok",
+        "test_empty_section_warns",
+        "test_case_insensitive"
+      ]
+    },
+    {
+      "name": "Security Auditor agent definition",
+      "type": "file",
+      "path": "agents/security-auditor.md",
+      "created_by_task": "5",
+      "key_fields": [
+        "read-only tool access",
+        "OWASP category guidance",
+        "security-audit.json output schema",
+        "model selection"
+      ]
+    },
+    {
+      "name": "gate_sast",
+      "type": "function",
+      "path": "lib/gates.sh",
+      "function": "gate_sast",
+      "key_fields": [
+        "runs configured SAST tool in worktree",
+        "parses output via security_sast_parse",
+        "appends warnings to results array",
+        "always returns 0"
+      ],
+      "created_by_task": "6"
+    },
+    {
+      "name": "gate_sca",
+      "type": "function",
+      "path": "lib/gates.sh",
+      "function": "gate_sca",
+      "key_fields": [
+        "runs configured SCA tool in worktree",
+        "parses output via security_sca_parse",
+        "appends warnings to results array",
+        "always returns 0"
+      ],
+      "created_by_task": "6"
+    },
+    {
+      "name": "SAST/SCA gate tests",
+      "type": "file",
+      "path": "tests/test_gates_security.sh",
+      "key_fields": [
+        "test_gate_sast_skips_when_unconfigured",
+        "test_gate_sast_runs_and_parses",
+        "test_gate_sca_skips_when_unconfigured",
+        "test_gate_sca_runs_and_parses",
+        "test_gates_always_return_zero"
+      ],
+      "created_by_task": "6"
+    },
+    {
+      "name": "grounding secrets integration test",
+      "type": "file",
+      "path": "tests/test_grounding_secrets_integration.sh",
+      "key_fields": [
+        "test_grounding_run_includes_secrets_check",
+        "test_grounding_blocks_on_secret",
+        "test_grounding_passes_excluded_files"
+      ],
+      "created_by_task": "7"
+    },
+    {
+      "name": "context_assemble_security_auditor",
+      "type": "function",
+      "path": "lib/context_bridge.sh",
+      "function": "context_assemble_security_auditor",
+      "key_fields": [
+        "takes feature_name argument",
+        "collects files_touched from task JSONs",
+        "includes product and tech specs",
+        "includes CLAUDE.md conventions",
+        "outputs assembled prompt to stdout"
+      ],
+      "created_by_task": "8"
+    },
+    {
+      "name": "security_audit_run",
+      "type": "function",
+      "path": "lib/security.sh",
+      "function": "security_audit_run",
+      "key_fields": [
+        "takes feature_name",
+        "calls context_assemble_security_auditor",
+        "calls provider_run_json with security-auditor agent",
+        "writes security-audit.json",
+        "returns 0 always"
+      ],
+      "created_by_task": "9"
+    },
+    {
+      "name": "security_has_cached_audit",
+      "type": "function",
+      "path": "lib/security.sh",
+      "function": "security_has_cached_audit",
+      "key_fields": [
+        "takes feature_name",
+        "checks security-audit.json exists",
+        "checks file age < 3600 seconds",
+        "platform-aware stat"
+      ],
+      "created_by_task": "9"
+    },
+    {
+      "name": "security_create_defects",
+      "type": "function",
+      "path": "lib/security.sh",
+      "function": "security_create_defects",
+      "key_fields": [
+        "takes audit_json and threshold",
+        "filters by _severity_at_or_above",
+        "writes specs/defects/sec-<slug>.md",
+        "includes Classification-Override: moderate",
+        "includes Tags: security",
+        "maps severity to priority P0-P3"
+      ],
+      "created_by_task": "9"
+    },
+    {
+      "name": "cmd_security",
+      "type": "function",
+      "path": "lib/cmd/security.sh",
+      "function": "cmd_security",
+      "key_fields": [
+        "parses --create-defects and --feature flags",
+        "resolves feature name",
+        "calls security_audit_run or uses cache",
+        "calls security_print_banner",
+        "calls security_create_defects when --create-defects"
+      ],
+      "created_by_task": "10"
+    },
+    {
+      "name": "security CLI module",
+      "type": "file",
+      "path": "lib/cmd/security.sh",
+      "key_fields": [
+        "cmd_security function",
+        "flag parsing for --create-defects --feature -f"
+      ],
+      "created_by_task": "10"
+    },
+    {
+      "name": "e2e security tests",
+      "type": "file",
+      "path": "tests/test_e2e_security.sh",
+      "key_fields": [
+        "test_sast_gate_integration",
+        "test_sca_gate_integration",
+        "test_no_config_graceful_skip",
+        "test_secrets_block_grounding",
+        "test_secrets_exclusion",
+        "test_speed_security_command",
+        "test_create_defects",
+        "test_status_security_line"
+      ],
+      "created_by_task": "12"
+    }
+  ],
+  "relationships": []
+}

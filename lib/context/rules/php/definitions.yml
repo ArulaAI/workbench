@@ -1,0 +1,92 @@
+id: php-class
+language: php
+metadata:
+  produces: node
+  kind: class
+rule:
+  kind: class_declaration
+
+---
+id: php-interface
+language: php
+metadata:
+  produces: node
+  kind: type
+rule:
+  kind: interface_declaration
+
+---
+id: php-trait
+language: php
+metadata:
+  produces: node
+  kind: type
+rule:
+  kind: trait_declaration
+
+---
+id: php-enum
+language: php
+metadata:
+  produces: node
+  kind: type
+rule:
+  kind: enum_declaration
+
+---
+id: php-method
+language: php
+metadata:
+  produces: node
+  kind: method
+rule:
+  kind: method_declaration
+
+---
+id: php-function
+language: php
+metadata:
+  produces: node
+  kind: function
+rule:
+  kind: function_definition
+
+---
+id: php-const
+language: php
+metadata:
+  produces: node
+  kind: constant
+rule:
+  kind: const_declaration
+
+---
+id: php-property
+language: php
+metadata:
+  produces: node
+  kind: variable
+rule:
+  kind: property_declaration
+
+---
+id: php-class-extends
+language: php
+metadata:
+  produces: edge
+  edge_type: inherits
+rule:
+  kind: class_declaration
+  has:
+    kind: base_clause
+
+---
+id: php-class-implements
+language: php
+metadata:
+  produces: edge
+  edge_type: implements
+rule:
+  kind: class_declaration
+  has:
+    kind: class_interface_clause

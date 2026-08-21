@@ -1,0 +1,261 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 740" fill="none">
+  <defs>
+    <marker id="a" viewBox="0 0 10 7" refX="10" refY="3.5"
+      markerWidth="10" markerHeight="7" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#00ccaa"/>
+    </marker>
+    <marker id="a-dim" viewBox="0 0 10 7" refX="10" refY="3.5"
+      markerWidth="10" markerHeight="7" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#68686e"/>
+    </marker>
+    <linearGradient id="fade" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="rgba(0,204,170,0.0)"/>
+      <stop offset="50%" stop-color="rgba(0,204,170,0.12)"/>
+      <stop offset="100%" stop-color="rgba(0,204,170,0.0)"/>
+    </linearGradient>
+  </defs>
+
+  <style>
+    text {
+      font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+      fill: #f0f0f0;
+    }
+    .mono {
+      font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+      font-weight: 600;
+    }
+    .dim { fill: #68686e; }
+    .soft { fill: #a0a0a8; }
+    .accent { fill: #00ccaa; }
+    .accent-amber { fill: #ffcc33; }
+    .accent-cyan { fill: #44bbee; }
+    .accent-green { fill: #44cc77; }
+    .accent-violet { fill: #aa66cc; }
+  </style>
+
+  <!-- ────── CODEBASE + SPECS ────── -->
+  <text x="260" y="24" text-anchor="middle" class="mono" font-size="12"
+    letter-spacing="0.06em">CODEBASE</text>
+  <text x="490" y="24" text-anchor="middle" class="mono" font-size="12"
+    letter-spacing="0.06em">SPEC FILES</text>
+  <line x1="260" y1="34" x2="260" y2="56"
+    stroke="#00ccaa" stroke-width="1.2" marker-end="url(#a)"/>
+  <line x1="490" y1="34" x2="490" y2="56"
+    stroke="#00ccaa" stroke-width="1.2" marker-end="url(#a)"/>
+
+  <!-- ═══════════ LAYER 1 ═══════════ -->
+  <rect x="40" y="64" width="640" height="190" rx="10"
+    fill="#363638" stroke="rgba(0,204,170,0.2)" stroke-width="1"/>
+  <text x="360" y="86" text-anchor="middle" class="mono" font-size="12"
+    letter-spacing="0.04em">LAYER 1 — INDEX</text>
+  <text x="360" y="102" text-anchor="middle" font-size="10" class="dim">
+    Built once at pipeline start · Deterministic · tree-sitter + networkx</text>
+
+  <!-- Row 1: Project Map + CSG -->
+  <rect x="62" y="116" width="145" height="52" rx="6"
+    fill="rgba(0,204,170,0.06)" stroke="rgba(0,204,170,0.12)" stroke-width="1"/>
+  <text x="134" y="138" text-anchor="middle" font-size="11" font-weight="600">Project Map</text>
+  <text x="134" y="152" text-anchor="middle" font-size="9" class="dim">
+    files, languages, lines</text>
+
+  <rect x="222" y="116" width="276" height="52" rx="6"
+    fill="rgba(0,204,170,0.06)" stroke="rgba(0,204,170,0.12)" stroke-width="1"/>
+  <text x="360" y="134" text-anchor="middle" font-size="11" font-weight="600">
+    Codebase Semantic Graph</text>
+  <text x="360" y="148" text-anchor="middle" font-size="9" class="dim">
+    symbols → references → clusters → impact</text>
+
+  <rect x="513" y="116" width="145" height="52" rx="6"
+    fill="rgba(0,204,170,0.06)" stroke="rgba(0,204,170,0.12)" stroke-width="1"/>
+  <text x="585" y="138" text-anchor="middle" font-size="11" font-weight="600">Skeletons</text>
+  <text x="585" y="152" text-anchor="middle" font-size="9" class="dim">
+    10:1 compression</text>
+
+  <!-- Row 2: Spec-Alignment (narrower, centered) -->
+  <rect x="222" y="182" width="276" height="44" rx="6"
+    fill="rgba(0,204,170,0.06)" stroke="rgba(0,204,170,0.12)" stroke-width="1"/>
+  <text x="360" y="200" text-anchor="middle" font-size="11" font-weight="600">
+    Spec-Codebase Alignment</text>
+  <text x="360" y="214" text-anchor="middle" font-size="9" class="dim">
+    confirmed · missing · divergent</text>
+
+  <!-- Storage annotation -->
+  <text x="690" y="186" text-anchor="end" font-size="9" class="dim">.speed/context/</text>
+
+  <!-- ────── BYPASS PATH (right side) ────── -->
+  <!-- Dashed line from Layer 1 right side, down past Layer 2, to Architect -->
+  <path d="M 680 170 C 700 170, 710 190, 710 220 L 710 515 C 710 540, 700 550, 680 555"
+    stroke="#68686e" stroke-width="1" stroke-dasharray="4 3" fill="none"
+    marker-end="url(#a-dim)"/>
+  <text x="714" y="370" font-size="9" class="dim"
+    transform="rotate(90, 714, 370)" text-anchor="middle">
+    Architect + Plan Verifier bypass</text>
+
+  <!-- ────── ARROWS: LAYER 1 → LAYER 2 ────── -->
+  <rect x="40" y="274" width="640" height="1" fill="url(#fade)"/>
+
+  <!-- Fan-out arrows -->
+  <line x1="200" y1="254" x2="145" y2="304"
+    stroke="#00ccaa" stroke-width="1.2" marker-end="url(#a)"/>
+  <line x1="360" y1="254" x2="360" y2="304"
+    stroke="#00ccaa" stroke-width="1.2" marker-end="url(#a)"/>
+  <line x1="520" y1="254" x2="538" y2="304"
+    stroke="#00ccaa" stroke-width="1.2" marker-end="url(#a)"/>
+
+  <!-- Layer 2 tier label -->
+  <text x="45" y="290" font-size="10" class="accent-amber mono"
+    letter-spacing="0.06em">LAYER 2</text>
+  <text x="675" y="290" text-anchor="end" font-size="9" class="dim">
+    per-task · just-in-time · ~500 ms</text>
+
+  <!-- ═══════════ LAYER 2 BOXES ═══════════ -->
+  <!-- Task 1 -->
+  <rect x="55" y="310" width="185" height="145" rx="8"
+    fill="#363638" stroke="rgba(255,204,51,0.18)" stroke-width="1"/>
+  <text x="147" y="330" text-anchor="middle" class="mono" font-size="11">Task 1</text>
+  <line x1="72" y1="338" x2="222" y2="338"
+    stroke="rgba(255,255,255,0.06)" stroke-width="1"/>
+
+  <!-- Code context sub-box -->
+  <rect x="68" y="346" width="160" height="24" rx="4"
+    fill="rgba(0,204,170,0.04)" stroke="rgba(0,204,170,0.08)" stroke-width="0.5"/>
+  <text x="78" y="362" font-size="9" class="soft">code ctx</text>
+  <text x="218" y="362" text-anchor="end" font-size="8" class="dim">
+    full · skeleton · none</text>
+
+  <!-- Task context sub-box -->
+  <rect x="68" y="374" width="160" height="24" rx="4"
+    fill="rgba(0,204,170,0.04)" stroke="rgba(0,204,170,0.08)" stroke-width="0.5"/>
+  <text x="78" y="390" font-size="9" class="soft">task ctx</text>
+  <text x="218" y="390" text-anchor="end" font-size="8" class="dim">
+    upstream + downstream</text>
+
+  <!-- Spec context sub-box -->
+  <rect x="68" y="402" width="160" height="24" rx="4"
+    fill="rgba(0,204,170,0.04)" stroke="rgba(0,204,170,0.08)" stroke-width="0.5"/>
+  <text x="78" y="418" font-size="9" class="soft">spec ctx</text>
+  <text x="218" y="418" text-anchor="end" font-size="8" class="dim">
+    narrowed sections</text>
+
+  <!-- Budget -->
+  <text x="78" y="446" font-size="9" class="dim">budget.json — cut recording</text>
+
+  <!-- Task 2 (simpler, just showing it exists) -->
+  <rect x="268" y="310" width="185" height="145" rx="8"
+    fill="#363638" stroke="rgba(255,204,51,0.18)" stroke-width="1"/>
+  <text x="360" y="330" text-anchor="middle" class="mono" font-size="11">Task 2</text>
+  <line x1="285" y1="338" x2="435" y2="338"
+    stroke="rgba(255,255,255,0.06)" stroke-width="1"/>
+  <rect x="281" y="346" width="160" height="24" rx="4"
+    fill="rgba(0,204,170,0.04)" stroke="rgba(0,204,170,0.08)" stroke-width="0.5"/>
+  <text x="291" y="362" font-size="9" class="soft">code ctx</text>
+  <rect x="281" y="374" width="160" height="24" rx="4"
+    fill="rgba(0,204,170,0.04)" stroke="rgba(0,204,170,0.08)" stroke-width="0.5"/>
+  <text x="291" y="390" font-size="9" class="soft">task ctx</text>
+  <rect x="281" y="402" width="160" height="24" rx="4"
+    fill="rgba(0,204,170,0.04)" stroke="rgba(0,204,170,0.08)" stroke-width="0.5"/>
+  <text x="291" y="418" font-size="9" class="soft">spec ctx</text>
+  <text x="291" y="446" font-size="9" class="dim">budget.json</text>
+
+  <!-- Task N -->
+  <rect x="480" y="310" width="185" height="145" rx="8"
+    fill="#363638" stroke="rgba(255,204,51,0.18)" stroke-width="1"/>
+  <text x="572" y="330" text-anchor="middle" class="mono" font-size="11">Task N</text>
+  <line x1="497" y1="338" x2="647" y2="338"
+    stroke="rgba(255,255,255,0.06)" stroke-width="1"/>
+  <rect x="493" y="346" width="160" height="24" rx="4"
+    fill="rgba(0,204,170,0.04)" stroke="rgba(0,204,170,0.08)" stroke-width="0.5"/>
+  <text x="503" y="362" font-size="9" class="soft">code ctx</text>
+  <rect x="493" y="374" width="160" height="24" rx="4"
+    fill="rgba(0,204,170,0.04)" stroke="rgba(0,204,170,0.08)" stroke-width="0.5"/>
+  <text x="503" y="390" font-size="9" class="soft">task ctx</text>
+  <rect x="493" y="402" width="160" height="24" rx="4"
+    fill="rgba(0,204,170,0.04)" stroke="rgba(0,204,170,0.08)" stroke-width="0.5"/>
+  <text x="503" y="418" font-size="9" class="soft">spec ctx</text>
+  <text x="503" y="446" font-size="9" class="dim">budget.json</text>
+
+  <!-- Storage annotation -->
+  <text x="690" y="442" text-anchor="end" font-size="9" class="dim">
+    .speed/features/*/tasks/*/</text>
+
+  <!-- ────── ARROWS: LAYER 2 → LAYER 3 ────── -->
+  <rect x="40" y="478" width="640" height="1" fill="url(#fade)"/>
+
+  <line x1="147" y1="455" x2="147" y2="504"
+    stroke="#00ccaa" stroke-width="1.2" marker-end="url(#a)"/>
+  <line x1="360" y1="455" x2="360" y2="504"
+    stroke="#00ccaa" stroke-width="1.2" marker-end="url(#a)"/>
+  <line x1="572" y1="455" x2="572" y2="504"
+    stroke="#00ccaa" stroke-width="1.2" marker-end="url(#a)"/>
+
+  <!-- Layer 3 tier label -->
+  <text x="45" y="494" font-size="10" class="accent-cyan mono"
+    letter-spacing="0.06em">LAYER 3</text>
+  <text x="675" y="494" text-anchor="end" font-size="9" class="dim">
+    one assembly function per stage · ~10 ms</text>
+
+  <!-- ═══════════ LAYER 3 BOXES ═══════════ -->
+  <rect x="55" y="510" width="185" height="52" rx="6"
+    fill="#363638" stroke="rgba(68,187,238,0.2)" stroke-width="1"/>
+  <text x="147" y="532" text-anchor="middle" font-size="11">
+    assemble_developer()</text>
+  <text x="147" y="548" text-anchor="middle" font-size="9" class="dim">
+    context → content → intent</text>
+
+  <rect x="268" y="510" width="185" height="52" rx="6"
+    fill="#363638" stroke="rgba(68,187,238,0.2)" stroke-width="1"/>
+  <text x="360" y="532" text-anchor="middle" font-size="11">
+    assemble_developer()</text>
+  <text x="360" y="548" text-anchor="middle" font-size="9" class="dim">
+    context → content → intent</text>
+
+  <rect x="480" y="510" width="185" height="52" rx="6"
+    fill="#363638" stroke="rgba(68,187,238,0.2)" stroke-width="1"/>
+  <text x="572" y="532" text-anchor="middle" font-size="11">
+    assemble_reviewer()</text>
+  <text x="572" y="548" text-anchor="middle" font-size="9" class="dim">
+    criteria + diff + impact</text>
+
+  <!-- Bypass landing: Architect box -->
+  <rect x="480" y="570" width="185" height="44" rx="6"
+    fill="rgba(136,136,164,0.08)" stroke="rgba(136,136,164,0.15)" stroke-width="1"
+    stroke-dasharray="3 2"/>
+  <text x="572" y="590" text-anchor="middle" font-size="11" class="soft">
+    assemble_architect()</text>
+  <text x="572" y="602" text-anchor="middle" font-size="9" class="dim">
+    clusters + coupling + spec-align</text>
+
+  <!-- Arrows to agents -->
+  <line x1="147" y1="562" x2="147" y2="590"
+    stroke="#00ccaa" stroke-width="1.2" marker-end="url(#a)"/>
+  <line x1="360" y1="562" x2="360" y2="590"
+    stroke="#00ccaa" stroke-width="1.2" marker-end="url(#a)"/>
+  <line x1="572" y1="562" x2="572" y2="620"
+    stroke="#00ccaa" stroke-width="1.2"/>
+
+  <!-- Agent labels -->
+  <text x="147" y="608" text-anchor="middle" class="mono accent-green" font-size="11">
+    Developer</text>
+  <text x="360" y="608" text-anchor="middle" class="mono accent-green" font-size="11">
+    Developer</text>
+
+  <!-- Reviewer agent (below its L3 box, shifted to avoid overlap with Architect box) -->
+  <line x1="480" y1="555" x2="420" y2="555" stroke="rgba(255,255,255,0)" stroke-width="0"/>
+  <line x1="572" y1="620" x2="572" y2="640"
+    stroke="#00ccaa" stroke-width="1.2" marker-end="url(#a)"/>
+  <text x="572" y="662" text-anchor="middle" class="mono accent-violet" font-size="11">
+    Reviewer</text>
+
+  <!-- Architect + Verifier agents (from bypass) -->
+  <line x1="572" y1="614" x2="572" y2="632"
+    stroke="#68686e" stroke-width="1" stroke-dasharray="3 2" marker-end="url(#a-dim)"/>
+
+  <!-- Six-stage legend at bottom -->
+  <rect x="40" y="690" width="640" height="1" fill="url(#fade)"/>
+  <text x="360" y="712" text-anchor="middle" font-size="9" class="dim">
+    Six stages: Architect · Plan Verifier · Developer · Reviewer · Coherence Checker · Debugger
+  </text>
+  <text x="360" y="728" text-anchor="middle" font-size="9" class="dim">
+    Each receives a purpose-built prompt. Same data source, projected for different needs.
+  </text>
+</svg>

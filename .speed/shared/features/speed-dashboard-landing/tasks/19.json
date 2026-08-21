@@ -1,0 +1,98 @@
+{
+  "id": "19",
+  "title": "Add frontend component and page tests",
+  "description": "Create `dashboard/frontend/__tests__/landing/LandingPage.test.tsx`.\n\nTests:\n1. **Grid layout**: render EditorialGrid, verify CSS grid template columns are '260px 1fr 320px'.\n2. **DefinePanel rendering**: render with mock data. Verify vision warning appears for 'missing' status. Verify draft spec items rendered. Verify defect severity badges.\n3. **JudgePanel rendering**: render with pending review mock data. Verify hero metrics (coverage, criteria, verdict, decisions). Verify CTA button text. Mock `useRouter` and verify push to `/outcome-review?feature=X` on CTA click.\n4. **ExecutePanel rendering**: render with running features and escalation. Verify progress bar widths. Type in escalation input, click Send, verify `onRespondToEscalation` called with correct args.\n5. **LearnPanel rendering**: render with coverage trend, insights, escalation trend. Verify sorted order. Verify good/warn indicators.\n6. **Empty states**: render each panel with empty arrays. Verify no crash, empty state messages shown.\n7. **Page integration**: mock the GraphQL query hook to return fixture data. Render `page.tsx`. Verify all four panels present. Verify loading skeleton shown initially.\n\nUse the project's existing test framework (Jest + React Testing Library based on Next.js convention).",
+  "acceptance_criteria": "- Test: EditorialGrid CSS grid columns verified as 260px 1fr 320px\n  verify_by: test\n- Test: DefinePanel renders vision warning for 'missing' status\n  verify_by: test\n- Test: JudgePanel CTA navigates to /outcome-review?feature=<name>\n  verify_by: test\n- Test: ExecutePanel escalation Send calls mutation handler with correct args\n  verify_by: test\n- Test: LearnPanel renders sorted coverage trend\n  verify_by: test\n- Test: each panel renders empty state without crash\n  verify_by: test\n- Test: page shows loading skeleton before data arrives\n  verify_by: test\n- All tests pass\n  verify_by: test",
+  "depends_on": [
+    "17"
+  ],
+  "status": "done",
+  "branch": "speed/speed-dashboard-landing/task-19-add-frontend-component-and-page-tests",
+  "agent_model": "sonnet",
+  "created_at": "2026-03-15T16:26:57Z",
+  "started_at": "2026-03-15T20:49:05Z",
+  "completed_at": "2026-03-15T20:59:08Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": "{\"verdict\":\"request_changes\",\"spec_verification\":[{\"spec_quote\":\"Test: EditorialGrid CSS grid columns verified as 260px 1fr 320px\",\"spec_section\":\"Acceptance Criteria #1\",\"satisfied\":true,\"evidence\":\"LandingPage.test.tsx:130-143. Test renders EditorialGrid with four children, casts container.firstChild to HTMLElement, and asserts style.gridTemplateColumns === '260px 1fr 320px'. EditorialGrid.tsx:22 sets this exact inline style, which JSDOM preserves verbatim.\",\"notes\":\"container.firstChild is slightly fragile — it assumes React renders no wrapper around the component. RTL's render() returns the actual root element in this position, so this holds for the current setup.\"},{\"spec_quote\":\"Test: DefinePanel renders vision warning for 'missing' status\",\"spec_section\":\"Acceptance Criteria #3\",\"satisfied\":true,\"evidence\":\"LandingPage.test.tsx:151-154. Spreads defineFixture with visionStatus: 'missing' and asserts getByText(/Vision not defined/i). DefinePanel.tsx:26 renders the span 'Vision not defined — add a vision doc to unlock full tracking.' only when visionStatus === 'missing' (line 94).\",\"notes\":null},{\"spec_quote\":\"Test: JudgePanel CTA navigates to /outcome-review?feature=<name>\",\"spec_section\":\"Acceptance Criteria #5\",\"satisfied\":true,\"evidence\":\"LandingPage.test.tsx:182-185. Clicks the 'Review & decide' button and asserts mockPush('/outcome-review?feature=auth-v2'). JudgePanel.tsx:126 uses router.push(`/outcome-review?feature=${pendingReview.feature}`) where feature is 'auth-v2' in the fixture. The HTML entity &amp; decodes to & in the DOM, matching the regex /review & decide/i.\",\"notes\":null},{\"spec_quote\":\"Test: ExecutePanel escalation Send calls mutation handler with correct args\",\"spec_section\":\"Acceptance Criteria #7\",\"satisfied\":true,\"evidence\":\"LandingPage.test.tsx:207-215. Finds input by placeholder 'Your response…' (unicode ellipsis matches ExecutePanel.tsx:116), types 'Use PKCE', clicks Send, awaits assertion that mockOnRespond was called with ('auth-v2', 'task-5', 'Use PKCE'). EscalationCard.tsx:81 calls onRespond(escalation.feature, escalation.taskId, input.trim()) which maps exactly to the fixture values.\",\"notes\":\"The Send button is initially disabled (input is empty). The test types first, then clicks — correct ordering.\"},{\"spec_quote\":\"Test: LearnPanel renders sorted coverage trend\",\"spec_section\":\"Acceptance Criteria #9\",\"satisfied\":true,\"evidence\":\"LandingPage.test.tsx:218-228. Queries .type-table-cell elements inside the 'Coverage Trend' section and asserts order ['auth', 'notifications', 'billing']. LearnPanel.tsx:96-98 sorts coverageTrend descending by coveragePct. Fixture values (billing:40, auth:90, notifications:60) produce that exact order.\",\"notes\":null},{\"spec_quote\":\"Test: each panel renders empty state without crash\",\"spec_section\":\"Acceptance Criteria #11\",\"satisfied\":true,\"evidence\":\"LandingPage.test.tsx:233-267. Four tests cover: DefinePanel 'Nothing to review.' (component line 115), JudgePanel 'No reviews pending' (component line 93), ExecutePanel 'No features running.' (component line 158), LearnPanel 'No learning data yet.' (component line 106). All match exactly.\",\"notes\":\"DefinePanel empty state has a subtle condition: visionStatus must not be 'missing' AND draftSpecs and defects must be empty. The test correctly sets visionStatus: 'defined' with empty arrays.\"},{\"spec_quote\":\"Test: page shows loading skeleton before data arrives\",\"spec_section\":\"Acceptance Criteria #13\",\"satisfied\":true,\"evidence\":\"LandingPage.test.tsx:271-279. Mocks useQuery with fetching: true, queries .animate-pulse, asserts count > 0. Skeleton component (loading-skeleton.tsx:13) applies 'animate-pulse' as a base class. page.tsx:94-108 renders five Skeleton elements when fetching is true. Also correctly verifies 'Define' text is absent during loading.\",\"notes\":null},{\"spec_quote\":\"All tests pass\",\"spec_section\":\"Acceptance Criteria #15\",\"satisfied\":false,\"evidence\":\"No test runner is installed or configured. package.json has no vitest, @testing-library/react, @testing-library/dom, @testing-library/jest-dom, or jsdom in devDependencies. No vitest.config.ts exists anywhere in the project. No 'test' script in package.json. The file cannot be executed at all.\",\"notes\":\"This is a complete infrastructure gap, not a test quality issue. The test file itself is well-written and would likely pass once infrastructure is in place.\"}],\"missing_from_spec\":[{\"spec_quote\":\"All tests pass\",\"description\":\"Test infrastructure is entirely absent. Required additions: vitest, @testing-library/react, @testing-library/dom, @testing-library/jest-dom, jsdom, and @vitejs/plugin-react in devDependencies; vitest.config.ts with jsdom environment and @/ path alias resolution; a 'test' script in package.json; a test setup file to import @testing-library/jest-dom matchers.\"}],\"out_of_scope\":[],\"issues\":[{\"severity\":\"critical\",\"file\":\"dashboard/frontend/package.json\",\"line\":null,\"message\":\"No test dependencies installed. vitest, @testing-library/react, @testing-library/dom, @testing-library/jest-dom, jsdom, and @vitejs/plugin-react are all absent from devDependencies. The test file cannot run.\",\"suggestion\":\"Add to devDependencies: vitest, @vitest/coverage-v8, @testing-library/react, @testing-library/dom, @testing-library/jest-dom, jsdom. Add a test script: \\\"test\\\": \\\"vitest run\\\". This task owns only the test file, but AC15 cannot close without this infrastructure. Either this task scope should include package.json, or a separate infrastructure task must land first.\"},{\"severity\":\"critical\",\"file\":\"dashboard/frontend\",\"line\":null,\"message\":\"No vitest.config.ts exists. Without it, vitest cannot resolve the @/ path alias, cannot set the jsdom environment, and cannot load the test setup file for jest-dom matchers (toBeInTheDocument, toHaveStyle, etc.).\",\"suggestion\":\"Create vitest.config.ts with: environment: 'jsdom', resolve.alias mapping '@/' to the project root, setupFiles pointing to a file that imports @testing-library/jest-dom/matchers, and plugins: [react()] from @vitejs/plugin-react.\"},{\"severity\":\"major\",\"file\":\"dashboard/frontend/__tests__/landing/LandingPage.test.tsx\",\"line\":232,\"message\":\"toHaveStyle with CSS variable tokens may not assert correctly in JSDOM. The InsightCard component sets style={{ backgroundColor: 'var(--color-green)' }} via React JSX. When React sets style.backgroundColor programmatically in JSDOM, the CSS variable string is not a valid resolved CSS value. getComputedStyle() in JSDOM will return an empty string, causing toHaveStyle({ backgroundColor: 'var(--color-green)' }) to fail.\",\"suggestion\":\"Assert the aria-label alone (already done), or check the style attribute string directly: expect(dot).toHaveAttribute('style', expect.stringContaining('var(--color-green)')). Alternatively, add a data-color attribute to the dot element and assert on that instead.\"},{\"severity\":\"minor\",\"file\":\"dashboard/frontend/__tests__/landing/LandingPage.test.tsx\",\"line\":218,\"message\":\"The coverage trend sort test queries .type-table-cell inside the section but that class is also used by DefinePanel's draft spec names and defect rows if those panels were rendered. Since this test only renders LearnPanel in isolation, the query scope is safe now — but the .closest('section') approach is brittle if the component markup nests sections differently.\",\"suggestion\":\"Use a data-testid on the Coverage Trend section, or query by the section heading role: getByRole('region', { name: /coverage trend/i }) if an aria-label is added.\"},{\"severity\":\"nit\",\"file\":\"dashboard/frontend/__tests__/landing/LandingPage.test.tsx\",\"line\":196,\"message\":\"The ExecutePanel progress bar test uses container.querySelectorAll('div[style]') to find the fill bar by filtering for width === '65%'. This works but is fragile — any future div with style.width in the component would require updating the find logic.\",\"suggestion\":\"Add a data-testid='progress-fill' to the progress fill div in ExecutePanel, then query by that directly.\"}],\"strengths\":[\"All seven AC test groups are present and correctly mapped to the actual component implementations. Each assertion uses the right RTL query for the element type (getByRole for buttons, getByPlaceholderText for inputs, getByLabelText for aria-labeled dots).\",\"Fixtures are complete and typed against the GraphQL interfaces from lib/graphql/queries/landing.ts. Type safety in test data is a meaningful catch against interface drift.\",\"The useQuery/useMutation/useSubscription mock setup in beforeEach is correct for the page integration tests. useMutation returns a tuple matching the urql API.\",\"The empty state tests accurately capture the conditional rendering logic in each component, including the subtle three-way condition in DefinePanel (visionStatus !== 'missing' AND no specs AND no defects).\",\"The router mock is minimal and correct: only mockPush is extracted, and it's cleared in beforeEach to prevent cross-test contamination.\",\"The Send escalation test correctly sequences the interaction: type first (enabling the button), then click, then await the async handler. This tests the actual user flow, not just the callback.\"]}\n\n--- Attempt 1 ---\nFailed with: Quality gates failed\nHuman guidance: All 20 tests pass in worktree. vitest.config.ts, vitest.setup.ts, package.json deps exist in task-19 worktree branch. Grounding gate rejected undeclared infra files — spec gap, not code issue.\n\n--- Attempt 2 ---\nFailed with: Prior work on branch fails gates\nHuman guidance: Vitest infrastructure (vitest.config.ts, vitest.setup.ts, package.json deps) is now on the integration branch. Only the test file needs to be created.\n\n--- Attempt 3 ---\nFailed with: Prior work on branch fails gates\nHuman guidance: Vitest infrastructure (vitest.config.ts, vitest.setup.ts, package.json deps) is already installed. Only create the test file.\n\n--- Attempt 4 ---\nFailed with: Quality gates failed\nHuman guidance: Vitest infrastructure (vitest.config.ts, vitest.setup.ts, package.json deps) is already installed. Only create the test file.",
+  "files_touched": [
+    "dashboard/frontend/__tests__/landing/LandingPage.test.tsx"
+  ],
+  "spec_references": [
+    {
+      "spec": "tech",
+      "section": "Test Plan",
+      "requirement": "Frontend tests: grid layout snapshot, panel rendering, escalation input, CTA routing, empty states, subscription integration"
+    },
+    {
+      "spec": "tech",
+      "section": "Acceptance Criteria",
+      "requirement": "Items 10-12: T-shape grid, inline escalation, CTA routing"
+    }
+  ],
+  "rationale": "Frontend tests are the final verification layer, depending on all components and the page being assembled. A single test file covers all panels because the tests share mock data fixtures and the page integration test needs all components present.",
+  "assumptions": [
+    "Project uses Jest + React Testing Library (standard Next.js test setup)",
+    "CSS grid template values can be tested via computed styles or snapshot testing"
+  ],
+  "gate_results": {
+    "checks": [
+      {
+        "name": "diff_non_empty",
+        "status": "pass"
+      },
+      {
+        "name": "declared_files",
+        "status": "pass"
+      },
+      {
+        "name": "scope",
+        "status": "pass"
+      },
+      {
+        "name": "python_imports",
+        "status": "pass"
+      },
+      {
+        "name": "not_blocked",
+        "status": "pass"
+      },
+      {
+        "name": "test_coverage",
+        "status": "pass"
+      },
+      {
+        "name": "gate_evidence",
+        "status": "warn"
+      },
+      {
+        "name": "criteria",
+        "status": "pass"
+      },
+      {
+        "name": "secrets",
+        "status": "pass"
+      }
+    ],
+    "scope": {}
+  },
+  "review_verdict": "approve",
+  "failure_classification": {
+    "class": "unclassified",
+    "subclass": "unknown",
+    "evidence": "No classification rule matched"
+  },
+  "retry_count": 4,
+  "decisions": [
+    "Added `gql` to the urql mock factory so mission-control.ts can initialize its query constant at module load time without throwing.",
+    "Used distinct feature names in coverageTrend vs escalationTrend fixtures to prevent getAllByText collisions in the sort-order test.",
+    "Rendered real child components in the page integration tests rather than mocking them — urql is the only thing that needs mocking since the components themselves don't use it.",
+    "Used `…` (unicode ellipsis U+2026) in getByPlaceholderText to match the literal character in ExecutePanel.tsx:116 rather than three separate dots.",
+    "Used Array.from + .find on querySelectorAll('div[style]') for the progress bar width test — cannot add data-testid to ExecutePanel (owned by task 13)."
+  ],
+  "concerns": [
+    "4 pre-existing failures in JudgePanel.test.tsx (task 12) and app/page.test.tsx (task 17) exist on the branch — not caused by or fixable by this task.",
+    "toHaveStyle with CSS variable tokens (var(--color-green), var(--color-amber)) follows the pattern established by LearnPanel.test.tsx; if JSDOM's CSS variable support regresses, these assertions would need to switch to toHaveAttribute('style', ...)."
+  ],
+  "reviewed_at": "2026-03-16T02:38:19Z"
+}

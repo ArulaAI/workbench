@@ -1,0 +1,71 @@
+{
+  "id": "1",
+  "title": "Data models, shared types, and atomic write utility",
+  "description": "Create `lib/learn/conventions.py` with the foundational data models and utility functions that all pipeline phases depend on.\n\nDataclasses to define:\n- `RawPattern(type, files, scope, adherence, evidence, observation_support, recent_trend)` \u2014 intermediate representation from Phase A/B\n- `ConventionEntry(id, convention, scope, confidence, canonical_example, exceptions, evolution, tags, evidence, source)` \u2014 final convention record\n- `ConventionResult(conventions, conflicts, candidates, meta)` with a `summary()` method that formats CLI output\n\nUtility function `_atomic_write(path: Path, data: dict | list) -> None` \u2014 writes JSON to a temp file then renames to prevent partial corruption.\n\nAlso define type aliases and constants: confidence level literals (`established`, `emerging`, `decaying`, `conflict`), source literals (`config`, `discovered`), rejection reason literals.\n\nThe `__init__.py` at `lib/learn/__init__.py` already exists (confirmed in codebase context). Do not modify it in this task.",
+  "acceptance_criteria": "- RawPattern dataclass has fields: type (str), files (list[str]), scope (list[str]), adherence (float), evidence (str), observation_support (int, default 0), recent_trend (str, default 'stable')\n  verify_by: schema_check\n- ConventionEntry dataclass has fields: id (str), convention (str), scope (list[str]), confidence (str), canonical_example (str), exceptions (str|None), evolution (dict|None), tags (list[str]), evidence (dict), source (str)\n  verify_by: schema_check\n- ConventionResult dataclass has fields: conventions (list[ConventionEntry]), conflicts (list[dict]), candidates (list[ConventionEntry]), meta (dict)\n  verify_by: schema_check\n- ConventionResult.summary() returns a string containing convention count, candidate count, and source breakdown\n  verify_by: test\n- _atomic_write writes to temp file then renames; partial write (simulated interrupt) does not corrupt target file\n  verify_by: test",
+  "depends_on": [],
+  "status": "done",
+  "branch": "speed/speed-conventions/task-1-data-models-shared-types-and-atomic-writ",
+  "agent_model": "sonnet",
+  "created_at": "2026-03-14T16:03:48Z",
+  "started_at": "2026-03-15T13:56:17Z",
+  "completed_at": "2026-03-15T14:01:25Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": "",
+  "files_touched": [
+    "lib/learn/conventions.py"
+  ],
+  "gate_results": {
+    "checks": [
+      {
+        "name": "diff_non_empty",
+        "status": "pass"
+      },
+      {
+        "name": "declared_files",
+        "status": "pass"
+      },
+      {
+        "name": "scope",
+        "status": "pass"
+      },
+      {
+        "name": "python_imports",
+        "status": "pass"
+      },
+      {
+        "name": "not_blocked",
+        "status": "pass"
+      },
+      {
+        "name": "test_coverage",
+        "status": "pass"
+      },
+      {
+        "name": "gate_evidence",
+        "status": "warn"
+      },
+      {
+        "name": "criteria",
+        "status": "pass"
+      },
+      {
+        "name": "secrets",
+        "status": "pass"
+      }
+    ],
+    "scope": {}
+  },
+  "decisions": [
+    "format_knowledge_for_agent uses backward-compatible field reading: entry.get('knowledge', entry.get('content', entry.get('text', ''))) and entry.get('why_it_matters', entry.get('title', '')). The coherence fix says to use the spec fields (knowledge, why_it_matters), but existing tests in test_convention_pipeline.py (owned by Task 9) use the legacy fields (content, title). Pure spec compliance would break those tests; backward compat satisfies both.",
+    "_load_existing_conventions now also reads conflicts from conventions.json['conflicts'] directly, so the loaded result includes persisted conflict data.",
+    "_count_observations_at_run() helper added to count total observations and convention_violation observations from the obs_dir JSONL files, feeding the two new required meta fields."
+  ],
+  "concerns": [
+    "tests/test_convention_pipeline.py (Task 9) uses title/content fields in test data for format_knowledge_for_agent. Task 9 should update those tests to use knowledge/why_it_matters once the backward-compat period ends.",
+    "The views format remains array-of-objects [{id, text, scope}] rather than the spec's string-per-agent format. Changing it would break format_conventions_for_agent's scope-filtering capability. The spec may need updating to match the implementation."
+  ],
+  "review_verdict": "approve",
+  "reviewed_at": "2026-03-15T03:34:11Z"
+}

@@ -1,0 +1,11 @@
+{
+  "expected_rules": [
+    "c-constant",
+    "c-constant",
+    "c-constant",
+    "c-enum",
+    "c-function",
+    "c-struct",
+    "c-typedef"
+  ]
+}

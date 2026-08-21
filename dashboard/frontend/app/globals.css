@@ -1,0 +1,384 @@
+@import "tailwindcss";
+
+/*
+ * SPEED Dashboard Design System
+ *
+ * Reference vibe: Linear meets a spacecraft HUD.
+ * Information-dense, calm under load, depth that guides the eye.
+ *
+ * Three rules everything follows:
+ *   1. Depth comes in pairs: border + shadow. Never one without the other.
+ *   2. Every text element uses a defined role from the type ladder.
+ *   3. Accent is reserved for hero metrics and primary actions.
+ */
+
+
+/* ── Tokens ─────────────────────────────────────────────────────── */
+
+@theme {
+  /* Backgrounds — wide separation between tiers for real depth */
+  --color-bg:             #0c0c10;
+  --color-bg-elevated:    #16161e;
+  --color-bg-card:        #1c1c27;
+  --color-bg-card-hover:  #24243a;
+
+  /* Accents — teal primary, violet secondary */
+  --color-accent:       #00d4aa;
+  --color-accent-glow:  rgba(0, 212, 170, 0.12);
+  --color-accent-dim:   rgba(0, 212, 170, 0.06);
+  --color-violet:       #8b5cf6;
+  --color-violet-glow:  rgba(139, 92, 246, 0.10);
+
+  /* Semantic status */
+  --color-emerald:  #44cc77;
+  --color-red:      #ef4464;
+  --color-amber:    #f0b232;
+  --color-blue:     #4ba6ee;
+  --color-rose:     #ff6699;
+  --color-cyan:     #44ddee;
+
+  /* Text — tested contrast ratios against --bg-card (#1c1c27) */
+  --color-text:           #e4e4e9;   /* ~13:1. Headlines, values, labels. */
+  --color-text-secondary: #9494a3;   /* ~5.5:1. Descriptions, secondary columns. */
+  --color-text-tertiary:  #55556a;   /* ~2.8:1. Decorative only: timestamps, dividers. */
+
+  /* Borders */
+  --color-border:       rgba(255, 255, 255, 0.06);
+  --color-border-light: rgba(255, 255, 255, 0.03);
+
+  /* Typography */
+  --font-sans: "Inter", system-ui, -apple-system, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+
+
+/* ── Base ───────────────────────────────────────────────────────── */
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+
+/* ── Surfaces ───────────────────────────────────────────────────── *
+ * Cards, panels, and any elevated surface.
+ * Always border + shadow together. Never one without the other.
+ */
+
+.surface {
+  background: var(--color-bg-card);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.3),
+    0 0 0 1px rgba(0, 0, 0, 0.1);
+}
+
+.surface-hover {
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.surface-hover:hover {
+  border-color: var(--color-accent-glow);
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.4),
+    0 0 0 1px var(--color-accent-glow);
+}
+
+.surface-elevated {
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-light);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+
+/* ── Typography Ladder ──────────────────────────────────────────── *
+ * Strict role-based combinations. Do not freestyle size/weight/color.
+ *
+ *   Font assignments:
+ *     IBM Plex Mono — KPI values, metric numbers, code refs, brand mark,
+ *                     table column headers
+ *     Inter         — Everything else
+ */
+
+.type-page-title {
+  font-family: var(--font-mono);
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--color-text);
+  line-height: 1.3;
+}
+
+.type-section-header {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+  line-height: 1.4;
+}
+
+.type-kpi-value {
+  font-family: var(--font-mono);
+  font-size: 28px;
+  font-weight: 600;
+  line-height: 1.1;
+  /* color set per-instance: accent for hero, --text for neutral */
+}
+
+.type-kpi-label {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  line-height: 1.4;
+}
+
+.type-body {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+}
+
+.type-table-header {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  line-height: 1.4;
+}
+
+.type-table-cell {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--color-text-secondary);
+  line-height: 1.4;
+}
+
+.type-badge {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.type-caption {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--color-text-tertiary);
+  line-height: 1.4;
+}
+
+.type-mono-value {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.type-column-name {
+  font-family: var(--font-mono);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text);
+  line-height: 1.3;
+}
+
+.type-column-intent {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--color-text-secondary);
+  line-height: 1.4;
+}
+
+.type-column-aggregate {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--color-text-secondary);
+  line-height: 1.4;
+}
+
+.type-section-title {
+  font-family: var(--font-sans);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text);
+  line-height: 1.4;
+}
+
+.type-compact-label {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 500;
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  line-height: 1.4;
+}
+
+.type-cell-label {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  line-height: 1.4;
+}
+
+
+/* ── Status Colors ──────────────────────────────────────────────── *
+ * Each status has a foreground and a 12% background variant.
+ * Used on badges, pills, progress bar segments, dot indicators.
+ */
+
+.status-done       { color: var(--color-emerald); }
+.status-done-bg    { background: rgba(68, 204, 119, 0.12); }
+.status-running    { color: var(--color-amber); }
+.status-running-bg { background: rgba(240, 178, 50, 0.12); }
+.status-failed     { color: var(--color-red); }
+.status-failed-bg  { background: rgba(239, 68, 100, 0.12); }
+.status-pending    { color: var(--color-text-tertiary); }
+.status-pending-bg { background: rgba(85, 85, 106, 0.12); }
+.status-review     { color: var(--color-blue); }
+.status-review-bg  { background: rgba(75, 166, 238, 0.12); }
+
+
+/* ── Progress Bar ───────────────────────────────────────────────── */
+
+.progress-track {
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 9999px;
+  overflow: hidden;
+  display: flex;
+  gap: 0.5px;
+}
+
+
+/* ── Chart Overrides (Recharts) ─────────────────────────────────── */
+
+.recharts-cartesian-grid line {
+  stroke: rgba(255, 255, 255, 0.04);
+}
+.recharts-tooltip-wrapper .recharts-default-tooltip {
+  background: var(--color-bg-card) !important;
+  border: 1px solid var(--color-border) !important;
+  border-radius: 8px !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4) !important;
+}
+
+
+/* ── React Flow Overrides ───────────────────────────────────────── */
+
+.react-flow__background pattern circle {
+  fill: rgba(255, 255, 255, 0.03);
+}
+.react-flow__controls {
+  background: var(--color-bg-elevated) !important;
+  border: 1px solid var(--color-border) !important;
+  border-radius: 8px !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3) !important;
+}
+.react-flow__controls button {
+  background: var(--color-bg-card) !important;
+  border-color: var(--color-border) !important;
+  color: var(--color-text-secondary) !important;
+}
+.react-flow__controls button:hover {
+  background: var(--color-bg-card-hover) !important;
+  color: var(--color-text) !important;
+}
+.react-flow__minimap {
+  background: var(--color-bg-elevated) !important;
+  border-radius: 8px;
+}
+
+
+/* ── Scrollbar ──────────────────────────────────────────────────── */
+
+::-webkit-scrollbar {
+  width: 3px;
+  height: 3px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(85, 85, 106, 0.3);
+  border-radius: 2px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-tertiary);
+}
+
+
+/* ── Selection ──────────────────────────────────────────────────── */
+
+::selection {
+  background: var(--color-accent-glow);
+  color: var(--color-text);
+}
+
+
+/* ── VerdictDot ─────────────────────────────────────────────────── */
+
+.vd-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  border-radius: 4px;
+  outline: none;
+  flex-shrink: 0;
+}
+.vd-btn:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+.vd-dot-inner {
+  border-radius: 50%;
+  flex-shrink: 0;
+  pointer-events: none;
+  opacity: var(--vd-base-opacity, 1);
+  transition: opacity 120ms ease-out, transform 120ms ease-out, box-shadow 120ms ease-out;
+}
+.vd-btn:active .vd-dot-inner {
+  transform: scale(0.9);
+}
+.vd-btn:hover .vd-dot-inner {
+  opacity: 0.8;
+}
+.vd-dot-inner[data-selected] {
+  box-shadow: 0 0 0 2px var(--color-border);
+}
+.vd-dot-inner[data-compare] {
+  box-shadow: 0 0 0 2px var(--color-accent);
+}
+.vd-btn:hover .vd-dot-inner[data-compare] {
+  box-shadow: 0 0 0 2px var(--color-accent), 0 0 8px var(--color-accent-glow);
+}
+@media (prefers-reduced-motion: reduce) {
+  .vd-dot-inner {
+    transition: none;
+  }
+}

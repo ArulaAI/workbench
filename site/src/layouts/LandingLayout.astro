@@ -1,0 +1,53 @@
+---
+interface Props {
+  title: string;
+  description?: string;
+}
+
+const { title, description = 'AI-orchestrated development pipeline — from spec to shipped code.' } = Astro.props;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content={description} />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>{title}</title>
+    <script type="module">
+      import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.4.0/firebase-app.js';
+      import { getAnalytics } from 'https://www.gstatic.com/firebasejs/11.4.0/firebase-analytics.js';
+      const app = initializeApp({
+        apiKey: "AIzaSyCZTCb3iCcRu_XhNaKSXtlzzd9Z1IoCdYI",
+        authDomain: "speed-cdc1c.firebaseapp.com",
+        projectId: "speed-cdc1c",
+        storageBucket: "speed-cdc1c.firebasestorage.app",
+        messagingSenderId: "973752787192",
+        appId: "1:973752787192:web:2de8c429169dd6531f5b0d",
+        measurementId: "G-MJLYFXBMH2"
+      });
+      getAnalytics(app);
+    </script>
+  </head>
+  <body>
+    <slot />
+  </body>
+</html>
+
+<style is:global>
+  @import '../styles/global.css';
+
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+
+  body {
+    font-family: var(--font-sans);
+    font-size: 16px;
+    line-height: 1.6;
+    color: var(--color-text);
+    background: var(--color-bg);
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+</style>

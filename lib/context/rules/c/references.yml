@@ -1,0 +1,30 @@
+id: c-field-access
+language: c
+metadata:
+  produces: reference
+  ref_kind: attribute_access
+rule:
+  kind: field_expression
+
+---
+id: c-include
+language: c
+metadata:
+  produces: reference
+  ref_kind: import
+  module_var: MODULE
+rule:
+  kind: preproc_include
+  pattern: '#include $MODULE'
+
+---
+id: c-call
+language: c
+metadata:
+  produces: reference
+  ref_kind: call
+  name_var: FUNC
+rule:
+  kind: call_expression
+  pattern: $FUNC($$$ARGS)
+

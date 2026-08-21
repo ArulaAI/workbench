@@ -1,0 +1,36 @@
+{
+  "id": "11",
+  "title": "Security summary line in speed status output",
+  "description": "Modify `cmd_status()` in `lib/cmd/status.sh` (function defined at line 4 per codebase context) to include a security findings summary line.\n\nLocate the section in `cmd_status()` where per-feature status is printed. After the existing task progress or defect listing, add a security summary block:\n\n1. Determine the feature's logs directory: `${STATE_DIR}/features/${feature_name}/logs/`.\n2. Check for the existence of any security log files: `security-audit.json`, `sast-findings.json`, `sca-findings.json`. If none exist, skip the security line entirely (do not show \"no findings\" for features that have never run security scans).\n3. For each existing findings file, extract counts using `jq`:\n   - `security-audit.json`: read `.summary.by_severity` directly\n   - `sast-findings.json` and `sca-findings.json`: use `jq 'group_by(.severity) | map({key: .[0].severity, value: length}) | from_entries'` to aggregate\n4. Merge severity counts across all sources.\n5. Compute total. If total > 0, print: `Security: ⚠ N findings (X high, Y medium, ...)` using `COLOR_WARN`. If total == 0 (files exist but empty), print: `Security: ✓ no findings` using `COLOR_SUCCESS`.\n\nThe `cmd_status` function references `feature_name` from its existing feature iteration. Verify the variable name matches (could be `feature`, `name`, `feature_name`, etc.) by inspecting the current function body. Use the existing variable.\n\nEnsure `lib/security.sh` is sourced by the time `cmd_status` runs (it should be, given Task 10 adds the source line to `speed`).",
+  "acceptance_criteria": "- cmd_status output includes security summary line when security findings exist for a feature\n  verify_by: test\n- Security summary shows total count and per-severity breakdown\n  verify_by: test\n- Security summary shows green checkmark when scan ran but found zero findings\n  verify_by: test\n- No security line appears for features with no security log files\n  verify_by: test\n- Summary aggregates findings across audit, SAST, and SCA sources\n  verify_by: test\n- Severity labels use appropriate color codes (error for critical/high, warn for medium, dim for low/info)\n  verify_by: manual",
+  "depends_on": [
+    "2"
+  ],
+  "status": "done",
+  "branch": "speed/speed-security/task-11-security-summary-line-in-speed-status-ou",
+  "agent_model": "sonnet",
+  "created_at": "2026-02-26T11:44:37Z",
+  "started_at": "2026-02-26T11:58:49Z",
+  "completed_at": "2026-02-26T12:03:43Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": null,
+  "files_touched": [
+    "lib/cmd/status.sh"
+  ],
+  "decisions": [
+    "Placed the security summary block after the Contract info section — it fits naturally as another top-level status indicator alongside SPEED status, active agents, and contract state.",
+    "Used a single jq call per file (extracting all five severity counts in one pass) to avoid multiple subshell invocations per source file.",
+    "Used `local sec_has_files=false` with three `[[ -f ... ]] && sec_has_files=true` checks rather than a single compound test — matches existing style in the file.",
+    "Declared c/h/m/l/i locals once at the top of the sec_has_files block and reused them across the three file-processing blocks.",
+    "Trailing `, ` removal uses `sec_detail=${sec_detail%, }` — standard bash parameter expansion, no subprocess.",
+    "tests/test_status.sh stubs the complex functions (task_print_graph, feature_list, etc.) and sets GLOBAL_FEATURE to bypass the feature-selection logic, focusing assertions on the security section."
+  ],
+  "concerns": [
+    "tests/test_status.sh is undeclared in the task spec's Files section, triggering the scope warning. It's a cascading requirement (grounding check enforces test_${stem}.sh for lib/cmd/status.sh). The gate treats 1 undeclared file as a warning, not a hard failure.",
+    "The `group_by(.severity)` jq expression on sast-findings.json and sca-findings.json will produce an empty object `{}` for an empty array `[]`, which the counting logic handles correctly (all counts default to 0). Edge case is safe.",
+    "If `jq` is not available, the security summary block silently skips (due to `|| sec_tmp=\"0 0 0 0 0\"` fallback). This matches the existing pattern in cmd_status which already requires jq."
+  ],
+  "review_verdict": "approve",
+  "reviewed_at": "2026-02-26T16:53:06Z"
+}

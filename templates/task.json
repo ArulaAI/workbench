@@ -1,0 +1,31 @@
+{
+  "type": "object",
+  "required": ["id", "title", "description", "acceptance_criteria", "depends_on", "agent_model"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Unique numeric task identifier"
+    },
+    "title": {
+      "type": "string",
+      "description": "Short descriptive title for the task"
+    },
+    "description": {
+      "type": "string",
+      "description": "Detailed implementation description including file paths, function signatures, and approach"
+    },
+    "acceptance_criteria": {
+      "type": "string",
+      "description": "Bullet-pointed list of testable conditions that define 'done'"
+    },
+    "depends_on": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "IDs of tasks that must complete before this one can start"
+    },
+    "agent_model": {
+      "type": "string",
+      "description": "Model to use for this task. Provider-specific (e.g., sonnet, opus for Claude; o3, o3-mini for Codex)."
+    }
+  }
+}

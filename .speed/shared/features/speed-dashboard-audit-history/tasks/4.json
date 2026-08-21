@@ -1,0 +1,78 @@
+{
+  "id": "4",
+  "title": "Unit tests for audit history utility functions",
+  "description": "Create `dashboard/frontend/components/editor/audit-history-utils.test.ts` with comprehensive vitest unit tests.\n\nUse `vi.useFakeTimers()` and `vi.setSystemTime()` to control Date.now() for formatRelativeTime tests. Create a helper `isoAgo(ms: number)` that returns `new Date(Date.now() - ms).toISOString()`.\n\n**describe('formatRelativeTime')**\n- it('returns unknown for empty string')\n- it('returns unknown for invalid date')\n- it('returns just now for 0 seconds ago')\n- it('returns just now for 30 seconds ago')\n- it('returns just now for 59 seconds ago')\n- it('returns 1m ago at 60 second boundary')\n- it('returns 45m ago for 45 minutes')\n- it('returns 1h ago at 60 minute boundary')\n- it('returns 23h ago for 23 hours')\n- it('returns 1d ago at 24 hour boundary')\n- it('returns 6d ago for 6 days')\n- it('returns short date at 7 day boundary')\n- it('returns short date for 30 days ago')\n- it('handles future timestamps gracefully')\n\n**describe('issueKey')**\n- it('generates key from section and ruleId')\n- it('falls back to message truncation without ruleId')\n- it('produces different keys for different messages in same section')\n- it('produces same key for identical issues')\n- it('handles empty section gracefully')\n\n**describe('computeComparison')**\n- it('returns empty groups for empty audits')\n- it('puts all issues in unchanged for identical audits')\n- it('puts issues in removed and added for completely different audits')\n- it('correctly categorizes mixed changes')\n- it('treats issue moved to different section as removed + added')\n\n**describe('getPersistentIssues')**\n- it('returns empty set for null previous')\n- it('returns empty set for no overlap')\n- it('returns all keys for full overlap')\n- it('returns only shared keys for partial overlap')\n\nConstruct mock SpeedAuditResult objects inline with minimal required fields.",
+  "acceptance_criteria": "- All formatRelativeTime boundary and edge case tests pass [verify: test]\n- All issueKey uniqueness and identity tests pass [verify: test]\n- All computeComparison categorization tests pass [verify: test]\n- All getPersistentIssues intersection tests pass [verify: test]\n- Tests use vitest describe/it/expect and vi.useFakeTimers [verify: lint]\n- No import errors from audit-history-utils.ts [verify: lint]",
+  "depends_on": [
+    "2"
+  ],
+  "status": "done",
+  "branch": "speed/speed-dashboard-audit-history/task-4-unit-tests-for-audit-history-utility-fun",
+  "agent_model": "sonnet",
+  "created_at": "2026-03-25T22:18:31Z",
+  "started_at": "2026-03-26T02:13:16Z",
+  "completed_at": "2026-03-26T02:15:51Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": null,
+  "claimed_by": "sanjay",
+  "base_commit": "9977b6097f2fa8d0d140dcf5abe43194e6c80b98",
+  "files_touched": [
+    "dashboard/frontend/components/editor/audit-history-utils.test.ts"
+  ],
+  "started_by": "sanjay",
+  "gate_results": {
+    "checks": [
+      {
+        "name": "diff_non_empty",
+        "status": "pass"
+      },
+      {
+        "name": "declared_files",
+        "status": "pass"
+      },
+      {
+        "name": "scope",
+        "status": "pass"
+      },
+      {
+        "name": "python_imports",
+        "status": "pass"
+      },
+      {
+        "name": "not_blocked",
+        "status": "pass"
+      },
+      {
+        "name": "test_coverage",
+        "status": "pass"
+      },
+      {
+        "name": "gate_evidence",
+        "status": "warn"
+      },
+      {
+        "name": "criteria",
+        "status": "warn"
+      },
+      {
+        "name": "secrets",
+        "status": "pass"
+      },
+      {
+        "name": "syntax",
+        "status": "pass"
+      }
+    ],
+    "scope": {}
+  },
+  "decisions": [
+    "The task spec mentioned 'issueKey generates key from section and ruleId' but AuditIssue has no ruleId field — the actual implementation uses section + message. Adapted test names to reflect the real implementation while preserving intent (key uniqueness, truncation behavior).",
+    "Used regex /^[A-Z][a-z]+ \\d+$/ for short-date assertions rather than hard-coding Intl output, making tests locale-independent while still verifying the formatted-date branch is taken.",
+    "makeAudit and makeIssue helpers kept file-local and minimal — not exported, not abstracted beyond what the tests need."
+  ],
+  "concerns": [],
+  "review_verdict": "approve",
+  "reviewed_at": "2026-03-26T02:54:57Z",
+  "reviewed_by": "sanjay"
+}

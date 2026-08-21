@@ -1,0 +1,32 @@
+{
+  "id": "10b",
+  "title": "CLI Command: integrate --defect",
+  "description": "Add `--defect <name>` flag to `cmd_integrate()` in the main `speed` script, plus a `_cmd_integrate_defect` helper function.\n\n**Flag parsing change in `cmd_integrate()`:**\nMove flag parsing before `_require_feature` so `--defect` mode can skip the feature requirement. Add `--defect` case alongside existing `--skip-tests`. When `--defect` is present, call `_cmd_integrate_defect \"$defect_name\"` and return early.\n\n**`_cmd_integrate_defect <name>` helper** (add before `cmd_integrate`):\n1. Validate defect exists: call `defect_state_read \"$name\"`. If it fails, exit with 'Defect not found: <name>'\n2. Read current status from state.json\n3. Read complexity from triage output via `defect_triage_read \"$name\"`\n4. Validate state is `fixed` or `reviewed`; if not, exit with 'Defect <name> is in state <state>, expected fixed or reviewed'\n5. For moderate defects in `fixed` state: call `review_defect_fix \"$name\"` first\n6. Call `integrate_defect \"$name\"` (this internally runs guardian check, merge, and regression)\n7. Print success message\n\n**Key library functions** (already sourced):\n- `defect_state_read` from lib/defects.sh\n- `defect_triage_read` from lib/defects.sh\n- `review_defect_fix` from lib/defect_review.sh — runs reviewer agent\n- `integrate_defect` from lib/defect_review.sh — runs guardian, merges, runs regression\n\n**Existing patterns to follow:**\n- Same flag parsing pattern as `cmd_run()` (which will have `--defect` from task 10a)\n- `cmd_defect()` error message patterns",
+  "acceptance_criteria": "- `speed integrate --defect <name>` calls review_defect_fix for moderate defects in fixed state [verify_by: test]\n- `speed integrate --defect <name>` calls integrate_defect [verify_by: test]\n- `speed integrate --defect nonexistent` exits with 'Defect not found: nonexistent' [verify_by: test]\n- `speed integrate --defect <name>` in wrong state exits with descriptive error [verify_by: test]\n- Existing `speed integrate --skip-tests` still works (no regression) [verify_by: test]",
+  "depends_on": [
+    "7",
+    "8",
+    "9"
+  ],
+  "status": "done",
+  "branch": "speed/speed-defects/task-10b-cli-command-integrate-defect",
+  "agent_model": "sonnet",
+  "created_at": "2026-02-24T20:00:00Z",
+  "started_at": "2026-02-24T18:44:36Z",
+  "completed_at": "2026-02-24T18:48:09Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": null,
+  "files_touched": [
+    "speed"
+  ],
+  "decisions": [
+    "Flag parsing moved entirely before _require_feature in cmd_integrate — this means --skip-tests is also parsed before _require_feature, which is a harmless change (it's only used after the feature check anyway)",
+    "If defect_triage_read fails (no triage.json), complexity defaults to empty string, which means the moderate-review step is skipped — integrate_defect itself will do its own state validation",
+    "_cmd_integrate_defect does not print a redundant success message since integrate_defect already prints a detailed resolution summary"
+  ],
+  "concerns": [
+    "The --defect flag does not forward --skip-tests to integrate_defect — that function always runs regression tests. If a caller wants to skip tests for a defect integration, there is no mechanism. Not in scope for this task but worth noting.",
+    "integrate_defect returns non-zero exit codes on merge conflict (EXIT_MERGE_CONFLICT) and gate failure (EXIT_GATE_FAILURE) — _cmd_integrate_defect propagates these naturally since integrate_defect is the last statement (no error wrapping). This is correct behavior."
+  ]
+}

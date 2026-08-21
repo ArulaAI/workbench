@@ -1,0 +1,40 @@
+id: csharp-member-access
+language: csharp
+metadata:
+  produces: reference
+  ref_kind: attribute_access
+rule:
+  kind: member_access_expression
+
+---
+id: csharp-using
+language: csharp
+metadata:
+  produces: reference
+  ref_kind: import
+  module_var: MODULE
+rule:
+  kind: using_directive
+  pattern: using $MODULE;
+
+---
+id: csharp-using-static
+language: csharp
+metadata:
+  produces: reference
+  ref_kind: import
+  module_var: MODULE
+rule:
+  kind: using_directive
+  pattern: using static $MODULE;
+
+---
+id: csharp-call
+language: csharp
+metadata:
+  produces: reference
+  ref_kind: call
+  name_var: FUNC
+rule:
+  kind: invocation_expression
+  pattern: $FUNC($$$ARGS)

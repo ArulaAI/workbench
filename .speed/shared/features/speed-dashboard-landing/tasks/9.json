@@ -1,0 +1,96 @@
+{
+  "id": "9",
+  "title": "Create frontend GraphQL queries and mutation for landing page",
+  "description": "Create `dashboard/frontend/lib/graphql/queries/landing.ts` with:\n\n1. `LANDING_VIEW_QUERY` \u2014 full query matching the tech spec's `LandingView` GraphQL example. All four panel sub-selections (define, judge, execute, learn) plus top-level fields (greeting, projectName, branch, narrative).\n2. `RESPOND_TO_ESCALATION_MUTATION` \u2014 mutation with variables `$feature: String!`, `$taskId: String!`, `$response: String!`. Returns `{ success, error }`.\n3. Export TypeScript types for the query response shape (LandingViewData, DefinePanel, JudgePanel, ExecutePanel, LearnPanel, etc.) matching the GraphQL schema.\n4. Reference the existing `TASK_STATUS_SUBSCRIPTION` from the mission-control queries file for reuse (import path, do not duplicate).\n\nFollow the pattern established by other query files in `dashboard/frontend/lib/graphql/queries/`.",
+  "acceptance_criteria": "- LANDING_VIEW_QUERY exported and contains all four panel sub-selections\n  verify_by: lint\n- RESPOND_TO_ESCALATION_MUTATION exported with correct variable types\n  verify_by: lint\n- TypeScript types exported for LandingViewData and all panel types\n  verify_by: lint\n- Query field names match the GraphQL schema exactly (camelCase)\n  verify_by: lint\n- File imports follow existing query file patterns in the project\n  verify_by: file_exists",
+  "depends_on": [
+    "8"
+  ],
+  "status": "done",
+  "branch": "speed/speed-dashboard-landing/task-9-create-frontend-graphql-queries-and-muta",
+  "agent_model": "sonnet",
+  "created_at": "2026-03-15T16:26:56Z",
+  "started_at": null,
+  "completed_at": "2026-03-17T05:22:16Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": "{\"verdict\":\"request_changes\",\"spec_verification\":[{\"spec_quote\":\"LANDING_VIEW_QUERY exported and contains all four panel sub-selections\",\"spec_section\":\"Acceptance Criteria #1\",\"satisfied\":false,\"evidence\":\"Diff is empty. No file dashboard/frontend/lib/graphql/queries/landing.ts exists in the changeset.\",\"notes\":\"Nothing was implemented.\"},{\"spec_quote\":\"RESPOND_TO_ESCALATION_MUTATION exported with correct variable types\",\"spec_section\":\"Acceptance Criteria #3\",\"satisfied\":false,\"evidence\":\"Diff is empty.\",\"notes\":\"Nothing was implemented.\"},{\"spec_quote\":\"TypeScript types exported for LandingViewData and all panel types\",\"spec_section\":\"Acceptance Criteria #5\",\"satisfied\":false,\"evidence\":\"Diff is empty.\",\"notes\":\"Nothing was implemented.\"},{\"spec_quote\":\"Query field names match the GraphQL schema exactly (camelCase)\",\"spec_section\":\"Acceptance Criteria #7\",\"satisfied\":false,\"evidence\":\"Diff is empty. Cannot verify field name alignment with schema.\",\"notes\":\"Nothing was implemented.\"},{\"spec_quote\":\"File imports follow existing query file patterns in the project\",\"spec_section\":\"Acceptance Criteria #9\",\"satisfied\":false,\"evidence\":\"Diff is empty.\",\"notes\":\"Nothing was implemented.\"}],\"missing_from_spec\":[{\"spec_quote\":\"LANDING_VIEW_QUERY exported and contains all four panel sub-selections\",\"description\":\"The entire file dashboard/frontend/lib/graphql/queries/landing.ts was not created.\"},{\"spec_quote\":\"RESPOND_TO_ESCALATION_MUTATION exported with correct variable types\",\"description\":\"Mutation definition is absent.\"},{\"spec_quote\":\"TypeScript types exported for LandingViewData and all panel types\",\"description\":\"All TypeScript type exports are absent.\"}],\"out_of_scope\":[],\"issues\":[{\"severity\":\"critical\",\"file\":\"dashboard/frontend/lib/graphql/queries/landing.ts\",\"line\":null,\"message\":\"File does not exist. The diff is empty \u2014 the task was not implemented.\",\"suggestion\":\"Create dashboard/frontend/lib/graphql/queries/landing.ts with LANDING_VIEW_QUERY (all four panel sub-selections), RESPOND_TO_ESCALATION_MUTATION (with typed variables), and TypeScript type exports for LandingViewData and each panel type. Field names must match the schema from task 8 exactly.\"}],\"strengths\":[]}",
+  "files_touched": [
+    "dashboard/frontend/lib/graphql/queries/landing.ts"
+  ],
+  "spec_references": [
+    {
+      "spec": "tech",
+      "section": "File Impact",
+      "requirement": "dashboard/frontend/lib/graphql/queries/landing.ts: New file. LANDING_VIEW_QUERY, RESPOND_TO_ESCALATION_MUTATION. Reuse TASK_STATUS_SUBSCRIPTION."
+    },
+    {
+      "spec": "tech",
+      "section": "Basic Example",
+      "requirement": "Full GraphQL query and mutation definitions"
+    }
+  ],
+  "rationale": "GraphQL query definitions are a prerequisite for every frontend component that fetches data. Creating them as a standalone task keeps the query shape stable before components consume it. Depends on task 8 because the query shape must match the schema.",
+  "assumptions": [
+    "The project uses Apollo Client or urql based on existing frontend GraphQL patterns",
+    "TASK_STATUS_SUBSCRIPTION already exists in the mission-control query file and can be imported"
+  ],
+  "gate_results": {
+    "checks": [
+      {
+        "name": "diff_non_empty",
+        "status": "fail"
+      },
+      {
+        "name": "declared_files",
+        "status": "pass"
+      },
+      {
+        "name": "scope",
+        "status": "pass"
+      },
+      {
+        "name": "python_imports",
+        "status": "pass"
+      },
+      {
+        "name": "not_blocked",
+        "status": "pass"
+      },
+      {
+        "name": "test_coverage",
+        "status": "pass"
+      },
+      {
+        "name": "gate_evidence",
+        "status": "warn"
+      },
+      {
+        "name": "criteria",
+        "status": "pass"
+      },
+      {
+        "name": "secrets",
+        "status": "pass"
+      }
+    ],
+    "scope": {}
+  },
+  "decisions": [
+    "Re-exported TASK_STATUS_SUBSCRIPTION from ./mission-control rather than duplicating it \u2014 satisfies 'reference for reuse' requirement without copy-paste.",
+    "TypeScript interfaces match Strawberry's automatic snake_case \u2192 camelCase conversion (e.g. vision_status \u2192 visionStatus, draft_specs \u2192 draftSpecs).",
+    "Followed urql gql pattern exactly as established by mission-control.ts and other query files.",
+    "LandingViewData wraps the response under a `landingView` key matching the GraphQL query root field name."
+  ],
+  "concerns": [
+    "The gate warns about missing test coverage \u2014 task 19 owns LandingPage.test.tsx and is expected to cover this file. No test file was declared for task 9.",
+    "The mutation argument names (feature, taskId, response) are passed as flat args to respondToEscalation, matching task 8's schema wiring. If the backend schema changes to accept an input object, this query would need updating."
+  ],
+  "review_verdict": "approve",
+  "failure_classification": {
+    "class": "unclassified",
+    "subclass": "unknown",
+    "evidence": "No classification rule matched"
+  },
+  "retry_count": 1
+}

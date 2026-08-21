@@ -1,0 +1,75 @@
+{
+  "id": "1",
+  "title": "Create formatRelativeTime and issueKey utility functions",
+  "description": "Create `dashboard/frontend/components/editor/audit-history-utils.ts` with two pure utility functions.\n\n**`formatRelativeTime(isoString: string): string`**\nConverts an ISO 8601 timestamp to a human-readable relative time string:\n- Empty/invalid input returns 'unknown'\n- < 60 seconds ago returns 'just now'\n- < 60 minutes ago returns 'Nm ago' (e.g. '5m ago')\n- < 24 hours ago returns 'Nh ago' (e.g. '3h ago')\n- < 7 days ago returns 'Nd ago' (e.g. '2d ago')\n- >= 7 days ago returns short date 'Mar 15' using Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' })\n\nCompute the diff as `Date.now() - new Date(isoString).getTime()`. Check `isNaN` on the parsed date for invalid input.\n\n**`issueKey(issue: AuditIssue): string`**\nProduces a composite string key for matching issues across runs. Format: `${section}::${identifier}` where identifier is `ruleId` if available, otherwise first 80 chars of `message`. Import the `AuditIssue` type from the existing codebase. Check IntelPanel.tsx or the GraphQL types directory for the type definition. If `AuditIssue` does not have a `ruleId` field, use `section + '::' + message.slice(0, 80)`.\n\nExport both functions as named exports. Also export a `ComparisonResult` interface placeholder (just the type, implementation in task 2): `{ removed: AuditIssue[], unchanged: AuditIssue[], added: AuditIssue[] }`.",
+  "acceptance_criteria": "- formatRelativeTime('') returns 'unknown' [verify: test]\n- formatRelativeTime with invalid date string returns 'unknown' [verify: test]\n- formatRelativeTime with timestamp 30s ago returns 'just now' [verify: test]\n- formatRelativeTime with timestamp 5min ago returns '5m ago' [verify: test]\n- formatRelativeTime with timestamp 3h ago returns '3h ago' [verify: test]\n- formatRelativeTime with timestamp 2d ago returns '2d ago' [verify: test]\n- formatRelativeTime with timestamp 10d ago returns short date like 'Mar 15' [verify: test]\n- issueKey produces different keys for issues with same section but different messages [verify: test]\n- issueKey produces identical keys for the same issue across two audit runs [verify: test]\n- File exports formatRelativeTime, issueKey, and ComparisonResult as named exports [verify: lint]",
+  "depends_on": [],
+  "status": "done",
+  "branch": "speed/speed-dashboard-audit-history/task-1-create-formatrelativetime-and-issuekey-u",
+  "agent_model": "sonnet",
+  "created_at": "2026-03-25T22:18:30Z",
+  "started_at": "2026-03-26T02:08:10Z",
+  "completed_at": "2026-03-26T02:09:47Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": null,
+  "claimed_by": "sanjay",
+  "base_commit": "9977b6097f2fa8d0d140dcf5abe43194e6c80b98",
+  "files_touched": [
+    "dashboard/frontend/components/editor/audit-history-utils.ts"
+  ],
+  "started_by": "sanjay",
+  "gate_results": {
+    "checks": [
+      {
+        "name": "diff_non_empty",
+        "status": "pass"
+      },
+      {
+        "name": "declared_files",
+        "status": "pass"
+      },
+      {
+        "name": "scope",
+        "status": "pass"
+      },
+      {
+        "name": "python_imports",
+        "status": "pass"
+      },
+      {
+        "name": "not_blocked",
+        "status": "pass"
+      },
+      {
+        "name": "test_coverage",
+        "status": "warn",
+        "note": "deferred to sibling tasks"
+      },
+      {
+        "name": "gate_evidence",
+        "status": "warn"
+      },
+      {
+        "name": "criteria",
+        "status": "warn"
+      },
+      {
+        "name": "secrets",
+        "status": "pass"
+      },
+      {
+        "name": "syntax",
+        "status": "pass"
+      }
+    ],
+    "scope": {}
+  },
+  "decisions": [
+    "AuditIssue has no ruleId field (confirmed by inspecting the TypeScript type in lib/graphql/queries/editor.ts), so issueKey uses section + '::' + message.slice(0, 80) as specified in the fallback path.",
+    "Imported AuditIssue from @/lib/graphql/queries/editor, matching IntelPanel.tsx's import pattern."
+  ],
+  "concerns": [
+    "Test coverage for this file is deferred to Task 4 (audit-history-utils.test.ts). The full gate flagged this but noted it as 'deferred to sibling tasks'."
+  ]
+}

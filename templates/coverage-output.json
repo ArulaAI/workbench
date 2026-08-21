@@ -1,0 +1,25 @@
+{
+  "type": "object",
+  "required": ["coverage", "gaps", "summary"],
+  "properties": {
+    "coverage": {
+      "type": "string",
+      "enum": ["complete", "gaps_found"]
+    },
+    "gaps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["spec", "section", "requirement", "severity", "explanation"],
+        "properties": {
+          "spec": { "type": "string" },
+          "section": { "type": "string" },
+          "requirement": { "type": "string" },
+          "severity": { "type": "string", "enum": ["critical", "minor"] },
+          "explanation": { "type": "string" }
+        }
+      }
+    },
+    "summary": { "type": "string" }
+  }
+}

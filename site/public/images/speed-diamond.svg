@@ -1,0 +1,221 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 460" fill="none">
+  <style>
+    text { font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif; }
+    .mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; }
+  </style>
+
+  <!-- ═══ LEGEND ═══ -->
+  <text x="690" y="22" font-size="10.5" fill="#e8a87c" font-weight="600">Human</text>
+  <text x="740" y="22" font-size="10.5" fill="#58585e">/</text>
+  <text x="752" y="22" font-size="10.5" fill="#80f0d8" font-weight="600">Agent</text>
+  <text x="800" y="22" font-size="10.5" fill="#58585e">/</text>
+  <text x="812" y="22" font-size="10.5" fill="#00ccaa" font-weight="600">Gate</text>
+
+  <!-- ═══════════════════════════════════════ -->
+  <!-- SPECS BACKLOG (stacked cards = plural) -->
+  <!-- ═══════════════════════════════════════ -->
+  <rect x="30" y="195" width="64" height="46" rx="5"
+        fill="#303034" stroke="rgba(0,204,170,0.08)" stroke-width="0.8"/>
+  <rect x="25" y="190" width="64" height="46" rx="5"
+        fill="#303034" stroke="rgba(0,204,170,0.10)" stroke-width="0.8"/>
+  <rect x="20" y="185" width="64" height="46" rx="6"
+        fill="#3a3a3e" stroke="rgba(0,204,170,0.18)" stroke-width="1"/>
+  <text x="52" y="210" text-anchor="middle"
+        class="mono" font-size="14" font-weight="700" fill="#00ccaa"
+        letter-spacing="0.06em">SPECS</text>
+  <text x="52" y="224" text-anchor="middle"
+        font-size="8.5" fill="#a0a0a8">backlog</text>
+
+  <!-- Spec authors — structural, not annotation -->
+  <text x="52" y="252" text-anchor="middle"
+        font-size="10" fill="#e8a87c" font-weight="500">PM · Design · Eng</text>
+
+  <!-- Arrow → PREPARE -->
+  <line x1="90" y1="208" x2="122" y2="208"
+        stroke="#58585e" stroke-width="1.8"/>
+  <path d="M 118,204 L 126,208 L 118,212" fill="#58585e"/>
+
+  <!-- ═══════════════════════════════════════ -->
+  <!-- PREPARE (with self-correcting loop)    -->
+  <!-- ═══════════════════════════════════════ -->
+  <rect x="130" y="172" width="118" height="72" rx="7"
+        fill="#303034" stroke="rgba(0,204,170,0.12)" stroke-width="1"/>
+  <text x="189" y="198" text-anchor="middle"
+        class="mono" font-size="13" font-weight="600" fill="#f0f0f0"
+        letter-spacing="0.03em">PREPARE</text>
+  <text x="189" y="216" text-anchor="middle"
+        font-size="9.5" fill="#a0a0a8">validate · plan · verify</text>
+
+  <!-- Self-correcting loop arrow (right side) -->
+  <path d="M 240,192 C 258,192 258,224 240,224"
+        stroke="#00ccaa" stroke-width="1.3" stroke-opacity="0.5" fill="none"/>
+  <path d="M 242,221 L 238,228 L 236,220" fill="#00ccaa" fill-opacity="0.5"/>
+  <text x="266" y="212" text-anchor="start"
+        font-size="8.5" fill="#00ccaa" fill-opacity="0.6">≤3×</text>
+
+  <!-- Roles -->
+  <text x="189" y="260" text-anchor="middle"
+        font-size="10" fill="#80f0d8">Architect · Verifier</text>
+  <text x="189" y="158" text-anchor="middle"
+        font-size="10" fill="#e8a87c">Architect reviews</text>
+
+  <!-- Arrow → GATE 1 -->
+  <line x1="252" y1="208" x2="286" y2="208"
+        stroke="#58585e" stroke-width="1.8"/>
+
+  <!-- ═══════════════════════════════════════ -->
+  <!-- GATE 1 (human + SPEED)                -->
+  <!-- ═══════════════════════════════════════ -->
+  <rect x="290" y="196" width="6" height="24" rx="3"
+        fill="#00ccaa" fill-opacity="0.6"/>
+  <!-- Dual nature: warm tick + teal tick -->
+  <circle cx="293" cy="190" r="3" fill="#e8a87c" fill-opacity="0.7"/>
+  <circle cx="293" cy="226" r="3" fill="#80f0d8" fill-opacity="0.7"/>
+
+  <!-- Arrow → Fan-out -->
+  <line x1="300" y1="208" x2="330" y2="208"
+        stroke="#58585e" stroke-width="1.8"/>
+
+  <!-- ═══════════════════════════════════════ -->
+  <!-- EXECUTE — Fan-out / Fan-in             -->
+  <!-- ═══════════════════════════════════════ -->
+
+  <!-- EXECUTE label -->
+  <text x="438" y="80" text-anchor="middle"
+        class="mono" font-size="11" font-weight="600" fill="#a0a0a8"
+        letter-spacing="0.06em">EXECUTE</text>
+  <text x="438" y="96" text-anchor="middle"
+        font-size="9.5" fill="#58585e" font-style="italic">N parallel · isolated worktrees</text>
+
+  <!-- Fan-out node -->
+  <circle cx="338" cy="208" r="6" fill="#303034" stroke="#58585e" stroke-width="2"/>
+
+  <!-- Track 1 (top) — y=130 -->
+  <path d="M 344,208 C 368,208 375,130 400,130"
+        stroke="#58585e" stroke-width="1.5" fill="none"/>
+  <line x1="400" y1="130" x2="484" y2="130"
+        stroke="#58585e" stroke-width="1.5"/>
+  <path d="M 484,130 C 510,130 516,208 540,208"
+        stroke="#58585e" stroke-width="1.5" fill="none"/>
+  <!-- DEV → REV -->
+  <circle cx="422" cy="130" r="14" fill="#303034" stroke="rgba(0,204,170,0.2)" stroke-width="1.2"/>
+  <text x="422" y="134" text-anchor="middle" font-size="10" fill="#80f0d8" font-weight="600">DEV</text>
+  <path d="M 439,130 L 449,130" stroke="#58585e" stroke-width="1"/>
+  <path d="M 446,127 L 452,130 L 446,133" fill="#58585e"/>
+  <circle cx="466" cy="130" r="14" fill="#303034" stroke="rgba(0,204,170,0.2)" stroke-width="1.2"/>
+  <text x="466" y="134" text-anchor="middle" font-size="10" fill="#80f0d8" font-weight="600">REV</text>
+
+  <!-- Track 2 (center) — y=208 -->
+  <line x1="344" y1="208" x2="540" y2="208"
+        stroke="#58585e" stroke-width="1.5"/>
+  <circle cx="422" cy="208" r="14" fill="#303034" stroke="rgba(0,204,170,0.2)" stroke-width="1.2"/>
+  <text x="422" y="212" text-anchor="middle" font-size="10" fill="#80f0d8" font-weight="600">DEV</text>
+  <path d="M 439,208 L 449,208" stroke="#58585e" stroke-width="1"/>
+  <path d="M 446,205 L 452,208 L 446,211" fill="#58585e"/>
+  <circle cx="466" cy="208" r="14" fill="#303034" stroke="rgba(0,204,170,0.2)" stroke-width="1.2"/>
+  <text x="466" y="212" text-anchor="middle" font-size="10" fill="#80f0d8" font-weight="600">REV</text>
+
+  <!-- Track 3 (bottom) — y=286 -->
+  <path d="M 344,208 C 368,208 375,286 400,286"
+        stroke="#58585e" stroke-width="1.5" fill="none"/>
+  <line x1="400" y1="286" x2="484" y2="286"
+        stroke="#58585e" stroke-width="1.5"/>
+  <path d="M 484,286 C 510,286 516,208 540,208"
+        stroke="#58585e" stroke-width="1.5" fill="none"/>
+  <circle cx="422" cy="286" r="14" fill="#303034" stroke="rgba(0,204,170,0.2)" stroke-width="1.2"/>
+  <text x="422" y="290" text-anchor="middle" font-size="10" fill="#80f0d8" font-weight="600">DEV</text>
+  <path d="M 439,286 L 449,286" stroke="#58585e" stroke-width="1"/>
+  <path d="M 446,283 L 452,286 L 446,289" fill="#58585e"/>
+  <circle cx="466" cy="286" r="14" fill="#303034" stroke="rgba(0,204,170,0.2)" stroke-width="1.2"/>
+  <text x="466" y="290" text-anchor="middle" font-size="10" fill="#80f0d8" font-weight="600">REV</text>
+
+  <!-- Fan-in node -->
+  <circle cx="546" cy="208" r="6" fill="#303034" stroke="#58585e" stroke-width="2"/>
+
+  <!-- EXECUTE failure loop (arc below fan-out) -->
+  <path d="M 546,216 C 546,336 338,336 338,216"
+        stroke="#00ccaa" stroke-width="1.3" stroke-opacity="0.3"
+        stroke-dasharray="5,4" fill="none"/>
+  <path d="M 335,220 L 338,212 L 341,220" fill="#00ccaa" fill-opacity="0.35"/>
+  <text x="442" y="332" text-anchor="middle"
+        font-size="10" fill="#80f0d8">Debugger → Supervisor</text>
+  <text x="442" y="348" text-anchor="middle"
+        font-size="9" fill="#58585e" font-style="italic">retry · escalate model · replan · escalate human</text>
+
+  <!-- Human developer escalation -->
+  <text x="442" y="316" text-anchor="middle"
+        font-size="10" fill="#e8a87c">Developer handles ~5%</text>
+
+  <!-- Arrow → GATE 2 -->
+  <line x1="554" y1="208" x2="578" y2="208"
+        stroke="#58585e" stroke-width="1.8"/>
+
+  <!-- ═══════════════════════════════════════ -->
+  <!-- GATE 2 (human + SPEED)                -->
+  <!-- ═══════════════════════════════════════ -->
+  <rect x="582" y="196" width="6" height="24" rx="3"
+        fill="#00ccaa" fill-opacity="0.6"/>
+  <circle cx="585" cy="190" r="3" fill="#e8a87c" fill-opacity="0.7"/>
+  <circle cx="585" cy="226" r="3" fill="#80f0d8" fill-opacity="0.7"/>
+
+  <!-- Arrow → INTEGRATE -->
+  <line x1="592" y1="208" x2="626" y2="208"
+        stroke="#58585e" stroke-width="1.8"/>
+
+  <!-- ═══════════════════════════════════════ -->
+  <!-- INTEGRATE (linear, no loop)            -->
+  <!-- ═══════════════════════════════════════ -->
+  <rect x="630" y="172" width="118" height="72" rx="7"
+        fill="#303034" stroke="rgba(0,204,170,0.12)" stroke-width="1"/>
+  <text x="689" y="198" text-anchor="middle"
+        class="mono" font-size="13" font-weight="600" fill="#f0f0f0"
+        letter-spacing="0.03em">INTEGRATE</text>
+  <text x="689" y="216" text-anchor="middle"
+        font-size="9.5" fill="#a0a0a8">coherence · merge · gate</text>
+
+  <!-- Roles — no loop here, linear only -->
+  <text x="689" y="260" text-anchor="middle"
+        font-size="10" fill="#80f0d8">Checker · Integrator · Guardian</text>
+
+  <!-- Arrow → SHIPPED -->
+  <line x1="752" y1="208" x2="786" y2="208"
+        stroke="#58585e" stroke-width="1.8"/>
+  <path d="M 782,204 L 790,208 L 782,212" fill="#58585e"/>
+
+  <!-- ═══════════════════════════════════════ -->
+  <!-- SHIPPED                                -->
+  <!-- ═══════════════════════════════════════ -->
+  <rect x="794" y="185" width="50" height="46" rx="6"
+        fill="#1a3a35" stroke="#00ccaa" stroke-width="1.2" stroke-opacity="0.45"/>
+  <text x="819" y="206" text-anchor="middle"
+        class="mono" font-size="10" font-weight="700" fill="#00ccaa"
+        letter-spacing="0.04em">CODE</text>
+  <text x="819" y="220" text-anchor="middle"
+        class="mono" font-size="10" font-weight="700" fill="#00ccaa"
+        letter-spacing="0.04em">IN MAIN</text>
+
+  <text x="819" y="250" text-anchor="middle"
+        font-size="10" fill="#e8a87c">Human judgment</text>
+
+  <!-- ═══════════════════════════════════════ -->
+  <!-- ITERATION LOOP (shipped → next spec)   -->
+  <!-- ═══════════════════════════════════════ -->
+  <path d="M 819,183 C 819,46 52,46 52,183"
+        stroke="#58585e" stroke-width="1.5" stroke-opacity="0.3"
+        stroke-dasharray="8,5" fill="none"/>
+  <path d="M 49,177 L 52,185 L 55,177" fill="#58585e" fill-opacity="0.35"/>
+  <text x="435" y="44" text-anchor="middle"
+        font-size="10.5" fill="#a0a0a8">next spec from backlog</text>
+
+  <!-- ═══════════════════════════════════════ -->
+  <!-- QA role (designs both gates)           -->
+  <!-- ═══════════════════════════════════════ -->
+  <text x="438" y="396" text-anchor="middle"
+        font-size="10" fill="#e8a87c">QA designs verification gates</text>
+  <path d="M 380,390 L 293,230"
+        stroke="#e8a87c" stroke-width="0.7" stroke-opacity="0.15"
+        stroke-dasharray="3,3" fill="none"/>
+  <path d="M 496,390 L 585,230"
+        stroke="#e8a87c" stroke-width="0.7" stroke-opacity="0.15"
+        stroke-dasharray="3,3" fill="none"/>
+</svg>

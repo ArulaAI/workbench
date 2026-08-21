@@ -1,0 +1,107 @@
+{
+  "id": "8",
+  "title": "Wire landing resolver into GraphQL schema",
+  "description": "Modify `dashboard/backend/schema.py` to integrate the landing page types and resolvers from Phase 1.\n\n1. Import all types from `dashboard/backend/resolvers/landing_types.py`\n2. Import `get_landing_view` and `respond_to_escalation` from `dashboard/backend/resolvers/landing.py`\n3. Add `landing_view` field to the existing `Query` class. The resolver calls `get_landing_view(project_root, info)` and returns `LandingView`.\n4. Add `respond_to_escalation` field to the existing `Mutation` class. Arguments: `feature: str`, `task_id: str`, `response: str`. Calls `respond_to_escalation()` from the resolver module.\n5. Follow the existing pattern in schema.py (see how `mission_control`, `topology`, `budget` resolvers are wired).",
+  "acceptance_criteria": "- `landing_view` field exists on the Query type and returns LandingView\n  verify_by: schema_check\n- `respond_to_escalation` mutation field exists with feature, task_id, response arguments\n  verify_by: schema_check\n- Executing `landingView` query against the schema returns data (not a schema error)\n  verify_by: test\n- Executing `respondToEscalation` mutation against the schema returns EscalationResponseResult\n  verify_by: test\n- No import errors when starting the backend server\n  verify_by: lint",
+  "depends_on": [
+    "7"
+  ],
+  "status": "done",
+  "branch": "speed/speed-dashboard-landing/task-8-wire-landing-resolver-into-graphql-schem",
+  "agent_model": "opus",
+  "created_at": "2026-03-15T16:26:56Z",
+  "started_at": "2026-03-17T05:19:05Z",
+  "completed_at": "2026-03-17T05:22:15Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": "{\"verdict\":\"request_changes\",\"spec_verification\":[{\"spec_quote\":\"landing_view field exists on the Query type and returns LandingView\",\"spec_section\":\"Acceptance Criteria #1\",\"satisfied\":true,\"evidence\":\"schema.py:635-637 — @strawberry.field def landing_view(self, info) -> LandingView, delegates to landing_resolver.get_landing_view(project_root)\",\"notes\":\"Return type is non-Optional LandingView, consistent with the resolver signature.\"},{\"spec_quote\":\"respond_to_escalation mutation field exists with feature, task_id, response arguments\",\"spec_section\":\"Acceptance Criteria #3\",\"satisfied\":true,\"evidence\":\"schema.py:737-749 — Mutation class with @strawberry.mutation def respond_to_escalation(self, info, feature: str, task_id: str, response: str) -> EscalationResponseResult. Schema line 754 includes mutation=Mutation.\",\"notes\":\"Arguments match exactly. EscalationResponseInput is constructed inline from the three scalar args before passing to the resolver.\"},{\"spec_quote\":\"Executing landingView query against the schema returns data (not a schema error) — verify_by: test\",\"spec_section\":\"Acceptance Criteria #5–6\",\"satisfied\":false,\"evidence\":\"No test in the suite calls schema.execute() or strawberry.Schema(...).execute_sync(...). test_landing.py calls get_landing_view() directly; test_landing_types.py uses AST parsing with no Strawberry import. Neither exercises the compiled schema.\",\"notes\":\"A schema-level test is required to catch type registration failures, missing context keys, or strawberry compilation errors that bypass unit tests.\"},{\"spec_quote\":\"Executing respondToEscalation mutation against the schema returns EscalationResponseResult — verify_by: test\",\"spec_section\":\"Acceptance Criteria #7–8\",\"satisfied\":false,\"evidence\":\"Same gap — no test calls schema.execute('mutation { respondToEscalation(...) { success error } }'). The respond_to_escalation resolver function is tested thoroughly in test_landing.py, but the schema-layer mutation wiring is untested.\",\"notes\":\"The mutation class is new (no prior Mutation type existed). Schema-level execution is the only way to verify the wiring didn't introduce a Strawberry type conflict.\"},{\"spec_quote\":\"No import errors when starting the backend server — verify_by: lint\",\"spec_section\":\"Acceptance Criteria #9–10\",\"satisfied\":true,\"evidence\":\"schema.py:12-19 — all four imports (landing_resolver, EscalationResponseInput, EscalationResponseResult, LandingView) resolve to existing symbols in landing.py and landing_types.py. No circular imports visible.\",\"notes\":\"Cannot execute, but static inspection shows no missing symbols.\"}],\"missing_from_spec\":[{\"spec_quote\":\"Executing landingView query against the schema returns data (not a schema error) — verify_by: test\",\"description\":\"No test exercises schema.execute() with the landingView query. A minimal test constructing the schema with a mock context and running execute_sync('{ landingView { greeting projectName } }') would satisfy this criterion.\"},{\"spec_quote\":\"Executing respondToEscalation mutation against the schema returns EscalationResponseResult — verify_by: test\",\"description\":\"No test exercises the mutation via the schema. A test calling schema.execute_sync('mutation { respondToEscalation(feature: \\\"x\\\", taskId: \\\"y\\\", response: \\\"z\\\") { success error } }') with a mock context is needed.\"}],\"out_of_scope\":[],\"issues\":[{\"severity\":\"major\",\"file\":\"dashboard/backend/tests/\",\"line\":null,\"message\":\"No schema-level execution test for landingView or respondToEscalation. AC5 and AC7 are explicitly 'verify_by: test' and require schema.execute() calls, not just resolver function calls.\",\"suggestion\":\"Add a test module (e.g., test_schema_landing.py) that constructs the strawberry schema with a mock context dict containing project_root, then calls schema.execute_sync() for both the query and mutation. The mutation test can use a real tmp_path with a blocked task file.\"}],\"strengths\":[\"The wiring in schema.py is minimal and correct: landing_view on Query, respond_to_escalation on Mutation, schema = strawberry.Schema(query=Query, mutation=Mutation, subscription=Subscription).\",\"The mutation correctly constructs EscalationResponseInput from scalar GraphQL args before handing off to the resolver — keeps the GraphQL layer thin.\",\"The conn parameter is intentionally omitted from the landing_view resolver call (landing_resolver.get_landing_view accepts conn=None as a reserved param), which is correct and matches the resolver's documented intent.\",\"context['project_root'] is the correct key, consistent with every other field resolver in the file.\",\"resolver/landing.py and landing_types.py coverage is comprehensive — all edge cases, security validation, and error paths are tested.\"],\"defect_scope_check\":null}\n\n--- Attempt 1 ---\nFailed with: Merge conflict: speed/speed-dashboard-landing/task-7-implement-landing-view-orchestrator-and- into dashboard-human-surfaces (failed 3x)\nHuman guidance: Review flagged missing schema-level integration tests. AC5 and AC7 require schema.execute() calls, not just direct resolver calls.\n\n--- Attempt 2 ---\nFailed with: Quality gates failed\nHuman guidance: Review requires schema.execute() integration tests for AC5 and AC7.",
+  "files_touched": [
+    "dashboard/backend/schema.py"
+  ],
+  "spec_references": [
+    {
+      "spec": "tech",
+      "section": "File Impact",
+      "requirement": "dashboard/backend/schema.py: Add LandingView types, query field, escalation response mutation. Import resolver."
+    },
+    {
+      "spec": "tech",
+      "section": "Basic Example",
+      "requirement": "query LandingView and mutation RespondToEscalation GraphQL definitions"
+    }
+  ],
+  "rationale": "Schema integration is the bridge between Phase 1 resolver logic and Phase 2 frontend work. All frontend tasks depend on the query being executable against the schema. Separated from resolver implementation (Phase 1) because schema.py is a shared file touched by other features and needs careful integration.",
+  "assumptions": [
+    "schema.py uses Strawberry GraphQL based on the existing dashboard patterns",
+    "The Query and Mutation classes already exist in schema.py and we extend them with new fields"
+  ],
+  "decisions": [
+    "Created test_schema_landing.py (undeclared) to satisfy AC5/AC7 which require schema.execute() integration tests. The schema.py wiring was already complete from prior attempts.",
+    "Tests use schema.execute_sync() with a context dict containing project_root (tmp_path) and a mocked conn, matching the pattern used by all other Query resolvers in schema.py.",
+    "The landingView query test covers both empty project and fully populated project scenarios. The mutation test covers success, non-blocked task failure, and missing feature failure."
+  ],
+  "concerns": [
+    "Neither strawberry nor pytest are installed in the system Python. The tests are structurally correct and follow the same import pattern as test_landing.py, but could not be executed locally. The CI/test environment presumably has these dependencies."
+  ],
+  "review_verdict": "approve",
+  "retry_count": 3,
+  "failure_classification": {
+    "class": "unclassified",
+    "subclass": "unknown",
+    "evidence": "No classification rule matched"
+  },
+  "timeout_count": 1,
+  "gate_results": {
+    "checks": [
+      {
+        "name": "diff_non_empty",
+        "status": "pass"
+      },
+      {
+        "name": "declared_files",
+        "status": "pass"
+      },
+      {
+        "name": "scope",
+        "status": "warn",
+        "undeclared_files": [
+          "dashboard/backend/tests/test_schema_landing.py"
+        ]
+      },
+      {
+        "name": "python_imports",
+        "status": "pass"
+      },
+      {
+        "name": "not_blocked",
+        "status": "pass"
+      },
+      {
+        "name": "test_coverage",
+        "status": "pass"
+      },
+      {
+        "name": "gate_evidence",
+        "status": "warn"
+      },
+      {
+        "name": "criteria",
+        "status": "warn"
+      },
+      {
+        "name": "secrets",
+        "status": "pass"
+      },
+      {
+        "name": "syntax",
+        "status": "pass"
+      }
+    ],
+    "scope": {
+      "undeclared_files": [
+        "dashboard/backend/tests/test_schema_landing.py"
+      ]
+    }
+  },
+  "reviewed_at": "2026-03-17T05:29:33Z"
+}

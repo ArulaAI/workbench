@@ -1,0 +1,80 @@
+{
+  "id": "17",
+  "title": "Fix coherence issues",
+  "description": "Fix the following cross-task coherence issues. Each recommendation is from the coherence checker's analysis of all completed task diffs against the spec.\n\n1. Change _format_and_validate signature to return (passed, candidates, conflicts) so discover_conventions receives the rich conflict data from _handle_conflicts. Remap the conflict fields to match the spec: category→area, nested pattern objects→string summaries, status→auto_resolved boolean.\n2. Fix detect_knowledge_gaps conventions.json reading: change 'if isinstance(conv_data, list)' to handle dict format with conv_data.get('conventions', []) to extract the conventions array, matching how the file is actually written.\n3. Move rejection_reason to a top-level field in _convention_to_dict output for candidates (or add a separate _candidate_to_dict function that includes it at the top level).\n4. Rename 'insufficient_evidence' to 'not_evidenced' in the RejectionReason type alias and all usages to match the spec.\n5. Convert evidence.code_adherence from float to descriptive string format (e.g., '18 of 20 test files') at serialization time in _pattern_to_entry, or update the spec to accept numeric values.\n\nFollow spec schemas exactly for field names, types, and structure. Do not refactor beyond what the recommendations ask for.",
+  "acceptance_criteria": "- Each coherence recommendation is addressed or has a comment explaining why it was skipped\n- speed coherence passes after these fixes\n- No new lint/typecheck/test failures\n- All quality gates pass",
+  "depends_on": [
+    "16",
+    "5",
+    "1",
+    "6",
+    "10"
+  ],
+  "status": "pending",
+  "branch": "speed/speed-conventions/task-17-fix-coherence-issues",
+  "agent_model": "sonnet",
+  "created_at": "2026-03-16T02:49:27Z",
+  "started_at": "2026-03-16T02:50:23Z",
+  "completed_at": "2026-03-16T02:56:04Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": "{\"verdict\":\"request_changes\",\"spec_verification\":[{\"spec_quote\":\"\\\"rejection_reason\\\": { \\\"type\\\": \\\"string\\\", \\\"enum\\\": [\\\"not_actionable\\\", \\\"not_project_specific\\\", \\\"not_evidenced\\\", \\\"not_scoped\\\", \\\"redundant\\\", \\\"no_matching_template\\\"] }\",\"spec_section\":\"Output Contract — conventions-candidates.json schema\",\"satisfied\":false,\"evidence\":\"convention_templates.py returns `\\\"insufficient_evidence\\\"` at line 332. The diff adds a comment acknowledging this violates the spec but explicitly skips the fix. `insufficient_evidence` is not in the spec enum. Serialized candidates will fail schema validation.\",\"notes\":\"Compound problem: commit `0b3e897` on `feature/continuous-learning` (NOT an ancestor of this branch) already renamed this to `not_evidenced`. If this branch merges without resolving, it will revert that fix. The comment justification ('breaks test_convention_pipeline.py Task 9') is circular — the tests should match the spec, not the other way around.\"},{\"spec_quote\":\"\\\"evidence\\\": { \\\"type\\\": \\\"object\\\", \\\"required\\\": [\\\"code_adherence\\\", \\\"observation_support\\\"], \\\"properties\\\": { \\\"code_adherence\\\": { \\\"type\\\": \\\"string\\\" }, ... } }\",\"spec_section\":\"Output Contract — conventions.json schema, evidence properties\",\"satisfied\":true,\"evidence\":\"conventions.py lines 148–157 (new block): `evidence = dict(entry.evidence)` copies the dict, then converts `code_adherence` float to a descriptive string (`\\\"X of Y files\\\"` or `\\\"X%\\\"`) before serialization. The original in-memory `ConventionEntry` is not mutated.\",\"notes\":\"String formats produced — `\\\"18 of 20 files\\\"` and `\\\"87%\\\"` — are reasonable matches for spec examples (`\\\"18 of 20 test files\\\"`). Minor: the entity type ('test files', 'lib files') is lost since `files_checked` is a count with no type tag, but no spec constraint governs the exact string content.\"},{\"spec_quote\":\"\\\"required\\\": [\\\"id\\\", \\\"convention\\\", \\\"scope\\\", \\\"confidence\\\", \\\"tags\\\", \\\"evidence\\\", \\\"source\\\", \\\"rejection_reason\\\"]\",\"spec_section\":\"Output Contract — conventions-candidates.json items schema\",\"satisfied\":true,\"evidence\":\"New `_candidate_to_dict` function (conventions.py lines 166–173) calls `_convention_to_dict` then promotes `rejection_reason` from inside `evidence` to the top-level dict. Used at conventions.py line 557: `[_candidate_to_dict(c) for c in candidates]`.\",\"notes\":\"Minor redundancy: `rejection_reason` ends up in both `entry.evidence` AND `d` (top-level). The spec example shows it only at top level. Not a schema violation (spec doesn't prohibit extra fields in evidence for candidates), but the evidence dict is noisier than necessary.\"},{\"spec_quote\":\"\\\"type\\\": \\\"object\\\", \\\"required\\\": [\\\"conventions\\\", \\\"conflicts\\\", \\\"views\\\"]\",\"spec_section\":\"Output Contract — conventions.json schema\",\"satisfied\":true,\"evidence\":\"project_knowledge.py lines 319–322: changed `isinstance(conv_data, list)` to `isinstance(conv_data, dict)` and iterates `conv_data.get(\\\"conventions\\\", [])`. The old code would silently skip all entries because `conventions.json` is an object, not a list.\",\"notes\":\"This is a genuine bug fix. The old code was dead code — the branch condition was never true.\"},{\"spec_quote\":\"_format_and_validate()... Apply templates, quality bar, assign confidence. Returns (passed, rejected).\",\"spec_section\":\"Pipeline Implementation — Phase C\",\"satisfied\":true,\"evidence\":\"The spec says 2-value return. `_format_and_validate` currently returns `(passed, candidates)` which matches the spec. Coherence rec 1 claimed it should return 3 values including conflicts, but the spec does not require this. Conflicts are extracted separately in `discover_conventions` (lines 479–487) from candidates with `rejection_reason='conflict'`. The 2-value return is correct.\",\"notes\":\"The comment added ('Coherence rec 1 skipped') is based on a misread. The spec explicitly says 2-value return. No change needed here — the comment introduces confusion about a non-existent divergence.\"}],\"missing_from_spec\":[{\"spec_quote\":\"\\\"rejection_reason\\\": { \\\"type\\\": \\\"string\\\", \\\"enum\\\": [\\\"not_actionable\\\", \\\"not_project_specific\\\", \\\"not_evidenced\\\", \\\"not_scoped\\\", \\\"redundant\\\", \\\"no_matching_template\\\"] }\",\"description\":\"`insufficient_evidence` is not in the spec enum. The task documents this as 'skipped' but that means conventions-candidates.json will contain schema-invalid `rejection_reason` values. The fix exists on the parent branch (commit `0b3e897`) and must be incorporated here before merge.\"}],\"out_of_scope\":[{\"file\":\"lib/learn/convention_templates.py\",\"line\":332,\"description\":\"The added comment for coherence rec 4 documents a spec violation but takes no corrective action. A comment that says 'we know this is wrong but we're not fixing it' is not a valid resolution under the review criteria ('the spec is the source of truth'). The comment is not out of scope per se, but it substitutes for the actual fix.\"}],\"issues\":[{\"severity\":\"critical\",\"file\":\"lib/learn/convention_templates.py\",\"line\":332,\"message\":\"`insufficient_evidence` is not in the spec's `rejection_reason` enum. The spec enum is `[\\\"not_actionable\\\", \\\"not_project_specific\\\", \\\"not_evidenced\\\", \\\"not_scoped\\\", \\\"redundant\\\", \\\"no_matching_template\\\"]`. Any candidate rejected for lack of evidence will serialize with an invalid rejection reason. Additionally, commit `0b3e897` on `feature/continuous-learning` already fixed this to `not_evidenced` — merging this branch without that commit will revert the fix.\",\"suggestion\":\"Either rebase this branch onto `feature/continuous-learning` (which includes `0b3e897`) or apply the rename directly: change `return \\\"insufficient_evidence\\\"` to `return \\\"not_evidenced\\\"` and update the assertion in `test_convention_pipeline.py` (Task 9) to match the spec.\"},{\"severity\":\"minor\",\"file\":\"lib/learn/conventions.py\",\"line\":166,\"message\":\"`_candidate_to_dict` promotes `rejection_reason` to top-level but does not remove it from the `evidence` dict. The serialized output has `rejection_reason` in two places. The spec example only shows it at top level.\",\"suggestion\":\"After promoting, remove from the evidence copy: `evidence = {k: v for k, v in d['evidence'].items() if k != 'rejection_reason'}`; `d['evidence'] = evidence`. Not blocking, but cleans up the output.\"},{\"severity\":\"nit\",\"file\":\"lib/learn/convention_templates.py\",\"line\":331,\"message\":\"The comment for coherence rec 4 says 'Skipped: renaming breaks test_convention_pipeline.py (Task 9) which asserts insufficient_evidence'. The correct resolution is to fix the test to match the spec, not to leave the spec violation in place. The comment as written implies the test is authoritative over the spec, which inverts the intended hierarchy.\",\"suggestion\":\"Remove the comment when applying the fix. Tests should assert `not_evidenced`.\"}],\"defect_scope_check\":{\"scope_ok\":true,\"large_diff\":false},\"scope_violations\":[],\"strengths\":[\"The `code_adherence` float-to-string conversion is correctly isolated to serialization time via `dict(entry.evidence)` copy — the in-memory ConventionEntry is never mutated, which is the right pattern for a serializer.\",\"The `project_knowledge.py` dict/list fix is precise and minimal — one branch condition and one key access, no surrounding changes.\",\"The `_candidate_to_dict` helper correctly separates candidate serialization from convention serialization rather than adding conditional logic inside the existing function.\",\"Coherence rec 1 is correctly left alone — the spec says 2-value return, and the current conflict extraction approach (post-call, from candidates) matches the spec's stated design.\"]}",
+  "files_touched": [
+    "lib/learn/convention_templates.py",
+    "lib/learn/conventions.py",
+    "lib/learn/project_knowledge.py"
+  ],
+  "gate_results": {
+    "checks": [
+      {
+        "name": "diff_non_empty",
+        "status": "pass"
+      },
+      {
+        "name": "declared_files",
+        "status": "pass"
+      },
+      {
+        "name": "scope",
+        "status": "pass"
+      },
+      {
+        "name": "python_imports",
+        "status": "pass"
+      },
+      {
+        "name": "not_blocked",
+        "status": "pass"
+      },
+      {
+        "name": "test_coverage",
+        "status": "pass"
+      },
+      {
+        "name": "gate_evidence",
+        "status": "warn"
+      },
+      {
+        "name": "criteria",
+        "status": "pass"
+      },
+      {
+        "name": "secrets",
+        "status": "pass"
+      }
+    ],
+    "scope": {}
+  },
+  "decisions": [
+    "Issue 2: Changed isinstance(conv_data, list) to isinstance(conv_data, dict) and reads conv_data.get('conventions', []) — conventions.json is written as {conventions:[...], conflicts:[...], views:{...}}, not a bare list.",
+    "Issue 3: Added _candidate_to_dict that wraps _convention_to_dict and promotes rejection_reason to top-level; discover_conventions now uses it when writing conventions-candidates.json.",
+    "Issue 5: _convention_to_dict now converts code_adherence float to a descriptive string ('N of M files') at serialization time, leaving the internal float intact for _handle_conflicts comparisons.",
+    "Issue 1 SKIPPED: Changing _format_and_validate to return (passed, candidates, conflicts) would break test_convention_pipeline.py (Task 9, locked) which unpacks it as 2 values. Added inline comment.",
+    "Issue 4 SKIPPED: Renaming 'insufficient_evidence' to 'not_evidenced' would break test_convention_pipeline.py (Task 9, locked) which asserts the old name. Added inline comment."
+  ],
+  "concerns": [
+    "Issues 1 and 4 require test_convention_pipeline.py (owned by Task 9) to be updated before they can be implemented. The spec-code mismatch for those two items persists until Task 9's tests are revised.",
+    "code_adherence string uses files_checked (len(pattern.files)) as the denominator. For naming patterns, adherence is over identifiers not files, so '2 of 2 files' may be misleading when the raw evidence says '10 of 12 identifiers'. The spec example uses '18 of 20 test files' which implies test_framework patterns — for those the denominator is accurate."
+  ],
+  "review_verdict": "request_changes"
+}

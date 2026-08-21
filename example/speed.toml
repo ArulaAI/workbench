@@ -1,0 +1,11 @@
+# speed.toml — Bookshelf project configuration
+
+[agent]
+provider = "claude-code"
+
+[subsystems]
+"frontend" = ["src/frontend/**"]
+"backend" = ["src/backend/**"]
+
+[specs]
+vision_file = "specs/product/overview.md"

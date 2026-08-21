@@ -1,0 +1,49 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# SPEED state (created at runtime in the consumer project)
+
+# Editors
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Working docs (internal — audits, research, session artifacts)
+working-docs/
+
+# Astro site
+site/dist/
+site/node_modules/
+site/.astro/
+
+# Next.js build output
+.next/
+
+# TypeScript build cache
+tsconfig.tsbuildinfo
+
+# Root-level build/dependency artifacts
+.astro/
+node_modules/
+
+# Virtual environment
+.venv/
+
+# Compiled grammar libraries (platform-specific, built by scripts/build-grammars.sh)
+lib/context/data/grammars/*.dylib
+lib/context/data/grammars/*.so
+lib/context/data/grammars/*.dll
+
+# Stale artifacts
+*.backup
+
+# Environment
+.env
+.env.*

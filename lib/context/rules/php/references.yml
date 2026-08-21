@@ -1,0 +1,34 @@
+id: php-use-import
+language: php
+metadata:
+  produces: reference
+  ref_kind: import
+rule:
+  kind: namespace_use_declaration
+
+---
+id: php-method-call
+language: php
+metadata:
+  produces: reference
+  ref_kind: call
+rule:
+  kind: member_call_expression
+
+---
+id: php-static-call
+language: php
+metadata:
+  produces: reference
+  ref_kind: call
+rule:
+  kind: scoped_call_expression
+
+---
+id: php-object-creation
+language: php
+metadata:
+  produces: reference
+  ref_kind: call
+rule:
+  kind: object_creation_expression

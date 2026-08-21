@@ -1,0 +1,79 @@
+id: tsx-class
+language: tsx
+metadata:
+  produces: node
+  kind: class
+rule:
+  kind: class_declaration
+
+---
+id: tsx-interface
+language: tsx
+metadata:
+  produces: node
+  kind: type
+rule:
+  kind: interface_declaration
+
+---
+id: tsx-type-alias
+language: tsx
+metadata:
+  produces: node
+  kind: type
+rule:
+  kind: type_alias_declaration
+
+---
+id: tsx-function
+language: tsx
+metadata:
+  produces: node
+  kind: function
+rule:
+  kind: function_declaration
+
+---
+id: tsx-constant
+language: tsx
+metadata:
+  produces: node
+  kind: constant
+rule:
+  pattern: const $NAME = $VALUE
+  not:
+    inside:
+      any:
+        - kind: function_declaration
+        - kind: method_definition
+        - kind: arrow_function
+      stopBy: end
+constraints:
+  NAME:
+    regex: "^[A-Z][A-Z0-9_]+$"
+
+---
+id: tsx-class-extends
+language: tsx
+metadata:
+  produces: edge
+  edge_type: inherits
+rule:
+  kind: class_declaration
+  has:
+    kind: class_heritage
+    has:
+      kind: extends_clause
+
+---
+id: tsx-class-implements
+language: tsx
+metadata:
+  produces: edge
+  edge_type: implements
+rule:
+  kind: class_declaration
+  has:
+    kind: class_heritage
+    has:
+      kind: implements_clause

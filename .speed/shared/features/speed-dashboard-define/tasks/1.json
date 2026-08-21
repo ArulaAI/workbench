@@ -1,0 +1,123 @@
+{
+  "id": "1",
+  "title": "Implement Define resolver with spec audit and data assembly",
+  "description": "Create `dashboard/backend/resolvers/define.py` with the `get_define_view()` function. This resolver reads from 8+ filesystem sources and assembles the DefineView response.\n\nKey functions to implement:\n- `get_define_view(project_root, feature=None) -> DefineView`: Main entry point. Orchestrates all reads and returns assembled view.\n- `_match_specs_to_feature(project_root, feature_name) -> dict`: Matches specs by filename convention, falls back to frontmatter `feature:` field.\n- `_audit_spec(path, spec_type) -> SpecIndicator`: Parses markdown for required sections (PRD: Problem, Users, User Stories, Scope, Success Criteria; RFC: Basic Example, Data Model, API Surface). Returns audit_status (clean/warning/error) and warnings list.\n- `_build_specified(project_root, feature_name) -> SpecifiedData`: Assembles spec indicators, open question count, sizing estimate.\n- `_build_built(project_root, feature_name) -> BuiltData`: Reads task files, spec-traceability.json, criteria-verify.json, Guardian logs. Computes coverage_pct, task_progress, blocked_count.\n- `_build_gap(project_root, feature_name) -> GapData`: Reads escalations.json, computes rework_count from tasks with retry_count > 0, counts unverifiable criteria.\n- `_build_defects(project_root) -> list[DefineDefect]`: Reads .speed/defects/*/state.json and specs/defects/*.md. Parses first paragraph as description. Clamps unknown severities to P3.\n- `_compute_aggregates(features) -> DefineAggregates`: Computes all aggregate fields from the features list.\n\nReuse existing readers from `landing.py` by importing: `_read_vision_status()`, `_read_task_files()`. For other data, implement purpose-built readers since the landing versions return different shapes.\n\nThe `feature` filter applies `str.endswith()` on feature names. Aggregates recompute from filtered list. Defects are never filtered.\n\nAll file reads must handle missing files, malformed JSON, and empty files gracefully (return defaults, never crash).",
+  "acceptance_criteria": "- get_define_view() returns a DefineView with features, defects, and aggregates when given a populated project root\n- get_define_view() returns DefineView with empty features list and zero aggregates for empty project\n- _audit_spec() returns audit_status='error' for spec missing required sections\n- _audit_spec() returns audit_status='clean' for spec with all required sections\n- _audit_spec() returns audit_status='error' with empty warnings list for 0-byte file\n- _match_specs_to_feature() matches by filename convention (feature name == spec filename without extension)\n- _build_built() returns null coverage_pct when spec-traceability.json is missing\n- _build_built() returns blocked_count from tasks with status 'blocked'\n- _build_gap() returns rework_count from tasks with retry_count > 0\n- _build_defects() clamps unknown severity values to P3\n- feature filter with str.endswith() returns only matching features\n- Malformed state.json does not crash resolver (returns defaults)",
+  "depends_on": [
+    "2"
+  ],
+  "status": "pending",
+  "branch": "speed/speed-dashboard-define/task-1-implement-define-resolver-with-spec-audi",
+  "agent_model": "opus",
+  "created_at": "2026-03-21T11:49:37Z",
+  "started_at": "2026-03-21T13:35:56Z",
+  "completed_at": "2026-03-21T13:40:51Z",
+  "agent_pid": null,
+  "error": "Agent timed out after 600s",
+  "review_feedback": "{\"verdict\":\"request_changes\",\"spec_verification\":[{\"spec_quote\":\"DefineFeature.state | One of 'complete', 'executing', 'writing', 'unplanned'. Derived from state.json. Features without a state.json default to 'unplanned'.\",\"spec_section\":\"Validation Rules\",\"satisfied\":false,\"evidence\":\"_read_feature_state (line 650) returns the raw 'status' value from state.json verbatim. No normalization to the four canonical values occurs. The constants _EXECUTING_STATES and _COMPLETED_STATES (lines 48-49) were clearly written for this purpose but are never called anywhere in the file. As a result, DefineFeature.state can be 'running', 'done', 'completed', or any other string that appears in state.json — none of which match the spec-mandated vocabulary.\",\"notes\":\"This also breaks _compute_aggregates (lines 628-633), which checks for 'done'/'completed' and 'running'/'executing' rather than the canonical 'complete'/'executing'. The completed_count and executing_count aggregates will miscount features whose state.json uses a value not in those hardcoded sets.\"},{\"spec_quote\":\"DefineDefect.status | One of 'unfixed', 'triaging', 'fixing', 'resolved'. Defaults to 'unfixed' if state.json has no status.\",\"spec_section\":\"Validation Rules\",\"satisfied\":\"partial\",\"evidence\":\"For defects read from .speed/defects/*/state.json, status is taken from state.json as-is with no normalization (line 514: status = data.get('status', 'open')). The default fallback 'open' is not a valid value per spec (should be 'unfixed'). Defects discovered only from specs/defects/*.md are unconditionally assigned status='open' (line 549) — also invalid.\",\"notes\":\"Minor, but the GraphQL schema will expose 'open' to clients who expect only the four valid values.\"},{\"spec_quote\":\"_read_guardian_verdict() | Guardian logs (JSON, JSONL, cache) | DefineFeature.built.guardianVerdict\",\"spec_section\":\"Existing Infrastructure / Backend readers\",\"satisfied\":\"partial\",\"evidence\":\"define.py re-implements _read_guardian_verdict (lines 379-421) instead of importing and calling landing._read_guardian_verdict. The new version is missing the cache/guardian.dat fallback that landing.py handles (landing.py lines 693-701). The spec's infrastructure table explicitly says to reuse the existing function.\",\"notes\":\"The missing cache fallback means define page will show null guardian verdict for features where only a cached result exists, while the landing page would show a value. Behavioural divergence between two pages reading the same data source.\"},{\"spec_quote\":\"get_define_view() returns a DefineView with features, defects, and aggregates when given a populated project root\",\"spec_section\":\"Acceptance Criteria\",\"satisfied\":true,\"evidence\":\"get_define_view (line 673) assembles all three components. DefineView is returned with vision_status, vision_path, features, defects, and aggregates.\",\"notes\":null},{\"spec_quote\":\"get_define_view() returns DefineView with empty features list and zero aggregates for empty project\",\"spec_section\":\"Acceptance Criteria\",\"satisfied\":true,\"evidence\":\"If .speed/features/ doesn't exist, features is empty (lines 693-710). _compute_aggregates with empty list returns all-zero aggregates (lines 607-644).\",\"notes\":null},{\"spec_quote\":\"_audit_spec() returns audit_status='error' for spec missing required sections\",\"spec_section\":\"Acceptance Criteria\",\"satisfied\":true,\"evidence\":\"Lines 150-157: missing sections → warnings list → audit_status='error'.\",\"notes\":null},{\"spec_quote\":\"_audit_spec() returns audit_status='clean' for spec with all required sections\",\"spec_section\":\"Acceptance Criteria\",\"satisfied\":true,\"evidence\":\"Lines 159-165: empty warnings list → audit_status='clean'.\",\"notes\":null},{\"spec_quote\":\"_audit_spec() returns audit_status='error' with empty warnings list for 0-byte file\",\"spec_section\":\"Acceptance Criteria\",\"satisfied\":true,\"evidence\":\"Lines 116-124: content.strip() empty → audit_status='error', warnings=[].\",\"notes\":null},{\"spec_quote\":\"_match_specs_to_feature() matches by filename convention (feature name == spec filename without extension)\",\"spec_section\":\"Acceptance Criteria\",\"satisfied\":true,\"evidence\":\"Lines 224-228: candidate = spec_dir / f'{feature_name}.md', checked with exists().\",\"notes\":null},{\"spec_quote\":\"_build_built() returns null coverage_pct when spec-traceability.json is missing\",\"spec_section\":\"Acceptance Criteria\",\"satisfied\":true,\"evidence\":\"Lines 336-344: coverage_pct initialized to None, only set if trace_file.exists().\",\"notes\":null},{\"spec_quote\":\"_build_built() returns blocked_count from tasks with status 'blocked'\",\"spec_section\":\"Acceptance Criteria\",\"satisfied\":true,\"evidence\":\"Line 326: blocked_count = sum(1 for t in tasks if t.get('status') == 'blocked').\",\"notes\":null},{\"spec_quote\":\"_build_gap() returns rework_count from tasks with retry_count > 0\",\"spec_section\":\"Acceptance Criteria\",\"satisfied\":true,\"evidence\":\"Line 463: rework_count = sum(1 for t in tasks if t.get('retry_count', 0) > 0).\",\"notes\":null},{\"spec_quote\":\"_build_defects() clamps unknown severity values to P3\",\"spec_section\":\"Acceptance Criteria\",\"satisfied\":true,\"evidence\":\"Lines 512-513: if severity not in _VALID_SEVERITIES: severity = 'P3'.\",\"notes\":null},{\"spec_quote\":\"feature filter with str.endswith() returns only matching features\",\"spec_section\":\"Acceptance Criteria\",\"satisfied\":true,\"evidence\":\"Lines 735-737: if feature: features = [f for f in features if f.name.endswith(feature)].\",\"notes\":null},{\"spec_quote\":\"Malformed state.json does not crash resolver (returns defaults)\",\"spec_section\":\"Acceptance Criteria\",\"satisfied\":true,\"evidence\":\"_read_json (line 55) catches all JSON/OS errors and returns None. _read_feature_state (lines 650-656) handles None state → 'unplanned'.\",\"notes\":null},{\"spec_quote\":\"Aggregates are recomputed from the filtered list. Defects are not filtered (they are project-wide, not per-feature).\",\"spec_section\":\"API Surface / Query field\",\"satisfied\":true,\"evidence\":\"Lines 739-743: aggregates computed after filter applied; defects = _build_defects(project_root) runs unconditionally.\",\"notes\":null},{\"spec_quote\":\"Spec-to-feature matching falls back to scanning spec frontmatter for a 'feature:' field\",\"spec_section\":\"Data Model / Spec-to-feature matching\",\"satisfied\":true,\"evidence\":\"Lines 230-240: glob *.md, read frontmatter with _read_frontmatter_feature, match against feature_name.\",\"notes\":null},{\"spec_quote\":\"Unit tests (dashboard/backend/tests/test_define.py)\",\"spec_section\":\"Testing / Test Plan\",\"satisfied\":false,\"evidence\":\"No test_define.py file appears in the diff. test_define_types.py exists but tests only the type definitions. The resolver itself — get_define_view, _audit_spec, _match_specs_to_feature, _build_built, _build_gap, _build_defects — has no test coverage shipped with this change.\",\"notes\":\"All twelve acceptance criteria describe observable behaviour that must be verified by tests. The spec lists an explicit test plan at dashboard/backend/tests/test_define.py.\"},{\"spec_quote\":\"Required sections present (Problem, Users, User Stories, Scope, Success Criteria for PRD; Basic Example, Data Model, API Surface for RFC)\",\"spec_section\":\"Data Model / Audit computation\",\"satisfied\":true,\"evidence\":\"_PRD_REQUIRED_SECTIONS (lines 33-39) and _RFC_REQUIRED_SECTIONS (lines 41-45) match exactly.\",\"notes\":null},{\"spec_quote\":\"Open questions: Count of rows in the Open Questions table where Status is 'Open'\",\"spec_section\":\"Data Model / Audit computation\",\"satisfied\":\"partial\",\"evidence\":\"_build_specified (lines 268-278) counts lines starting with '?' or containing 'open question' anywhere in the file. The spec describes counting table rows in an Open Questions table where a Status column is 'Open'. The implementation's heuristic is materially different and will produce false positives on any line mentioning 'open question' in prose.\",\"notes\":\"The spec lists this as an unresolved question ('Should V1 audit check section content?') so partial credit applies. But the discrepancy should be documented.\"},{\"spec_quote\":\"BuiltData.coveragePct | Float 0.0-100.0 or null. Clamped to [0, 100].\",\"spec_section\":\"Validation Rules\",\"satisfied\":true,\"evidence\":\"Line 344: coverage_pct = max(0.0, min(100.0, pct * 100 if pct <= 1.0 else pct)). Also handles ratio-vs-percentage ambiguity.\",\"notes\":null}],\"missing_from_spec\":[{\"spec_quote\":\"DefineFeature.state | One of 'complete', 'executing', 'writing', 'unplanned'.\",\"description\":\"State normalization: raw state.json values ('running', 'done', 'completed', etc.) are never mapped to the four canonical values the spec mandates. The unused _EXECUTING_STATES and _COMPLETED_STATES constants suggest this was planned but not wired up.\"},{\"spec_quote\":\"Unit tests (dashboard/backend/tests/test_define.py) — get_define_view() with empty project, get_define_view() with fully populated project, vision status, spec-to-feature matching, audit computation, per-feature Built data, Gap data, defect enrichment, aggregates\",\"description\":\"No test file for the resolver is included in this task's diff. All acceptance criteria are behavioural and require test coverage.\"},{\"spec_quote\":\"DefineDefect.status | One of 'unfixed', 'triaging', 'fixing', 'resolved'. Defaults to 'unfixed' if state.json has no status.\",\"description\":\"No normalization or defaulting to 'unfixed'. The code defaults to 'open' (from state.json) and assigns 'open' to spec-only defects — neither is a valid value.\"}],\"out_of_scope\":[{\"file\":\"dashboard/backend/resolvers/define.py\",\"line\":712,\"description\":\"Feature discovery from specs/product/*.md (lines 712-733): the spec says 'Features are identified by directory names in .speed/features/'. Discovering features purely from spec files that lack a .speed/features/ entry is not described in the Data Model. May be intentional for unplanned features but is unspecified and untested.\"},{\"file\":\"dashboard/backend/resolvers/define.py\",\"line\":63,\"description\":\"_read_json_lenient (lines 63-68) is functionally identical to _read_json. The only difference is the return type annotation. The actual implementation is the same. One of these can be deleted; keeping both creates confusion about when to use which.\"},{\"file\":\"dashboard/backend/resolvers/define.py\",\"line\":379,\"description\":\"_read_guardian_verdict (lines 379-421) re-implements logic already in landing._read_guardian_verdict. The spec's infrastructure table explicitly designates the landing.py function as reusable. The define.py version is both duplication and less complete (missing cache fallback).\"}],\"issues\":[{\"severity\":\"major\",\"file\":\"dashboard/backend/resolvers/define.py\",\"line\":650,\"message\":\"_read_feature_state returns raw state.json values with no normalization. DefineFeature.state will contain strings like 'running', 'done', 'completed' — none of which are valid per the spec's validation rules ('complete', 'executing', 'writing', 'unplanned').\",\"suggestion\":\"Add a normalization step: map 'running'/'executing' → 'executing', 'done'/'completed' → 'complete', 'writing'/'drafting' → 'writing', everything else → 'unplanned'. Use the already-defined _EXECUTING_STATES and _COMPLETED_STATES constants or expand them. Update _compute_aggregates to use the canonical values.\"},{\"severity\":\"major\",\"file\":\"dashboard/backend/resolvers/define.py\",\"line\":628,\"message\":\"_compute_aggregates checks f.state in ('done', 'completed') for completed_count and f.state in ('running', 'executing') for executing_count. These raw values will not appear once state normalization is added (see issue above), or will appear inconsistently without it. The aggregate counts will be wrong.\",\"suggestion\":\"Once state normalization is in place, change comparisons to 'complete' and 'executing' respectively.\"},{\"severity\":\"major\",\"file\":\"dashboard/backend/resolvers/define.py\",\"line\":514,\"message\":\"Defect status defaults to 'open' (not in valid set) and spec-only defects are assigned status='open'. Spec mandates 'unfixed' as the default.\",\"suggestion\":\"Change line 514 to status = data.get('status', 'unfixed') and line 549 to status='unfixed'. Optionally add normalization for values not in the valid set.\"},{\"severity\":\"major\",\"file\":\"dashboard/backend/resolvers/define.py\",\"line\":379,\"message\":\"_read_guardian_verdict is re-implemented instead of calling landing._read_guardian_verdict. The define.py version is missing the cache/guardian.dat fallback (exit code 0=approve, 1=reject, etc.) that landing.py supports.\",\"suggestion\":\"Import and call landing._read_guardian_verdict (already imported from .landing). Remove the local implementation.\"},{\"severity\":\"major\",\"file\":\"dashboard/backend/resolvers/define.py\",\"line\":1,\"message\":\"No test file. All twelve acceptance criteria describe observable behaviour. The spec names dashboard/backend/tests/test_define.py as the target. Without tests, there is no way to verify the acceptance criteria are met.\",\"suggestion\":\"Add test_define.py with unit tests covering the cases listed in the spec's Test Plan section.\"},{\"severity\":\"minor\",\"file\":\"dashboard/backend/resolvers/define.py\",\"line\":48,\"message\":\"_EXECUTING_STATES and _COMPLETED_STATES are defined (lines 48-49) but never referenced anywhere in the file. Dead code.\",\"suggestion\":\"Either use them in _read_feature_state for normalization (the intended purpose) or remove them.\"},{\"severity\":\"minor\",\"file\":\"dashboard/backend/resolvers/define.py\",\"line\":63,\"message\":\"_read_json_lenient is functionally identical to _read_json. Both call json.loads(path.read_text()) and return None on exception. _read_json's type annotation (dict | None) is also wrong — it can return a list.\",\"suggestion\":\"Merge into one function with return type Any | None. Remove the duplicate.\"},{\"severity\":\"minor\",\"file\":\"dashboard/backend/resolvers/define.py\",\"line\":451,\"message\":\"_build_gap calls _read_task_files on the same feature directory that _build_built already read. Both are called per-feature in get_define_view, doubling task file I/O.\",\"suggestion\":\"Either pass the tasks list from the caller, or combine _build_built and _build_gap into a single function that reads tasks once.\"},{\"severity\":\"nit\",\"file\":\"dashboard/backend/resolvers/define.py\",\"line\":268,\"message\":\"Open question counting (lines 268-278) uses a line-based heuristic ('?' prefix or 'open question' substring) rather than the spec's described approach (rows in an Open Questions table where Status is 'Open'). Will overcount on specs that discuss open questions in prose.\",\"suggestion\":\"Document the heuristic in the function comment, or align with the spec's table-parsing description. The spec lists this as an unresolved V1 question so deferral is acceptable if noted.\"}],\"strengths\":[\"Correct reuse of _read_vision_status and _read_task_files from landing.py.\",\"Coverage normalization (pct * 100 if pct <= 1.0) correctly handles both ratio and percentage inputs from spec-traceability.json.\",\"Malformed JSON handling is thorough: _read_json wraps all parse errors, _read_json_lenient handles list-shaped files, and the feature/defect builders handle None returns without crashing.\",\"Severity clamping logic is clean and correct.\",\"str.endswith() filter semantics match the spec's description and match the pattern used in spec_alignment.\",\"Frontmatter feature matching correctly skips overview.md to avoid false matches.\"]}",
+  "base_commit": "7ed4b169751e655eb28450aea043215ed898e0bf",
+  "files_touched": [
+    "dashboard/backend/resolvers/define.py"
+  ],
+  "spec_references": [
+    {
+      "spec": "tech",
+      "section": "Data Model",
+      "requirement": "Resolver reads from specs/, .speed/features/, .speed/defects/"
+    },
+    {
+      "spec": "tech",
+      "section": "API Surface",
+      "requirement": "defineView query with optional feature filter"
+    },
+    {
+      "spec": "tech",
+      "section": "Validation Rules",
+      "requirement": "All field constraints and defaults"
+    },
+    {
+      "spec": "product",
+      "section": "User Stories",
+      "requirement": "S1: features with spec coverage, execution state, and gap analysis"
+    },
+    {
+      "spec": "product",
+      "section": "User Stories",
+      "requirement": "S3: audit warnings and sizing estimates per feature"
+    }
+  ],
+  "rationale": "The resolver is the most complex piece: it reads 8+ file sources, computes audits, and assembles a multi-level response. Separated from the type definitions (task 2) because the types are a prerequisite and much simpler. Uses opus because the audit logic, edge case handling, and multi-source assembly require architectural judgment.",
+  "assumptions": [
+    "Audit checks section existence only (not content quality) per tech spec V1 decision",
+    "Sizing estimate uses rough heuristic (user story count * 2) since no audit tool exists yet",
+    "Features without state.json default to 'unplanned' per tech spec validation rules",
+    "Frontmatter fallback for spec matching reads YAML frontmatter between --- delimiters"
+  ],
+  "timeout_count": 1,
+  "failure_classification": {
+    "class": "complexity",
+    "subclass": "exceeded_capacity",
+    "evidence": "Task timed out even after escalation to higher-capability model"
+  },
+  "review_verdict": "request_changes",
+  "gate_results": {
+    "checks": [
+      {
+        "name": "diff_non_empty",
+        "status": "pass"
+      },
+      {
+        "name": "declared_files",
+        "status": "pass"
+      },
+      {
+        "name": "scope",
+        "status": "pass"
+      },
+      {
+        "name": "python_imports",
+        "status": "pass"
+      },
+      {
+        "name": "not_blocked",
+        "status": "pass"
+      },
+      {
+        "name": "test_coverage",
+        "status": "warn",
+        "note": "deferred to sibling tasks"
+      },
+      {
+        "name": "gate_evidence",
+        "status": "warn"
+      },
+      {
+        "name": "criteria",
+        "status": "warn"
+      },
+      {
+        "name": "secrets",
+        "status": "pass"
+      },
+      {
+        "name": "syntax",
+        "status": "pass"
+      }
+    ],
+    "scope": {}
+  },
+  "decisions": [
+    "Implemented _read_guardian_verdict locally rather than importing from landing.py because the landing version returns 'unknown' as default while the define types use Optional[str] (None for no data). The define version returns None when no Guardian data exists.",
+    "Duplicated _read_json locally to avoid tightly coupling to landing.py internal helpers. Only imported the two explicitly specified reusable functions (_read_vision_status, _read_task_files).",
+    "Open question counting uses a heuristic: lines starting with '?' or containing 'open question' in the product spec.",
+    "Sizing estimate uses user story count * 2 as specified in the task assumptions.",
+    "Features are discovered from both .speed/features/ directories AND specs/product/*.md (excluding overview.md) to catch features that have specs but no feature directory yet.",
+    "For 0-byte spec files, _audit_spec returns audit_status='error' with empty warnings list as required by acceptance criteria.",
+    "Spec audit uses case-insensitive heading matching (e.g., 'user stories' matches 'User Stories') for robustness."
+  ],
+  "concerns": [
+    "Test coverage is deferred to task 4 (test_define.py). The quality gates note this as a warning but pass.",
+    "The escalation collection in _build_gap merges two sources (escalations.json + blocked task questions). If both sources reference the same escalation, it could be double-counted. The spec doesn't clarify deduplication strategy here.",
+    "Coverage normalization handles both 0-1 and 0-100 scales (same pattern as landing.py), but edge cases like negative values or values > 100 on the 0-1 scale path could produce unexpected results."
+  ]
+}

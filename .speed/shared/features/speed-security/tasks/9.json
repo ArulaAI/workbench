@@ -1,0 +1,37 @@
+{
+  "id": "9",
+  "title": "Security audit orchestration and defect creation functions",
+  "description": "Add three functions to `lib/security.sh` (created by Phase 1 Task 2 with severity helpers, parsers, and banner). These functions build on the foundation to provide the audit orchestration and defect creation capabilities.\n\n**`security_audit_run(feature_name)`:**\n1. Create `${STATE_DIR}/features/${feature_name}/logs/` directory.\n2. Log step: \"Running Security Auditor agent on feature '${feature_name}'...\"\n3. Call `context_assemble_security_auditor \"$feature_name\"` (from Task 8) to build the prompt. If empty, `log_error` and return 0.\n4. Write prompt to a temp file (`mktemp`).\n5. Call `provider_run_json` with args: agent file `${SCRIPT_DIR}/agents/security-auditor.md`, prompt content, output template `${SCRIPT_DIR}/templates/architect-output.json`, model `$MODEL_SUPPORT`, max turns `$DEFAULT_JSON_MAX_TURNS`, empty context arg, label \"Security Auditor\". Capture output, allowing failure (`|| true`).\n6. Remove temp file.\n7. Parse agent output via `parse_agent_json`. On failure, `log_warn` and return 0.\n8. Write parsed JSON (piped through `jq '.'`) to `security-audit.json` in the logs dir.\n9. Return 0 always.\n\n**`security_has_cached_audit(feature_name)`:**\n1. Check if `${STATE_DIR}/features/${feature_name}/logs/security-audit.json` exists. Return 1 if not.\n2. Compute file age: on Darwin use `stat -f %m`, on Linux use `stat -c %Y`. Compare with current epoch.\n3. Return 0 if age < 3600 seconds, 1 otherwise.\n\n**`security_create_defects(audit_json, threshold)`:**\n1. Validate audit JSON exists. `log_error` and return 1 if missing.\n2. Create `specs/defects/` directory if absent.\n3. Read feature name from audit JSON via `jq -r '.feature'`.\n4. Iterate findings by index (0 to `jq '.findings | length'`).\n5. For each finding, extract severity, title, description, file, line, snippet, recommendation, category via `jq`.\n6. Call `_severity_at_or_above \"$severity\" \"$threshold\"` (from Task 2). If below threshold, increment skipped counter and continue.\n7. Map severity to priority via `_SEVERITY_TO_PRIORITY` associative array (from Task 2).\n8. Slugify title: lowercase, spaces→hyphens, strip non-alphanumeric except hyphens, truncate to 40 chars.\n9. Write defect spec to `specs/defects/sec-${slug}.md` with fields: Severity, Related Feature, Tags: security, Classification-Override: moderate, Observed, Expected, Repro.\n10. Log each created file. Print summary counts.",
+  "acceptance_criteria": "- security_audit_run function exists in lib/security.sh\n  verify_by: test\n- security_audit_run writes security-audit.json to .speed/features/<name>/logs/\n  verify_by: test\n- security_audit_run returns 0 when agent output is unparseable\n  verify_by: test\n- security_audit_run returns 0 when context assembly returns empty\n  verify_by: test\n- security_has_cached_audit function exists in lib/security.sh\n  verify_by: test\n- security_has_cached_audit returns 0 for files less than 1 hour old\n  verify_by: test\n- security_has_cached_audit returns 1 when audit file is missing\n  verify_by: test\n- security_create_defects function exists in lib/security.sh\n  verify_by: test\n- security_create_defects creates specs/defects/sec-<slug>.md for findings at or above threshold\n  verify_by: test\n- security_create_defects skips findings below threshold and logs count\n  verify_by: test\n- Generated defect specs contain 'Classification-Override: moderate'\n  verify_by: test\n- Generated defect specs contain 'Tags: security'\n  verify_by: test\n- Severity mapping: critical→P0, high→P1, medium→P2, low→P3\n  verify_by: test\n- security_create_defects returns 1 when audit JSON is missing\n  verify_by: test",
+  "depends_on": [
+    "2",
+    "8"
+  ],
+  "status": "done",
+  "branch": "speed/speed-security/task-9-security-audit-orchestration-and-defect-",
+  "agent_model": "opus",
+  "created_at": "2026-02-26T11:44:36Z",
+  "started_at": "2026-02-26T12:13:51Z",
+  "completed_at": "2026-02-26T12:23:49Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": null,
+  "files_touched": [
+    "lib/security.sh"
+  ],
+  "timeout_count": 1,
+  "review_verdict": "approve",
+  "retry_count": 1,
+  "decisions": [
+    "Used SPEED_DIR (from config.sh) instead of SCRIPT_DIR for agent/template paths, since SCRIPT_DIR is set in the main speed script and not available when security.sh is sourced in isolation",
+    "Used _severity_to_priority() function instead of _SEVERITY_TO_PRIORITY associative array, per Task 2's decision about bash 3.2 compatibility (macOS ships with bash 3.2 which lacks declare -A)",
+    "provider_run_json is called directly rather than through claude_run_json alias, since tests stub provider_run_json and the alias may not be available in test context",
+    "security_create_defects writes defect files relative to current directory (matching the 'specs/defects/' path convention), not relative to PROJECT_ROOT — consistent with how the defect system works elsewhere",
+    "The prompt temp file is written and then re-read via cat for the provider_run_json call, matching the pattern used in _run_architect_phase in plan.sh"
+  ],
+  "concerns": [
+    "The task spec references ${SCRIPT_DIR}/agents/security-auditor.md and ${SCRIPT_DIR}/templates/architect-output.json, but SCRIPT_DIR is only set in the main speed script. I used SPEED_DIR from config.sh instead. If security.sh is ever sourced from a context where SPEED_DIR isn't set, these paths would break.",
+    "The template used for provider_run_json is architect-output.json (as specified in the task), but the security auditor agent produces a different schema (with 'findings' array, not 'tasks' array). The JSON schema mode in provider_run_json may not validate the output correctly against this template. A dedicated security-audit-output.json template would be more appropriate but was not in scope."
+  ],
+  "reviewed_at": "2026-02-26T16:46:49Z"
+}

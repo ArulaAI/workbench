@@ -1,0 +1,313 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1020 580" fill="none">
+  <style>
+    text { font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif; }
+    .mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; }
+  </style>
+
+  <defs>
+    <symbol id="human" viewBox="0 0 16 16">
+      <circle cx="8" cy="4.5" r="3" fill="#e8a87c"/>
+      <path d="M 2,15 C 2,10.5 5,9 8,9 C 11,9 14,10.5 14,15" fill="#e8a87c"/>
+    </symbol>
+    <symbol id="robot" viewBox="0 0 16 16">
+      <rect x="3" y="5" width="10" height="9" rx="2" fill="#80f0d8"/>
+      <line x1="8" y1="5" x2="8" y2="2" stroke="#80f0d8" stroke-width="1.5"/>
+      <circle cx="8" cy="1.5" r="1.5" fill="#80f0d8"/>
+      <circle cx="6" cy="9" r="1.2" fill="#303034"/>
+      <circle cx="10" cy="9" r="1.2" fill="#303034"/>
+      <rect x="5.5" y="11.5" width="5" height="1" rx="0.5" fill="#303034"/>
+    </symbol>
+  </defs>
+
+  <!-- ═══════════════════════════════════════ -->
+  <!-- ITERATION LOOP (over top)              -->
+  <!-- ═══════════════════════════════════════ -->
+  <path d="M 900,240 C 900,40 60,40 60,240"
+        stroke="#58585e" stroke-width="1.5"
+        stroke-dasharray="8,5" fill="none"/>
+  <path d="M 57,246 L 60,236 L 63,246" fill="#58585e"/>
+  <text x="480" y="46" text-anchor="middle"
+        font-size="11" fill="#a0a0a8">next spec from backlog</text>
+
+  <!-- ═══════════════════════════════════════ -->
+  <!-- SPECS BACKLOG                          -->
+  <!-- ═══════════════════════════════════════ -->
+  <rect x="32" y="260" width="56" height="40" rx="4"
+        fill="#303034" stroke="#58585e" stroke-width="0.8"/>
+  <rect x="28" y="256" width="56" height="40" rx="4"
+        fill="#303034" stroke="#58585e" stroke-width="0.8"/>
+  <rect x="24" y="252" width="56" height="40" rx="5"
+        fill="#3a3a3e" stroke="#00ccaa" stroke-width="1" stroke-opacity="0.3"/>
+  <text x="52" y="275" text-anchor="middle"
+        class="mono" font-size="14" font-weight="700" fill="#00ccaa"
+        letter-spacing="0.06em">SPECS</text>
+  <text x="52" y="287" text-anchor="middle"
+        font-size="8" fill="#a0a0a8">backlog</text>
+
+  <!-- Roles below SPECS: icons on one row, text below -->
+  <g>
+    <use href="#human" x="24" y="308" width="20" height="20"/>
+    <use href="#robot" x="50" y="308" width="20" height="20"/>
+    <text x="46" y="344" text-anchor="middle"
+          font-size="9.5" fill="#b8b8be">PM · Design · Eng</text>
+  </g>
+
+  <!-- Arrow → PREPARE -->
+  <line x1="86" y1="272" x2="130" y2="272"
+        stroke="#58585e" stroke-width="2"/>
+  <path d="M 126,268 L 134,272 L 126,276" fill="#58585e"/>
+
+  <!-- ═══════════════════════════════════════ -->
+  <!-- PREPARE                                -->
+  <!-- ═══════════════════════════════════════ -->
+  <rect x="138" y="242" width="120" height="60" rx="7"
+        fill="#303034" stroke="rgba(0,204,170,0.15)" stroke-width="1"/>
+  <text x="198" y="268" text-anchor="middle"
+        class="mono" font-size="13" font-weight="600" fill="#f0f0f0"
+        letter-spacing="0.03em">PREPARE</text>
+  <text x="198" y="286" text-anchor="middle"
+        font-size="9.5" fill="#a0a0a8">validate · plan · verify</text>
+
+  <!-- Self-correcting loop — arcs OVER TOP of PREPARE box -->
+  <path d="M 178,242 C 178,210 218,210 218,242"
+        stroke="#00ccaa" stroke-width="1.8" stroke-opacity="0.8" fill="none"/>
+  <path d="M 215,238 L 218,246 L 221,238" fill="#00ccaa" fill-opacity="0.8"/>
+  <text x="198" y="206" text-anchor="middle"
+        font-size="11" font-weight="600" fill="#00ccaa" fill-opacity="0.85">≤3×</text>
+
+  <!-- Human Architect above PREPARE — icon left, text right with 8px gap -->
+  <g>
+    <use href="#human" x="138" y="168" width="20" height="20"/>
+    <text x="170" y="183" font-size="10" fill="#e8a87c">Architect reviews</text>
+  </g>
+
+  <!-- Agent roles below PREPARE — icon left, text right with 8px gap -->
+  <g>
+    <use href="#robot" x="138" y="316" width="20" height="20"/>
+    <text x="170" y="331" font-size="10" fill="#80f0d8">Architect · Verifier</text>
+  </g>
+
+  <!-- Arrow → GATE 1 -->
+  <line x1="262" y1="272" x2="298" y2="272"
+        stroke="#58585e" stroke-width="2"/>
+
+  <!-- ═══════════════════════════════════════ -->
+  <!-- GATE 1                                 -->
+  <!-- ═══════════════════════════════════════ -->
+  <rect x="302" y="250" width="32" height="44" rx="4"
+        fill="#1a3a35" stroke="#00ccaa" stroke-width="1.2" stroke-opacity="0.4"/>
+  <text x="318" y="268" text-anchor="middle"
+        class="mono" font-size="7.5" font-weight="700" fill="#00ccaa"
+        letter-spacing="0.04em">GATE</text>
+  <!-- Icons below gate: side by side, 10px below box bottom (294+10=304) -->
+  <g>
+    <use href="#human" x="296" y="306" width="18" height="18"/>
+    <use href="#robot" x="320" y="306" width="18" height="18"/>
+  </g>
+
+  <!-- Arrow → EXECUTE -->
+  <line x1="338" y1="272" x2="370" y2="272"
+        stroke="#58585e" stroke-width="2"/>
+  <path d="M 366,268 L 374,272 L 366,276" fill="#58585e"/>
+
+  <!-- ═══════════════════════════════════════ -->
+  <!-- EXECUTE (dominant center element)      -->
+  <!-- ═══════════════════════════════════════ -->
+  <rect x="378" y="110" width="260" height="332" rx="8"
+        fill="#303034" fill-opacity="0.5"
+        stroke="rgba(0,204,170,0.12)" stroke-width="1"/>
+
+  <!-- Header -->
+  <text x="508" y="134" text-anchor="middle"
+        class="mono" font-size="13" font-weight="600" fill="#f0f0f0"
+        letter-spacing="0.04em">EXECUTE</text>
+  <text x="508" y="150" text-anchor="middle"
+        font-size="9.5" fill="#a0a0a8">N parallel tasks · isolated worktrees</text>
+
+  <!-- Fan-out node -->
+  <circle cx="404" cy="272" r="8" fill="#3a3a3e" stroke="#00ccaa" stroke-width="1.5" stroke-opacity="0.5"/>
+
+  <!-- Fan-in node -->
+  <circle cx="612" cy="272" r="8" fill="#3a3a3e" stroke="#00ccaa" stroke-width="1.5" stroke-opacity="0.5"/>
+
+  <!-- ── Track 1 — y=174 ── -->
+  <path d="M 412,272 C 432,272 436,174 456,174"
+        stroke="#58585e" stroke-width="1.5" fill="none"/>
+  <line x1="456" y1="174" x2="568" y2="174" stroke="#58585e" stroke-width="1.5"/>
+  <path d="M 568,174 C 588,174 592,272 606,272"
+        stroke="#58585e" stroke-width="1.5" fill="none"/>
+  <circle cx="478" cy="174" r="14" fill="#3a3a3e" stroke="rgba(0,204,170,0.25)" stroke-width="1.2"/>
+  <text x="478" y="178" text-anchor="middle" font-size="10" fill="#80f0d8" font-weight="600">DEV</text>
+  <line x1="495" y1="174" x2="511" y2="174" stroke="#58585e" stroke-width="1"/>
+  <path d="M 508,171 L 514,174 L 508,177" fill="#58585e"/>
+  <circle cx="530" cy="174" r="14" fill="#3a3a3e" stroke="rgba(0,204,170,0.25)" stroke-width="1.2"/>
+  <text x="530" y="178" text-anchor="middle" font-size="10" fill="#80f0d8" font-weight="600">REV</text>
+  <line x1="547" y1="174" x2="555" y2="174" stroke="#58585e" stroke-width="1"/>
+  <circle cx="564" cy="174" r="8" fill="#1a3a35" stroke="#00ccaa" stroke-width="1" stroke-opacity="0.4"/>
+  <text x="564" y="178" text-anchor="middle" font-size="8" fill="#00ccaa" font-weight="700">✓</text>
+
+  <!-- ── Track 2 — y=222 ── -->
+  <path d="M 412,272 C 432,272 436,222 456,222"
+        stroke="#58585e" stroke-width="1.5" fill="none"/>
+  <line x1="456" y1="222" x2="568" y2="222" stroke="#58585e" stroke-width="1.5"/>
+  <path d="M 568,222 C 588,222 592,272 606,272"
+        stroke="#58585e" stroke-width="1.5" fill="none"/>
+  <circle cx="478" cy="222" r="14" fill="#3a3a3e" stroke="rgba(0,204,170,0.25)" stroke-width="1.2"/>
+  <text x="478" y="226" text-anchor="middle" font-size="10" fill="#80f0d8" font-weight="600">DEV</text>
+  <line x1="495" y1="222" x2="511" y2="222" stroke="#58585e" stroke-width="1"/>
+  <path d="M 508,219 L 514,222 L 508,225" fill="#58585e"/>
+  <circle cx="530" cy="222" r="14" fill="#3a3a3e" stroke="rgba(0,204,170,0.25)" stroke-width="1.2"/>
+  <text x="530" y="226" text-anchor="middle" font-size="10" fill="#80f0d8" font-weight="600">REV</text>
+  <line x1="547" y1="222" x2="555" y2="222" stroke="#58585e" stroke-width="1"/>
+  <circle cx="564" cy="222" r="8" fill="#1a3a35" stroke="#00ccaa" stroke-width="1" stroke-opacity="0.4"/>
+  <text x="564" y="226" text-anchor="middle" font-size="8" fill="#00ccaa" font-weight="700">✓</text>
+
+  <!-- ── Track 3 (center) — y=272 ── -->
+  <line x1="412" y1="272" x2="568" y2="272" stroke="#58585e" stroke-width="1.5"/>
+  <circle cx="478" cy="272" r="14" fill="#3a3a3e" stroke="rgba(0,204,170,0.25)" stroke-width="1.2"/>
+  <text x="478" y="276" text-anchor="middle" font-size="10" fill="#80f0d8" font-weight="600">DEV</text>
+  <line x1="495" y1="272" x2="511" y2="272" stroke="#58585e" stroke-width="1"/>
+  <path d="M 508,269 L 514,272 L 508,275" fill="#58585e"/>
+  <circle cx="530" cy="272" r="14" fill="#3a3a3e" stroke="rgba(0,204,170,0.25)" stroke-width="1.2"/>
+  <text x="530" y="276" text-anchor="middle" font-size="10" fill="#80f0d8" font-weight="600">REV</text>
+  <line x1="547" y1="272" x2="555" y2="272" stroke="#58585e" stroke-width="1"/>
+  <circle cx="564" cy="272" r="8" fill="#1a3a35" stroke="#00ccaa" stroke-width="1" stroke-opacity="0.4"/>
+  <text x="564" y="276" text-anchor="middle" font-size="8" fill="#00ccaa" font-weight="700">✓</text>
+
+  <!-- ── Track 4 — y=322 ── -->
+  <path d="M 412,272 C 432,272 436,322 456,322"
+        stroke="#58585e" stroke-width="1.5" fill="none"/>
+  <line x1="456" y1="322" x2="568" y2="322" stroke="#58585e" stroke-width="1.5"/>
+  <path d="M 568,322 C 588,322 592,272 606,272"
+        stroke="#58585e" stroke-width="1.5" fill="none"/>
+  <circle cx="478" cy="322" r="14" fill="#3a3a3e" stroke="rgba(0,204,170,0.25)" stroke-width="1.2"/>
+  <text x="478" y="326" text-anchor="middle" font-size="10" fill="#80f0d8" font-weight="600">DEV</text>
+  <line x1="495" y1="322" x2="511" y2="322" stroke="#58585e" stroke-width="1"/>
+  <path d="M 508,319 L 514,322 L 508,325" fill="#58585e"/>
+  <circle cx="530" cy="322" r="14" fill="#3a3a3e" stroke="rgba(0,204,170,0.25)" stroke-width="1.2"/>
+  <text x="530" y="326" text-anchor="middle" font-size="10" fill="#80f0d8" font-weight="600">REV</text>
+  <line x1="547" y1="322" x2="555" y2="322" stroke="#58585e" stroke-width="1"/>
+  <circle cx="564" cy="322" r="8" fill="#1a3a35" stroke="#00ccaa" stroke-width="1" stroke-opacity="0.4"/>
+  <text x="564" y="326" text-anchor="middle" font-size="8" fill="#00ccaa" font-weight="700">✓</text>
+
+  <!-- ── Track 5 — y=370 ── -->
+  <path d="M 412,272 C 432,272 436,370 456,370"
+        stroke="#58585e" stroke-width="1.5" fill="none"/>
+  <line x1="456" y1="370" x2="568" y2="370" stroke="#58585e" stroke-width="1.5"/>
+  <path d="M 568,370 C 588,370 592,272 606,272"
+        stroke="#58585e" stroke-width="1.5" fill="none"/>
+  <circle cx="478" cy="370" r="14" fill="#3a3a3e" stroke="rgba(0,204,170,0.25)" stroke-width="1.2"/>
+  <text x="478" y="374" text-anchor="middle" font-size="10" fill="#80f0d8" font-weight="600">DEV</text>
+  <line x1="495" y1="370" x2="511" y2="370" stroke="#58585e" stroke-width="1"/>
+  <path d="M 508,367 L 514,370 L 508,373" fill="#58585e"/>
+  <circle cx="530" cy="370" r="14" fill="#3a3a3e" stroke="rgba(0,204,170,0.25)" stroke-width="1.2"/>
+  <text x="530" y="374" text-anchor="middle" font-size="10" fill="#80f0d8" font-weight="600">REV</text>
+  <line x1="547" y1="370" x2="555" y2="370" stroke="#58585e" stroke-width="1"/>
+  <circle cx="564" cy="370" r="8" fill="#1a3a35" stroke="#00ccaa" stroke-width="1" stroke-opacity="0.4"/>
+  <text x="564" y="374" text-anchor="middle" font-size="8" fill="#00ccaa" font-weight="700">✓</text>
+
+  <!-- Column labels -->
+  <text x="478" y="406" text-anchor="middle"
+        font-size="9" fill="#80f0d8" fill-opacity="0.6">develop</text>
+  <text x="530" y="406" text-anchor="middle"
+        font-size="9" fill="#80f0d8" fill-opacity="0.6">review</text>
+  <text x="564" y="406" text-anchor="middle"
+        font-size="9" fill="#00ccaa" fill-opacity="0.5">test</text>
+
+  <!-- Human escalation — icon left, text right, 8px gap -->
+  <g>
+    <use href="#human" x="440" y="416" width="18" height="18"/>
+    <text x="468" y="430" font-size="9.5" fill="#e8a87c">~5% human escalation</text>
+  </g>
+
+  <!-- Arrow EXECUTE → GATE 2 -->
+  <line x1="620" y1="272" x2="654" y2="272"
+        stroke="#58585e" stroke-width="2"/>
+
+  <!-- ═══════════════════════════════════════ -->
+  <!-- GATE 2                                 -->
+  <!-- ═══════════════════════════════════════ -->
+  <rect x="658" y="250" width="32" height="44" rx="4"
+        fill="#1a3a35" stroke="#00ccaa" stroke-width="1.2" stroke-opacity="0.4"/>
+  <text x="674" y="268" text-anchor="middle"
+        class="mono" font-size="7.5" font-weight="700" fill="#00ccaa"
+        letter-spacing="0.04em">GATE</text>
+  <!-- Icons below gate: side by side, 10px below box bottom -->
+  <g>
+    <use href="#human" x="652" y="306" width="18" height="18"/>
+    <use href="#robot" x="676" y="306" width="18" height="18"/>
+  </g>
+
+  <!-- Arrow → INTEGRATE -->
+  <line x1="694" y1="272" x2="726" y2="272"
+        stroke="#58585e" stroke-width="2"/>
+  <path d="M 722,268 L 730,272 L 722,276" fill="#58585e"/>
+
+  <!-- ═══════════════════════════════════════ -->
+  <!-- INTEGRATE                              -->
+  <!-- ═══════════════════════════════════════ -->
+  <rect x="734" y="242" width="120" height="60" rx="7"
+        fill="#303034" stroke="rgba(0,204,170,0.15)" stroke-width="1"/>
+  <text x="794" y="268" text-anchor="middle"
+        class="mono" font-size="13" font-weight="600" fill="#f0f0f0"
+        letter-spacing="0.03em">INTEGRATE</text>
+  <text x="794" y="286" text-anchor="middle"
+        font-size="9.5" fill="#a0a0a8">coherence · merge · ship</text>
+
+  <!-- Agent roles below INTEGRATE — icon left, text right -->
+  <g>
+    <use href="#robot" x="734" y="316" width="18" height="18"/>
+    <text x="762" y="330" font-size="10" fill="#80f0d8">Checker · Integrator · Guardian</text>
+  </g>
+
+  <!-- Arrow → SHIPPED -->
+  <line x1="858" y1="272" x2="890" y2="272"
+        stroke="#58585e" stroke-width="2"/>
+  <path d="M 886,268 L 894,272 L 886,276" fill="#58585e"/>
+
+  <!-- ═══════════════════════════════════════ -->
+  <!-- SHIPPED                                -->
+  <!-- ═══════════════════════════════════════ -->
+  <rect x="898" y="250" width="68" height="44" rx="6"
+        fill="#1a3a35" stroke="#00ccaa" stroke-width="1.2" stroke-opacity="0.5"/>
+  <text x="932" y="268" text-anchor="middle"
+        class="mono" font-size="9" font-weight="700" fill="#00ccaa"
+        letter-spacing="0.03em">CODE IN</text>
+  <text x="932" y="282" text-anchor="middle"
+        class="mono" font-size="9" font-weight="700" fill="#00ccaa"
+        letter-spacing="0.03em">MAIN</text>
+
+  <!-- Role below CODE IN MAIN — icon left, text right -->
+  <g>
+    <use href="#human" x="898" y="306" width="18" height="18"/>
+    <text x="924" y="320" font-size="10" fill="#e8a87c">Human judgment</text>
+  </g>
+
+  <!-- ═══════════════════════════════════════ -->
+  <!-- FAILURE RECOVERY LOOP — tighter arc    -->
+  <!-- ═══════════════════════════════════════ -->
+  <path d="M 674,298 C 674,468 318,468 318,298"
+        stroke="#00ccaa" stroke-width="1.5" stroke-opacity="0.45"
+        stroke-dasharray="6,4" fill="none"/>
+  <path d="M 315,304 L 318,294 L 321,304" fill="#00ccaa" fill-opacity="0.45"/>
+
+  <!-- Recovery label — icon left, text right, centered on arc bottom -->
+  <g>
+    <use href="#robot" x="440" y="456" width="18" height="18"/>
+    <text x="468" y="470" font-size="10.5" fill="#80f0d8" fill-opacity="0.7">Debugger → Supervisor</text>
+  </g>
+  <text x="496" y="486" text-anchor="middle"
+        font-size="9.5" fill="#a0a0a8">retry · escalate model · replan · escalate to human</text>
+
+  <!-- ═══════════════════════════════════════ -->
+  <!-- LEGEND (bottom-right)                  -->
+  <!-- ═══════════════════════════════════════ -->
+  <g>
+    <use href="#human" x="840" y="460" width="18" height="18"/>
+    <text x="864" y="474" font-size="10.5" fill="#e8a87c" font-weight="500">Human</text>
+  </g>
+  <g>
+    <use href="#robot" x="840" y="486" width="18" height="18"/>
+    <text x="864" y="500" font-size="10.5" fill="#80f0d8" font-weight="500">Agent</text>
+  </g>
+</svg>

@@ -1,0 +1,20 @@
+---
+import LandingLayout from '../../../layouts/LandingLayout.astro';
+import Nav from '../../../components/Landing/Nav.astro';
+import CaseStudyShell from './_CaseStudyShell';
+import './_styles.css';
+import './_replay/replay.css';
+---
+
+<LandingLayout title="SPEED — Case Study: Appwrite">
+  <Nav />
+  <main class="cs-page">
+    <CaseStudyShell client:load />
+  </main>
+</LandingLayout>
+
+<style>
+  .cs-page {
+    padding-top: 52px;
+  }
+</style>

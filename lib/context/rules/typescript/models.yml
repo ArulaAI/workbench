@@ -1,0 +1,45 @@
+id: typeorm-entity
+language: typescript
+metadata:
+  produces: node
+  kind: class
+  orm: true
+rule:
+  kind: class_declaration
+  has:
+    kind: decorator
+    stopBy: neighbor
+    has:
+      stopBy: end
+      any:
+        - kind: identifier
+          regex: "^Entity$"
+        - kind: call_expression
+          has:
+            field: function
+            regex: "^Entity$"
+
+---
+id: typeorm-column
+language: typescript
+metadata:
+  produces: node
+  kind: variable
+  orm: true
+rule:
+  kind: public_field_definition
+  has:
+    kind: decorator
+    stopBy: neighbor
+    has:
+      stopBy: end
+      any:
+        - kind: identifier
+          regex: "^Column$"
+        - kind: call_expression
+          has:
+            field: function
+            regex: "^Column$"
+  inside:
+    kind: class_declaration
+    stopBy: end

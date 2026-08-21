@@ -1,0 +1,14 @@
+{
+  "expected_rules": [
+    "js-arrow-function",
+    "js-call",
+    "js-class",
+    "js-constant",
+    "js-constant",
+    "js-constant",
+    "js-export-function",
+    "js-function",
+    "js-function",
+    "js-method"
+  ]
+}

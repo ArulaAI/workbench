@@ -1,0 +1,101 @@
+{
+  "id": "2",
+  "title": "Implement Define panel reader",
+  "description": "Create `dashboard/backend/resolvers/landing.py` with `read_define_panel(project_root: Path) -> LandingDefinePanel`. Logic:\n\n1. **Vision status**: Check if `specs/product/overview.md` exists. If missing, status='missing'. If exists, read content: if <50 chars or contains only template markers, status='placeholder'; else status='defined'.\n2. **Draft specs**: Glob `specs/product/*.md` (excluding overview.md). For each, extract feature name from filename. Check if `specs/tech/{name}.md` exists to build spec_types list. Check if `.speed/features/{name}/state.json` exists: if no state file, status='unplanned'; if state exists but status is not 'running'/'done', status='writing'.\n3. **Defects**: Glob `.speed/defects/*/state.json`. Parse each for severity and name. Clamp unrecognized severity to 'P3'. Sort by severity (P0 first).\n4. **defect_count**: len(defects).\n\nImport types from landing_types.py. Handle missing directories gracefully (return empty lists, vision_status='missing').",
+  "acceptance_criteria": "- read_define_panel returns LandingDefinePanel with correct vision_status when overview.md is missing\n- read_define_panel returns vision_status='defined' when overview.md has substantive content\n- Draft specs detected from specs/product/*.md excluding overview.md\n- spec_types includes 'technical' when matching specs/tech/ file exists\n- Specs without .speed/features/{name}/state.json get status='unplanned'\n- Defects parsed from .speed/defects/*/state.json with severity and name\n- Unrecognized severity values mapped to 'P3'\n- Missing directories return empty lists without raising exceptions",
+  "depends_on": [
+    "1"
+  ],
+  "status": "done",
+  "branch": "speed/speed-dashboard-landing/task-2-implement-define-panel-reader",
+  "agent_model": "sonnet",
+  "created_at": "2026-03-15T16:26:56Z",
+  "started_at": "2026-03-16T03:22:24Z",
+  "completed_at": "2026-03-16T03:23:42Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": "{\"verdict\":\"request_changes\",\"spec_verification\":[{\"spec_quote\":\"Define | Product vision | specs/product/overview.md | Existence check\",\"spec_section\":\"tech § Data Model - What the resolver reads\",\"satisfied\":true,\"evidence\":\"_read_vision_status (landing.py:211) checks overview.exists() and returns 'missing' on False. Returns 'defined' when substantive content is present.\",\"notes\":\"Implementation also adds a 'placeholder' branch via heuristic. The tech spec lists 'placeholder' in validation rules but defers detection logic to the Define RFC. The heuristic (< 50 chars or only headings/template markers) is reasonable and directly tested.\"},{\"spec_quote\":\"Define | Spec files | specs/product/*.md, specs/tech/*.md | Feature names without execution state → draft specs\",\"spec_section\":\"tech § Data Model - What the resolver reads\",\"satisfied\":\"partial\",\"evidence\":\"_read_draft_specs (landing.py:241) globs specs/product/*.md and checks specs/tech/{name}.md. The 'partial' rating is because the tech spec lookup uses the stripped feature name (post-prefix-removal), not the original filename — see issues.\",\"notes\":\"See major issue: spec files following the 'speed-*' naming convention will never have spec_types include 'technical', because the tech spec file is named speed-auth.md but the code looks for auth.md.\"},{\"spec_quote\":\"Scan specs/product/*.md for feature names. Check whether .speed/features/{name}/ exists with a state.json. If no feature state: the spec is a draft (written but not planned). Also check: if specs/product/foo.md exists but specs/tech/foo.md doesn't, the feature has a PRD without an RFC\",\"spec_section\":\"tech § Data Model - Draft spec detection\",\"satisfied\":\"partial\",\"evidence\":\"Steps 1-3 are correctly implemented. Step 4 ('Also check') is structurally present but broken for 'speed-*' prefixed spec files (same root cause as above). The test test_draft_specs_with_tech_spec only exercises the non-prefixed case (auth.md / auth.md), not the real naming convention (speed-auth.md / speed-auth.md).\",\"notes\":null},{\"spec_quote\":\"Define | Defect state | .speed/defects/*/state.json | Severity, name, count\",\"spec_section\":\"tech § Data Model - What the resolver reads\",\"satisfied\":true,\"evidence\":\"_read_defects (landing.py:290) globs .speed/defects/*/state.json and extracts severity and name. defect_count is set via len(defects) in read_define_panel:203.\",\"notes\":null},{\"spec_quote\":\"severity (defect display) | One of: P0, P1, P2, P3. Defects with unrecognized severity render as P3.\",\"spec_section\":\"tech § Validation Rules\",\"satisfied\":true,\"evidence\":\"_read_defects:302-303 — if severity not in _VALID_SEVERITIES: severity = 'P3'. _VALID_SEVERITIES covers P0-P3.\",\"notes\":null},{\"spec_quote\":\"vision_status | One of: missing, placeholder, defined. Derived from specs/product/overview.md.\",\"spec_section\":\"tech § Validation Rules\",\"satisfied\":true,\"evidence\":\"_read_vision_status returns exactly these three values and no others.\",\"notes\":null},{\"spec_quote\":\"spec_types (draft spec) | Non-empty array. Values limited to 'product' and 'technical'.\",\"spec_section\":\"tech § Validation Rules\",\"satisfied\":true,\"evidence\":\"spec_types always starts as ['product'] and conditionally appends 'technical'. No other values are added.\",\"notes\":null},{\"spec_quote\":\"As a PM, I want to see the Define panel with vision status, draft specs, and defect count. Given specs exist on disk and defects are filed, when I view the left sidebar, then I see vision status (missing/defined), draft specs needing next step, and defects grouped by severity\",\"spec_section\":\"product § User Stories - S3\",\"satisfied\":true,\"evidence\":\"LandingDefinePanel returns vision_status, draft_specs (with status), defects (sorted by _SEVERITY_ORDER at landing.py:308), and defect_count.\",\"notes\":null},{\"spec_quote\":\"Missing directories return empty lists without raising exceptions\",\"spec_section\":\"AC8\",\"satisfied\":true,\"evidence\":\"_read_draft_specs:246 returns [] when product_dir.is_dir() is False. _read_defects:292 returns [] when defects_dir.is_dir() is False. test_empty_project confirms both.\",\"notes\":null}],\"missing_from_spec\":[],\"out_of_scope\":[],\"issues\":[{\"severity\":\"major\",\"file\":\"dashboard/backend/resolvers/landing.py\",\"line\":257,\"message\":\"Tech spec lookup uses the stripped feature name, not the original spec filename. For a product spec named 'speed-auth.md', _feature_name returns 'auth' and the code checks specs/tech/auth.md. But the tech spec is named specs/tech/speed-auth.md. All 'speed-*' prefixed specs will always report spec_types=['product'] even when a matching tech spec exists.\",\"suggestion\":\"The tech spec lookup should use the original stem (before prefix stripping), not the derived feature name. One approach: check both (tech_dir / f'{spec_file.stem}.md') and (tech_dir / f'{name}.md'). Or separate the concerns — derive a 'spec_stem' for file lookups and a 'feature_name' for .speed/features/ lookups. The assumption documented in the task conflates these two uses.\"},{\"severity\":\"major\",\"file\":\"dashboard/backend/tests/test_landing.py\",\"line\":112,\"message\":\"test_draft_specs_with_tech_spec only exercises the non-prefixed case (auth.md → tech/auth.md). No test covers the real naming convention: specs/product/speed-auth.md + specs/tech/speed-auth.md. This gap is why the bug above is undetected.\",\"suggestion\":\"Add a test: write specs/product/speed-auth.md and specs/tech/speed-auth.md, verify draft_specs[0].spec_types == ['product', 'technical'].\"},{\"severity\":\"minor\",\"file\":\"dashboard/backend/resolvers/landing.py\",\"line\":264,\"message\":\"Corrupt or empty state.json causes a spec to appear as status='writing' rather than 'unplanned'. _read_json returns None, then 'or {}' gives an empty dict, then state.get('status') is None (not 'running'/'done'), so status='writing'. A file that doesn't parse as JSON is treated as 'has execution state' rather than 'missing state'.\",\"suggestion\":\"Add a None check: if _read_json returns None, treat the feature as having no valid state (i.e., status='unplanned'). Or document the behavior as intentional.\"}],\"strengths\":[\"All eight acceptance criteria are covered by the implementation, and ACs 1-2-7-8 each have direct tests exercising the exact boundary conditions.\",\"The placeholder heuristic (_TEMPLATE_MARKERS + heading-only detection) is sound and handles the edge case of template files that exceed 50 chars but contain no real content.\",\"Defects are sorted by severity order (P0→P3) using the _SEVERITY_ORDER dict — correct and well-tested.\",\"The 'running' and 'done' exclusion logic in _read_draft_specs correctly partitions features across panels: draft specs stay out of the Define list once they enter Execute or Judge.\",\"_read_json's silent error handling (returning None on JSONDecodeError and OSError) is the right pattern for a best-effort filesystem read.\"]}\n\n--- Attempt 1 ---\nFailed with: Merge conflict: speed/speed-dashboard-landing/task-1-define-graphql-types-for-landing-page into dashboard-human-surfaces (failed 3x)\nHuman guidance: Bug in _feature_name(): it strips speed- prefix which is correct for .speed/features/ directory lookup, but wrong for tech spec lookup on line 257. Fix: use spec_file.stem for the tech spec path, use _feature_name() only for the feature directory path.",
+  "files_touched": [
+    "dashboard/backend/resolvers/landing.py"
+  ],
+  "spec_references": [
+    {
+      "spec": "tech",
+      "section": "Data Model - Draft spec detection",
+      "requirement": "Scan specs/product/*.md, check for feature state to identify drafts"
+    },
+    {
+      "spec": "tech",
+      "section": "Data Model - What the resolver reads",
+      "requirement": "Define panel reads product vision, spec files, and defect state"
+    },
+    {
+      "spec": "product",
+      "section": "User Stories - S3",
+      "requirement": "Define panel shows vision status, draft specs, defect list with severity"
+    }
+  ],
+  "rationale": "First panel reader to land in landing.py, establishing the file and the pattern for subsequent panel readers. Define panel has the simplest read pattern (existence checks and globs, no cross-referencing between data sources), making it the right one to go first.",
+  "assumptions": [
+    "Vision status 'placeholder' detection uses a simple heuristic: file under 50 chars or containing only markdown template markers. The tech spec references 'Define RFC for detection logic' but no such logic is defined, so we use a reasonable heuristic.",
+    "Feature name derived from spec filename by stripping the .md extension and any 'speed-' prefix to match .speed/features/ directory names"
+  ],
+  "gate_results": {
+    "checks": [
+      {
+        "name": "diff_non_empty",
+        "status": "pass"
+      },
+      {
+        "name": "declared_files",
+        "status": "pass"
+      },
+      {
+        "name": "scope",
+        "status": "warn",
+        "undeclared_files": [
+          "dashboard/backend/tests/test_landing.py (task 18)"
+        ]
+      },
+      {
+        "name": "python_imports",
+        "status": "pass"
+      },
+      {
+        "name": "not_blocked",
+        "status": "pass"
+      },
+      {
+        "name": "test_coverage",
+        "status": "pass"
+      },
+      {
+        "name": "gate_evidence",
+        "status": "warn"
+      },
+      {
+        "name": "criteria",
+        "status": "pass"
+      },
+      {
+        "name": "secrets",
+        "status": "pass"
+      }
+    ],
+    "scope": {
+      "undeclared_files": [
+        "dashboard/backend/tests/test_landing.py (task 18)"
+      ]
+    }
+  },
+  "decisions": [
+    "Used spec_file.stem (e.g. 'speed-auth') for specs/tech/ lookup, and _feature_name() result (e.g. 'auth') only for .speed/features/ lookup — per reviewer feedback and human guidance.",
+    "Corrupt/unparseable state.json now yields status='unplanned' (None check before 'or {}') rather than defaulting to 'writing'."
+  ],
+  "concerns": [
+    "test_landing.py is owned by task 18 (scope warning). The two new tests are required to cover the bugs fixed in this task — they belong with the existing test_landing.py that was already modified in attempt 1."
+  ],
+  "review_verdict": "approve",
+  "retry_count": 1,
+  "reviewed_at": "2026-03-17T05:27:44Z"
+}

@@ -1,0 +1,94 @@
+---
+---
+
+<section class="section numbers-section">
+  <div class="numbers">
+    <div class="number">
+      <div class="number-value">12</div>
+      <div class="number-label">Agents</div>
+    </div>
+    <div class="number">
+      <div class="number-value">&lt;1s</div>
+      <div class="number-label">Lock Time</div>
+    </div>
+    <div class="number">
+      <div class="number-value">0</div>
+      <div class="number-label">Merge Conflicts</div>
+    </div>
+  </div>
+</section>
+
+<style>
+  .section {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 100px 32px;
+  }
+
+  .numbers-section {
+    border-top: 1px solid var(--color-border);
+    text-align: center;
+  }
+
+  .numbers {
+    display: flex;
+    justify-content: center;
+    gap: 80px;
+  }
+
+  .number {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    opacity: 0;
+    transform: translateY(12px);
+    transition: opacity 0.4s, transform 0.4s;
+  }
+
+  .number.visible {
+    opacity: 1;
+    transform: none;
+  }
+
+  .number-value {
+    font-family: var(--font-mono);
+    font-size: clamp(48px, 8vw, 80px);
+    font-weight: 700;
+    color: var(--color-text);
+    letter-spacing: -0.04em;
+    line-height: 1;
+  }
+
+  .number-label {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--color-text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-top: 12px;
+  }
+
+  @media (max-width: 600px) {
+    .numbers { gap: 32px; flex-wrap: wrap; }
+    .section { padding: 60px 16px; }
+  }
+</style>
+
+<script>
+  const numberObs = new IntersectionObserver(entries => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        const el = entry.target as HTMLElement;
+        const delay = parseInt(el.dataset.delay || '0', 10);
+        setTimeout(() => el.classList.add('visible'), delay);
+        numberObs.unobserve(el);
+      }
+    });
+  }, { threshold: 0.15 });
+
+  document.querySelectorAll('.number').forEach((el, i) => {
+    (el as HTMLElement).dataset.delay = String(i * 120);
+    numberObs.observe(el);
+  });
+</script>

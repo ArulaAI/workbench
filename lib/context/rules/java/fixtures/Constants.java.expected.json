@@ -1,0 +1,14 @@
+{
+  "expected_rules": [
+    "java-class",
+    "java-constant",
+    "java-constant",
+    "java-constant",
+    "java-constructor",
+    "java-field-access",
+    "java-field-access",
+    "java-interface",
+    "java-method",
+    "java-method"
+  ]
+}

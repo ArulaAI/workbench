@@ -1,0 +1,101 @@
+id: js-class
+language: javascript
+metadata:
+  produces: node
+  kind: class
+rule:
+  kind: class_declaration
+
+---
+id: js-function
+language: javascript
+metadata:
+  produces: node
+  kind: function
+rule:
+  kind: function_declaration
+
+---
+id: js-arrow-function
+language: javascript
+metadata:
+  produces: node
+  kind: function
+rule:
+  kind: variable_declarator
+  has:
+    field: value
+    kind: arrow_function
+
+---
+id: js-generator
+language: javascript
+metadata:
+  produces: node
+  kind: function
+rule:
+  kind: generator_function_declaration
+
+---
+id: js-method
+language: javascript
+metadata:
+  produces: node
+  kind: method
+rule:
+  kind: method_definition
+  inside:
+    kind: class_body
+    stopBy: neighbor
+
+---
+id: js-export-function
+language: javascript
+metadata:
+  produces: node
+  kind: function
+rule:
+  kind: export_statement
+  has:
+    kind: function_declaration
+
+---
+id: js-export-class
+language: javascript
+metadata:
+  produces: node
+  kind: class
+rule:
+  kind: export_statement
+  has:
+    kind: class_declaration
+
+---
+id: js-constant
+language: javascript
+metadata:
+  produces: node
+  kind: constant
+rule:
+  pattern: const $NAME = $VALUE
+  not:
+    inside:
+      any:
+        - kind: function_declaration
+        - kind: method_definition
+        - kind: arrow_function
+      stopBy: end
+constraints:
+  NAME:
+    regex: "^[A-Z][A-Z0-9_]+$"
+
+---
+id: js-class-extends
+language: javascript
+metadata:
+  produces: edge
+  edge_type: inherits
+rule:
+  kind: class_declaration
+  has:
+    kind: class_heritage

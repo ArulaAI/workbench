@@ -1,0 +1,46 @@
+id: diesel-queryable
+language: rust
+metadata:
+  produces: node
+  kind: class
+  orm: true
+rule:
+  kind: struct_item
+  has:
+    kind: attribute_item
+    stopBy: neighbor
+    has:
+      stopBy: end
+      regex: "Queryable"
+
+---
+id: diesel-insertable
+language: rust
+metadata:
+  produces: node
+  kind: class
+  orm: true
+rule:
+  kind: struct_item
+  has:
+    kind: attribute_item
+    stopBy: neighbor
+    has:
+      stopBy: end
+      regex: "Insertable"
+
+---
+id: diesel-table-name
+language: rust
+metadata:
+  produces: node
+  kind: class
+  orm: true
+rule:
+  kind: struct_item
+  has:
+    kind: attribute_item
+    stopBy: neighbor
+    has:
+      stopBy: end
+      regex: "diesel\\(table_name"

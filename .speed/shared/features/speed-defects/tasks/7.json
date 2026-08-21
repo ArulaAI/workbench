@@ -1,0 +1,35 @@
+{
+  "id": "7",
+  "title": "Reproduce and Fix Pipeline Logic",
+  "description": "Create `lib/defect_fix.sh` with orchestration logic for the reproduce and fix stages. Sources `lib/defects.sh` for state management.\n\n**Functions:**\n\n`create_defect_branch <name>`\nCreate git branch `speed/defect-<name>` from current HEAD. Exit with error if branch already exists: 'Branch speed/defect-<name> already exists. Clean up or use a different name.' After creating the branch, call `set_defect_branch <name> speed/defect-<name>` (from lib/defects.sh) to update state.json's branch field.\n\n`reproduce_defect <name>`\nModerate defects only. Flow:\n1. `create_defect_branch`\n2. `transition_defect_state` to `reproducing`\n3. Read triage.json for defect_type, affected_files, test_coverage_detail\n4. Build Developer Agent prompt: load the reproduce mode section from agents/developer.md, inject triage output, defect report, and related specs. Select test strategy instructions based on defect_type.\n5. Run Developer Agent via existing pipeline infrastructure (`provider_run` or equivalent)\n6. Run quality gates: lint + typecheck only (skip test gate — new test is expected to fail)\n7. On gate failure → exit with output, state stays at `reproducing`\n8. Commit the failing test with message: 'test: reproduce <name> defect'\n9. `transition_defect_state` to `reproduced`\n\n`fix_defect <name>`\nAll complexities. Flow:\n1. For trivial: call `create_defect_branch` (no reproduce stage preceded it)\n   For moderate: continue on existing branch (failing test already committed)\n2. `transition_defect_state` to `fixing`\n3. Read triage.json for root_cause_hypothesis, affected_files, suggested_approach\n4. Build Developer Agent prompt: load fix mode section from agents/developer.md, inject triage output, defect report. For moderate: include 'the failing test defines done — make it pass.'\n5. Run Developer Agent\n6. `run_defect_quality_gates`\n7. `check_grounding_gates`\n8. On any failure → exit with output, state stays at `fixing`\n9. Commit fix with message: 'fix: resolve <name> defect'\n10. `transition_defect_state` to `fixed`\n\n`run_defect_quality_gates <name>`\nRun quality gates scoped to the defect:\n- Lint, typecheck, and test for the affected subsystem\n- If related_spec identifies a feature, also run that feature's test suite\n- Determine subsystem from affected_files paths (glob match against project structure)\nReturn 0 on pass, 1 on failure with gate output printed.\n\n`check_grounding_gates <name>`\nVerify the fix diff is properly scoped:\n- Non-empty diff check: exit with 'No changes produced' if diff is empty\n- Scope check: compare files in the diff against `affected_files` from triage.json. Exit with 'Files modified outside affected scope: <list>' if any file is outside scope\nReturn 0 on pass, 1 on violation.\n\n**Error handling:**\n- Branch exists → exit with descriptive message\n- Quality gates fail → exit with gate output, no state transition\n- Empty diff → exit with 'No changes produced'\n- Out-of-scope files → exit with file list",
+  "acceptance_criteria": "- `lib/defect_fix.sh` file exists [verify_by: file_exists]\n- `create_defect_branch` creates branch named speed/defect-<name> [verify_by: test]\n- `create_defect_branch` exits non-zero with message when branch already exists [verify_by: test]\n- `create_defect_branch` updates state.json branch field by calling set_defect_branch [verify_by: test]\n- `reproduce_defect` transitions state from triaged to reproducing to reproduced [verify_by: test]\n- `reproduce_defect` runs lint and typecheck but skips test gate [verify_by: test]\n- `fix_defect` for trivial creates branch (no prior reproduce) [verify_by: test]\n- `fix_defect` for moderate continues on existing branch [verify_by: test]\n- `fix_defect` transitions state from reproduced (or triaged) to fixing to fixed [verify_by: test]\n- `check_grounding_gates` exits non-zero with 'No changes produced' on empty diff [verify_by: test]\n- `check_grounding_gates` exits non-zero listing out-of-scope files when diff touches files outside affected_files [verify_by: test]\n- `run_defect_quality_gates` runs lint, typecheck, and tests for affected subsystem [verify_by: test]",
+  "depends_on": [
+    "1",
+    "4"
+  ],
+  "status": "done",
+  "branch": "speed/speed-defects/task-7-reproduce-and-fix-pipeline-logic",
+  "agent_model": "opus",
+  "created_at": "2026-02-24T08:09:53Z",
+  "started_at": "2026-02-24T12:54:26Z",
+  "completed_at": "2026-02-24T12:55:10Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": "--- Attempt 1 ---\nFailed with: Quality gates failed\nHuman guidance: Gate evidence grounding check fixed.\n  Code is already on the branch, just re-run gates.",
+  "files_touched": [
+    "lib/defect_fix.sh"
+  ],
+  "failure_classification": {
+    "class": "unclassified",
+    "subclass": "unknown",
+    "evidence": "No classification rule matched"
+  },
+  "review_verdict": null,
+  "retry_count": 1,
+  "decisions": [
+    "Code was already committed from attempt 1 — only needed gate re-run after grounding check fix"
+  ],
+  "concerns": [
+    "Lint/typecheck/test gates show 'not configured for both' — shell script subsystem has no configured linter or test runner in the gate infrastructure. Syntax check passes, which is the applicable gate for .sh files."
+  ]
+}

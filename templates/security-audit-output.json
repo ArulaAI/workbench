@@ -1,0 +1,87 @@
+{
+  "type": "object",
+  "required": ["feature", "timestamp", "agent_model", "findings", "summary"],
+  "additionalProperties": false,
+  "properties": {
+    "feature": {
+      "type": "string",
+      "description": "Feature name that was audited"
+    },
+    "timestamp": {
+      "type": "string",
+      "description": "ISO 8601 timestamp of the audit"
+    },
+    "agent_model": {
+      "type": "string",
+      "description": "Model used for the audit"
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "severity", "category", "title", "description", "file", "line", "snippet", "recommendation"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Sequential ID in format SEC-NNN (e.g. SEC-001, SEC-042)"
+          },
+          "severity": {
+            "type": "string",
+            "enum": ["critical", "high", "medium", "low", "info"],
+            "description": "Finding severity level"
+          },
+          "category": {
+            "type": "string",
+            "enum": ["injection", "auth", "secrets", "crypto", "config", "xss", "path-traversal", "info-disclosure"],
+            "description": "OWASP-aligned vulnerability category"
+          },
+          "title": {
+            "type": "string",
+            "description": "Short descriptive title"
+          },
+          "description": {
+            "type": "string",
+            "description": "Detailed explanation of the vulnerability"
+          },
+          "file": {
+            "type": "string",
+            "description": "Relative path from project root"
+          },
+          "line": {
+            "type": "integer",
+            "description": "Line number (0 if file-level)"
+          },
+          "snippet": {
+            "type": "string",
+            "description": "Relevant code fragment (max 200 chars)"
+          },
+          "recommendation": {
+            "type": "string",
+            "description": "Concrete fix action — name the function, library, or pattern to use"
+          }
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "required": ["total", "by_severity"],
+      "properties": {
+        "total": {
+          "type": "integer",
+          "description": "Must equal findings array length"
+        },
+        "by_severity": {
+          "type": "object",
+          "required": ["critical", "high", "medium", "low", "info"],
+          "properties": {
+            "critical": { "type": "integer" },
+            "high": { "type": "integer" },
+            "medium": { "type": "integer" },
+            "low": { "type": "integer" },
+            "info": { "type": "integer" }
+          }
+        }
+      }
+    }
+  }
+}

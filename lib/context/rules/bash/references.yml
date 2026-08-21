@@ -1,0 +1,31 @@
+id: bash-source
+language: bash
+metadata:
+  produces: reference
+  ref_kind: import
+  module_var: MODULE
+rule:
+  kind: command
+  pattern: source $MODULE
+
+---
+id: bash-dot-source
+language: bash
+metadata:
+  produces: reference
+  ref_kind: import
+  module_var: MODULE
+rule:
+  kind: command
+  pattern: . $MODULE
+
+---
+id: bash-call
+language: bash
+metadata:
+  produces: reference
+  ref_kind: call
+rule:
+  kind: command
+
+Notes on the Bash rules:

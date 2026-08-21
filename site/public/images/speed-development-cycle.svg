@@ -1,0 +1,219 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1060 480" fill="none">
+  <style>
+    text { font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif; }
+    .mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; }
+  </style>
+
+  <defs>
+    <symbol id="human" viewBox="0 0 16 16">
+      <circle cx="8" cy="4.5" r="3" fill="#e8a87c"/>
+      <path d="M 2,15 C 2,10.5 5,9 8,9 C 11,9 14,10.5 14,15" fill="#e8a87c"/>
+    </symbol>
+    <symbol id="robot" viewBox="0 0 16 16">
+      <rect x="3" y="5" width="10" height="9" rx="2" fill="#80f0d8"/>
+      <line x1="8" y1="5" x2="8" y2="2" stroke="#80f0d8" stroke-width="1.5"/>
+      <circle cx="8" cy="1.5" r="1.5" fill="#80f0d8"/>
+      <circle cx="6" cy="9" r="1.2" fill="#303034"/>
+      <circle cx="10" cy="9" r="1.2" fill="#303034"/>
+      <rect x="5.5" y="11.5" width="5" height="1" rx="0.5" fill="#303034"/>
+    </symbol>
+  </defs>
+
+  <!-- ═══════════════════════════════════════ -->
+  <!-- RETURN ARC (Learn → Define)            -->
+  <!-- ═══════════════════════════════════════ -->
+  <path d="M 945,190 C 945,28 115,28 115,190"
+        stroke="#58585e" stroke-width="1.5"
+        stroke-dasharray="8,5" fill="none"/>
+  <path d="M 112,196 L 115,186 L 118,196" fill="#58585e"/>
+
+  <!-- Learning Curation ceremony pill on return arc -->
+  <rect x="427" y="18" width="206" height="28" rx="14"
+        fill="#303034" stroke="#e8a87c" stroke-width="1.2" stroke-opacity="0.6"/>
+  <use href="#human" x="437" y="24" width="16" height="16"/>
+  <text x="540" y="37" text-anchor="middle"
+        class="mono" font-size="10" font-weight="600" fill="#e8a87c"
+        letter-spacing="0.04em">LEARNING CURATION</text>
+
+  <text x="530" y="66" text-anchor="middle"
+        font-size="10" fill="#a0a0a8" font-style="italic">accumulated intelligence</text>
+
+  <!-- ═══════════════════════════════════════ -->
+  <!-- PHASE 1: DEFINE (Human)                -->
+  <!-- ═══════════════════════════════════════ -->
+  <rect x="30" y="186" width="165" height="140" rx="7"
+        fill="#303034" stroke="#e8a87c" stroke-width="1.2" stroke-opacity="0.4"/>
+
+  <text x="112" y="216" text-anchor="middle"
+        class="mono" font-size="14" font-weight="700" fill="#e8a87c"
+        letter-spacing="0.05em">DEFINE</text>
+
+  <line x1="54" y1="228" x2="171" y2="228"
+        stroke="#58585e" stroke-width="0.5" stroke-opacity="0.3"/>
+
+  <text x="112" y="250" text-anchor="middle"
+        font-size="10.5" fill="#b8b8be">product discovery</text>
+  <text x="112" y="268" text-anchor="middle"
+        font-size="10.5" fill="#b8b8be">spec authoring</text>
+  <text x="112" y="286" text-anchor="middle"
+        font-size="10.5" fill="#b8b8be">context alignment</text>
+
+  <!-- Human icon + label -->
+  <use href="#human" x="80" y="302" width="18" height="18"/>
+  <text x="104" y="316" font-size="9.5" fill="#e8a87c" fill-opacity="0.7">PM · Eng · Design</text>
+
+  <!-- ═══════════════════════════════════════ -->
+  <!-- TRANSITION: DEFINE → EXECUTE           -->
+  <!-- ═══════════════════════════════════════ -->
+
+  <!-- Arrow -->
+  <line x1="199" y1="256" x2="282" y2="256"
+        stroke="#58585e" stroke-width="1.8"/>
+  <path d="M 278,252 L 286,256 L 278,260" fill="#58585e"/>
+
+  <!-- Spec Session ceremony pill -->
+  <rect x="197" y="216" width="126" height="24" rx="12"
+        fill="#303034" stroke="#e8a87c" stroke-width="1" stroke-opacity="0.5"/>
+  <use href="#human" x="205" y="220" width="16" height="16"/>
+  <text x="268" y="233" text-anchor="middle"
+        class="mono" font-size="9" font-weight="600" fill="#e8a87c"
+        letter-spacing="0.03em">SPEC SESSION</text>
+
+  <!-- Artifact label below arrow -->
+  <text x="240" y="276" text-anchor="middle"
+        font-size="9" fill="#a0a0a8" font-style="italic">structured spec</text>
+
+  <!-- ═══════════════════════════════════════ -->
+  <!-- PHASE 2: EXECUTE (System)              -->
+  <!-- ═══════════════════════════════════════ -->
+  <rect x="290" y="156" width="240" height="200" rx="8"
+        fill="#303034" fill-opacity="0.6"
+        stroke="#00ccaa" stroke-width="1.2" stroke-opacity="0.2"/>
+
+  <text x="410" y="184" text-anchor="middle"
+        class="mono" font-size="14" font-weight="700" fill="#00ccaa"
+        letter-spacing="0.05em">EXECUTE</text>
+
+  <line x1="314" y1="194" x2="506" y2="194"
+        stroke="#58585e" stroke-width="0.5" stroke-opacity="0.3"/>
+
+  <!-- Prepare row -->
+  <text x="314" y="216" font-size="9" fill="#a0a0a8" font-weight="600"
+        letter-spacing="0.03em">PREPARE</text>
+  <text x="314" y="232"
+        class="mono" font-size="9.5" fill="#80f0d8" fill-opacity="0.8">validate · plan · verify</text>
+
+  <!-- Build row -->
+  <text x="314" y="256" font-size="9" fill="#a0a0a8" font-weight="600"
+        letter-spacing="0.03em">BUILD</text>
+  <text x="314" y="272"
+        class="mono" font-size="9.5" fill="#80f0d8" fill-opacity="0.8">run · review (N parallel)</text>
+
+  <!-- Ship row -->
+  <text x="314" y="296" font-size="9" fill="#a0a0a8" font-weight="600"
+        letter-spacing="0.03em">SHIP</text>
+  <text x="314" y="312"
+        class="mono" font-size="9.5" fill="#80f0d8" fill-opacity="0.8">coherence · integrate</text>
+
+  <!-- Agent icon + escalation note -->
+  <use href="#robot" x="314" y="328" width="18" height="18"/>
+  <text x="338" y="342" font-size="9.5" fill="#80f0d8" fill-opacity="0.6">7 stages · ~5% human escalation</text>
+
+  <!-- ═══════════════════════════════════════ -->
+  <!-- TRANSITION: EXECUTE → JUDGE            -->
+  <!-- ═══════════════════════════════════════ -->
+
+  <!-- Arrow -->
+  <line x1="534" y1="256" x2="618" y2="256"
+        stroke="#58585e" stroke-width="1.8"/>
+  <path d="M 614,252 L 622,256 L 614,260" fill="#58585e"/>
+
+  <!-- Outcome Review ceremony pill -->
+  <rect x="530" y="216" width="152" height="24" rx="12"
+        fill="#303034" stroke="#e8a87c" stroke-width="1" stroke-opacity="0.5"/>
+  <use href="#human" x="538" y="220" width="16" height="16"/>
+  <text x="614" y="233" text-anchor="middle"
+        class="mono" font-size="9" font-weight="600" fill="#e8a87c"
+        letter-spacing="0.03em">OUTCOME REVIEW</text>
+
+  <!-- Artifact label below arrow -->
+  <text x="576" y="276" text-anchor="middle"
+        font-size="9" fill="#a0a0a8" font-style="italic">verification evidence</text>
+
+  <!-- ═══════════════════════════════════════ -->
+  <!-- PHASE 3: JUDGE (Human)                 -->
+  <!-- ═══════════════════════════════════════ -->
+  <rect x="626" y="186" width="150" height="140" rx="7"
+        fill="#303034" stroke="#e8a87c" stroke-width="1.2" stroke-opacity="0.4"/>
+
+  <text x="701" y="216" text-anchor="middle"
+        class="mono" font-size="14" font-weight="700" fill="#e8a87c"
+        letter-spacing="0.05em">JUDGE</text>
+
+  <line x1="650" y1="228" x2="752" y2="228"
+        stroke="#58585e" stroke-width="0.5" stroke-opacity="0.3"/>
+
+  <text x="701" y="250" text-anchor="middle"
+        font-size="10.5" fill="#b8b8be">verification report</text>
+  <text x="701" y="268" text-anchor="middle"
+        font-size="10.5" fill="#b8b8be">guardian findings</text>
+  <text x="701" y="286" text-anchor="middle"
+        font-size="10.5" fill="#b8b8be">accept · reject · refine</text>
+
+  <!-- Human icon + label -->
+  <use href="#human" x="672" y="302" width="18" height="18"/>
+  <text x="696" y="316" font-size="9.5" fill="#e8a87c" fill-opacity="0.7">PM · Eng</text>
+
+  <!-- ═══════════════════════════════════════ -->
+  <!-- TRANSITION: JUDGE → LEARN              -->
+  <!-- ═══════════════════════════════════════ -->
+
+  <!-- Arrow -->
+  <line x1="780" y1="256" x2="860" y2="256"
+        stroke="#58585e" stroke-width="1.8"/>
+  <path d="M 856,252 L 864,256 L 856,260" fill="#58585e"/>
+
+  <!-- Artifact label below arrow -->
+  <text x="820" y="276" text-anchor="middle"
+        font-size="9" fill="#a0a0a8" font-style="italic">corrections</text>
+
+  <!-- ═══════════════════════════════════════ -->
+  <!-- PHASE 4: LEARN (System → Human)        -->
+  <!-- ═══════════════════════════════════════ -->
+  <rect x="868" y="186" width="158" height="140" rx="7"
+        fill="#303034" stroke="#00ccaa" stroke-width="1.2" stroke-opacity="0.2"/>
+
+  <text x="947" y="216" text-anchor="middle"
+        class="mono" font-size="14" font-weight="700" fill="#00ccaa"
+        letter-spacing="0.05em">LEARN</text>
+
+  <line x1="892" y1="228" x2="1002" y2="228"
+        stroke="#58585e" stroke-width="0.5" stroke-opacity="0.3"/>
+
+  <text x="947" y="250" text-anchor="middle"
+        font-size="10.5" fill="#b8b8be">extract observations</text>
+  <text x="947" y="268" text-anchor="middle"
+        font-size="10.5" fill="#b8b8be">synthesize learnings</text>
+  <text x="947" y="286" text-anchor="middle"
+        font-size="10.5" fill="#b8b8be">inject into next run</text>
+
+  <!-- Agent + human icons -->
+  <use href="#robot" x="916" y="302" width="18" height="18"/>
+  <use href="#human" x="940" y="302" width="18" height="18"/>
+  <text x="964" y="316" font-size="9.5" fill="#a0a0a8" fill-opacity="0.7">+ curation</text>
+
+  <!-- ═══════════════════════════════════════ -->
+  <!-- LEGEND                                 -->
+  <!-- ═══════════════════════════════════════ -->
+  <g transform="translate(30, 420)">
+    <use href="#human" x="0" y="0" width="18" height="18"/>
+    <text x="24" y="14" font-size="10.5" fill="#e8a87c" font-weight="500">Human phase</text>
+
+    <use href="#robot" x="140" y="0" width="18" height="18"/>
+    <text x="164" y="14" font-size="10.5" fill="#80f0d8" font-weight="500">System phase</text>
+
+    <rect x="290" y="2" width="14" height="14" rx="7"
+          fill="#303034" stroke="#e8a87c" stroke-width="0.8" stroke-opacity="0.5"/>
+    <text x="310" y="14" font-size="10.5" fill="#a0a0a8">Human ceremony (event-driven, not calendar)</text>
+  </g>
+</svg>

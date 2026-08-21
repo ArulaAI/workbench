@@ -1,0 +1,120 @@
+{
+  "id": "9",
+  "title": "Build SpecifiedCell, SpecPill, and StateBadge components",
+  "description": "Create three components for the Specified column:\n\n**1. `dashboard/frontend/components/define/specified-cell.tsx` — SpecifiedCell**\nRenders the left column for each feature row. Contains:\n- Feature name (13px/500, truncate at 32 chars)\n- StateBadge next to name\n- Three SpecPill components (Product, Technical, Design)\n- Audit warnings: warning count + warning text lines (11px, --color-amber)\n- Open questions count (11px, --color-text-tertiary)\n- Sizing estimate when present\n- Compact variant for unplanned features (single-line, padding 10px 20px)\n- Full variant for complete/executing/writing (padding 16px 20px)\n\n**2. `dashboard/frontend/components/define/spec-pill.tsx` — SpecPill**\nThree-state indicator pill:\n- `present`: emerald bg `rgba(68,204,119,0.06)`, text `--color-emerald`\n- `warning`: amber bg `rgba(240,178,50,0.06)`, text `--color-amber`\n- `missing`: bg `--color-bg-card`, dashed border `--color-text-tertiary`, text `--color-text-tertiary`\n- Label in --font-mono, 9px/500\n- Props: label ('Product' | 'Technical' | 'Design'), state ('present' | 'warning' | 'missing')\n\n**3. `dashboard/frontend/components/define/state-badge.tsx` — StateBadge**\nLifecycle badge:\n- COMPLETE: emerald bg/text\n- EXECUTING: accent bg/text\n- WRITING: violet bg/text\n- UNPLANNED: neutral bg, tertiary text\n- Font: --font-mono, 8px/600, uppercase\n- Props: state ('complete' | 'executing' | 'writing' | 'unplanned')\n\nDerive SpecPill state from feature data: `exists=false` → missing, `exists=true && auditStatus='warning'||'error'` → warning, else → present.",
+  "acceptance_criteria": "- SpecifiedCell renders feature name truncated at 32 chars with ellipsis\n- SpecifiedCell renders StateBadge and three SpecPill components\n- SpecifiedCell shows audit warning count and text when present\n- SpecifiedCell renders compact variant for unplanned features\n- SpecPill renders three visual states with correct colors (present/emerald, warning/amber, missing/dashed)\n- SpecPill uses --font-mono at 9px/500\n- StateBadge renders four states with correct per-state colors\n- StateBadge uses --font-mono at 8px/600 uppercase\n- No hardcoded colors outside token system",
+  "depends_on": [
+    "8"
+  ],
+  "status": "pending",
+  "branch": "speed/speed-dashboard-define/task-9-build-specifiedcell-specpill-and-stateba",
+  "agent_model": "opus",
+  "created_at": "2026-03-21T11:49:38Z",
+  "started_at": "2026-03-21T15:25:12Z",
+  "completed_at": "2026-03-21T15:27:14Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": "{\"verdict\":\"request_changes\",\"spec_verification\":[{\"spec_quote\":\"SpecifiedCell renders feature name truncated at 32 chars with ellipsis\",\"spec_section\":\"Acceptance Criteria #1\",\"satisfied\":true,\"evidence\":\"specified-cell.tsx:28-30 — truncateName slices at 32 and appends \\\\u2026. Tests at specified-cell.test.tsx:30-40 cover exact-length, over-length, and under-length cases.\",\"notes\":null},{\"spec_quote\":\"SpecifiedCell renders StateBadge and three SpecPill components\",\"spec_section\":\"Acceptance Criteria #2\",\"satisfied\":true,\"evidence\":\"specified-cell.tsx:111 renders StateBadge, lines 116-118 render Product/Technical/Design SpecPills. Compact (unplanned) variant renders only StateBadge per AC4 — this is correct behaviour, not a gap.\",\"notes\":null},{\"spec_quote\":\"SpecifiedCell shows audit warning count and text when present\",\"spec_section\":\"Acceptance Criteria #3\",\"satisfied\":true,\"evidence\":\"specified-cell.tsx:70-75 aggregates all warnings; lines 122-150 render count string with singular/plural and individual warning lines. Tests at specified-cell.test.tsx:122-171 verify count, singular form, individual lines, and absent-case.\",\"notes\":null},{\"spec_quote\":\"SpecifiedCell renders compact variant for unplanned features\",\"spec_section\":\"Acceptance Criteria #4\",\"satisfied\":true,\"evidence\":\"specified-cell.tsx:39-68 — early return for state === 'unplanned' with name + StateBadge only, no pills. specified-cell.test.tsx:209-226 verifies pills are absent and padding is 10px 20px.\",\"notes\":null},{\"spec_quote\":\"SpecPill renders three visual states with correct colors (present/emerald, warning/amber, missing/dashed)\",\"spec_section\":\"Acceptance Criteria #5\",\"satisfied\":\"partial\",\"evidence\":\"spec-pill.tsx:36-61 renders all three states with correct text colors (--color-emerald, --color-amber, --color-text-tertiary) and correct dashed border for missing. State tests at spec-pill.test.tsx:23-76 pass. However, background colors are hardcoded rgba literals (see AC9 violation).\",\"notes\":\"Visual state logic is correct; color token compliance is not (see issues).\"},{\"spec_quote\":\"SpecPill uses --font-mono at 9px/500\",\"spec_section\":\"Acceptance Criteria #6\",\"satisfied\":true,\"evidence\":\"spec-pill.tsx:41-43 — fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 500. Verified by spec-pill.test.tsx:86-92.\"},{\"spec_quote\":\"StateBadge renders four states with correct per-state colors\",\"spec_section\":\"Acceptance Criteria #7\",\"satisfied\":\"partial\",\"evidence\":\"state-badge.tsx:3-20 maps complete→emerald, executing→accent, writing→amber, unplanned→tertiary-text. Text color tokens are correct. Background colors are hardcoded rgba literals (see AC9).\",\"notes\":\"All four states render; color token compliance is not (see issues).\"},{\"spec_quote\":\"StateBadge uses --font-mono at 8px/600 uppercase\",\"spec_section\":\"Acceptance Criteria #8\",\"satisfied\":true,\"evidence\":\"state-badge.tsx:34-38 — fontFamily: 'var(--font-mono)', fontSize: 8, fontWeight: 600, textTransform: 'uppercase'. Verified by state-badge.test.tsx:61-65.\"},{\"spec_quote\":\"No hardcoded colors outside token system\",\"spec_section\":\"Acceptance Criteria #9\",\"satisfied\":false,\"evidence\":\"Six hardcoded rgba values across two files — see issues.\",\"notes\":\"This is the primary blocker for approval.\"}],\"missing_from_spec\":[],\"out_of_scope\":[{\"file\":\"dashboard/frontend/components/define/specified-cell.tsx\",\"line\":153,\"description\":\"openQuestions rendering is not mentioned in any acceptance criterion. May be a reasonable extension of the component, but no spec requirement was provided to verify against.\"},{\"file\":\"dashboard/frontend/components/define/specified-cell.tsx\",\"line\":169,\"description\":\"sizingEstimate rendering similarly has no matching acceptance criterion. Same caveat as above.\"}],\"issues\":[{\"severity\":\"major\",\"file\":\"dashboard/frontend/components/define/spec-pill.tsx\",\"line\":14,\"message\":\"Hardcoded rgba(68, 204, 119, 0.06) violates AC9. This value derives from --color-emerald but is not a registered token.\",\"suggestion\":\"Add --color-emerald-subtle: rgba(68, 204, 119, 0.06) to globals.css and use that token here. Same pattern for the amber equivalent on line 19.\"},{\"severity\":\"major\",\"file\":\"dashboard/frontend/components/define/state-badge.tsx\",\"line\":5,\"message\":\"Four hardcoded rgba backgrounds: rgba(68, 204, 119, 0.12), rgba(0, 212, 170, 0.10), rgba(240, 178, 50, 0.08), rgba(85, 85, 106, 0.12). None are registered tokens.\",\"suggestion\":\"globals.css already has --color-accent-glow: rgba(0, 212, 170, 0.12). The executing background (0.10) diverges from this token — decide whether to align to the existing token or define a new --color-accent-dim-10. Add --color-emerald-subtle, --color-amber-subtle, --color-surface-muted (or equivalent) for the other three.\"},{\"severity\":\"minor\",\"file\":\"dashboard/frontend/components/define/specified-cell.tsx\",\"line\":43,\"message\":\"Compact variant padding is 10px 20px. 10 is not on the 4px grid (CLAUDE.md: 'All spacing values should be multiples of 4').\",\"suggestion\":\"Use 8px or 12px vertical padding.\"},{\"severity\":\"minor\",\"file\":\"dashboard/frontend/components/define/specified-cell.tsx\",\"line\":93,\"message\":\"gap: 6 between name and StateBadge is not on the 4px grid.\",\"suggestion\":\"Use gap: 4 or gap: 8.\"},{\"severity\":\"minor\",\"file\":\"dashboard/frontend/components/define/specified-cell.tsx\",\"line\":123,\"message\":\"gap: 2 in the warning list column is not on the 4px grid.\",\"suggestion\":\"Use gap: 4.\"},{\"severity\":\"minor\",\"file\":\"dashboard/frontend/components/define/spec-pill.tsx\",\"line\":51,\"message\":\"padding: '3px 6px' — 3 is not on the 4px grid.\",\"suggestion\":\"Use padding: '4px 8px'.\"},{\"severity\":\"nit\",\"file\":\"dashboard/frontend/components/define/state-badge.test.tsx\",\"line\":54,\"message\":\"Typography test checks fontFamily, fontSize, and fontWeight but does not assert textTransform: 'uppercase', which is part of AC8.\",\"suggestion\":\"Add expect(badge).toHaveStyle({ textTransform: 'uppercase' }) to the existing typography test.\"}],\"strengths\":[\"derivePillState logic is clean and correctly maps the three SpecInfo fields to PillState without branching complexity.\",\"Test coverage is extensive — 26 cases in specified-cell.test.tsx cover truncation edge cases, all pill states, warning singular/plural, compact variant isolation, and padding variants. Well above the minimum.\",\"The BADGE_STYLES and PILL_STYLES lookup tables keep the rendering logic stateless and easy to reason about.\",\"Compact variant correctly suppresses spec pills — the unplanned path returns early before building the pill row, so there is no conditional wrapping noise in the full render path.\",\"All three components export their types (BadgeState, PillState, PillLabel), making them composable for downstream consumers.\"]}",
+  "base_commit": "7ed4b169751e655eb28450aea043215ed898e0bf",
+  "files_touched": [
+    "dashboard/frontend/components/define/specified-cell.tsx",
+    "dashboard/frontend/components/define/spec-pill.tsx",
+    "dashboard/frontend/components/define/state-badge.tsx",
+    "dashboard/frontend/components/define/specified-cell.test.tsx",
+    "dashboard/frontend/components/define/spec-pill.test.tsx",
+    "dashboard/frontend/components/define/state-badge.test.tsx"
+  ],
+  "spec_references": [
+    {
+      "spec": "design",
+      "section": "Component Inventory",
+      "requirement": "SpecifiedCell, SpecPill (three-state), StateBadge"
+    },
+    {
+      "spec": "design",
+      "section": "Color Application",
+      "requirement": "Spec pill colors for present/warning/missing, state badge colors per state"
+    },
+    {
+      "spec": "design",
+      "section": "Typography",
+      "requirement": "Feature name 13px/500, spec pill 9px/500 mono, state badge 8px/600 mono"
+    },
+    {
+      "spec": "design",
+      "section": "Data Binding",
+      "requirement": "Spec pill state derived from exists + auditStatus"
+    },
+    {
+      "spec": "product",
+      "section": "User Stories",
+      "requirement": "S1: spec indicators, S3: audit warnings per feature, S4: lifecycle-state-based structure"
+    }
+  ],
+  "rationale": "The Specified column is the most visually complex column with the most sub-components. Grouped together because SpecPill and StateBadge are only used inside SpecifiedCell. Depends on task 8 (the page shell that renders these cells) to ensure the grid context exists.",
+  "assumptions": [
+    "SpecPill derives state from SpecIndicator fields per design spec Data Binding section"
+  ],
+  "timeout_count": 1,
+  "review_verdict": "request_changes",
+  "retry_count": 2,
+  "decisions": [
+    "Writing state badge changed from violet to amber (rgba(240,178,50,0.08) bg, --color-amber text) to match design spec and existing DefinePanel.tsx pattern",
+    "letterSpacing changed from 0.06em to 0.03em to match design spec typography table",
+    "totalWarnings now derives from allWarnings.length instead of summing warningCount fields, eliminating potential count/text divergence when caller data is inconsistent",
+    "Did NOT modify page.tsx — previous attempt failed scope check for touching that file (owned by task 12)"
+  ],
+  "concerns": [
+    "The 'missing' pill uses a dashed-border visual rather than the opacity:0.35 dimming described in the design spec Implementation Notes. The reviewer flagged this as needing explicit confirmation. The task description specifies dashed border for missing state, so I kept the current implementation, but this deviation from the design spec's 'dim to opacity 0.35' language remains unresolved."
+  ],
+  "failure_classification": {
+    "class": "pipeline",
+    "subclass": "decomposition_error",
+    "evidence": "Agent modified 1 file(s) owned by other tasks: dashboard/frontend/app/define/page.tsx (task 12)"
+  },
+  "gate_results": {
+    "checks": [
+      {
+        "name": "diff_non_empty",
+        "status": "pass"
+      },
+      {
+        "name": "declared_files",
+        "status": "pass"
+      },
+      {
+        "name": "scope",
+        "status": "pass"
+      },
+      {
+        "name": "python_imports",
+        "status": "pass"
+      },
+      {
+        "name": "not_blocked",
+        "status": "pass"
+      },
+      {
+        "name": "test_coverage",
+        "status": "pass"
+      },
+      {
+        "name": "gate_evidence",
+        "status": "warn"
+      },
+      {
+        "name": "criteria",
+        "status": "warn"
+      },
+      {
+        "name": "secrets",
+        "status": "pass"
+      },
+      {
+        "name": "syntax",
+        "status": "pass"
+      }
+    ],
+    "scope": {}
+  }
+}

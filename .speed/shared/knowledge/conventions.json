@@ -1,0 +1,2843 @@
+{
+  "conventions": [
+    {
+      "id": "conv-comodification-79f18ab7398f",
+      "convention": "Always modify `dashboard/frontend/components/landing/LearnPanel.test.tsx` and `dashboard/frontend/components/landing/LearnPanel.tsx` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "dashboard/frontend/components/landing"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "dashboard/frontend/components/landing/LearnPanel.test.tsx",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-4c61b763e2c9",
+      "convention": "Always modify `lib/cmd/retry.sh` and `lib/cmd/run.sh` together. Co-modified in 1/2 commits (92%).",
+      "scope": [
+        "lib/cmd"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "lib/cmd/retry.sh",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 0.92,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-1a7c33cf6fac",
+      "convention": "Always modify `tests/test_rca_git_topology.sh` and `tests/test_rca_solution_logic.sh` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "tests"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "tests/test_rca_git_topology.sh",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-dcc8527311c0",
+      "convention": "Always modify `dashboard/frontend/vitest.config.ts` and `dashboard/frontend/vitest.setup.ts` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "dashboard/frontend"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "dashboard/frontend/vitest.config.ts",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-d60701961fe2",
+      "convention": "Always modify `dashboard/frontend/{__tests__ => components}/landing/DefinePanel.test.tsx` and `dashboard/frontend/{__tests__ => components}/landing/PanelLabel.test.tsx` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "dashboard/frontend/{__tests__ => components}/landing"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "dashboard/frontend/{__tests__ => components}/landing/DefinePanel.test.tsx",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-352bcdfce18e",
+      "convention": "Always modify `dashboard/frontend/__tests__/landing/DefinePanel.test.tsx` and `dashboard/frontend/__tests__/landing/PanelLabel.test.tsx` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "dashboard/frontend/__tests__/landing"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "dashboard/frontend/__tests__/landing/DefinePanel.test.tsx",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-f44e1538f30c",
+      "convention": "Always modify `specs/product/speed-dashboard-define.md` and `specs/product/speed-dashboard-landing.md` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "specs/product"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "specs/product/speed-dashboard-define.md",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-88054526e733",
+      "convention": "Always modify `specs/tech/speed-dashboard-define.md` and `specs/tech/speed-dashboard-landing.md` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "specs/tech"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "specs/tech/speed-dashboard-define.md",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-615359af2f72",
+      "convention": "Always modify `specs/design/speed-dashboard-define.md` and `specs/design/speed-dashboard-landing.md` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "specs/design"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "specs/design/speed-dashboard-define.md",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-2dc931e731d5",
+      "convention": "Always modify `agents/architect-enrich.md` and `agents/architect-skeleton.md` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "agents"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "agents/architect-enrich.md",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-b8fc28bebe30",
+      "convention": "Always modify `docs/process.md` and `lib/context/spec_split.py` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "docs",
+        "lib/context"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "docs/process.md",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-9e2f50843d25",
+      "convention": "Always modify `site/public/images/speed-ceremony-comparison.svg` and `site/public/images/speed-development-cycle.svg` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "site/public/images"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "site/public/images/speed-ceremony-comparison.svg",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-92038dd3825d",
+      "convention": "Always modify `specs/defects/csg-import-resolution-broken.md` and `templates/architect-enrich-output.json` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "specs/defects",
+        "templates"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "specs/defects/csg-import-resolution-broken.md",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-ab6f12fe7782",
+      "convention": "Always modify `site/package-lock.json` and `site/tsconfig.json` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "site"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "site/package-lock.json",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-fc24364423c2",
+      "convention": "Always modify `site/src/components/demo/ActNav.tsx` and `site/src/components/demo/ReplayShell.tsx` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "site/src/components/demo"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "site/src/components/demo/ActNav.tsx",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-8d0eb4aa1ded",
+      "convention": "Always modify `site/src/components/demo/acts/ActLearning.tsx` and `site/src/components/demo/acts/ActPipeline.tsx` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "site/src/components/demo/acts"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "site/src/components/demo/acts/ActLearning.tsx",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-0604d3c37c5a",
+      "convention": "Always modify `site/src/data/f10-replay.json` and `site/src/pages/demo/replay.astro` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "site/src/data",
+        "site/src/pages/demo"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "site/src/data/f10-replay.json",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-99f850637d4b",
+      "convention": "Always modify `site/src/stores/replay.ts` and `site/src/styles/demo.css` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "site/src/stores",
+        "site/src/styles"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "site/src/stores/replay.ts",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-5ec14b5b6c7d",
+      "convention": "Always modify `docs/api/agents/architect.md` and `docs/api/agents/coherence-checker.md` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "docs/api/agents"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "docs/api/agents/architect.md",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-a202245bd42f",
+      "convention": "Always modify `lib/learn/__init__.py` and `lib/learn/classify.py` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "lib/learn"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "lib/learn/__init__.py",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-55dac3ae4221",
+      "convention": "Always modify `lib/context/rules/c/fixtures/constants.c` and `lib/context/rules/c/fixtures/constants.c.expected.json` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "lib/context/rules/c/fixtures"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "lib/context/rules/c/fixtures/constants.c",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-54d84f35c688",
+      "convention": "Always modify `lib/context/rules/c_sharp/definitions.yml` and `lib/context/rules/cpp/definitions.yml` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "lib/context/rules/c_sharp",
+        "lib/context/rules/cpp"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "lib/context/rules/c_sharp/definitions.yml",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-caa263e8e461",
+      "convention": "Always modify `lib/context/rules/c_sharp/fixtures/Constants.cs` and `lib/context/rules/c_sharp/fixtures/Constants.cs.expected.json` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "lib/context/rules/c_sharp/fixtures"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "lib/context/rules/c_sharp/fixtures/Constants.cs",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-583497bbdeaf",
+      "convention": "Always modify `lib/context/rules/cpp/fixtures/constants.cpp` and `lib/context/rules/cpp/fixtures/constants.cpp.expected.json` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "lib/context/rules/cpp/fixtures"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "lib/context/rules/cpp/fixtures/constants.cpp",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-48254c83dad8",
+      "convention": "Always modify `lib/context/rules/go/definitions.yml` and `lib/context/rules/ruby/definitions.yml` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "lib/context/rules/go",
+        "lib/context/rules/ruby"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "lib/context/rules/go/definitions.yml",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-f95b17d27926",
+      "convention": "Always modify `lib/context/rules/go/fixtures/constants.go` and `lib/context/rules/go/fixtures/constants.go.expected.json` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "lib/context/rules/go/fixtures"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "lib/context/rules/go/fixtures/constants.go",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-8d6a7afe72eb",
+      "convention": "Always modify `lib/context/rules/java/definitions.yml` and `lib/context/rules/javascript/definitions.yml` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "lib/context/rules/java",
+        "lib/context/rules/javascript"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "lib/context/rules/java/definitions.yml",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-23c658aee16d",
+      "convention": "Always modify `lib/context/rules/java/fixtures/Constants.java` and `lib/context/rules/java/fixtures/Constants.java.expected.json` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "lib/context/rules/java/fixtures"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "lib/context/rules/java/fixtures/Constants.java",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-5bae8ee97c1d",
+      "convention": "Always modify `lib/context/rules/javascript/fixtures/constants.js` and `lib/context/rules/javascript/fixtures/constants.js.expected.json` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "lib/context/rules/javascript/fixtures"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "lib/context/rules/javascript/fixtures/constants.js",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-f189c1718c8c",
+      "convention": "Always modify `lib/context/rules/python/definitions.yml` and `lib/context/rules/typescript/definitions.yml` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "lib/context/rules/python",
+        "lib/context/rules/typescript"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "lib/context/rules/python/definitions.yml",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-be44df3cc938",
+      "convention": "Always modify `lib/context/rules/python/fixtures/constants.py` and `lib/context/rules/python/fixtures/constants.py.expected.json` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "lib/context/rules/python/fixtures"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "lib/context/rules/python/fixtures/constants.py",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-1998ebcd0716",
+      "convention": "Always modify `lib/context/rules/ruby/fixtures/constants.rb` and `lib/context/rules/ruby/fixtures/constants.rb.expected.json` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "lib/context/rules/ruby/fixtures"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "lib/context/rules/ruby/fixtures/constants.rb",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-f0188d03cfcf",
+      "convention": "Always modify `lib/context/rules/rust/fixtures/constants.rs` and `lib/context/rules/rust/fixtures/constants.rs.expected.json` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "lib/context/rules/rust/fixtures"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "lib/context/rules/rust/fixtures/constants.rs",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-2d3a91b8dce1",
+      "convention": "Always modify `lib/context/rules/tsx/fixtures/constants.tsx` and `lib/context/rules/tsx/fixtures/constants.tsx.expected.json` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "lib/context/rules/tsx/fixtures"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "lib/context/rules/tsx/fixtures/constants.tsx",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-9c8b06d5669e",
+      "convention": "Always modify `lib/context/rules/typescript/fixtures/constants.ts` and `lib/context/rules/typescript/fixtures/constants.ts.expected.json` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "lib/context/rules/typescript/fixtures"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "lib/context/rules/typescript/fixtures/constants.ts",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-b711d6499586",
+      "convention": "Always modify `docs/api/agent-roles.md` and `docs/architecture/agent-orchestration.md` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "docs/api",
+        "docs/architecture"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "docs/api/agent-roles.md",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-b3edb1ab7a1e",
+      "convention": "Always modify `dashboard/README.md` and `dashboard/backend/.gitignore` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "dashboard",
+        "dashboard/backend"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "dashboard/README.md",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-44fdd1c14417",
+      "convention": "Always modify `dashboard/backend/resolvers/__init__.py` and `dashboard/backend/resolvers/budget.py` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "dashboard/backend/resolvers"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "dashboard/backend/resolvers/__init__.py",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-bffd0da55d96",
+      "convention": "Always modify `dashboard/frontend/app/analytics/page.tsx` and `dashboard/frontend/app/budget/page.tsx` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "dashboard/frontend/app/analytics",
+        "dashboard/frontend/app/budget"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "dashboard/frontend/app/analytics/page.tsx",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-94bb1eecbf32",
+      "convention": "Always modify `dashboard/frontend/app/globals.css` and `dashboard/frontend/app/layout.tsx` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "dashboard/frontend/app"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "dashboard/frontend/app/globals.css",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-062236cb1cdd",
+      "convention": "Always modify `dashboard/frontend/app/spec-alignment/page.tsx` and `dashboard/frontend/app/topology/page.tsx` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "dashboard/frontend/app/spec-alignment",
+        "dashboard/frontend/app/topology"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "dashboard/frontend/app/spec-alignment/page.tsx",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-bf370203e667",
+      "convention": "Always modify `dashboard/frontend/components/layout/app-shell.tsx` and `dashboard/frontend/components/layout/connection-status.tsx` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "dashboard/frontend/components/layout"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "dashboard/frontend/components/layout/app-shell.tsx",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-4e2ef730e79b",
+      "convention": "Always modify `dashboard/frontend/components/shared/chart-card.tsx` and `dashboard/frontend/components/shared/error-boundary.tsx` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "dashboard/frontend/components/shared"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "dashboard/frontend/components/shared/chart-card.tsx",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-dafe00ba5b81",
+      "convention": "Always modify `dashboard/frontend/components/topology/code-treemap.tsx` and `dashboard/frontend/components/topology/edge-bundling.tsx` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "dashboard/frontend/components/topology"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "dashboard/frontend/components/topology/code-treemap.tsx",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-2caf5868c4de",
+      "convention": "Always modify `dashboard/frontend/lib/graphql/client.ts` and `dashboard/frontend/lib/graphql/provider.tsx` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "dashboard/frontend/lib/graphql"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "dashboard/frontend/lib/graphql/client.ts",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-3cdc3abd97aa",
+      "convention": "Always modify `dashboard/frontend/lib/graphql/queries/analytics.ts` and `dashboard/frontend/lib/graphql/queries/budget.ts` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "dashboard/frontend/lib/graphql/queries"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "dashboard/frontend/lib/graphql/queries/analytics.ts",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-73dbc239745c",
+      "convention": "Always modify `dashboard/frontend/lib/hooks/use-feature-selector.ts` and `dashboard/frontend/lib/utils/cn.ts` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "dashboard/frontend/lib/hooks",
+        "dashboard/frontend/lib/utils"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "dashboard/frontend/lib/hooks/use-feature-selector.ts",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-29d7d581101d",
+      "convention": "Always modify `docs/tooling/tmux-spec.md` and `docs/tooling/tmux-workflow.md` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "docs/tooling"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "docs/tooling/tmux-spec.md",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-4d86d620a3d0",
+      "convention": "Always modify `docs/architecture/assets/architecture-overview.svg` and `docs/architecture/assets/context-pipeline-overview.svg` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "docs/architecture/assets"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "docs/architecture/assets/architecture-overview.svg",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-84e57d871f17",
+      "convention": "Always modify `site/src/components/Landing/Footer.astro` and `site/src/components/Landing/Nav.astro` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "site/src/components/Landing"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "site/src/components/Landing/Footer.astro",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-0182fd6ccbfb",
+      "convention": "Always modify `site/src/pages/404.astro` and `site/src/pages/500.astro` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "site/src/pages"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "site/src/pages/404.astro",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-bc7e98a61769",
+      "convention": "Always modify `lib/context/data/extraction.toml` and `lib/context/rules/c/references.yml` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "lib/context/data",
+        "lib/context/rules/c"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "lib/context/data/extraction.toml",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-4dfc069f352e",
+      "convention": "Always modify `.config/tmux/scripts/sessionizer.sh` and `.config/tmux/tmux.conf` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        ".config/tmux",
+        ".config/tmux/scripts"
+      ],
+      "confidence": "emerging",
+      "canonical_example": ".config/tmux/scripts/sessionizer.sh",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-09a0c4190e39",
+      "convention": "Always modify `README.md` and `example/README.md` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        ".",
+        "example"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "README.md",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-8057f0abd82f",
+      "convention": "Always modify `lib/context/rules/protobuf/types.yml` and `lib/context/rules/rust/models.yml` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "lib/context/rules/protobuf",
+        "lib/context/rules/rust"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "lib/context/rules/protobuf/types.yml",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-f0f0f8895d69",
+      "convention": "Always modify `lib/context/rules/tsx/models.yml` and `scripts/build-grammars.sh` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "lib/context/rules/tsx",
+        "scripts"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "lib/context/rules/tsx/models.yml",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-ecccd4755f2b",
+      "convention": "Always modify `tests/fixtures/base_processor.py` and `tests/fixtures/json_processor.py` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "tests/fixtures"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "tests/fixtures/base_processor.py",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-a9c740519653",
+      "convention": "Always modify `.github/workflows/deploy-site.yml` and `lib/criteria_verify.py` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        ".github/workflows",
+        "lib"
+      ],
+      "confidence": "emerging",
+      "canonical_example": ".github/workflows/deploy-site.yml",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-c2529b9c9a1d",
+      "convention": "Always modify `site/src/content.config.ts` and `site/src/content/docs/docs` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "site/src",
+        "site/src/content/docs"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "site/src/content.config.ts",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-81b498bc8eaa",
+      "convention": "Always modify `lib/context/data/grammars/.gitkeep` and `lib/context/rules/graphql/types.yml` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "lib/context/data/grammars",
+        "lib/context/rules/graphql"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "lib/context/data/grammars/.gitkeep",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-8b77bfa70648",
+      "convention": "Always modify `lib/__pycache__/contract_verify.cpython-313.pyc` and `lib/__pycache__/spec_ground.cpython-313.pyc` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "lib/__pycache__"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "lib/__pycache__/contract_verify.cpython-313.pyc",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-b04803071cf7",
+      "convention": "Always modify `example/specs/design/bookshelf.md` and `example/specs/product/bookshelf.md` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "example/specs/design",
+        "example/specs/product"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "example/specs/design/bookshelf.md",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-6694291780b3",
+      "convention": "Always modify `example/specs/tech/bookshelf.md` and `example/src/backend/app/__init__.py` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "example/specs/tech",
+        "example/src/backend/app"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "example/specs/tech/bookshelf.md",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-f54db11b023c",
+      "convention": "Always modify `example/src/backend/app/models/__init__.py` and `example/src/frontend/package.json` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "example/src/backend/app/models",
+        "example/src/frontend"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "example/src/backend/app/models/__init__.py",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    },
+    {
+      "id": "conv-comodification-be9177052d7e",
+      "convention": "Always modify `example/src/frontend/src/app/page.tsx` and `specs/unified-intake.md` together. Co-modified in 2/2 commits (100%).",
+      "scope": [
+        "example/src/frontend/src/app",
+        "specs"
+      ],
+      "confidence": "emerging",
+      "canonical_example": "example/src/frontend/src/app/page.tsx",
+      "exceptions": null,
+      "evolution": null,
+      "tags": [
+        "comodification"
+      ],
+      "evidence": {
+        "code_adherence": 1.0,
+        "observation_support": 0,
+        "files_checked": 2,
+        "recent_trend": "stable"
+      },
+      "source": "discovered"
+    }
+  ],
+  "conflicts": [],
+  "views": {
+    "developer": [
+      {
+        "id": "conv-comodification-79f18ab7398f",
+        "text": "- **[emerging]** Always modify `dashboard/frontend/components/landing/LearnPanel.test.tsx` and `dashboard/frontend/components/landing/LearnPanel.tsx` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "dashboard/frontend/components/landing"
+        ]
+      },
+      {
+        "id": "conv-comodification-4c61b763e2c9",
+        "text": "- **[emerging]** Always modify `lib/cmd/retry.sh` and `lib/cmd/run.sh` together. Co-modified in 1/2 commits (92%).",
+        "scope": [
+          "lib/cmd"
+        ]
+      },
+      {
+        "id": "conv-comodification-1a7c33cf6fac",
+        "text": "- **[emerging]** Always modify `tests/test_rca_git_topology.sh` and `tests/test_rca_solution_logic.sh` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "tests"
+        ]
+      },
+      {
+        "id": "conv-comodification-dcc8527311c0",
+        "text": "- **[emerging]** Always modify `dashboard/frontend/vitest.config.ts` and `dashboard/frontend/vitest.setup.ts` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "dashboard/frontend"
+        ]
+      },
+      {
+        "id": "conv-comodification-d60701961fe2",
+        "text": "- **[emerging]** Always modify `dashboard/frontend/{__tests__ => components}/landing/DefinePanel.test.tsx` and `dashboard/frontend/{__tests__ => components}/landing/PanelLabel.test.tsx` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "dashboard/frontend/{__tests__ => components}/landing"
+        ]
+      },
+      {
+        "id": "conv-comodification-352bcdfce18e",
+        "text": "- **[emerging]** Always modify `dashboard/frontend/__tests__/landing/DefinePanel.test.tsx` and `dashboard/frontend/__tests__/landing/PanelLabel.test.tsx` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "dashboard/frontend/__tests__/landing"
+        ]
+      },
+      {
+        "id": "conv-comodification-f44e1538f30c",
+        "text": "- **[emerging]** Always modify `specs/product/speed-dashboard-define.md` and `specs/product/speed-dashboard-landing.md` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "specs/product"
+        ]
+      },
+      {
+        "id": "conv-comodification-88054526e733",
+        "text": "- **[emerging]** Always modify `specs/tech/speed-dashboard-define.md` and `specs/tech/speed-dashboard-landing.md` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "specs/tech"
+        ]
+      },
+      {
+        "id": "conv-comodification-615359af2f72",
+        "text": "- **[emerging]** Always modify `specs/design/speed-dashboard-define.md` and `specs/design/speed-dashboard-landing.md` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "specs/design"
+        ]
+      },
+      {
+        "id": "conv-comodification-2dc931e731d5",
+        "text": "- **[emerging]** Always modify `agents/architect-enrich.md` and `agents/architect-skeleton.md` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "agents"
+        ]
+      },
+      {
+        "id": "conv-comodification-b8fc28bebe30",
+        "text": "- **[emerging]** Always modify `docs/process.md` and `lib/context/spec_split.py` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "docs",
+          "lib/context"
+        ]
+      },
+      {
+        "id": "conv-comodification-9e2f50843d25",
+        "text": "- **[emerging]** Always modify `site/public/images/speed-ceremony-comparison.svg` and `site/public/images/speed-development-cycle.svg` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "site/public/images"
+        ]
+      },
+      {
+        "id": "conv-comodification-92038dd3825d",
+        "text": "- **[emerging]** Always modify `specs/defects/csg-import-resolution-broken.md` and `templates/architect-enrich-output.json` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "specs/defects",
+          "templates"
+        ]
+      },
+      {
+        "id": "conv-comodification-ab6f12fe7782",
+        "text": "- **[emerging]** Always modify `site/package-lock.json` and `site/tsconfig.json` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "site"
+        ]
+      },
+      {
+        "id": "conv-comodification-fc24364423c2",
+        "text": "- **[emerging]** Always modify `site/src/components/demo/ActNav.tsx` and `site/src/components/demo/ReplayShell.tsx` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "site/src/components/demo"
+        ]
+      },
+      {
+        "id": "conv-comodification-8d0eb4aa1ded",
+        "text": "- **[emerging]** Always modify `site/src/components/demo/acts/ActLearning.tsx` and `site/src/components/demo/acts/ActPipeline.tsx` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "site/src/components/demo/acts"
+        ]
+      },
+      {
+        "id": "conv-comodification-0604d3c37c5a",
+        "text": "- **[emerging]** Always modify `site/src/data/f10-replay.json` and `site/src/pages/demo/replay.astro` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "site/src/data",
+          "site/src/pages/demo"
+        ]
+      },
+      {
+        "id": "conv-comodification-99f850637d4b",
+        "text": "- **[emerging]** Always modify `site/src/stores/replay.ts` and `site/src/styles/demo.css` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "site/src/stores",
+          "site/src/styles"
+        ]
+      },
+      {
+        "id": "conv-comodification-5ec14b5b6c7d",
+        "text": "- **[emerging]** Always modify `docs/api/agents/architect.md` and `docs/api/agents/coherence-checker.md` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "docs/api/agents"
+        ]
+      },
+      {
+        "id": "conv-comodification-a202245bd42f",
+        "text": "- **[emerging]** Always modify `lib/learn/__init__.py` and `lib/learn/classify.py` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/learn"
+        ]
+      },
+      {
+        "id": "conv-comodification-55dac3ae4221",
+        "text": "- **[emerging]** Always modify `lib/context/rules/c/fixtures/constants.c` and `lib/context/rules/c/fixtures/constants.c.expected.json` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/rules/c/fixtures"
+        ]
+      },
+      {
+        "id": "conv-comodification-54d84f35c688",
+        "text": "- **[emerging]** Always modify `lib/context/rules/c_sharp/definitions.yml` and `lib/context/rules/cpp/definitions.yml` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/rules/c_sharp",
+          "lib/context/rules/cpp"
+        ]
+      },
+      {
+        "id": "conv-comodification-caa263e8e461",
+        "text": "- **[emerging]** Always modify `lib/context/rules/c_sharp/fixtures/Constants.cs` and `lib/context/rules/c_sharp/fixtures/Constants.cs.expected.json` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/rules/c_sharp/fixtures"
+        ]
+      },
+      {
+        "id": "conv-comodification-583497bbdeaf",
+        "text": "- **[emerging]** Always modify `lib/context/rules/cpp/fixtures/constants.cpp` and `lib/context/rules/cpp/fixtures/constants.cpp.expected.json` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/rules/cpp/fixtures"
+        ]
+      },
+      {
+        "id": "conv-comodification-48254c83dad8",
+        "text": "- **[emerging]** Always modify `lib/context/rules/go/definitions.yml` and `lib/context/rules/ruby/definitions.yml` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/rules/go",
+          "lib/context/rules/ruby"
+        ]
+      },
+      {
+        "id": "conv-comodification-f95b17d27926",
+        "text": "- **[emerging]** Always modify `lib/context/rules/go/fixtures/constants.go` and `lib/context/rules/go/fixtures/constants.go.expected.json` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/rules/go/fixtures"
+        ]
+      },
+      {
+        "id": "conv-comodification-8d6a7afe72eb",
+        "text": "- **[emerging]** Always modify `lib/context/rules/java/definitions.yml` and `lib/context/rules/javascript/definitions.yml` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/rules/java",
+          "lib/context/rules/javascript"
+        ]
+      },
+      {
+        "id": "conv-comodification-23c658aee16d",
+        "text": "- **[emerging]** Always modify `lib/context/rules/java/fixtures/Constants.java` and `lib/context/rules/java/fixtures/Constants.java.expected.json` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/rules/java/fixtures"
+        ]
+      },
+      {
+        "id": "conv-comodification-5bae8ee97c1d",
+        "text": "- **[emerging]** Always modify `lib/context/rules/javascript/fixtures/constants.js` and `lib/context/rules/javascript/fixtures/constants.js.expected.json` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/rules/javascript/fixtures"
+        ]
+      },
+      {
+        "id": "conv-comodification-f189c1718c8c",
+        "text": "- **[emerging]** Always modify `lib/context/rules/python/definitions.yml` and `lib/context/rules/typescript/definitions.yml` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/rules/python",
+          "lib/context/rules/typescript"
+        ]
+      },
+      {
+        "id": "conv-comodification-be44df3cc938",
+        "text": "- **[emerging]** Always modify `lib/context/rules/python/fixtures/constants.py` and `lib/context/rules/python/fixtures/constants.py.expected.json` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/rules/python/fixtures"
+        ]
+      },
+      {
+        "id": "conv-comodification-1998ebcd0716",
+        "text": "- **[emerging]** Always modify `lib/context/rules/ruby/fixtures/constants.rb` and `lib/context/rules/ruby/fixtures/constants.rb.expected.json` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/rules/ruby/fixtures"
+        ]
+      },
+      {
+        "id": "conv-comodification-f0188d03cfcf",
+        "text": "- **[emerging]** Always modify `lib/context/rules/rust/fixtures/constants.rs` and `lib/context/rules/rust/fixtures/constants.rs.expected.json` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/rules/rust/fixtures"
+        ]
+      },
+      {
+        "id": "conv-comodification-2d3a91b8dce1",
+        "text": "- **[emerging]** Always modify `lib/context/rules/tsx/fixtures/constants.tsx` and `lib/context/rules/tsx/fixtures/constants.tsx.expected.json` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/rules/tsx/fixtures"
+        ]
+      },
+      {
+        "id": "conv-comodification-9c8b06d5669e",
+        "text": "- **[emerging]** Always modify `lib/context/rules/typescript/fixtures/constants.ts` and `lib/context/rules/typescript/fixtures/constants.ts.expected.json` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/rules/typescript/fixtures"
+        ]
+      },
+      {
+        "id": "conv-comodification-b711d6499586",
+        "text": "- **[emerging]** Always modify `docs/api/agent-roles.md` and `docs/architecture/agent-orchestration.md` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "docs/api",
+          "docs/architecture"
+        ]
+      },
+      {
+        "id": "conv-comodification-b3edb1ab7a1e",
+        "text": "- **[emerging]** Always modify `dashboard/README.md` and `dashboard/backend/.gitignore` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "dashboard",
+          "dashboard/backend"
+        ]
+      },
+      {
+        "id": "conv-comodification-44fdd1c14417",
+        "text": "- **[emerging]** Always modify `dashboard/backend/resolvers/__init__.py` and `dashboard/backend/resolvers/budget.py` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "dashboard/backend/resolvers"
+        ]
+      },
+      {
+        "id": "conv-comodification-bffd0da55d96",
+        "text": "- **[emerging]** Always modify `dashboard/frontend/app/analytics/page.tsx` and `dashboard/frontend/app/budget/page.tsx` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "dashboard/frontend/app/analytics",
+          "dashboard/frontend/app/budget"
+        ]
+      },
+      {
+        "id": "conv-comodification-94bb1eecbf32",
+        "text": "- **[emerging]** Always modify `dashboard/frontend/app/globals.css` and `dashboard/frontend/app/layout.tsx` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "dashboard/frontend/app"
+        ]
+      },
+      {
+        "id": "conv-comodification-062236cb1cdd",
+        "text": "- **[emerging]** Always modify `dashboard/frontend/app/spec-alignment/page.tsx` and `dashboard/frontend/app/topology/page.tsx` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "dashboard/frontend/app/spec-alignment",
+          "dashboard/frontend/app/topology"
+        ]
+      },
+      {
+        "id": "conv-comodification-bf370203e667",
+        "text": "- **[emerging]** Always modify `dashboard/frontend/components/layout/app-shell.tsx` and `dashboard/frontend/components/layout/connection-status.tsx` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "dashboard/frontend/components/layout"
+        ]
+      },
+      {
+        "id": "conv-comodification-4e2ef730e79b",
+        "text": "- **[emerging]** Always modify `dashboard/frontend/components/shared/chart-card.tsx` and `dashboard/frontend/components/shared/error-boundary.tsx` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "dashboard/frontend/components/shared"
+        ]
+      },
+      {
+        "id": "conv-comodification-dafe00ba5b81",
+        "text": "- **[emerging]** Always modify `dashboard/frontend/components/topology/code-treemap.tsx` and `dashboard/frontend/components/topology/edge-bundling.tsx` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "dashboard/frontend/components/topology"
+        ]
+      },
+      {
+        "id": "conv-comodification-2caf5868c4de",
+        "text": "- **[emerging]** Always modify `dashboard/frontend/lib/graphql/client.ts` and `dashboard/frontend/lib/graphql/provider.tsx` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "dashboard/frontend/lib/graphql"
+        ]
+      },
+      {
+        "id": "conv-comodification-3cdc3abd97aa",
+        "text": "- **[emerging]** Always modify `dashboard/frontend/lib/graphql/queries/analytics.ts` and `dashboard/frontend/lib/graphql/queries/budget.ts` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "dashboard/frontend/lib/graphql/queries"
+        ]
+      },
+      {
+        "id": "conv-comodification-73dbc239745c",
+        "text": "- **[emerging]** Always modify `dashboard/frontend/lib/hooks/use-feature-selector.ts` and `dashboard/frontend/lib/utils/cn.ts` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "dashboard/frontend/lib/hooks",
+          "dashboard/frontend/lib/utils"
+        ]
+      },
+      {
+        "id": "conv-comodification-29d7d581101d",
+        "text": "- **[emerging]** Always modify `docs/tooling/tmux-spec.md` and `docs/tooling/tmux-workflow.md` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "docs/tooling"
+        ]
+      },
+      {
+        "id": "conv-comodification-4d86d620a3d0",
+        "text": "- **[emerging]** Always modify `docs/architecture/assets/architecture-overview.svg` and `docs/architecture/assets/context-pipeline-overview.svg` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "docs/architecture/assets"
+        ]
+      },
+      {
+        "id": "conv-comodification-84e57d871f17",
+        "text": "- **[emerging]** Always modify `site/src/components/Landing/Footer.astro` and `site/src/components/Landing/Nav.astro` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "site/src/components/Landing"
+        ]
+      },
+      {
+        "id": "conv-comodification-0182fd6ccbfb",
+        "text": "- **[emerging]** Always modify `site/src/pages/404.astro` and `site/src/pages/500.astro` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "site/src/pages"
+        ]
+      },
+      {
+        "id": "conv-comodification-bc7e98a61769",
+        "text": "- **[emerging]** Always modify `lib/context/data/extraction.toml` and `lib/context/rules/c/references.yml` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/data",
+          "lib/context/rules/c"
+        ]
+      },
+      {
+        "id": "conv-comodification-4dfc069f352e",
+        "text": "- **[emerging]** Always modify `.config/tmux/scripts/sessionizer.sh` and `.config/tmux/tmux.conf` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          ".config/tmux",
+          ".config/tmux/scripts"
+        ]
+      },
+      {
+        "id": "conv-comodification-09a0c4190e39",
+        "text": "- **[emerging]** Always modify `README.md` and `example/README.md` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          ".",
+          "example"
+        ]
+      },
+      {
+        "id": "conv-comodification-8057f0abd82f",
+        "text": "- **[emerging]** Always modify `lib/context/rules/protobuf/types.yml` and `lib/context/rules/rust/models.yml` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/rules/protobuf",
+          "lib/context/rules/rust"
+        ]
+      },
+      {
+        "id": "conv-comodification-f0f0f8895d69",
+        "text": "- **[emerging]** Always modify `lib/context/rules/tsx/models.yml` and `scripts/build-grammars.sh` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/rules/tsx",
+          "scripts"
+        ]
+      },
+      {
+        "id": "conv-comodification-ecccd4755f2b",
+        "text": "- **[emerging]** Always modify `tests/fixtures/base_processor.py` and `tests/fixtures/json_processor.py` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "tests/fixtures"
+        ]
+      },
+      {
+        "id": "conv-comodification-a9c740519653",
+        "text": "- **[emerging]** Always modify `.github/workflows/deploy-site.yml` and `lib/criteria_verify.py` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          ".github/workflows",
+          "lib"
+        ]
+      },
+      {
+        "id": "conv-comodification-c2529b9c9a1d",
+        "text": "- **[emerging]** Always modify `site/src/content.config.ts` and `site/src/content/docs/docs` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "site/src",
+          "site/src/content/docs"
+        ]
+      },
+      {
+        "id": "conv-comodification-81b498bc8eaa",
+        "text": "- **[emerging]** Always modify `lib/context/data/grammars/.gitkeep` and `lib/context/rules/graphql/types.yml` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/data/grammars",
+          "lib/context/rules/graphql"
+        ]
+      },
+      {
+        "id": "conv-comodification-8b77bfa70648",
+        "text": "- **[emerging]** Always modify `lib/__pycache__/contract_verify.cpython-313.pyc` and `lib/__pycache__/spec_ground.cpython-313.pyc` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/__pycache__"
+        ]
+      },
+      {
+        "id": "conv-comodification-b04803071cf7",
+        "text": "- **[emerging]** Always modify `example/specs/design/bookshelf.md` and `example/specs/product/bookshelf.md` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "example/specs/design",
+          "example/specs/product"
+        ]
+      },
+      {
+        "id": "conv-comodification-6694291780b3",
+        "text": "- **[emerging]** Always modify `example/specs/tech/bookshelf.md` and `example/src/backend/app/__init__.py` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "example/specs/tech",
+          "example/src/backend/app"
+        ]
+      },
+      {
+        "id": "conv-comodification-f54db11b023c",
+        "text": "- **[emerging]** Always modify `example/src/backend/app/models/__init__.py` and `example/src/frontend/package.json` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "example/src/backend/app/models",
+          "example/src/frontend"
+        ]
+      },
+      {
+        "id": "conv-comodification-be9177052d7e",
+        "text": "- **[emerging]** Always modify `example/src/frontend/src/app/page.tsx` and `specs/unified-intake.md` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "example/src/frontend/src/app",
+          "specs"
+        ]
+      }
+    ],
+    "reviewer": [
+      {
+        "id": "conv-comodification-79f18ab7398f",
+        "text": "- **[emerging]** Always modify `dashboard/frontend/components/landing/LearnPanel.test.tsx` and `dashboard/frontend/components/landing/LearnPanel.tsx` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "dashboard/frontend/components/landing"
+        ]
+      },
+      {
+        "id": "conv-comodification-4c61b763e2c9",
+        "text": "- **[emerging]** Always modify `lib/cmd/retry.sh` and `lib/cmd/run.sh` together. Co-modified in 1/2 commits (92%).",
+        "scope": [
+          "lib/cmd"
+        ]
+      },
+      {
+        "id": "conv-comodification-1a7c33cf6fac",
+        "text": "- **[emerging]** Always modify `tests/test_rca_git_topology.sh` and `tests/test_rca_solution_logic.sh` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "tests"
+        ]
+      },
+      {
+        "id": "conv-comodification-dcc8527311c0",
+        "text": "- **[emerging]** Always modify `dashboard/frontend/vitest.config.ts` and `dashboard/frontend/vitest.setup.ts` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "dashboard/frontend"
+        ]
+      },
+      {
+        "id": "conv-comodification-d60701961fe2",
+        "text": "- **[emerging]** Always modify `dashboard/frontend/{__tests__ => components}/landing/DefinePanel.test.tsx` and `dashboard/frontend/{__tests__ => components}/landing/PanelLabel.test.tsx` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "dashboard/frontend/{__tests__ => components}/landing"
+        ]
+      },
+      {
+        "id": "conv-comodification-352bcdfce18e",
+        "text": "- **[emerging]** Always modify `dashboard/frontend/__tests__/landing/DefinePanel.test.tsx` and `dashboard/frontend/__tests__/landing/PanelLabel.test.tsx` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "dashboard/frontend/__tests__/landing"
+        ]
+      },
+      {
+        "id": "conv-comodification-f44e1538f30c",
+        "text": "- **[emerging]** Always modify `specs/product/speed-dashboard-define.md` and `specs/product/speed-dashboard-landing.md` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "specs/product"
+        ]
+      },
+      {
+        "id": "conv-comodification-88054526e733",
+        "text": "- **[emerging]** Always modify `specs/tech/speed-dashboard-define.md` and `specs/tech/speed-dashboard-landing.md` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "specs/tech"
+        ]
+      },
+      {
+        "id": "conv-comodification-615359af2f72",
+        "text": "- **[emerging]** Always modify `specs/design/speed-dashboard-define.md` and `specs/design/speed-dashboard-landing.md` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "specs/design"
+        ]
+      },
+      {
+        "id": "conv-comodification-2dc931e731d5",
+        "text": "- **[emerging]** Always modify `agents/architect-enrich.md` and `agents/architect-skeleton.md` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "agents"
+        ]
+      },
+      {
+        "id": "conv-comodification-b8fc28bebe30",
+        "text": "- **[emerging]** Always modify `docs/process.md` and `lib/context/spec_split.py` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "docs",
+          "lib/context"
+        ]
+      },
+      {
+        "id": "conv-comodification-9e2f50843d25",
+        "text": "- **[emerging]** Always modify `site/public/images/speed-ceremony-comparison.svg` and `site/public/images/speed-development-cycle.svg` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "site/public/images"
+        ]
+      },
+      {
+        "id": "conv-comodification-92038dd3825d",
+        "text": "- **[emerging]** Always modify `specs/defects/csg-import-resolution-broken.md` and `templates/architect-enrich-output.json` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "specs/defects",
+          "templates"
+        ]
+      },
+      {
+        "id": "conv-comodification-ab6f12fe7782",
+        "text": "- **[emerging]** Always modify `site/package-lock.json` and `site/tsconfig.json` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "site"
+        ]
+      },
+      {
+        "id": "conv-comodification-fc24364423c2",
+        "text": "- **[emerging]** Always modify `site/src/components/demo/ActNav.tsx` and `site/src/components/demo/ReplayShell.tsx` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "site/src/components/demo"
+        ]
+      },
+      {
+        "id": "conv-comodification-8d0eb4aa1ded",
+        "text": "- **[emerging]** Always modify `site/src/components/demo/acts/ActLearning.tsx` and `site/src/components/demo/acts/ActPipeline.tsx` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "site/src/components/demo/acts"
+        ]
+      },
+      {
+        "id": "conv-comodification-0604d3c37c5a",
+        "text": "- **[emerging]** Always modify `site/src/data/f10-replay.json` and `site/src/pages/demo/replay.astro` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "site/src/data",
+          "site/src/pages/demo"
+        ]
+      },
+      {
+        "id": "conv-comodification-99f850637d4b",
+        "text": "- **[emerging]** Always modify `site/src/stores/replay.ts` and `site/src/styles/demo.css` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "site/src/stores",
+          "site/src/styles"
+        ]
+      },
+      {
+        "id": "conv-comodification-5ec14b5b6c7d",
+        "text": "- **[emerging]** Always modify `docs/api/agents/architect.md` and `docs/api/agents/coherence-checker.md` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "docs/api/agents"
+        ]
+      },
+      {
+        "id": "conv-comodification-a202245bd42f",
+        "text": "- **[emerging]** Always modify `lib/learn/__init__.py` and `lib/learn/classify.py` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/learn"
+        ]
+      },
+      {
+        "id": "conv-comodification-55dac3ae4221",
+        "text": "- **[emerging]** Always modify `lib/context/rules/c/fixtures/constants.c` and `lib/context/rules/c/fixtures/constants.c.expected.json` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/rules/c/fixtures"
+        ]
+      },
+      {
+        "id": "conv-comodification-54d84f35c688",
+        "text": "- **[emerging]** Always modify `lib/context/rules/c_sharp/definitions.yml` and `lib/context/rules/cpp/definitions.yml` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/rules/c_sharp",
+          "lib/context/rules/cpp"
+        ]
+      },
+      {
+        "id": "conv-comodification-caa263e8e461",
+        "text": "- **[emerging]** Always modify `lib/context/rules/c_sharp/fixtures/Constants.cs` and `lib/context/rules/c_sharp/fixtures/Constants.cs.expected.json` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/rules/c_sharp/fixtures"
+        ]
+      },
+      {
+        "id": "conv-comodification-583497bbdeaf",
+        "text": "- **[emerging]** Always modify `lib/context/rules/cpp/fixtures/constants.cpp` and `lib/context/rules/cpp/fixtures/constants.cpp.expected.json` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/rules/cpp/fixtures"
+        ]
+      },
+      {
+        "id": "conv-comodification-48254c83dad8",
+        "text": "- **[emerging]** Always modify `lib/context/rules/go/definitions.yml` and `lib/context/rules/ruby/definitions.yml` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/rules/go",
+          "lib/context/rules/ruby"
+        ]
+      },
+      {
+        "id": "conv-comodification-f95b17d27926",
+        "text": "- **[emerging]** Always modify `lib/context/rules/go/fixtures/constants.go` and `lib/context/rules/go/fixtures/constants.go.expected.json` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/rules/go/fixtures"
+        ]
+      },
+      {
+        "id": "conv-comodification-8d6a7afe72eb",
+        "text": "- **[emerging]** Always modify `lib/context/rules/java/definitions.yml` and `lib/context/rules/javascript/definitions.yml` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/rules/java",
+          "lib/context/rules/javascript"
+        ]
+      },
+      {
+        "id": "conv-comodification-23c658aee16d",
+        "text": "- **[emerging]** Always modify `lib/context/rules/java/fixtures/Constants.java` and `lib/context/rules/java/fixtures/Constants.java.expected.json` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/rules/java/fixtures"
+        ]
+      },
+      {
+        "id": "conv-comodification-5bae8ee97c1d",
+        "text": "- **[emerging]** Always modify `lib/context/rules/javascript/fixtures/constants.js` and `lib/context/rules/javascript/fixtures/constants.js.expected.json` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/rules/javascript/fixtures"
+        ]
+      },
+      {
+        "id": "conv-comodification-f189c1718c8c",
+        "text": "- **[emerging]** Always modify `lib/context/rules/python/definitions.yml` and `lib/context/rules/typescript/definitions.yml` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/rules/python",
+          "lib/context/rules/typescript"
+        ]
+      },
+      {
+        "id": "conv-comodification-be44df3cc938",
+        "text": "- **[emerging]** Always modify `lib/context/rules/python/fixtures/constants.py` and `lib/context/rules/python/fixtures/constants.py.expected.json` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/rules/python/fixtures"
+        ]
+      },
+      {
+        "id": "conv-comodification-1998ebcd0716",
+        "text": "- **[emerging]** Always modify `lib/context/rules/ruby/fixtures/constants.rb` and `lib/context/rules/ruby/fixtures/constants.rb.expected.json` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/rules/ruby/fixtures"
+        ]
+      },
+      {
+        "id": "conv-comodification-f0188d03cfcf",
+        "text": "- **[emerging]** Always modify `lib/context/rules/rust/fixtures/constants.rs` and `lib/context/rules/rust/fixtures/constants.rs.expected.json` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/rules/rust/fixtures"
+        ]
+      },
+      {
+        "id": "conv-comodification-2d3a91b8dce1",
+        "text": "- **[emerging]** Always modify `lib/context/rules/tsx/fixtures/constants.tsx` and `lib/context/rules/tsx/fixtures/constants.tsx.expected.json` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/rules/tsx/fixtures"
+        ]
+      },
+      {
+        "id": "conv-comodification-9c8b06d5669e",
+        "text": "- **[emerging]** Always modify `lib/context/rules/typescript/fixtures/constants.ts` and `lib/context/rules/typescript/fixtures/constants.ts.expected.json` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/rules/typescript/fixtures"
+        ]
+      },
+      {
+        "id": "conv-comodification-b711d6499586",
+        "text": "- **[emerging]** Always modify `docs/api/agent-roles.md` and `docs/architecture/agent-orchestration.md` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "docs/api",
+          "docs/architecture"
+        ]
+      },
+      {
+        "id": "conv-comodification-b3edb1ab7a1e",
+        "text": "- **[emerging]** Always modify `dashboard/README.md` and `dashboard/backend/.gitignore` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "dashboard",
+          "dashboard/backend"
+        ]
+      },
+      {
+        "id": "conv-comodification-44fdd1c14417",
+        "text": "- **[emerging]** Always modify `dashboard/backend/resolvers/__init__.py` and `dashboard/backend/resolvers/budget.py` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "dashboard/backend/resolvers"
+        ]
+      },
+      {
+        "id": "conv-comodification-bffd0da55d96",
+        "text": "- **[emerging]** Always modify `dashboard/frontend/app/analytics/page.tsx` and `dashboard/frontend/app/budget/page.tsx` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "dashboard/frontend/app/analytics",
+          "dashboard/frontend/app/budget"
+        ]
+      },
+      {
+        "id": "conv-comodification-94bb1eecbf32",
+        "text": "- **[emerging]** Always modify `dashboard/frontend/app/globals.css` and `dashboard/frontend/app/layout.tsx` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "dashboard/frontend/app"
+        ]
+      },
+      {
+        "id": "conv-comodification-062236cb1cdd",
+        "text": "- **[emerging]** Always modify `dashboard/frontend/app/spec-alignment/page.tsx` and `dashboard/frontend/app/topology/page.tsx` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "dashboard/frontend/app/spec-alignment",
+          "dashboard/frontend/app/topology"
+        ]
+      },
+      {
+        "id": "conv-comodification-bf370203e667",
+        "text": "- **[emerging]** Always modify `dashboard/frontend/components/layout/app-shell.tsx` and `dashboard/frontend/components/layout/connection-status.tsx` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "dashboard/frontend/components/layout"
+        ]
+      },
+      {
+        "id": "conv-comodification-4e2ef730e79b",
+        "text": "- **[emerging]** Always modify `dashboard/frontend/components/shared/chart-card.tsx` and `dashboard/frontend/components/shared/error-boundary.tsx` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "dashboard/frontend/components/shared"
+        ]
+      },
+      {
+        "id": "conv-comodification-dafe00ba5b81",
+        "text": "- **[emerging]** Always modify `dashboard/frontend/components/topology/code-treemap.tsx` and `dashboard/frontend/components/topology/edge-bundling.tsx` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "dashboard/frontend/components/topology"
+        ]
+      },
+      {
+        "id": "conv-comodification-2caf5868c4de",
+        "text": "- **[emerging]** Always modify `dashboard/frontend/lib/graphql/client.ts` and `dashboard/frontend/lib/graphql/provider.tsx` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "dashboard/frontend/lib/graphql"
+        ]
+      },
+      {
+        "id": "conv-comodification-3cdc3abd97aa",
+        "text": "- **[emerging]** Always modify `dashboard/frontend/lib/graphql/queries/analytics.ts` and `dashboard/frontend/lib/graphql/queries/budget.ts` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "dashboard/frontend/lib/graphql/queries"
+        ]
+      },
+      {
+        "id": "conv-comodification-73dbc239745c",
+        "text": "- **[emerging]** Always modify `dashboard/frontend/lib/hooks/use-feature-selector.ts` and `dashboard/frontend/lib/utils/cn.ts` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "dashboard/frontend/lib/hooks",
+          "dashboard/frontend/lib/utils"
+        ]
+      },
+      {
+        "id": "conv-comodification-29d7d581101d",
+        "text": "- **[emerging]** Always modify `docs/tooling/tmux-spec.md` and `docs/tooling/tmux-workflow.md` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "docs/tooling"
+        ]
+      },
+      {
+        "id": "conv-comodification-4d86d620a3d0",
+        "text": "- **[emerging]** Always modify `docs/architecture/assets/architecture-overview.svg` and `docs/architecture/assets/context-pipeline-overview.svg` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "docs/architecture/assets"
+        ]
+      },
+      {
+        "id": "conv-comodification-84e57d871f17",
+        "text": "- **[emerging]** Always modify `site/src/components/Landing/Footer.astro` and `site/src/components/Landing/Nav.astro` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "site/src/components/Landing"
+        ]
+      },
+      {
+        "id": "conv-comodification-0182fd6ccbfb",
+        "text": "- **[emerging]** Always modify `site/src/pages/404.astro` and `site/src/pages/500.astro` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "site/src/pages"
+        ]
+      },
+      {
+        "id": "conv-comodification-bc7e98a61769",
+        "text": "- **[emerging]** Always modify `lib/context/data/extraction.toml` and `lib/context/rules/c/references.yml` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/data",
+          "lib/context/rules/c"
+        ]
+      },
+      {
+        "id": "conv-comodification-4dfc069f352e",
+        "text": "- **[emerging]** Always modify `.config/tmux/scripts/sessionizer.sh` and `.config/tmux/tmux.conf` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          ".config/tmux",
+          ".config/tmux/scripts"
+        ]
+      },
+      {
+        "id": "conv-comodification-09a0c4190e39",
+        "text": "- **[emerging]** Always modify `README.md` and `example/README.md` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          ".",
+          "example"
+        ]
+      },
+      {
+        "id": "conv-comodification-8057f0abd82f",
+        "text": "- **[emerging]** Always modify `lib/context/rules/protobuf/types.yml` and `lib/context/rules/rust/models.yml` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/rules/protobuf",
+          "lib/context/rules/rust"
+        ]
+      },
+      {
+        "id": "conv-comodification-f0f0f8895d69",
+        "text": "- **[emerging]** Always modify `lib/context/rules/tsx/models.yml` and `scripts/build-grammars.sh` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/rules/tsx",
+          "scripts"
+        ]
+      },
+      {
+        "id": "conv-comodification-ecccd4755f2b",
+        "text": "- **[emerging]** Always modify `tests/fixtures/base_processor.py` and `tests/fixtures/json_processor.py` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "tests/fixtures"
+        ]
+      },
+      {
+        "id": "conv-comodification-a9c740519653",
+        "text": "- **[emerging]** Always modify `.github/workflows/deploy-site.yml` and `lib/criteria_verify.py` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          ".github/workflows",
+          "lib"
+        ]
+      },
+      {
+        "id": "conv-comodification-c2529b9c9a1d",
+        "text": "- **[emerging]** Always modify `site/src/content.config.ts` and `site/src/content/docs/docs` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "site/src",
+          "site/src/content/docs"
+        ]
+      },
+      {
+        "id": "conv-comodification-81b498bc8eaa",
+        "text": "- **[emerging]** Always modify `lib/context/data/grammars/.gitkeep` and `lib/context/rules/graphql/types.yml` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/data/grammars",
+          "lib/context/rules/graphql"
+        ]
+      },
+      {
+        "id": "conv-comodification-8b77bfa70648",
+        "text": "- **[emerging]** Always modify `lib/__pycache__/contract_verify.cpython-313.pyc` and `lib/__pycache__/spec_ground.cpython-313.pyc` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/__pycache__"
+        ]
+      },
+      {
+        "id": "conv-comodification-b04803071cf7",
+        "text": "- **[emerging]** Always modify `example/specs/design/bookshelf.md` and `example/specs/product/bookshelf.md` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "example/specs/design",
+          "example/specs/product"
+        ]
+      },
+      {
+        "id": "conv-comodification-6694291780b3",
+        "text": "- **[emerging]** Always modify `example/specs/tech/bookshelf.md` and `example/src/backend/app/__init__.py` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "example/specs/tech",
+          "example/src/backend/app"
+        ]
+      },
+      {
+        "id": "conv-comodification-f54db11b023c",
+        "text": "- **[emerging]** Always modify `example/src/backend/app/models/__init__.py` and `example/src/frontend/package.json` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "example/src/backend/app/models",
+          "example/src/frontend"
+        ]
+      },
+      {
+        "id": "conv-comodification-be9177052d7e",
+        "text": "- **[emerging]** Always modify `example/src/frontend/src/app/page.tsx` and `specs/unified-intake.md` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "example/src/frontend/src/app",
+          "specs"
+        ]
+      }
+    ],
+    "architect": [
+      {
+        "id": "conv-comodification-79f18ab7398f",
+        "text": "- **[emerging]** Always modify `dashboard/frontend/components/landing/LearnPanel.test.tsx` and `dashboard/frontend/components/landing/LearnPanel.tsx` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "dashboard/frontend/components/landing"
+        ]
+      },
+      {
+        "id": "conv-comodification-4c61b763e2c9",
+        "text": "- **[emerging]** Always modify `lib/cmd/retry.sh` and `lib/cmd/run.sh` together. Co-modified in 1/2 commits (92%).",
+        "scope": [
+          "lib/cmd"
+        ]
+      },
+      {
+        "id": "conv-comodification-1a7c33cf6fac",
+        "text": "- **[emerging]** Always modify `tests/test_rca_git_topology.sh` and `tests/test_rca_solution_logic.sh` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "tests"
+        ]
+      },
+      {
+        "id": "conv-comodification-dcc8527311c0",
+        "text": "- **[emerging]** Always modify `dashboard/frontend/vitest.config.ts` and `dashboard/frontend/vitest.setup.ts` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "dashboard/frontend"
+        ]
+      },
+      {
+        "id": "conv-comodification-d60701961fe2",
+        "text": "- **[emerging]** Always modify `dashboard/frontend/{__tests__ => components}/landing/DefinePanel.test.tsx` and `dashboard/frontend/{__tests__ => components}/landing/PanelLabel.test.tsx` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "dashboard/frontend/{__tests__ => components}/landing"
+        ]
+      },
+      {
+        "id": "conv-comodification-352bcdfce18e",
+        "text": "- **[emerging]** Always modify `dashboard/frontend/__tests__/landing/DefinePanel.test.tsx` and `dashboard/frontend/__tests__/landing/PanelLabel.test.tsx` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "dashboard/frontend/__tests__/landing"
+        ]
+      },
+      {
+        "id": "conv-comodification-f44e1538f30c",
+        "text": "- **[emerging]** Always modify `specs/product/speed-dashboard-define.md` and `specs/product/speed-dashboard-landing.md` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "specs/product"
+        ]
+      },
+      {
+        "id": "conv-comodification-88054526e733",
+        "text": "- **[emerging]** Always modify `specs/tech/speed-dashboard-define.md` and `specs/tech/speed-dashboard-landing.md` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "specs/tech"
+        ]
+      },
+      {
+        "id": "conv-comodification-615359af2f72",
+        "text": "- **[emerging]** Always modify `specs/design/speed-dashboard-define.md` and `specs/design/speed-dashboard-landing.md` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "specs/design"
+        ]
+      },
+      {
+        "id": "conv-comodification-2dc931e731d5",
+        "text": "- **[emerging]** Always modify `agents/architect-enrich.md` and `agents/architect-skeleton.md` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "agents"
+        ]
+      },
+      {
+        "id": "conv-comodification-b8fc28bebe30",
+        "text": "- **[emerging]** Always modify `docs/process.md` and `lib/context/spec_split.py` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "docs",
+          "lib/context"
+        ]
+      },
+      {
+        "id": "conv-comodification-9e2f50843d25",
+        "text": "- **[emerging]** Always modify `site/public/images/speed-ceremony-comparison.svg` and `site/public/images/speed-development-cycle.svg` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "site/public/images"
+        ]
+      },
+      {
+        "id": "conv-comodification-92038dd3825d",
+        "text": "- **[emerging]** Always modify `specs/defects/csg-import-resolution-broken.md` and `templates/architect-enrich-output.json` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "specs/defects",
+          "templates"
+        ]
+      },
+      {
+        "id": "conv-comodification-ab6f12fe7782",
+        "text": "- **[emerging]** Always modify `site/package-lock.json` and `site/tsconfig.json` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "site"
+        ]
+      },
+      {
+        "id": "conv-comodification-fc24364423c2",
+        "text": "- **[emerging]** Always modify `site/src/components/demo/ActNav.tsx` and `site/src/components/demo/ReplayShell.tsx` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "site/src/components/demo"
+        ]
+      },
+      {
+        "id": "conv-comodification-8d0eb4aa1ded",
+        "text": "- **[emerging]** Always modify `site/src/components/demo/acts/ActLearning.tsx` and `site/src/components/demo/acts/ActPipeline.tsx` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "site/src/components/demo/acts"
+        ]
+      },
+      {
+        "id": "conv-comodification-0604d3c37c5a",
+        "text": "- **[emerging]** Always modify `site/src/data/f10-replay.json` and `site/src/pages/demo/replay.astro` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "site/src/data",
+          "site/src/pages/demo"
+        ]
+      },
+      {
+        "id": "conv-comodification-99f850637d4b",
+        "text": "- **[emerging]** Always modify `site/src/stores/replay.ts` and `site/src/styles/demo.css` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "site/src/stores",
+          "site/src/styles"
+        ]
+      },
+      {
+        "id": "conv-comodification-5ec14b5b6c7d",
+        "text": "- **[emerging]** Always modify `docs/api/agents/architect.md` and `docs/api/agents/coherence-checker.md` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "docs/api/agents"
+        ]
+      },
+      {
+        "id": "conv-comodification-a202245bd42f",
+        "text": "- **[emerging]** Always modify `lib/learn/__init__.py` and `lib/learn/classify.py` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/learn"
+        ]
+      },
+      {
+        "id": "conv-comodification-55dac3ae4221",
+        "text": "- **[emerging]** Always modify `lib/context/rules/c/fixtures/constants.c` and `lib/context/rules/c/fixtures/constants.c.expected.json` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/rules/c/fixtures"
+        ]
+      },
+      {
+        "id": "conv-comodification-54d84f35c688",
+        "text": "- **[emerging]** Always modify `lib/context/rules/c_sharp/definitions.yml` and `lib/context/rules/cpp/definitions.yml` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/rules/c_sharp",
+          "lib/context/rules/cpp"
+        ]
+      },
+      {
+        "id": "conv-comodification-caa263e8e461",
+        "text": "- **[emerging]** Always modify `lib/context/rules/c_sharp/fixtures/Constants.cs` and `lib/context/rules/c_sharp/fixtures/Constants.cs.expected.json` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/rules/c_sharp/fixtures"
+        ]
+      },
+      {
+        "id": "conv-comodification-583497bbdeaf",
+        "text": "- **[emerging]** Always modify `lib/context/rules/cpp/fixtures/constants.cpp` and `lib/context/rules/cpp/fixtures/constants.cpp.expected.json` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/rules/cpp/fixtures"
+        ]
+      },
+      {
+        "id": "conv-comodification-48254c83dad8",
+        "text": "- **[emerging]** Always modify `lib/context/rules/go/definitions.yml` and `lib/context/rules/ruby/definitions.yml` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/rules/go",
+          "lib/context/rules/ruby"
+        ]
+      },
+      {
+        "id": "conv-comodification-f95b17d27926",
+        "text": "- **[emerging]** Always modify `lib/context/rules/go/fixtures/constants.go` and `lib/context/rules/go/fixtures/constants.go.expected.json` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/rules/go/fixtures"
+        ]
+      },
+      {
+        "id": "conv-comodification-8d6a7afe72eb",
+        "text": "- **[emerging]** Always modify `lib/context/rules/java/definitions.yml` and `lib/context/rules/javascript/definitions.yml` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/rules/java",
+          "lib/context/rules/javascript"
+        ]
+      },
+      {
+        "id": "conv-comodification-23c658aee16d",
+        "text": "- **[emerging]** Always modify `lib/context/rules/java/fixtures/Constants.java` and `lib/context/rules/java/fixtures/Constants.java.expected.json` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/rules/java/fixtures"
+        ]
+      },
+      {
+        "id": "conv-comodification-5bae8ee97c1d",
+        "text": "- **[emerging]** Always modify `lib/context/rules/javascript/fixtures/constants.js` and `lib/context/rules/javascript/fixtures/constants.js.expected.json` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/rules/javascript/fixtures"
+        ]
+      },
+      {
+        "id": "conv-comodification-f189c1718c8c",
+        "text": "- **[emerging]** Always modify `lib/context/rules/python/definitions.yml` and `lib/context/rules/typescript/definitions.yml` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/rules/python",
+          "lib/context/rules/typescript"
+        ]
+      },
+      {
+        "id": "conv-comodification-be44df3cc938",
+        "text": "- **[emerging]** Always modify `lib/context/rules/python/fixtures/constants.py` and `lib/context/rules/python/fixtures/constants.py.expected.json` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/rules/python/fixtures"
+        ]
+      },
+      {
+        "id": "conv-comodification-1998ebcd0716",
+        "text": "- **[emerging]** Always modify `lib/context/rules/ruby/fixtures/constants.rb` and `lib/context/rules/ruby/fixtures/constants.rb.expected.json` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/rules/ruby/fixtures"
+        ]
+      },
+      {
+        "id": "conv-comodification-f0188d03cfcf",
+        "text": "- **[emerging]** Always modify `lib/context/rules/rust/fixtures/constants.rs` and `lib/context/rules/rust/fixtures/constants.rs.expected.json` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/rules/rust/fixtures"
+        ]
+      },
+      {
+        "id": "conv-comodification-2d3a91b8dce1",
+        "text": "- **[emerging]** Always modify `lib/context/rules/tsx/fixtures/constants.tsx` and `lib/context/rules/tsx/fixtures/constants.tsx.expected.json` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/rules/tsx/fixtures"
+        ]
+      },
+      {
+        "id": "conv-comodification-9c8b06d5669e",
+        "text": "- **[emerging]** Always modify `lib/context/rules/typescript/fixtures/constants.ts` and `lib/context/rules/typescript/fixtures/constants.ts.expected.json` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/rules/typescript/fixtures"
+        ]
+      },
+      {
+        "id": "conv-comodification-b711d6499586",
+        "text": "- **[emerging]** Always modify `docs/api/agent-roles.md` and `docs/architecture/agent-orchestration.md` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "docs/api",
+          "docs/architecture"
+        ]
+      },
+      {
+        "id": "conv-comodification-b3edb1ab7a1e",
+        "text": "- **[emerging]** Always modify `dashboard/README.md` and `dashboard/backend/.gitignore` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "dashboard",
+          "dashboard/backend"
+        ]
+      },
+      {
+        "id": "conv-comodification-44fdd1c14417",
+        "text": "- **[emerging]** Always modify `dashboard/backend/resolvers/__init__.py` and `dashboard/backend/resolvers/budget.py` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "dashboard/backend/resolvers"
+        ]
+      },
+      {
+        "id": "conv-comodification-bffd0da55d96",
+        "text": "- **[emerging]** Always modify `dashboard/frontend/app/analytics/page.tsx` and `dashboard/frontend/app/budget/page.tsx` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "dashboard/frontend/app/analytics",
+          "dashboard/frontend/app/budget"
+        ]
+      },
+      {
+        "id": "conv-comodification-94bb1eecbf32",
+        "text": "- **[emerging]** Always modify `dashboard/frontend/app/globals.css` and `dashboard/frontend/app/layout.tsx` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "dashboard/frontend/app"
+        ]
+      },
+      {
+        "id": "conv-comodification-062236cb1cdd",
+        "text": "- **[emerging]** Always modify `dashboard/frontend/app/spec-alignment/page.tsx` and `dashboard/frontend/app/topology/page.tsx` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "dashboard/frontend/app/spec-alignment",
+          "dashboard/frontend/app/topology"
+        ]
+      },
+      {
+        "id": "conv-comodification-bf370203e667",
+        "text": "- **[emerging]** Always modify `dashboard/frontend/components/layout/app-shell.tsx` and `dashboard/frontend/components/layout/connection-status.tsx` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "dashboard/frontend/components/layout"
+        ]
+      },
+      {
+        "id": "conv-comodification-4e2ef730e79b",
+        "text": "- **[emerging]** Always modify `dashboard/frontend/components/shared/chart-card.tsx` and `dashboard/frontend/components/shared/error-boundary.tsx` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "dashboard/frontend/components/shared"
+        ]
+      },
+      {
+        "id": "conv-comodification-dafe00ba5b81",
+        "text": "- **[emerging]** Always modify `dashboard/frontend/components/topology/code-treemap.tsx` and `dashboard/frontend/components/topology/edge-bundling.tsx` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "dashboard/frontend/components/topology"
+        ]
+      },
+      {
+        "id": "conv-comodification-2caf5868c4de",
+        "text": "- **[emerging]** Always modify `dashboard/frontend/lib/graphql/client.ts` and `dashboard/frontend/lib/graphql/provider.tsx` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "dashboard/frontend/lib/graphql"
+        ]
+      },
+      {
+        "id": "conv-comodification-3cdc3abd97aa",
+        "text": "- **[emerging]** Always modify `dashboard/frontend/lib/graphql/queries/analytics.ts` and `dashboard/frontend/lib/graphql/queries/budget.ts` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "dashboard/frontend/lib/graphql/queries"
+        ]
+      },
+      {
+        "id": "conv-comodification-73dbc239745c",
+        "text": "- **[emerging]** Always modify `dashboard/frontend/lib/hooks/use-feature-selector.ts` and `dashboard/frontend/lib/utils/cn.ts` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "dashboard/frontend/lib/hooks",
+          "dashboard/frontend/lib/utils"
+        ]
+      },
+      {
+        "id": "conv-comodification-29d7d581101d",
+        "text": "- **[emerging]** Always modify `docs/tooling/tmux-spec.md` and `docs/tooling/tmux-workflow.md` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "docs/tooling"
+        ]
+      },
+      {
+        "id": "conv-comodification-4d86d620a3d0",
+        "text": "- **[emerging]** Always modify `docs/architecture/assets/architecture-overview.svg` and `docs/architecture/assets/context-pipeline-overview.svg` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "docs/architecture/assets"
+        ]
+      },
+      {
+        "id": "conv-comodification-84e57d871f17",
+        "text": "- **[emerging]** Always modify `site/src/components/Landing/Footer.astro` and `site/src/components/Landing/Nav.astro` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "site/src/components/Landing"
+        ]
+      },
+      {
+        "id": "conv-comodification-0182fd6ccbfb",
+        "text": "- **[emerging]** Always modify `site/src/pages/404.astro` and `site/src/pages/500.astro` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "site/src/pages"
+        ]
+      },
+      {
+        "id": "conv-comodification-bc7e98a61769",
+        "text": "- **[emerging]** Always modify `lib/context/data/extraction.toml` and `lib/context/rules/c/references.yml` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/data",
+          "lib/context/rules/c"
+        ]
+      },
+      {
+        "id": "conv-comodification-4dfc069f352e",
+        "text": "- **[emerging]** Always modify `.config/tmux/scripts/sessionizer.sh` and `.config/tmux/tmux.conf` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          ".config/tmux",
+          ".config/tmux/scripts"
+        ]
+      },
+      {
+        "id": "conv-comodification-09a0c4190e39",
+        "text": "- **[emerging]** Always modify `README.md` and `example/README.md` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          ".",
+          "example"
+        ]
+      },
+      {
+        "id": "conv-comodification-8057f0abd82f",
+        "text": "- **[emerging]** Always modify `lib/context/rules/protobuf/types.yml` and `lib/context/rules/rust/models.yml` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/rules/protobuf",
+          "lib/context/rules/rust"
+        ]
+      },
+      {
+        "id": "conv-comodification-f0f0f8895d69",
+        "text": "- **[emerging]** Always modify `lib/context/rules/tsx/models.yml` and `scripts/build-grammars.sh` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/rules/tsx",
+          "scripts"
+        ]
+      },
+      {
+        "id": "conv-comodification-ecccd4755f2b",
+        "text": "- **[emerging]** Always modify `tests/fixtures/base_processor.py` and `tests/fixtures/json_processor.py` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "tests/fixtures"
+        ]
+      },
+      {
+        "id": "conv-comodification-a9c740519653",
+        "text": "- **[emerging]** Always modify `.github/workflows/deploy-site.yml` and `lib/criteria_verify.py` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          ".github/workflows",
+          "lib"
+        ]
+      },
+      {
+        "id": "conv-comodification-c2529b9c9a1d",
+        "text": "- **[emerging]** Always modify `site/src/content.config.ts` and `site/src/content/docs/docs` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "site/src",
+          "site/src/content/docs"
+        ]
+      },
+      {
+        "id": "conv-comodification-81b498bc8eaa",
+        "text": "- **[emerging]** Always modify `lib/context/data/grammars/.gitkeep` and `lib/context/rules/graphql/types.yml` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/context/data/grammars",
+          "lib/context/rules/graphql"
+        ]
+      },
+      {
+        "id": "conv-comodification-8b77bfa70648",
+        "text": "- **[emerging]** Always modify `lib/__pycache__/contract_verify.cpython-313.pyc` and `lib/__pycache__/spec_ground.cpython-313.pyc` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "lib/__pycache__"
+        ]
+      },
+      {
+        "id": "conv-comodification-b04803071cf7",
+        "text": "- **[emerging]** Always modify `example/specs/design/bookshelf.md` and `example/specs/product/bookshelf.md` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "example/specs/design",
+          "example/specs/product"
+        ]
+      },
+      {
+        "id": "conv-comodification-6694291780b3",
+        "text": "- **[emerging]** Always modify `example/specs/tech/bookshelf.md` and `example/src/backend/app/__init__.py` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "example/specs/tech",
+          "example/src/backend/app"
+        ]
+      },
+      {
+        "id": "conv-comodification-f54db11b023c",
+        "text": "- **[emerging]** Always modify `example/src/backend/app/models/__init__.py` and `example/src/frontend/package.json` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "example/src/backend/app/models",
+          "example/src/frontend"
+        ]
+      },
+      {
+        "id": "conv-comodification-be9177052d7e",
+        "text": "- **[emerging]** Always modify `example/src/frontend/src/app/page.tsx` and `specs/unified-intake.md` together. Co-modified in 2/2 commits (100%).",
+        "scope": [
+          "example/src/frontend/src/app",
+          "specs"
+        ]
+      }
+    ]
+  }
+}

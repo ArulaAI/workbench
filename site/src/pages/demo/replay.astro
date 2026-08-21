@@ -1,0 +1,272 @@
+---
+import LandingLayout from '../../layouts/LandingLayout.astro';
+import Nav from '../../components/Landing/Nav.astro';
+import ActNav from '../../components/demo/ActNav';
+import ReplayShell from '../../components/demo/ReplayShell';
+import '../../styles/demo.css';
+
+const leftFragments = [
+  { icon: '◫', tool: 'Jira', color: 'var(--color-blue)', snippet: 'FE-2847 Rich feed cards\nStatus: In Progress\nAssignee: —\nSprint: 14 (overdue)', rotate: -2 },
+  { icon: '◰', tool: 'Confluence', color: 'var(--color-cyan)', snippet: 'Feed Redesign PRD\nLast edited: 3 weeks ago\n"Needs alignment with\ndesign before dev starts"', rotate: 1.5 },
+  { icon: '⑂', tool: 'GitHub', color: 'var(--color-green)', snippet: 'PR #312: feed card updates\n3 conversations unresolved\nLast commit: 9 days ago\nCI: failing', rotate: -1 },
+  { icon: '◈', tool: 'Notion', color: 'var(--color-slate)', snippet: 'Meeting notes: Feed sync\nAction items: TBD\nNext steps: TBD', rotate: 2 },
+  { icon: '▦', tool: 'Excel', color: 'var(--color-emerald)', snippet: 'Feed Requirements v2 FINAL(2).xlsx\nShared by: PM\nColumns: A-AQ', rotate: -1.5 },
+];
+
+const rightFragments = [
+  { icon: '◇', tool: 'Figma', color: 'var(--color-violet)', snippet: 'Feed v3 — Draft\n↳ 47 comments, 12 unresolved\n↳ "Is this the latest?"', rotate: 2.5 },
+  { icon: '⌥', tool: 'Monday', color: 'var(--color-amber)', snippet: 'Q1 Roadmap\nFeed redesign: 🟡 At Risk\nBlocker: waiting on specs', rotate: -1.5 },
+  { icon: '✉', tool: 'Inbox', color: 'var(--color-rose)', snippet: 'Re: Re: Re: Feed scope\n"Can someone summarize\nwhere we landed?"', rotate: 1 },
+  { icon: '⊞', tool: 'Slack', color: 'var(--color-purple)', snippet: '#eng-frontend\n"Does anyone know which\nFigma file is current?"\n3 replies, no resolution', rotate: -2 },
+  { icon: '▷', tool: 'Loom', color: 'var(--color-red)', snippet: 'Design walkthrough (14min)\nViews: 2\nComments: 0', rotate: 1.5 },
+];
+---
+
+<LandingLayout title="SPEED — Replay: F10 Rich Feed">
+  <Nav />
+  <main class="replay-page">
+    <section class="hero-chaos">
+      <!-- Left tool surfaces -->
+      <div class="fragment-col fragment-col-left">
+        {leftFragments.map((f, i) => (
+          <div
+            class="fragment"
+            style={`--frag-color: ${f.color}; transform: rotate(${f.rotate}deg); animation-delay: ${-i * 3}s;`}
+          >
+            <div class="fragment-header">
+              <span class="fragment-icon">{f.icon}</span>
+              <span class="fragment-tool">{f.tool}</span>
+            </div>
+            <pre class="fragment-snippet">{f.snippet}</pre>
+          </div>
+        ))}
+      </div>
+
+      <!-- Center narrative -->
+      <div class="hero-center">
+        <div class="hero-kicker">The state of shipping software</div>
+        <h1 class="hero-headline">
+          Lots of code.<br />
+          Zero speed.<br />
+          <span class="hero-dim">Collaboration is getting worse.</span>
+        </h1>
+        <p class="hero-body">
+          Your specs live in Confluence. Designs in Figma. Tasks in Jira. Code in GitHub.
+          Status in Monday. Decisions in Slack threads no one can find.
+          <span class="hero-highlight">Context is everywhere. Alignment is nowhere.</span>
+        </p>
+        <div class="hero-cta-row">
+          <span class="hero-cta-label">Context, intelligence, and delivery in a single surface.</span>
+        </div>
+      </div>
+
+      <!-- Right tool surfaces -->
+      <div class="fragment-col fragment-col-right">
+        {rightFragments.map((f, i) => (
+          <div
+            class="fragment"
+            style={`--frag-color: ${f.color}; transform: rotate(${f.rotate}deg); animation-delay: ${-i * 2.5 - 1}s;`}
+          >
+            <div class="fragment-header">
+              <span class="fragment-icon">{f.icon}</span>
+              <span class="fragment-tool">{f.tool}</span>
+            </div>
+            <pre class="fragment-snippet">{f.snippet}</pre>
+          </div>
+        ))}
+      </div>
+    </section>
+
+    <ActNav client:load />
+    <ReplayShell client:load />
+  </main>
+</LandingLayout>
+
+<style>
+  .replay-page {
+    padding-top: 52px;
+  }
+
+  /* ── Hero Layout ──────────────────────── */
+
+  .hero-chaos {
+    position: relative;
+    height: calc(100vh - 52px);
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 40px;
+    padding: 40px 24px;
+  }
+
+  /* ── Fragment Columns ─────────────────── */
+
+  .fragment-col {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    width: 240px;
+    flex-shrink: 0;
+    mask-image: linear-gradient(
+      to bottom,
+      transparent 0%,
+      black 10%,
+      black 90%,
+      transparent 100%
+    );
+    -webkit-mask-image: linear-gradient(
+      to bottom,
+      transparent 0%,
+      black 10%,
+      black 90%,
+      transparent 100%
+    );
+  }
+
+  .fragment-col-left {
+    align-items: flex-end;
+  }
+
+  .fragment-col-right {
+    align-items: flex-start;
+  }
+
+  /* ── Fragment Surfaces ────────────────── */
+
+  .fragment {
+    background: color-mix(in srgb, var(--frag-color) 8%, var(--color-bg-elevated));
+    border: 1px solid color-mix(in srgb, var(--frag-color) 30%, transparent);
+    border-radius: 8px;
+    padding: 12px 14px;
+    width: 100%;
+    box-shadow:
+      0 4px 16px color-mix(in srgb, var(--frag-color) 10%, transparent),
+      0 1px 3px rgba(0, 0, 0, 0.3),
+      inset 0 1px 0 color-mix(in srgb, var(--frag-color) 8%, transparent);
+    animation: fragment-drift 20s ease-in-out infinite alternate;
+    transition: transform 0.3s ease;
+  }
+
+  .fragment-header {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin-bottom: 8px;
+    padding-bottom: 7px;
+    border-bottom: 1px solid color-mix(in srgb, var(--frag-color) 15%, transparent);
+  }
+
+  .fragment-icon {
+    font-size: 14px;
+    color: var(--frag-color);
+  }
+
+  .fragment-tool {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--frag-color);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  .fragment-snippet {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    line-height: 1.55;
+    color: var(--color-text-secondary);
+    white-space: pre;
+    margin: 0;
+  }
+
+  /* Subtle drift */
+  @keyframes fragment-drift {
+    0% { translate: 0 0; }
+    100% { translate: 2px -3px; }
+  }
+
+  /* ── Center Narrative ─────────────────── */
+
+  .hero-center {
+    position: relative;
+    z-index: 2;
+    text-align: center;
+    max-width: 480px;
+    flex-shrink: 0;
+  }
+
+  .hero-kicker {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--color-text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    margin-bottom: 24px;
+  }
+
+  .hero-headline {
+    font-family: var(--font-sans);
+    font-size: clamp(30px, 4vw, 48px);
+    font-weight: 700;
+    color: var(--color-text);
+    line-height: 1.15;
+    letter-spacing: -0.025em;
+    margin-bottom: 24px;
+  }
+
+  .hero-dim {
+    color: var(--color-text-secondary);
+  }
+
+  .hero-body {
+    font-family: var(--font-sans);
+    font-size: 15px;
+    color: var(--color-text-secondary);
+    line-height: 1.7;
+    margin: 0 auto 32px;
+  }
+
+  .hero-highlight {
+    color: var(--color-accent);
+    font-weight: 600;
+  }
+
+  .hero-cta-row {
+    display: flex;
+    justify-content: center;
+  }
+
+  .hero-cta-label {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--color-accent);
+    letter-spacing: 0.02em;
+  }
+
+  /* ── Responsive ───────────────────────── */
+
+  @media (max-width: 1100px) {
+    .fragment-col { width: 200px; }
+    .hero-chaos { gap: 24px; }
+  }
+
+  @media (max-width: 768px) {
+    .fragment-col { display: none; }
+
+    .hero-chaos {
+      height: auto;
+      min-height: calc(100vh - 52px);
+      padding: 60px 20px;
+    }
+
+    .hero-center { max-width: 100%; }
+  }
+
+  @media (max-width: 600px) {
+    .hero-headline {
+      font-size: 28px;
+    }
+  }
+</style>

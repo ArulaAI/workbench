@@ -1,0 +1,54 @@
+id: swift-class
+language: swift
+metadata:
+  produces: node
+  kind: class
+rule:
+  kind: class_declaration
+
+---
+id: swift-protocol
+language: swift
+metadata:
+  produces: node
+  kind: type
+rule:
+  kind: protocol_declaration
+
+---
+id: swift-function
+language: swift
+metadata:
+  produces: node
+  kind: method
+rule:
+  kind: function_declaration
+
+---
+id: swift-property
+language: swift
+metadata:
+  produces: node
+  kind: variable
+rule:
+  kind: property_declaration
+
+---
+id: swift-typealias
+language: swift
+metadata:
+  produces: node
+  kind: type
+rule:
+  kind: typealias_declaration
+
+---
+id: swift-class-inherits
+language: swift
+metadata:
+  produces: edge
+  edge_type: inherits
+rule:
+  kind: class_declaration
+  has:
+    kind: inheritance_specifier

@@ -1,0 +1,523 @@
+---
+---
+
+<div class="gitflow-wrap" id="gitflow-wrap">
+  <div class="gitflow-scroll">
+    <svg id="gf-svg" viewBox="0 0 780 310" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <style>
+        .gf-label { font-family: 'IBM Plex Mono', monospace; font-size: 11px; font-weight: 500; }
+        .gf-annot { font-family: 'IBM Plex Mono', monospace; font-size: 9px; }
+        .gf-main-label { font-family: 'IBM Plex Mono', monospace; font-size: 12px; font-weight: 600; }
+      </style>
+
+      <!-- Lane guide lines -->
+      <line x1="70" y1="100" x2="700" y2="100" style="stroke: var(--color-blue)" stroke-width="1" stroke-dasharray="2,10" opacity="0.08" class="anim-fade" id="lane-1"/>
+      <line x1="70" y1="145" x2="700" y2="145" style="stroke: var(--color-violet)" stroke-width="1" stroke-dasharray="2,10" opacity="0.08" class="anim-fade" id="lane-2"/>
+      <line x1="70" y1="190" x2="700" y2="190" style="stroke: var(--color-amber)" stroke-width="1" stroke-dasharray="2,10" opacity="0.08" class="anim-fade" id="lane-3"/>
+      <line x1="70" y1="235" x2="700" y2="235" style="stroke: var(--color-emerald)" stroke-width="1" stroke-dasharray="2,10" opacity="0.08" class="anim-fade" id="lane-4"/>
+      <line x1="70" y1="278" x2="700" y2="278" style="stroke: var(--color-rose)" stroke-width="1" stroke-dasharray="2,10" opacity="0.08" class="anim-fade" id="lane-5"/>
+
+      <!-- Branch paths -->
+      <path id="path-t1" class="anim-path gf-branch-t1"
+            d="M110,50 V86 Q110,100 124,100 H276 Q290,100 290,86 V50"
+            style="stroke: var(--color-blue)" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity="0.6"/>
+      <path id="path-t2" class="anim-path gf-branch-t2"
+            d="M110,50 V131 Q110,145 124,145 H476 Q490,145 490,131 V50"
+            style="stroke: var(--color-violet)" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity="0.6"/>
+      <path id="path-t3" class="anim-path gf-branch-t3"
+            d="M110,50 V176 Q110,190 124,190 H526 Q540,190 540,176 V50"
+            style="stroke: var(--color-amber)" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity="0.6"/>
+      <path id="path-t4" class="anim-path gf-branch-t4"
+            d="M315,50 V221 Q315,235 329,235 H576 Q590,235 590,221 V50"
+            style="stroke: var(--color-emerald)" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity="0.6"/>
+      <path id="path-t5" class="anim-path gf-branch-t5"
+            d="M315,50 V264 Q315,278 329,278 H631 Q645,278 645,264 V50"
+            style="stroke: var(--color-rose)" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity="0.6"/>
+
+      <!-- Main line -->
+      <line id="main-line" class="anim-path gf-main-glow"
+            x1="75" y1="50" x2="680" y2="50"
+            style="stroke: var(--color-text)" stroke-width="2.5" stroke-linecap="round"/>
+      <polygon id="main-arrow" class="anim-fade"
+            points="680,46 694,50 680,54" style="fill: var(--color-text)"/>
+
+      <!-- Main line dots -->
+      <circle id="dot-baseline" class="anim-dot" cx="110" cy="50" r="7" style="fill: var(--color-bg-elevated); stroke: var(--color-text)" stroke-width="2"/>
+      <text id="lbl-baseline" class="gf-annot anim-fade" x="110" y="34" text-anchor="middle" style="fill: var(--color-text-secondary)">baseline</text>
+
+      <circle id="dot-merge-t1" class="anim-dot gf-dot-glow-blue" cx="290" cy="50" r="6" style="fill: var(--color-blue)"/>
+      <text id="lbl-merge-t1" class="gf-annot anim-fade" x="290" y="34" text-anchor="middle" style="fill: var(--color-text-secondary)">merge models</text>
+
+      <circle id="dot-fork2" class="anim-dot" cx="315" cy="50" r="5" style="fill: var(--color-bg-elevated); stroke: var(--color-text-tertiary)" stroke-width="1.5"/>
+
+      <circle id="dot-merge-t2" class="anim-dot gf-dot-glow-violet" cx="490" cy="50" r="5" style="fill: var(--color-violet)"/>
+      <circle id="dot-merge-t3" class="anim-dot gf-dot-glow-amber" cx="540" cy="50" r="5" style="fill: var(--color-amber)"/>
+      <circle id="dot-merge-t4" class="anim-dot gf-dot-glow-emerald" cx="590" cy="50" r="5" style="fill: var(--color-emerald)"/>
+      <circle id="dot-merge-t5" class="anim-dot gf-dot-glow-rose" cx="645" cy="50" r="5" style="fill: var(--color-rose)"/>
+
+      <!-- Integrate bracket -->
+      <g id="integrate-bracket" class="anim-fade">
+        <line x1="490" y1="26" x2="645" y2="26" style="stroke: var(--color-text-secondary)" stroke-width="1"/>
+        <line x1="490" y1="26" x2="490" y2="34" style="stroke: var(--color-text-secondary)" stroke-width="1"/>
+        <line x1="645" y1="26" x2="645" y2="34" style="stroke: var(--color-text-secondary)" stroke-width="1"/>
+        <text x="567" y="19" class="gf-annot" text-anchor="middle" style="fill: var(--color-text-secondary)">integrate</text>
+      </g>
+
+      <!-- Branch event dots -->
+      <circle id="dot-t1-pass" class="anim-dot gf-dot-glow-green" cx="268" cy="100" r="6" style="fill: var(--color-emerald)"/>
+      <circle id="dot-t2-pass" class="anim-dot gf-dot-glow-green" cx="468" cy="145" r="6" style="fill: var(--color-emerald)"/>
+
+      <!-- T3: fail → retry → pass -->
+      <circle id="dot-t3-fail" class="anim-dot gf-dot-glow-red" cx="265" cy="190" r="5" style="fill: var(--color-red)"/>
+      <circle id="dot-t3-retry" class="anim-dot gf-dot-glow-amber" cx="300" cy="190" r="5" style="fill: var(--color-amber)"/>
+      <circle id="dot-t3-pass" class="anim-dot gf-dot-glow-green" cx="518" cy="190" r="6" style="fill: var(--color-emerald)"/>
+      <text id="lbl-t3-event" class="gf-annot anim-fade" x="264" y="207" style="fill: var(--color-text-secondary)">lint fail &#x2192; auto-fix</text>
+
+      <!-- T4: pass -->
+      <circle id="dot-t4-pass" class="anim-dot gf-dot-glow-green" cx="568" cy="235" r="6" style="fill: var(--color-emerald)"/>
+      <text id="lbl-t4-dep" class="gf-annot anim-fade" x="335" y="250" style="fill: var(--color-text-secondary)">sees models' work</text>
+
+      <!-- T5: fail → debugger → retry → pass -->
+      <circle id="dot-t5-fail" class="anim-dot gf-dot-glow-red" cx="415" cy="278" r="5" style="fill: var(--color-red)"/>
+      <circle id="dot-t5-debug" class="anim-dot gf-dot-glow-purple" cx="450" cy="278" r="5" style="fill: var(--color-violet)"/>
+      <circle id="dot-t5-retry" class="anim-dot gf-dot-glow-amber" cx="480" cy="278" r="5" style="fill: var(--color-amber)"/>
+      <circle id="dot-t5-pass" class="anim-dot gf-dot-glow-green" cx="623" cy="278" r="6" style="fill: var(--color-emerald)"/>
+      <text id="lbl-t5-event" class="gf-annot anim-fade" x="414" y="295" style="fill: var(--color-text-secondary)">import error &#x2192; debugger &#x2192; fix</text>
+
+      <!-- Lane labels -->
+      <text id="lbl-main" class="gf-main-label anim-fade" x="36" y="54" style="fill: var(--color-text)">main</text>
+      <text id="lbl-t1" class="gf-label anim-fade" x="66" y="104" text-anchor="end" style="fill: var(--color-blue)">models</text>
+      <text id="lbl-t2" class="gf-label anim-fade" x="66" y="149" text-anchor="end" style="fill: var(--color-violet)">api</text>
+      <text id="lbl-t3" class="gf-label anim-fade" x="66" y="194" text-anchor="end" style="fill: var(--color-amber)">validation</text>
+      <text id="lbl-t4" class="gf-label anim-fade" x="66" y="239" text-anchor="end" style="fill: var(--color-emerald)">queries</text>
+      <text id="lbl-t5" class="gf-label anim-fade" x="66" y="282" text-anchor="end" style="fill: var(--color-rose)">dashboard</text>
+    </svg>
+  </div>
+
+  <button class="replay-btn" id="replay-btn">&#x21bb; replay</button>
+
+  <div class="gitflow-legend" id="gf-legend">
+    <span class="anim-legend"><svg width="10" height="10"><circle cx="5" cy="5" r="4" style="fill: var(--color-emerald)"/></svg> gates passed</span>
+    <span class="anim-legend"><svg width="10" height="10"><circle cx="5" cy="5" r="4" style="fill: var(--color-red)"/></svg> gate failed</span>
+    <span class="anim-legend"><svg width="10" height="10"><circle cx="5" cy="5" r="4" style="fill: var(--color-violet)"/></svg> debugger</span>
+    <span class="anim-legend"><svg width="10" height="10"><circle cx="5" cy="5" r="4" style="fill: var(--color-amber)"/></svg> retry</span>
+  </div>
+</div>
+
+<div class="hero-stats" id="hero-stats">
+  <div class="stat">
+    <div class="stat-label">Sequential</div>
+    <div class="stat-value">~47 min</div>
+  </div>
+  <div class="stat-divider"></div>
+  <div class="stat">
+    <div class="stat-label">SPEED</div>
+    <div class="stat-value highlight">11m 42s</div>
+  </div>
+  <div class="stat-divider"></div>
+  <div class="stat">
+    <div class="stat-value big">4&times;</div>
+    <div class="stat-label">faster</div>
+  </div>
+</div>
+
+<style>
+  /* Gitflow wrapper */
+  .gitflow-wrap {
+    position: relative;
+    width: 100%;
+    max-width: 960px;
+    z-index: 1;
+  }
+
+  .gitflow-scroll { width: 100%; }
+  .gitflow-scroll svg { display: block; width: 100%; height: auto; }
+
+  /* Glow filters */
+  .gf-branch-t1 { filter: drop-shadow(0 0 5px color-mix(in srgb, var(--color-blue) 35%, transparent)); }
+  .gf-branch-t2 { filter: drop-shadow(0 0 5px color-mix(in srgb, var(--color-violet) 35%, transparent)); }
+  .gf-branch-t3 { filter: drop-shadow(0 0 5px color-mix(in srgb, var(--color-amber) 35%, transparent)); }
+  .gf-branch-t4 { filter: drop-shadow(0 0 5px color-mix(in srgb, var(--color-emerald) 35%, transparent)); }
+  .gf-branch-t5 { filter: drop-shadow(0 0 5px color-mix(in srgb, var(--color-rose) 35%, transparent)); }
+
+  .gf-dot-glow-green  { filter: drop-shadow(0 0 4px color-mix(in srgb, var(--color-green) 50%, transparent)); }
+  .gf-dot-glow-red    { filter: drop-shadow(0 0 4px color-mix(in srgb, var(--color-red) 50%, transparent)); }
+  .gf-dot-glow-purple { filter: drop-shadow(0 0 4px color-mix(in srgb, var(--color-purple) 50%, transparent)); }
+  .gf-dot-glow-amber  { filter: drop-shadow(0 0 4px color-mix(in srgb, var(--color-amber) 50%, transparent)); }
+  .gf-dot-glow-blue   { filter: drop-shadow(0 0 4px color-mix(in srgb, var(--color-blue) 50%, transparent)); }
+  .gf-dot-glow-violet { filter: drop-shadow(0 0 4px color-mix(in srgb, var(--color-violet) 50%, transparent)); }
+  .gf-dot-glow-emerald{ filter: drop-shadow(0 0 4px color-mix(in srgb, var(--color-emerald) 50%, transparent)); }
+  .gf-dot-glow-rose   { filter: drop-shadow(0 0 4px color-mix(in srgb, var(--color-rose) 50%, transparent)); }
+  .gf-main-glow { filter: drop-shadow(0 0 3px color-mix(in srgb, var(--color-text) 20%, transparent)); }
+
+  /* Path draw animation */
+  .anim-path {
+    visibility: hidden;
+  }
+
+  .anim-path.ready {
+    visibility: visible;
+    stroke-dashoffset: var(--path-len);
+    stroke-dasharray: var(--path-len);
+  }
+
+  .anim-path.drawn {
+    stroke-dashoffset: 0;
+    transition: stroke-dashoffset var(--draw-duration, 1s) ease-out;
+  }
+
+  /* Fade animation */
+  .anim-fade {
+    opacity: 0;
+    transition: opacity 0.35s ease-out;
+  }
+
+  .anim-fade.visible { opacity: 1; }
+
+  /* Dot scale animation */
+  .anim-dot {
+    opacity: 0;
+    transform-origin: center;
+    transform: scale(0);
+    transition: opacity 0.25s ease-out, transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+
+  .anim-dot.visible {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  /* Legend */
+  .gitflow-legend {
+    display: flex;
+    justify-content: center;
+    gap: 28px;
+    margin-top: 28px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--color-text-tertiary);
+  }
+
+  .gitflow-legend span {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+    opacity: 0;
+    transition: opacity 0.4s;
+  }
+
+  .gitflow-legend span.visible { opacity: 1; }
+
+  /* Replay button */
+  .replay-btn {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--color-text-tertiary);
+    background: var(--color-border-light);
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+    padding: 3px 10px;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+    z-index: 2;
+  }
+
+  .replay-btn:hover {
+    color: var(--color-text-secondary);
+    border-color: color-mix(in srgb, var(--color-accent) 15%, transparent);
+  }
+
+  /* Hero stats */
+  .hero-stats {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 48px;
+    margin-top: 56px;
+    padding: 24px 48px;
+    background: var(--color-bg-elevated);
+    border: 1px solid var(--color-border);
+    border-radius: 10px;
+    position: relative;
+    z-index: 1;
+    opacity: 0;
+    transform: translateY(10px);
+    transition: opacity 0.6s, transform 0.6s;
+  }
+
+  .hero-stats.visible {
+    opacity: 1;
+    transform: none;
+  }
+
+  .stat { text-align: center; }
+
+  .stat-label {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--color-text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 4px;
+  }
+
+  .stat-value {
+    font-family: var(--font-mono);
+    font-size: 22px;
+    font-weight: 600;
+    color: var(--color-text);
+    letter-spacing: -0.02em;
+  }
+
+  .stat-value.highlight { color: var(--color-green); }
+  .stat-value.big {
+    font-size: 28px;
+    color: var(--color-accent);
+  }
+
+  .stat-divider {
+    width: 1px;
+    height: 40px;
+    background: var(--color-border);
+  }
+
+  @media (max-width: 900px) {
+    .hero-stats { gap: 32px; padding: 20px 32px; }
+    .gitflow-scroll {
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    .gitflow-scroll svg { min-width: 680px; }
+    .replay-btn {
+      position: static;
+      display: block;
+      margin: 12px auto 0;
+      width: fit-content;
+    }
+  }
+
+  @media (max-width: 600px) {
+    .hero-stats {
+      gap: 20px;
+      padding: 16px 20px;
+      flex-wrap: wrap;
+      margin-top: 40px;
+    }
+    .stat-divider { display: none; }
+    .gitflow-scroll svg { min-width: 600px; }
+    .gitflow-legend {
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+  }
+</style>
+
+<script>
+  // ============================================
+  // TYPING ANIMATION
+  // ============================================
+  const TYPING_TEXT = 'speed run specs/tribes.md';
+  const TYPING_SPEED = 45;
+  const typedEl = document.getElementById('typed');
+  const cursorEl = document.getElementById('cursor');
+
+  function typeCommand(callback) {
+    if (!typedEl || !cursorEl) return;
+    let i = 0;
+    typedEl.textContent = '';
+    cursorEl.style.display = 'inline';
+    const interval = setInterval(() => {
+      typedEl.textContent = TYPING_TEXT.substring(0, i + 1);
+      i++;
+      if (i >= TYPING_TEXT.length) {
+        clearInterval(interval);
+        setTimeout(() => {
+          cursorEl.style.display = 'none';
+          if (callback) callback();
+        }, 350);
+      }
+    }, TYPING_SPEED);
+  }
+
+  // ============================================
+  // SVG PATH LENGTH COMPUTATION
+  // ============================================
+  function initPathLengths() {
+    document.querySelectorAll('.anim-path').forEach(el => {
+      el.classList.remove('ready', 'drawn');
+      let len;
+      if (el.tagName === 'path') {
+        len = (el as SVGPathElement).getTotalLength();
+      } else if (el.tagName === 'line') {
+        const x1 = parseFloat(el.getAttribute('x1') || '0');
+        const y1 = parseFloat(el.getAttribute('y1') || '0');
+        const x2 = parseFloat(el.getAttribute('x2') || '0');
+        const y2 = parseFloat(el.getAttribute('y2') || '0');
+        len = Math.sqrt((x2-x1)**2 + (y2-y1)**2);
+      }
+      if (len) {
+        (el as HTMLElement).style.setProperty('--path-len', String(len));
+        el.getBoundingClientRect();
+        el.classList.add('ready');
+      }
+    });
+  }
+
+  initPathLengths();
+
+  // ============================================
+  // ANIMATION TIMELINE
+  // ============================================
+  let animTimers: ReturnType<typeof setTimeout>[] = [];
+
+  function show(id: string, delay: number) {
+    animTimers.push(setTimeout(() => {
+      const el = document.getElementById(id);
+      if (el) el.classList.add('visible');
+    }, delay));
+  }
+
+  function draw(id: string, delay: number, duration: number) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    animTimers.push(setTimeout(() => {
+      (el as HTMLElement).style.setProperty('--draw-duration', duration + 's');
+      el.classList.add('drawn');
+    }, delay));
+  }
+
+  function runGitflowAnimation() {
+    animTimers.forEach(t => clearTimeout(t));
+    animTimers = [];
+
+    document.querySelectorAll('.anim-path').forEach(el => {
+      el.classList.remove('drawn');
+      (el as HTMLElement).offsetHeight; // force reflow
+    });
+    document.querySelectorAll('.anim-fade, .anim-dot').forEach(el => {
+      el.classList.remove('visible');
+    });
+    document.querySelectorAll('.anim-legend').forEach(el => {
+      el.classList.remove('visible');
+    });
+    document.getElementById('hero-stats')?.classList.remove('visible');
+
+    initPathLengths();
+
+    // Main line
+    draw('main-line', 0, 0.5);
+    show('main-arrow', 500);
+    show('lbl-main', 300);
+
+    // Baseline
+    show('dot-baseline', 500);
+    show('lbl-baseline', 600);
+
+    // Lane guides
+    show('lane-1', 600);
+    show('lane-2', 600);
+    show('lane-3', 600);
+    show('lane-4', 600);
+    show('lane-5', 600);
+
+    // Lane labels
+    show('lbl-t1', 700);
+    show('lbl-t2', 750);
+    show('lbl-t3', 800);
+    show('lbl-t4', 1600);
+    show('lbl-t5', 1600);
+
+    // T1, T2, T3 branches
+    draw('path-t1', 800, 1.0);
+    draw('path-t2', 800, 1.8);
+    draw('path-t3', 800, 2.0);
+
+    // T1 events
+    show('dot-t1-pass', 1500);
+    show('dot-merge-t1', 1900);
+    show('lbl-merge-t1', 2000);
+
+    // T4/T5 fork
+    show('dot-fork2', 2100);
+    draw('path-t4', 2200, 1.6);
+    draw('path-t5', 2200, 2.2);
+
+    // T3 failure
+    show('dot-t3-fail', 1700);
+    show('dot-t3-retry', 2100);
+    show('lbl-t3-event', 2200);
+
+    // T2 completes
+    show('dot-t2-pass', 2400);
+    show('dot-merge-t2', 2700);
+
+    // T3 completes
+    show('dot-t3-pass', 2800);
+    show('dot-merge-t3', 3000);
+
+    // T4 dependency
+    show('lbl-t4-dep', 2400);
+
+    // T5 failure events
+    show('dot-t5-fail', 2800);
+    show('dot-t5-debug', 3200);
+    show('dot-t5-retry', 3500);
+    show('lbl-t5-event', 3300);
+
+    // T4 completes
+    show('dot-t4-pass', 3600);
+    show('dot-merge-t4', 3800);
+
+    // T5 completes
+    show('dot-t5-pass', 4200);
+    show('dot-merge-t5', 4400);
+
+    // Integrate bracket
+    show('integrate-bracket', 4600);
+
+    // Legend
+    animTimers.push(setTimeout(() => {
+      document.querySelectorAll('.anim-legend').forEach((el, i) => {
+        setTimeout(() => el.classList.add('visible'), i * 80);
+      });
+    }, 4800));
+
+    // Stats bar
+    animTimers.push(setTimeout(() => {
+      document.getElementById('hero-stats')?.classList.add('visible');
+    }, 5200));
+  }
+
+  // ============================================
+  // ENTRY POINT
+  // ============================================
+  function startAll() {
+    typeCommand(() => {
+      runGitflowAnimation();
+    });
+  }
+
+  // Intersection observer
+  let hasPlayed = false;
+  const heroObs = new IntersectionObserver(entries => {
+    if (entries[0].isIntersecting && !hasPlayed) {
+      hasPlayed = true;
+      setTimeout(startAll, 600);
+    }
+  }, { threshold: 0.2 });
+
+  const gitflowWrap = document.getElementById('gitflow-wrap');
+  if (gitflowWrap) heroObs.observe(gitflowWrap);
+
+  // Replay
+  document.getElementById('replay-btn')?.addEventListener('click', () => {
+    hasPlayed = true;
+    startAll();
+  });
+</script>

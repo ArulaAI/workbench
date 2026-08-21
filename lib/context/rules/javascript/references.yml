@@ -1,0 +1,63 @@
+id: js-member-expression
+language: javascript
+metadata:
+  produces: reference
+  ref_kind: attribute_access
+rule:
+  kind: member_expression
+
+---
+id: js-import-named
+language: javascript
+metadata:
+  produces: reference
+  ref_kind: import
+  module_var: MODULE
+  symbols_var: NAMES
+rule:
+  kind: import_statement
+  pattern: import { $$$NAMES } from $MODULE
+
+---
+id: js-import-default
+language: javascript
+metadata:
+  produces: reference
+  ref_kind: import
+  module_var: MODULE
+rule:
+  kind: import_statement
+  pattern: import $NAME from $MODULE
+
+---
+id: js-import-namespace
+language: javascript
+metadata:
+  produces: reference
+  ref_kind: import
+  module_var: MODULE
+rule:
+  kind: import_statement
+  pattern: import * as $NAME from $MODULE
+
+---
+id: js-require
+language: javascript
+metadata:
+  produces: reference
+  ref_kind: import
+  module_var: MODULE
+rule:
+  kind: call_expression
+  pattern: require($MODULE)
+
+---
+id: js-call
+language: javascript
+metadata:
+  produces: reference
+  ref_kind: call
+  name_var: FUNC
+rule:
+  kind: call_expression
+  pattern: $FUNC($$$ARGS)

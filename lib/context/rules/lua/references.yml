@@ -1,0 +1,7 @@
+id: lua-function-call
+language: lua
+metadata:
+  produces: reference
+  ref_kind: call
+rule:
+  kind: function_call

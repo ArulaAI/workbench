@@ -1,0 +1,34 @@
+{
+  "id": "10c",
+  "title": "CLI Command: retry --defect",
+  "description": "Add `--defect <name>` flag to `cmd_retry()` in the main `speed` script, plus a `_cmd_retry_defect` helper function.\n\n**Flag parsing change in `cmd_retry()`:**\nMove flag parsing before `_require_feature` so `--defect` mode can skip the feature requirement. Add `--defect` case alongside existing `--task-id`, `--escalate`, `--context`. When `--defect` is present, call `_cmd_retry_defect` and return early. The existing `--escalate` and `--context` flags are reused for defect mode.\n\n**Edge case for `--context`:** When `--defect` is present and `--context` is used without a value (next arg starts with `--` or is missing), exit with 'Missing context text for --context flag'.\n\n**`_cmd_retry_defect <name> <context> <escalate>` helper** (add before `cmd_retry`):\n1. Validate defect exists: call `defect_state_read \"$name\"`. If it fails, exit with 'Defect not found: <name>'\n2. Read current status from state.json\n3. If `escalate` is true:\n   - Call `escalate_to_feature \"$name\"` from lib/defect_triage.sh\n   - Call `transition_defect_state \"$name\" \"escalated\"`\n   - Print escalation message and return\n4. If `context` is non-empty:\n   - Write context to `.speed/defects/<name>/context.md` (append if exists)\n   - Transition state back to `triaged` via `transition_defect_state`\n   - Log that context was added\n5. Determine failed stage from current state and re-run:\n   - `reproducing` → call `reproduce_defect \"$name\"`\n   - `fixing` or `triaged` (after context reset) → call `fix_defect \"$name\"`\n   - `reviewing` → call `review_defect_fix \"$name\"`\n   - `integrating` → call `integrate_defect \"$name\"`\n   - Other states → exit with descriptive error\n\n**Key library functions** (already sourced):\n- `defect_state_read` from lib/defects.sh\n- `_defect_dir` from lib/defects.sh — returns .speed/defects/<name> path\n- `transition_defect_state` from lib/defects.sh\n- `escalate_to_feature` from lib/defect_triage.sh\n- `reproduce_defect`, `fix_defect` from lib/defect_fix.sh\n- `review_defect_fix`, `integrate_defect` from lib/defect_review.sh\n\n**Existing patterns to follow:**\n- `cmd_retry()` already has `--escalate` and `--context` flag parsing — reuse those variables\n- `cmd_defect()` error message patterns",
+  "acceptance_criteria": "- `speed retry --defect <name> --escalate` calls escalate_to_feature and transitions to escalated [verify_by: test]\n- `speed retry --defect <name> --context \"hint\"` stores context and re-runs failed stage [verify_by: test]\n- `speed retry --defect <name>` without flags re-runs last failed stage using current state [verify_by: test]\n- `speed retry --defect <name> --context` without text exits with 'Missing context text for --context flag' [verify_by: test]\n- `speed retry --defect nonexistent` exits with 'Defect not found: nonexistent' [verify_by: test]\n- Existing `speed retry --task-id 5` still works (no regression) [verify_by: test]",
+  "depends_on": [
+    "7",
+    "8",
+    "9"
+  ],
+  "status": "done",
+  "branch": "speed/speed-defects/task-10c-cli-command-retry-defect",
+  "agent_model": "sonnet",
+  "created_at": "2026-02-24T20:00:00Z",
+  "started_at": "2026-02-24T18:48:10Z",
+  "completed_at": "2026-02-24T18:53:15Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": null,
+  "files_touched": [
+    "speed"
+  ],
+  "decisions": [
+    "Flag parsing moved before _require_feature so --defect mode can bypass the feature requirement entirely. The _require_feature call only happens when no --defect is present.",
+    "Used a context_flag_used sentinel boolean to distinguish between '--context not provided' and '--context provided without a value'. Only errors when both conditions are true and --defect is set.",
+    "The _cmd_retry_defect function handles the triaged→fixing re-run path in a single case arm ('fixing|triaged') since after context is appended and state is transitioned back to triaged, that case also runs fix_defect.",
+    "The state machine terminal states (resolved, rejected, escalated) and non-retryable states (filed, triaging, reproduced, fixed, reviewed) all fall through to the 'other states' error path.",
+    "tests/test_defect_cli.sh is undeclared in the task spec but is the natural home for these tests given Tasks 7 and 9 already established this pattern."
+  ],
+  "concerns": [
+    "test_retry_defect_context_appended_to_file verifies context.md is written but cannot verify the full fix_defect pipeline runs correctly in unit test context (requires provider). The test intentionally ignores the exit code from fix_defect and only asserts on the side effect.",
+    "The 'No gate invocation evidence' grounding warning is a structural limitation when running as a human-operated session rather than an automated developer agent."
+  ]
+}

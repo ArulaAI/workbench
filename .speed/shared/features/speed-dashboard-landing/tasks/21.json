@@ -1,0 +1,104 @@
+{
+  "id": "21",
+  "title": "Fix coherence issues",
+  "description": "Fix the following cross-task coherence issues. Each recommendation is from the coherence checker's analysis of all completed task diffs against the spec.\n\n1. Change var(--color-green) to var(--color-emerald) in LearnPanel.tsx:52 and LearnPanel.test.tsx:75.\n2. Add a '/' entry to sidebar.tsx navItems with a Home icon and 'Home' or 'Landing' label.\n3. Add a '/' entry to header.tsx views map with title 'Landing' and a description.\n4. Fix PendingReview.completedAt in landing.ts:28 to 'string | null' and add a null guard in JudgePanel.tsx:116 before calling formatDate().\n5. Either remove the greeting field from the backend LandingView type (since the frontend computes it client-side) or have TopBar accept and use the backend greeting as a fallback.\n\nFollow spec schemas exactly for field names, types, and structure. Do not refactor beyond what the recommendations ask for.",
+  "acceptance_criteria": "- Each coherence recommendation is addressed or has a comment explaining why it was skipped\n- speed coherence passes after these fixes\n- No new lint/typecheck/test failures\n- All quality gates pass",
+  "depends_on": [
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+    "1",
+    "13",
+    "14",
+    "10",
+    "20",
+    "9"
+  ],
+  "status": "done",
+  "branch": "speed/speed-dashboard-landing/task-21-fix-coherence-issues",
+  "agent_model": "sonnet",
+  "created_at": "2026-03-17T05:56:53Z",
+  "started_at": "2026-03-17T05:57:08Z",
+  "completed_at": "2026-03-17T06:00:39Z",
+  "agent_pid": null,
+  "error": null,
+  "review_feedback": null,
+  "files_touched": [
+    "dashboard/backend/resolvers/landing.py",
+    "dashboard/backend/resolvers/landing_types.py",
+    "dashboard/frontend/app/globals.css",
+    "dashboard/frontend/app/page.test.tsx",
+    "dashboard/frontend/components/landing/ExecutePanel.tsx",
+    "dashboard/frontend/components/landing/LearnPanel.test.tsx",
+    "dashboard/frontend/components/landing/LearnPanel.tsx",
+    "dashboard/frontend/components/landing/TopBar.tsx",
+    "dashboard/frontend/components/layout/header.tsx",
+    "dashboard/frontend/components/layout/sidebar.tsx",
+    "dashboard/frontend/lib/graphql/queries/landing.ts"
+  ],
+  "gate_results": {
+    "checks": [
+      {
+        "name": "diff_non_empty",
+        "status": "pass"
+      },
+      {
+        "name": "declared_files",
+        "status": "pass"
+      },
+      {
+        "name": "scope",
+        "status": "warn",
+        "undeclared_files": [
+          "dashboard/frontend/components/landing/JudgePanel.tsx"
+        ]
+      },
+      {
+        "name": "python_imports",
+        "status": "pass"
+      },
+      {
+        "name": "not_blocked",
+        "status": "pass"
+      },
+      {
+        "name": "test_coverage",
+        "status": "pass"
+      },
+      {
+        "name": "gate_evidence",
+        "status": "warn"
+      },
+      {
+        "name": "criteria",
+        "status": "warn"
+      },
+      {
+        "name": "secrets",
+        "status": "pass"
+      },
+      {
+        "name": "syntax",
+        "status": "pass"
+      }
+    ],
+    "scope": {
+      "undeclared_files": [
+        "dashboard/frontend/components/landing/JudgePanel.tsx"
+      ]
+    }
+  },
+  "decisions": [
+    "sidebar.tsx already had '/' entry with House icon from task 20 merge — no change needed",
+    "header.tsx '/' entry existed with title 'Overview' (task 20 decision); changed to 'Landing' per coherence recommendation",
+    "For issue 5 (greeting coherence), chose the TopBar fallback approach: added optional greeting? prop so the backend value can be used if passed, without breaking the existing call site in page.tsx that doesn't pass it",
+    "JudgePanel.tsx is owned by task 12 but required the null guard fix here since it directly uses PendingReview.completedAt whose type change I made in landing.ts"
+  ],
+  "concerns": [
+    "JudgePanel.tsx is flagged as undeclared (task 12 owns it) — the null guard is a required cascading fix from the completedAt type change, not a feature addition",
+    "page.tsx (task 17) does not currently pass greeting to TopBar based on the test mock — the optional prop will have no effect until page.tsx is updated to forward it"
+  ]
+}

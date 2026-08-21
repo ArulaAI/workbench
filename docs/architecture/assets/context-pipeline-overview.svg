@@ -1,0 +1,182 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 580" fill="none">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 7" refX="10" refY="3.5"
+      markerWidth="10" markerHeight="7" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#00ccaa"/>
+    </marker>
+    <marker id="arrow-dim" viewBox="0 0 10 7" refX="10" refY="3.5"
+      markerWidth="10" markerHeight="7" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#68686e"/>
+    </marker>
+    <linearGradient id="fade-line" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="rgba(0,204,170,0.0)"/>
+      <stop offset="50%" stop-color="rgba(0,204,170,0.12)"/>
+      <stop offset="100%" stop-color="rgba(0,204,170,0.0)"/>
+    </linearGradient>
+  </defs>
+
+  <style>
+    text {
+      font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+      fill: #f0f0f0;
+    }
+    .mono {
+      font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+      font-weight: 600;
+    }
+    .dim { fill: #68686e; }
+    .soft { fill: #a0a0a8; }
+    .accent { fill: #00ccaa; }
+    .accent-amber { fill: #ffcc33; }
+    .accent-cyan { fill: #44bbee; }
+    .accent-green { fill: #44cc77; }
+  </style>
+
+  <!-- ────── CODEBASE SOURCE ────── -->
+  <text x="360" y="24" text-anchor="middle" class="mono" font-size="13"
+    letter-spacing="0.08em">CODEBASE</text>
+  <line x1="360" y1="34" x2="360" y2="60"
+    stroke="#00ccaa" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- ────── LAYER 1 ────── -->
+  <rect x="55" y="70" width="610" height="126" rx="10"
+    fill="#363638" stroke="rgba(0,204,170,0.2)" stroke-width="1"/>
+  <text x="360" y="94" text-anchor="middle" class="mono" font-size="12"
+    letter-spacing="0.04em">LAYER 1</text>
+  <text x="360" y="110" text-anchor="middle" font-size="11" class="dim">
+    Built once · Deterministic · No LLM</text>
+
+  <!-- Four artifact pills -->
+  <rect x="78" y="124" width="122" height="30" rx="6"
+    fill="rgba(0,204,170,0.06)" stroke="rgba(0,204,170,0.12)" stroke-width="1"/>
+  <text x="139" y="144" text-anchor="middle" font-size="11">Project Map</text>
+
+  <rect x="214" y="124" width="122" height="30" rx="6"
+    fill="rgba(0,204,170,0.06)" stroke="rgba(0,204,170,0.12)" stroke-width="1"/>
+  <text x="275" y="144" text-anchor="middle" font-size="11">CSG</text>
+
+  <rect x="350" y="124" width="122" height="30" rx="6"
+    fill="rgba(0,204,170,0.06)" stroke="rgba(0,204,170,0.12)" stroke-width="1"/>
+  <text x="411" y="144" text-anchor="middle" font-size="11">Skeletons</text>
+
+  <rect x="486" y="124" width="122" height="30" rx="6"
+    fill="rgba(0,204,170,0.06)" stroke="rgba(0,204,170,0.12)" stroke-width="1"/>
+  <text x="547" y="144" text-anchor="middle" font-size="11">Spec-Align</text>
+
+  <!-- ────── TIER LABEL: LAYER 2 ────── -->
+  <rect x="55" y="215" width="610" height="1" fill="url(#fade-line)"/>
+  <text x="60" y="230" font-size="10" class="accent-amber mono"
+    letter-spacing="0.06em">LAYER 2</text>
+  <text x="660" y="230" text-anchor="end" font-size="10" class="dim">
+    per-task · ~500 ms</text>
+
+  <!-- Fan-out arrows from Layer 1 to Layer 2 -->
+  <line x1="205" y1="196" x2="152" y2="242"
+    stroke="#00ccaa" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="360" y1="196" x2="360" y2="242"
+    stroke="#00ccaa" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="515" y1="196" x2="568" y2="242"
+    stroke="#00ccaa" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+  <!-- ────── LAYER 2 BOXES ────── -->
+  <!-- Task 1 -->
+  <rect x="65" y="248" width="175" height="106" rx="8"
+    fill="#363638" stroke="rgba(0,204,170,0.18)" stroke-width="1"/>
+  <text x="152" y="268" text-anchor="middle" class="mono" font-size="11">Task 1</text>
+  <line x1="82" y1="276" x2="222" y2="276"
+    stroke="rgba(255,255,255,0.06)" stroke-width="1"/>
+  <text x="88" y="294" font-size="10" class="soft">code context</text>
+  <text x="88" y="308" font-size="10" class="soft">task context</text>
+  <text x="88" y="322" font-size="10" class="soft">spec context</text>
+  <text x="88" y="336" font-size="10" class="soft">budget</text>
+
+  <!-- Task 2 -->
+  <rect x="272" y="248" width="175" height="106" rx="8"
+    fill="#363638" stroke="rgba(0,204,170,0.18)" stroke-width="1"/>
+  <text x="360" y="268" text-anchor="middle" class="mono" font-size="11">Task 2</text>
+  <line x1="289" y1="276" x2="429" y2="276"
+    stroke="rgba(255,255,255,0.06)" stroke-width="1"/>
+  <text x="295" y="294" font-size="10" class="soft">code context</text>
+  <text x="295" y="308" font-size="10" class="soft">task context</text>
+  <text x="295" y="322" font-size="10" class="soft">spec context</text>
+  <text x="295" y="336" font-size="10" class="soft">budget</text>
+
+  <!-- Ellipsis between Task 2 and Task N -->
+  <text x="462" y="300" text-anchor="middle" font-size="16" class="dim">···</text>
+
+  <!-- Task N -->
+  <rect x="478" y="248" width="175" height="106" rx="8"
+    fill="#363638" stroke="rgba(0,204,170,0.18)" stroke-width="1"/>
+  <text x="565" y="268" text-anchor="middle" class="mono" font-size="11">Task N</text>
+  <line x1="495" y1="276" x2="635" y2="276"
+    stroke="rgba(255,255,255,0.06)" stroke-width="1"/>
+  <text x="501" y="294" font-size="10" class="soft">code context</text>
+  <text x="501" y="308" font-size="10" class="soft">task context</text>
+  <text x="501" y="322" font-size="10" class="soft">spec context</text>
+  <text x="501" y="336" font-size="10" class="soft">budget</text>
+
+  <!-- ────── TIER LABEL: LAYER 3 ────── -->
+  <rect x="55" y="373" width="610" height="1" fill="url(#fade-line)"/>
+  <text x="60" y="388" font-size="10" class="accent-cyan mono"
+    letter-spacing="0.06em">LAYER 3</text>
+  <text x="660" y="388" text-anchor="end" font-size="10" class="dim">
+    per-stage · ~10 ms</text>
+
+  <!-- Arrows from Layer 2 to Layer 3 -->
+  <line x1="152" y1="354" x2="152" y2="396"
+    stroke="#00ccaa" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="360" y1="354" x2="360" y2="396"
+    stroke="#00ccaa" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="565" y1="354" x2="565" y2="396"
+    stroke="#00ccaa" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+  <!-- ────── LAYER 3 BOXES ────── -->
+  <rect x="65" y="400" width="175" height="36" rx="6"
+    fill="#363638" stroke="rgba(0,204,170,0.15)" stroke-width="1"/>
+  <text x="152" y="423" text-anchor="middle" font-size="11">Developer prompt</text>
+
+  <rect x="272" y="400" width="175" height="36" rx="6"
+    fill="#363638" stroke="rgba(0,204,170,0.15)" stroke-width="1"/>
+  <text x="360" y="423" text-anchor="middle" font-size="11">Developer prompt</text>
+
+  <rect x="478" y="400" width="175" height="36" rx="6"
+    fill="#363638" stroke="rgba(0,204,170,0.15)" stroke-width="1"/>
+  <text x="565" y="423" text-anchor="middle" font-size="11">Reviewer prompt</text>
+
+  <!-- Arrows to agents -->
+  <line x1="152" y1="436" x2="152" y2="462"
+    stroke="#00ccaa" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="360" y1="436" x2="360" y2="462"
+    stroke="#00ccaa" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="565" y1="436" x2="565" y2="462"
+    stroke="#00ccaa" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+  <!-- Agent labels -->
+  <text x="152" y="480" text-anchor="middle" class="mono accent-green" font-size="11">Agent 1</text>
+  <text x="360" y="480" text-anchor="middle" class="mono accent-green" font-size="11">Agent 2</text>
+  <text x="565" y="480" text-anchor="middle" class="mono accent-green" font-size="11">Agent N</text>
+
+  <!-- ────── BYPASS PATH ────── -->
+  <rect x="55" y="505" width="610" height="1" fill="url(#fade-line)"/>
+  <text x="360" y="524" text-anchor="middle" font-size="10" class="dim">
+    Architect and Plan Verifier run before Layer 2 exists.
+    Layer 3 formats Layer 1 artifacts directly.</text>
+
+  <!-- Bypass mini-flow -->
+  <rect x="150" y="542" width="88" height="26" rx="5"
+    fill="rgba(0,204,170,0.06)" stroke="rgba(0,204,170,0.12)" stroke-width="1"/>
+  <text x="194" y="559" text-anchor="middle" font-size="10">Layer 1</text>
+
+  <line x1="238" y1="555" x2="298" y2="555"
+    stroke="#68686e" stroke-width="1.2" marker-end="url(#arrow-dim)"/>
+
+  <rect x="304" y="542" width="88" height="26" rx="5"
+    fill="rgba(0,204,170,0.06)" stroke="rgba(0,204,170,0.12)" stroke-width="1"/>
+  <text x="348" y="559" text-anchor="middle" font-size="10">Layer 3</text>
+
+  <line x1="392" y1="555" x2="448" y2="555"
+    stroke="#68686e" stroke-width="1.2" marker-end="url(#arrow-dim)"/>
+
+  <text x="462" y="551" font-size="10" class="soft">Architect</text>
+  <text x="462" y="565" font-size="10" class="soft">Plan Verifier</text>
+</svg>

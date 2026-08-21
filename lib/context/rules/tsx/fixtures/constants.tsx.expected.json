@@ -1,0 +1,9 @@
+{
+  "expected_rules": [
+    "tsx-class",
+    "tsx-constant",
+    "tsx-constant",
+    "tsx-constant",
+    "tsx-function"
+  ]
+}

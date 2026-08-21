@@ -1,0 +1,200 @@
+{
+  "entities": [
+    {
+      "name": "formatRelativeTime utility",
+      "type": "function",
+      "path": "dashboard/frontend/components/editor/audit-history-utils.ts",
+      "function": "formatRelativeTime",
+      "created_by_task": "1",
+      "key_fields": [
+        "converts ISO timestamp to relative string",
+        "handles edge cases: future, empty, boundary values",
+        "returns just now, Nm ago, Nh ago, Nd ago, or short date"
+      ]
+    },
+    {
+      "name": "issueKey utility",
+      "type": "function",
+      "path": "dashboard/frontend/components/editor/audit-history-utils.ts",
+      "function": "issueKey",
+      "created_by_task": "1",
+      "key_fields": [
+        "composite key from ruleId + section",
+        "used for matching issues across audit runs"
+      ]
+    },
+    {
+      "name": "computeComparison utility",
+      "type": "function",
+      "path": "dashboard/frontend/components/editor/audit-history-utils.ts",
+      "function": "computeComparison",
+      "created_by_task": "2",
+      "key_fields": [
+        "accepts two SpeedAuditResult objects",
+        "returns removed unchanged added issue groups",
+        "uses issueKey for matching"
+      ]
+    },
+    {
+      "name": "getPersistentIssues utility",
+      "type": "function",
+      "path": "dashboard/frontend/components/editor/audit-history-utils.ts",
+      "function": "getPersistentIssues",
+      "created_by_task": "2",
+      "key_fields": [
+        "accepts latest and previous audit",
+        "returns Set of issueKeys present in both"
+      ]
+    },
+    {
+      "name": "useAuditHistory hook",
+      "type": "function",
+      "path": "dashboard/frontend/components/editor/use-audit-history.ts",
+      "function": "useAuditHistory",
+      "created_by_task": "3",
+      "key_fields": [
+        "selectedRunIndex state with clamping",
+        "compareIndices state with validation",
+        "selectRun shiftSelectRun exitComparison resetToLatest actions",
+        "Escape key handler with two-level exit"
+      ]
+    },
+    {
+      "name": "audit-history-utils test file",
+      "type": "file",
+      "path": "dashboard/frontend/components/editor/audit-history-utils.test.ts",
+      "created_by_task": "4",
+      "key_fields": [
+        "formatRelativeTime edge cases",
+        "issueKey uniqueness",
+        "computeComparison correctness",
+        "getPersistentIssues correctness"
+      ]
+    },
+    {
+      "name": "use-audit-history test file",
+      "type": "file",
+      "path": "dashboard/frontend/components/editor/use-audit-history.test.ts",
+      "created_by_task": "5",
+      "key_fields": [
+        "selectedRunIndex clamping",
+        "compareIndices validation",
+        "escape key two-level exit",
+        "shift-click state transitions"
+      ]
+    },
+    {
+      "name": "VerdictDot",
+      "type": "function",
+      "path": "dashboard/frontend/components/editor/VerdictDot.tsx",
+      "function": "VerdictDot",
+      "created_by_task": "6",
+      "key_fields": [
+        "status prop (pass|warn|fail)",
+        "selected ring via --color-border",
+        "compareSelected ring via --color-accent",
+        "button element with aria-label and aria-pressed",
+        "24x24px minimum hit area",
+        "native title tooltip"
+      ]
+    },
+    {
+      "name": "RunHeader",
+      "type": "function",
+      "path": "dashboard/frontend/components/editor/RunHeader.tsx",
+      "function": "RunHeader",
+      "created_by_task": "7",
+      "key_fields": [
+        "relativeTime display",
+        "onBackToLatest callback",
+        "aria-live polite",
+        "--color-bg background with border-bottom"
+      ]
+    },
+    {
+      "name": "ComparisonHeader",
+      "type": "function",
+      "path": "dashboard/frontend/components/editor/ComparisonHeader.tsx",
+      "function": "ComparisonHeader",
+      "created_by_task": "7",
+      "key_fields": [
+        "olderTime and newerTime display",
+        "olderCount and newerCount with delta",
+        "delta color (emerald decrease, red increase)",
+        "aria-live polite"
+      ]
+    },
+    {
+      "name": "ComparisonView",
+      "type": "function",
+      "path": "dashboard/frontend/components/editor/ComparisonView.tsx",
+      "function": "ComparisonView",
+      "created_by_task": "8",
+      "key_fields": [
+        "Removed/Unchanged/Added grouped sections",
+        "onExit callback",
+        "removed row emerald tint",
+        "added row red tint",
+        "aria group labels per section"
+      ]
+    },
+    {
+      "name": "IntelPanel audit history integration",
+      "type": "file",
+      "path": "dashboard/frontend/components/editor/IntelPanel.tsx",
+      "created_by_task": "9",
+      "key_fields": [
+        "useAuditHistory hook wired",
+        "VerdictDot buttons replace spans",
+        "RunHeader conditional on selectedRunIndex !== 0",
+        "ComparisonView conditional on compareIndices",
+        "persistent badge on FindingRow",
+        "sizing card respects selectedRunIndex",
+        "Escape two-level exit",
+        "arrow key roving tabindex",
+        "0-run and 1-run fallback states"
+      ]
+    },
+    {
+      "name": "VerdictDot tests",
+      "type": "file",
+      "path": "dashboard/frontend/components/editor/VerdictDot.test.tsx",
+      "created_by_task": "10",
+      "key_fields": [
+        "renders button element",
+        "aria-label includes timestamp and status",
+        "click fires onClick",
+        "shift-click fires onShiftClick",
+        "selected ring visible",
+        "compare-selected ring visible"
+      ]
+    },
+    {
+      "name": "ComparisonView tests",
+      "type": "file",
+      "path": "dashboard/frontend/components/editor/ComparisonView.test.tsx",
+      "created_by_task": "10",
+      "key_fields": [
+        "renders removed/unchanged/added sections",
+        "empty section shows (none)",
+        "exit button fires onExit",
+        "delta color correct"
+      ]
+    },
+    {
+      "name": "IntelPanel audit history integration tests",
+      "type": "file",
+      "path": "dashboard/frontend/components/editor/IntelPanel.audit-history.test.tsx",
+      "created_by_task": "11",
+      "key_fields": [
+        "dot click swaps findings",
+        "shift-click enters comparison",
+        "escape exits comparison then selection",
+        "0-run shows empty message",
+        "1-run no compare",
+        "persistent badge renders"
+      ]
+    }
+  ],
+  "relationships": []
+}
