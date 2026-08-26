@@ -304,6 +304,7 @@ main() {
         review-status)  cmd_review_status "$@" ;;
         sync)           cmd_sync "$@" ;;
         skills)         cmd_skills "$@" ;;
+        hello)          cmd_hello "$@" ;;
         serve)          cmd_serve "$@" ;;
         dashboard) cmd_dashboard "$@" ;;
         self-update)   cmd_self_update "$@" ;;

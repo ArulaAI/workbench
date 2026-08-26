@@ -26,6 +26,14 @@ _skills_catalog_version() {
     echo "$v"
 }
 
+# Print a one-line temporary-alias notice to stderr when a command is invoked
+# via `speed` rather than the canonical `workbench` namespace. The `workbench`
+# dispatcher sets WORKBENCH_NS=1, which suppresses this.
+_speed_alias_notice() {
+    [[ -n "${WORKBENCH_NS:-}" ]] && return 0
+    echo "note: 'speed $1' is a temporary alias for the canonical 'workbench $1'" >&2
+}
+
 cmd_skills() {
     local sub="${1:-status}"
     [[ $# -gt 0 ]] && shift
@@ -43,6 +51,7 @@ cmd_skills() {
             ;;
     esac
 
+    _speed_alias_notice skills
     PYTHONPATH="${SPEED_DIR}/lib" "$(_skills_python)" -m skills "$sub" \
         --project-root "${PROJECT_ROOT}" \
         --skills-dir "${SPEED_DIR}/skills" \
