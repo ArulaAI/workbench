@@ -14,6 +14,7 @@ from skills import ABSENT, STALE, CONFLICTED, ORPHANED, UNSUPPORTED
 from skills.catalog import load_catalog
 from skills.targets import SURFACES, detect_surfaces, dest_dir
 from skills.project import render
+from skills.events import append_events, new_transaction, now_iso
 from skills.manifest import (
     hash_bytes,
     hash_disk,
@@ -36,7 +37,7 @@ def _classify_all(project_root, skills_dir, catalog_version, surfaces):
     by_name = {p.name: p for p in pkgs}
     manifest = load_manifest(project_root)
     rows: list = []
-    plans: list = []  # (surface, skill, state, rendered_or_None, dest)
+    plans: list = []  # (surface, skill, state, rendered_or_None, dest, version)
     for surface in surfaces:
         surf_entry = (
             manifest.get("surfaces", {}).get(surface.id, {}).get("skills", {})
@@ -48,7 +49,7 @@ def _classify_all(project_root, skills_dir, catalog_version, surfaces):
             dest = dest_dir(surface, name, project_root)
             state = classify_skill(rendered, hash_disk(dest), surf_entry.get(name))
             rows.append(SkillState(surface.id, name, state))
-            plans.append((surface, name, state, rendered, dest))
+            plans.append((surface, name, state, rendered, dest, pkg.meta.get("version")))
         for name, entry in surf_entry.items():
             if name in seen:
                 continue
@@ -57,7 +58,7 @@ def _classify_all(project_root, skills_dir, catalog_version, surfaces):
                 continue
             state = classify_skill(None, hash_disk(dest), entry)
             rows.append(SkillState(surface.id, name, state))
-            plans.append((surface, name, state, None, dest))
+            plans.append((surface, name, state, None, dest, None))
     return rows, plans, manifest
 
 
@@ -100,18 +101,26 @@ def sync(project_root, skills_dir, catalog_version, *, force=False, only_surface
     before = json.dumps(manifest, sort_keys=True)
     manifest.setdefault("surfaces", {})
 
-    for surface, name, state, rendered, dest in plans:
+    transaction = new_transaction()
+    ts = now_iso()
+    events: list = []
+
+    for surface, name, state, rendered, dest, version in plans:
         surf = manifest["surfaces"].setdefault(
             surface.id, {"root": surface.skills_root, "skills": {}}
         )
+        prev_version = surf["skills"].get(name, {}).get("version")
         remove = state == ORPHANED or (
             rendered is None and force and state == CONFLICTED
         )
         write = state in (ABSENT, STALE) or (state == CONFLICTED and force and rendered is not None)
+        action = None
         if remove:
             if dest.exists():
                 shutil.rmtree(dest)
             surf["skills"].pop(name, None)
+            action = "removed"
+            version = None
         elif write:
             if dest.exists():
                 shutil.rmtree(dest)
@@ -122,10 +131,27 @@ def sync(project_root, skills_dir, catalog_version, *, force=False, only_surface
             surf["skills"][name] = {
                 "files": {rel: hash_bytes(content) for rel, content in rendered.items()},
                 "projected_at_version": catalog_version,
+                "version": version,
             }
+            action = "installed" if state == ABSENT else "updated"
+        elif state == CONFLICTED:
+            action = "conflict"
+
+        if action is not None:
+            events.append({
+                "transaction": transaction,
+                "ts": ts,
+                "catalog_version": catalog_version,
+                "surface": surface.id,
+                "skill": name,
+                "action": action,
+                "prev_version": prev_version,
+                "new_version": version,
+            })
 
     manifest["catalog_version"] = catalog_version
     after = json.dumps(manifest, sort_keys=True)
     if after != before:
         save_manifest(project_root, manifest)
+    append_events(project_root, events)
     return rows
