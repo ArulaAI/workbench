@@ -19,3 +19,18 @@ def test_load_catalog_discovers_and_sorts(tmp_catalog):
 
 def test_load_catalog_missing_dir_is_empty(tmp_path):
     assert load_catalog(tmp_path / "nope") == []
+
+
+def test_load_package_excludes_junk_files(tmp_catalog):
+    skills_dir = tmp_catalog(
+        extra={
+            "scripts/hello.py": "print('hi')\n",
+            "scripts/__pycache__/hello.cpython-311.pyc": "BYTECODE",
+            ".DS_Store": "macjunk",
+        }
+    )
+    pkg = load_package(skills_dir / "workbench-draft")
+    assert "scripts/hello.py" in pkg.files
+    assert not any("__pycache__" in rel for rel in pkg.files)
+    assert not any(rel.endswith(".pyc") for rel in pkg.files)
+    assert ".DS_Store" not in pkg.files
