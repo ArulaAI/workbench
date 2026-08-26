@@ -24,7 +24,14 @@ def _load_hello_helper(skills_dir):
         raise FileNotFoundError(f"canonical helper missing: {helper}")
     spec = importlib.util.spec_from_file_location("workbench_hello_helper", helper)
     mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    # Do not write __pycache__ into the canonical package; a stray .pyc would
+    # otherwise be swept into the next projection.
+    prev = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
+    try:
+        spec.loader.exec_module(mod)
+    finally:
+        sys.dont_write_bytecode = prev
     return mod
 
 
