@@ -303,6 +303,7 @@ main() {
         review-judge)   cmd_review_judge "$@" ;;
         review-status)  cmd_review_status "$@" ;;
         sync)           cmd_sync "$@" ;;
+        skills)         cmd_skills "$@" ;;
         serve)          cmd_serve "$@" ;;
         dashboard) cmd_dashboard "$@" ;;
         self-update)   cmd_self_update "$@" ;;

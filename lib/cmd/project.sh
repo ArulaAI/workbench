@@ -25,6 +25,7 @@ cmd_init() {
 .speed/state.json
 .speed/running/
 .speed/worktrees/
+.speed/skills/
 EOF
         log_success "Updated .gitignore"
     fi
@@ -66,7 +67,16 @@ EOF
         log_info "${VISION_FILE} already exists, skipping"
     fi
 
-    # 8. Initial commit
+    # 8. Project the built-in skill catalog into detected agent surfaces
+    if [[ -d "${SPEED_DIR}/skills" ]]; then
+        if cmd_skills sync >/dev/null 2>&1; then
+            log_success "Skills projected into detected agent surfaces"
+        else
+            log_info "Skill projection skipped (no supported surface or conflicts) — run: ${COLOR_STEP}speed skills status${RESET}"
+        fi
+    fi
+
+    # 9. Initial commit
     (cd "$PROJECT_ROOT" && git add -A && git commit -m "speed init: project scaffold" 2>/dev/null) || true
 
     echo ""
