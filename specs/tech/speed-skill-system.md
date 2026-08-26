@@ -1,315 +1,270 @@
-# RFC: SPEED Skill System
+# RFC: Workbench Skill System
 
-> See [speed-skill-system-prd.md](../product/speed-skill-system-prd.md) for product context.
-> Feature note: [02-skill-system.md](../product/define-module/02-skill-system.md).
+> See [speed-skill-system-prd.md](../product/speed-skill-system-prd.md) for the source PRD.
+> Feature note (authoritative product scope): [define-module/01-skill-system.md](../product/define-module/01-skill-system.md).
 > Reference architecture (local, read-only): `../forge-foundry-primitives/forge_sync/`.
 
-This RFC specifies the technical design for a SPEED-native skill system: a canonical skill catalog, a lean Python projection engine, managed-file identity, `speed skills` commands, and the first `workbench-draft` package. It commits to four decisions taken during design: a SPEED-native projector (not a vendored copy of Forge Foundry), the existing `speed` CLI namespace (not a new `workbench` binary), Claude Code as the first projection surface with Codex following, and a plan/spec deliverable that stops before implementation.
+This RFC specifies the technical design for the Workbench Skill System: a canonical skill catalog, a lean stdlib Python projection engine, managed-file identity, the `workbench` command namespace with temporary `speed` aliases, and `workbench-hello` as the platform proof skill. It aligns with the updated feature note, which reframes the skill system as a Workbench-wide platform (used by every module, not only Define) and sets a strict bootstrap order: prove the platform with a helper-backed `workbench-hello` before any module skill such as `workbench-draft` ships.
 
-The scope here is packaging, projection, and lifecycle. The interview behavior of `workbench-draft` itself is owned by [03-guided-authoring.md](../product/define-module/03-guided-authoring.md) and is not redefined here.
+Scope here is packaging, projection, routing, and lifecycle. Domain workflow behavior (the `workbench-draft` interview, etc.) is owned by the module notes and is not defined here.
+
+## What changed from the previous revision
+
+This RFC previously targeted `speed skills` and shipped `workbench-draft` first. The updated note changed two foundational decisions, and this revision follows them:
+
+| Dimension | Previous RFC | This revision (matches the note) |
+|---|---|---|
+| First skill | `workbench-draft` (agent-native placeholder) | `workbench-hello` (helper-backed shared-implementation proof) |
+| Command namespace | `speed skills …` | `workbench …` canonical; `speed …` retained only as labeled temporary aliases |
+| Framing | Define feature | Workbench platform service for all modules |
+| Added scope | (none) | skill identity/versioning, release change ledger, project install-event log, compatibility/regression gate |
 
 ## Basic Example
 
-A maintainer adds one canonical package under the SPEED install tree:
+The platform proof skill is intentionally the smallest possible package. It is helper-backed: one canonical `scripts/hello.py` is the single implementation both the CLI and the agent route execute.
 
 ```text
-skills/workbench-draft/
-├── SKILL.md
-└── references/
-    ├── shared-interview-contract.md
-    └── question-banks/{prd,design,rfc,eval}.yaml
+skills/workbench-hello/
+├── SKILL.md          # invocation + safety contract; no domain logic
+└── scripts/
+    └── hello.py      # the ONE greeting implementation (stdlib)
 ```
 
-`SKILL.md` carries YAML front matter plus an agent-neutral instruction body:
-
-```markdown
----
-name: workbench-draft
-description: >
-  Run a guided PRD/design/RFC/eval interview and draft the matching SPEED
-  spec, then self-review it. Use when asked to "draft a spec" or "run the interview".
-x-speed-managed: true
-x-speed-catalog-version: 0.3.0
----
-
-# workbench-draft
-...ordered workflow, prerequisites, outputs, completion gates...
-```
-
-A user runs setup, and the catalog projects into every detected surface:
+Both entry points resolve the same canonical package and run the same helper:
 
 ```console
-$ speed init
-...
-✓ Skills projected: 1 skill → .claude/skills/ (claude_code)
+$ workbench init
+✓ Skills projected: 2 skills → .claude/skills/ (claude_code)
 
-$ speed skills status
-catalog 0.3.0 · 1 skill
-  claude_code   .claude/skills/   current
-  codex         (not detected)    unsupported
+$ workbench hello Mohit
+skill: workbench-hello
+message: Hello, Mohit! Workbench skills are available.
+catalog_version: 0.1.0
+surface: workbench-cli
 
-$ speed skills sync          # idempotent; re-running is a no-op when current
-✓ Nothing to do: 1 skill current on 1 surface
+$ workbench skills status
+catalog 0.1.0 · 2 skills
+  claude_code   workbench-hello   current
+  claude_code   workbench-draft   current
 ```
 
-From that point, the user invokes `/workbench-draft` directly inside Claude Code. No SPEED runtime process mediates the interview; the projection is the entire delivery mechanism for direct invocation. The `speed draft prd <feature>` convenience wrapper (Phase 4) launches the configured agent with the same skill and pre-filled arguments.
+Inside Claude Code the user invokes `/workbench-hello Mohit`; the projected `SKILL.md` runs the same `scripts/hello.py`. `speed hello`, `speed init`, and `speed skills …` remain as temporary aliases that route to the identical implementation and print a one-line notice naming the canonical `workbench` command.
 
 ## Data Model
 
-Three artifacts define the system: the canonical package on disk, the emitted projection, and the manifest that ties them together.
+Four artifacts: the canonical package, the projection, the manifest, and the append-only logs.
 
 ### Canonical package (source of truth)
 
-Lives at `${SPEED_DIR}/skills/<skill-name>/`, alongside `templates/` and `agents/`. One directory per skill; the directory name is the skill name.
+Lives at `${SPEED_DIR}/skills/<skill-name>/`. One directory per skill; directory name equals the skill name.
 
 | Path | Required | Purpose |
 |---|---|---|
-| `SKILL.md` | yes | Front matter (`name`, `description`) + instruction body. `name` must equal the directory name. |
-| `references/` | no | Material read at runtime: question banks, contracts, policies. |
-| `scripts/` | no | Deterministic helpers the skill may call. Not a hidden second workflow. |
-| `assets/` | no | Static templates or inputs copied or read by the skill. |
+| `SKILL.md` | yes | Front matter (`name`, `description`, optional `version`) + instruction body. |
+| `references/` | no | Material read at runtime. |
+| `scripts/` | no | Deterministic helpers. For a helper-backed skill this is the single implementation. |
+| `assets/` | no | Static templates or inputs. |
 
-The catalog version is the SPEED release version, read from the existing version source (`speed --version` / install metadata). There is no per-skill version and no project-level skill selection file.
+### Release catalog metadata (generated at build)
+
+```text
+skills/
+├── catalog.json          # generated manifest: skill names, versions, package hashes, catalog version
+├── CHANGELOG.md          # human-readable Added/Changed/Deprecated/Removed
+├── catalog-events.jsonl  # append-only release events
+└── <skill-name>/ …
+```
+
+`catalog.json` is the tested-release manifest. It is generated from the packages, never hand-edited. Phase 4 introduces it and the change ledger; Phases 1 to 3 run with an implicit catalog version taken from the SPEED release.
 
 ### Projection (generated, disposable)
 
-For Claude Code, the projection is a mirror of the canonical package at `${PROJECT_ROOT}/.claude/skills/<skill-name>/`, with two differences from the source:
-
-1. Front matter is normalized to the surface's expected keys, and SPEED provenance keys (`x-speed-managed: true`, `x-speed-catalog-version: <v>`, `x-speed-source: <skill-name>`) are injected.
-2. Relative references (`references/…`) are preserved verbatim so the same body resolves on any surface.
-
-Projection is deterministic: identical catalog input plus identical surface produces byte-identical output, so an unchanged sync writes nothing.
+For Claude Code, `${PROJECT_ROOT}/.claude/skills/<skill-name>/` mirrors the canonical package with two differences: front matter is normalized to the surface's keys and SPEED provenance keys are injected (`x-speed-managed: true`, `x-speed-source: <name>`, `x-speed-catalog-version: <v>`); all other files (including `scripts/hello.py`) are copied byte-for-byte, so the projected helper hash equals the canonical helper hash. Projection is deterministic.
 
 ### Manifest (managed-file identity)
 
-Stored at `${PROJECT_ROOT}/.speed/skills/manifest.json`. This is the record that lets sync tell SPEED-managed bytes from user edits. It is the single source for state classification.
+`${PROJECT_ROOT}/.speed/skills/manifest.json`. Records, per `(surface, skill)`: `projected_at_version`, optional skill `version`, and a `files` map of relpath to SHA-256. The recomputed on-disk hash versus the recorded hash is the only authority for distinguishing SPEED-managed bytes from user edits.
 
-```json
-{
-  "catalog_version": "0.3.0",
-  "surfaces": {
-    "claude_code": {
-      "root": ".claude/skills",
-      "skills": {
-        "workbench-draft": {
-          "source_hash": "sha256:…",
-          "files": {
-            "SKILL.md": "sha256:…",
-            "references/shared-interview-contract.md": "sha256:…"
-          },
-          "projected_at_version": "0.3.0"
-        }
-      }
-    }
-  }
-}
-```
+### Project install-event log
 
-- `source_hash`: hash of the canonical package inputs, so a catalog change is detectable without diffing every file.
-- `files.<relpath>`: hash of each emitted file *as SPEED wrote it*. On sync, the on-disk hash is recomputed and compared: equal means SPEED-managed and safe to update or remove; different means the user edited it and it must be preserved.
-- The manifest lives under `.speed/` and is git-ignored alongside other runtime state (it describes a specific checkout's projections, not shared design intent).
+`${PROJECT_ROOT}/.speed/skills/events.jsonl`, append-only. Each `sync`/repair appends one event per `(surface, skill)` under a single transaction id: `{transaction, catalog_version, surface, skill, action, prev_version, new_version, ts}` where action is one of `installed`, `updated`, `unchanged`, `conflict`, `removed`, `failed`. It proves what changed on each surface and never contains prompts, generated content, or credentials.
 
 ## State Machine
 
-Each `(surface, skill)` pair resolves to exactly one state at sync/status time. The manifest plus the on-disk hashes drive the classification; nothing else does.
+Each `(surface, skill)` resolves to one state. Manifest hashes plus on-disk hashes drive it; nothing else does.
 
-| State | Condition | Sync action |
-|---|---|---|
-| `absent` | In catalog, no projection on disk, no manifest entry | Project it. |
-| `current` | On disk, all file hashes match manifest, catalog version matches | No write. |
-| `stale` | Catalog version advanced and every on-disk file still matches the *old* manifest hash (unmodified) | Re-project and update manifest. |
-| `conflicted` | Any on-disk managed file's hash differs from its manifest hash | Preserve on-disk content; report; require `--force` or manual repair. |
-| `orphaned` | Projection + manifest entry exist, skill no longer in catalog | Remove only if every file still matches manifest; else downgrade to `conflicted`. |
-| `unsupported` | Surface not detected in the project (no `.claude/` etc.) | Skip; report as informational. |
+| State | Condition | Sync action | Event |
+|---|---|---|---|
+| `absent` | in catalog, no projection, no manifest entry | project | `installed` |
+| `current` | on disk, hashes match manifest, catalog version matches | no write | `unchanged` |
+| `stale` | catalog advanced; on-disk still matches old manifest | re-project | `updated` |
+| `conflicted` | on-disk hash differs from manifest | preserve; require `--force` | `conflict` |
+| `orphaned` | manifest+projection exist, skill gone from catalog | remove if unmodified else conflict | `removed` |
+| `unsupported` | surface not detected | skip | none |
 
-```mermaid
-stateDiagram-v2
-    [*] --> absent
-    absent --> current: project
-    current --> stale: catalog version advances
-    current --> conflicted: user edits a managed file
-    stale --> current: sync re-projects (unmodified)
-    stale --> conflicted: user edited before sync
-    conflicted --> current: sync --force / manual repair
-    current --> orphaned: skill removed from catalog
-    orphaned --> [*]: remove (unmodified)
-    orphaned --> conflicted: on-disk edited, cannot safely remove
-```
-
-Impossible/blocked transitions worth stating: `conflicted → current` never happens silently. It requires an explicit user action (`--force` or deleting the local copy), because silent overwrite is the exact failure the managed-file identity exists to prevent.
+`conflicted → current` never happens silently; it requires `--force` or a manual delete. That is the whole point of managed-file identity.
 
 ## API Surface
 
-### CLI (bash dispatch → Python module)
+### Command namespace
 
-Two new cases in the `speed` dispatch (`speed` case block) sourcing a new `lib/cmd/skills.sh`:
+`workbench` is canonical. `speed` entries are temporary aliases that route to the identical implementation and are labeled as such in help and output.
 
-| Command | Behavior | Exit codes |
+| Canonical (`workbench`) | Temporary alias (`speed`) | Behavior |
 |---|---|---|
-| `speed skills sync [--surface <id>] [--force] [--json]` | Converge every detected surface to the catalog. `--force` overwrites conflicted files. | `0` converged; `2` conflicts remain (no `--force`); `3` config/catalog error |
-| `speed skills status [--json]` | Print catalog version, skill count, and per-surface state table. Read-only. | `0` all current; `1` drift/conflict present; `3` config error |
-| `speed skills doctor [--json]` | Diagnose each non-`current` state and print exactly one usable repair command per problem. | `0` healthy; `1` issues found |
-| `speed init` | Existing flow gains a step that calls `skills sync` for detected surfaces (non-fatal on partial failure). | unchanged |
-| `speed draft <type> <feature>` *(Phase 4)* | Resolve `workbench-draft`, verify projection is `current`, launch the configured agent with type/feature pre-filled. | `0` launched; `3` skill missing/stale |
+| `workbench init` | `speed init` | Bootstrap project; projects the catalog into detected surfaces (non-fatal). |
+| `workbench skills sync [--surface][--force][--json]` | `speed skills sync …` | Converge surfaces to the catalog; append install events. |
+| `workbench skills status [--json]` | `speed skills status …` | Read-only per-surface state table. |
+| `workbench skills doctor [--json]` | `speed skills doctor …` | Diagnose non-`current` states, one repair path each (Phase 2; aliases to status until then). |
+| `workbench hello [name]` | `speed hello [name]` | Execute the canonical `scripts/hello.py`; surface = `workbench-cli`. |
 
-`skills.sh` is a thin wrapper. It resolves the Python interpreter with the established fallback chain (`SPEED_PYTHON` → `${SPEED_DIR}/.venv/bin/python3` → `${PROJECT_ROOT}/.venv/bin/python3` → `python3`, mirroring `context_bridge.sh`) and invokes `PYTHONPATH="${SPEED_DIR}" <py> -m lib.skills <subcommand> --project-root "${PROJECT_ROOT}" [flags]`.
+Exit codes: `sync` 0 converged / 2 conflicts remain / 3 error; `status` 0 all current / 1 drift / 3 error; `hello` 0 ok / 3 error.
 
-### Python module (`lib/skills/`)
+The alias policy: a `speed` command is retained only with an explicit `workbench` target, identical implementation/state/gates/provenance, and a temporary-alias label. New lifecycle behavior is authored under `workbench`; no independent `speed` workflow is added.
 
-The engine is a small package. Each unit has one job and a typed boundary, so it can be tested without the others.
+### Python engine (`lib/skills/`)
 
-| Module | Responsibility | Key signature |
-|---|---|---|
-| `catalog.py` | Discover and load canonical packages from `${SPEED_DIR}/skills/` | `load_catalog(speed_dir) -> Catalog` |
-| `validate.py` | Enforce the package contract | `validate_package(pkg) -> list[Violation]` |
-| `targets.py` | Surface → destination + detection rules | `detect_surfaces(project_root) -> list[Surface]`, `dest_dir(surface, skill) -> Path` |
-| `project.py` | Render one canonical package to one surface (pure, deterministic) | `render(pkg, surface) -> dict[relpath, bytes]` |
-| `manifest.py` | Read/write manifest, hash files, classify state | `classify(pkg, surface, disk, manifest) -> State` |
-| `sync.py` | Orchestrate detect → classify → apply → rewrite manifest | `sync(project_root, speed_dir, *, force, surface) -> SyncReport` |
-| `__main__.py` | argparse CLI producing text or `--json` | `main(argv) -> int` |
+Invoked as `PYTHONPATH="${SPEED_DIR}/lib" <python> -m skills <sub> …` (because `lib/` is not a package; `lib/skills/` is).
 
-`render` returns bytes in memory and never touches disk; `sync` is the only writer. That split keeps projection logic pure and trivially unit-testable, and it makes idempotency a property of `render` rather than of filesystem side effects.
+| Module | Responsibility |
+|---|---|
+| `frontmatter.py` | parse/serialize SKILL.md front matter (stdlib) |
+| `catalog.py` | discover/load canonical packages |
+| `validate.py` | package + catalog contract (names, refs, paths, uniqueness) |
+| `targets.py` | surface detection + destination |
+| `project.py` | pure render to bytes with provenance injection |
+| `manifest.py` | hashing, manifest I/O, state classification |
+| `events.py` | append-only install-event log |
+| `sync.py` | orchestrate detect → classify → apply → manifest + events (sole writer) |
+| `__main__.py` | argparse CLI: `sync`, `status`, `hello` |
+
+`hello` resolves the canonical `skills/workbench-hello/scripts/hello.py` and executes it, so the engine and every adapter reuse one implementation.
 
 ## Validation Rules
 
-Package validation runs at release time (catalog build) and defensively at load time. Every rule below maps to a fixture in `tests/skills/`.
+Run at catalog build and defensively at load. Each maps to a fixture in `tests/skills/`.
 
-| Field / condition | Constraint | On violation |
+| Condition | Constraint | On violation |
 |---|---|---|
-| `SKILL.md` presence | Must exist in each skill dir | reject package, name the dir |
-| Front-matter `name` | Non-empty, `^[a-z0-9][a-z0-9-]*$`, equals directory name | reject, name expected vs actual |
-| Front-matter `description` | Non-empty string | reject |
-| Skill name uniqueness | Unique across the catalog | reject, name the collision |
-| Relative references | Every path referenced in the body resolves inside the package | reject, name the missing path |
-| Path safety | No absolute paths, no `..` escaping the package root, no symlinks leaving it | reject, name the offending path |
-| Scripts | Must be files inside `scripts/`; not referenced as a full alternate workflow | reject |
-| Projection completeness | Rendering drops no required file and preserves the body meaning | reject at build |
-| Idempotency | Second `render` of the same input equals the first | fail build |
+| `SKILL.md` presence | required per skill | reject, name dir |
+| `name` | `^[a-z0-9][a-z0-9-]*$`, equals dir name | reject |
+| `description` | non-empty | reject |
+| name uniqueness | unique across catalog | reject, name collision |
+| relative refs | resolve inside package | reject, name path |
+| path safety | no absolute, no `..`, no escaping symlink | reject, name path |
+| helper-backed skill | CLI adapter carries no duplicate of the helper's logic | conformance test fails |
+| idempotency | second render equals first | fail build |
 
 ## Testing
 
 ### Acceptance Criteria
 
-- A fresh `speed init` in a project containing `.claude/` produces `.claude/skills/workbench-draft/SKILL.md` with injected provenance front matter and every referenced file present.
-- `speed skills status` reports `catalog <version> · N skills` and one row per detected surface whose state is one of those defined in the State Machine (`absent`, `current`, `stale`, `conflicted`, `orphaned`, `unsupported`).
-- Running `speed skills sync` twice with no catalog change makes zero file writes on the second run (verified by mtime/hash), proving idempotency.
-- Editing a projected `SKILL.md` and running `sync` leaves the edit intact and reports `conflicted`; the file is only overwritten under `--force`.
-- Advancing the catalog version and running `sync` updates an unmodified projection and rewrites the manifest to the new version.
-- Removing a skill from the catalog and running `sync` deletes an unmodified projection and leaves an edited one in place as `conflicted`.
-- `speed skills doctor` prints exactly one runnable repair command for each non-`current` surface/skill.
-- A package with a missing reference, an unsafe path, or a name/dir mismatch fails validation with the exact package, file, and reason, and never projects.
-- Directly invoking `/workbench-draft` in Claude Code after a successful sync runs the interview with no additional SPEED process.
+- `workbench init` (and `speed init` alias) projects `workbench-hello` and `workbench-draft` into `.claude/skills/` with provenance front matter and every file present.
+- `workbench hello Mohit` returns the greeting invariant, `catalog_version`, and `surface: workbench-cli`, executed by the canonical `scripts/hello.py`.
+- Changing `scripts/hello.py` and syncing changes both the CLI and the projected-skill output with no edit to adapter code (shared-implementation proof).
+- A stale projection whose helper hash differs from the canonical hash is not reported as equivalent.
+- `workbench skills status` reports one row per detected surface with a State-Machine state.
+- A second `sync` with an unchanged catalog writes nothing (manifest and projections untouched).
+- Editing a projected file makes it `conflicted`; it is preserved unless `--force`.
+- Each sync appends install events under one transaction id with the correct action per skill/surface.
+- `speed hello` / `speed skills` / `speed init` produce identical results to their `workbench` canonical and print a temporary-alias notice.
 
 ### Risks and Coverage
 
-| Risk | Severity | Test Approach |
+| Risk | Severity | Test |
 |---|---|---|
-| Sync overwrites a user-edited projection | High | Unit: hash-mismatch classifies `conflicted`; integration: edit-then-sync preserves bytes |
-| Interrupted sync leaves a half-written surface | High | Integration: kill between writes, re-run, assert convergence with no duplicates |
-| Non-deterministic render breaks idempotency | High | Unit: `render(x) == render(x)`; golden-file snapshot per surface |
-| Orphan removal recursively deletes a user directory | High | Unit: orphan with any modified file downgrades to `conflicted`, never deletes |
-| Path traversal in a reference escapes the project | High | Unit: `../` and absolute paths rejected by `validate_package` |
-| Provenance keys collide with a surface's reserved front matter | Medium | Contract test: Claude Code loads the projected SKILL.md and discovers the skill |
-| Manifest and disk disagree after manual `.speed` deletion | Medium | Integration: delete manifest, `sync` re-derives state from disk hashes safely |
+| CLI reimplements the greeting instead of reusing the helper | High | delete/alter helper → conformance fails; hash-equality of CLI and projection helper |
+| Sync overwrites a user edit | High | edit-then-sync preserves bytes; `--force` overwrites |
+| Non-deterministic render | High | `render(x)==render(x)`; golden snapshot |
+| Orphan removal deletes a modified dir | High | modified orphan downgrades to conflict |
+| Path traversal escapes project | High | `..`/absolute rejected by validate |
+| Event log leaks sensitive data | Medium | events contain only names/versions/hashes/actions |
 
 ### Test Plan
 
-**Unit tests** cover, in `tests/skills/`: the `validate.py` rule table (one case per row), `project.render` determinism and provenance injection, `manifest.classify` for all six states, `targets.detect_surfaces` for present/absent `.claude/`. New modules ship with tests; there is no prior coverage to regress.
+- **Unit:** `frontmatter`, `catalog`, `validate` (rule table), `project` determinism + provenance, `manifest.classify` (six states), `targets`, `events` append shape, and `hello.py` input normalization/output.
+- **Integration:** drive `lib.skills.__main__` end to end: init→sync→status; edit→conflict→force; version-bump→stale→update; remove→orphan→delete; interrupted-sync convergence; events.jsonl content.
+- **Shared-implementation conformance:** CLI `hello` output and projected-skill helper come from the same `scripts/hello.py` (hash equality); mutating the helper changes both routes.
+- **End-to-end:** `workbench`/`speed` bash routes against a fixture project asserting the `.claude/skills/` tree and status table. (Cannot run where the `speed_check_deps` grammar gate is unmet; verified via isolated function tests there.)
+- **Compatibility/regression gate (Phase 4):** the SK-T01…SK-T13 matrix from the note (collision, full-catalog regression, upgrade/rollback, interruption, permission-expansion, log integrity). Design-complete here; implemented when the catalog carries versions and `catalog.json`.
 
-**Integration tests** drive `lib.skills.__main__` end to end against a temp project: init→sync→status happy path, edit→conflict→force, version-bump→stale→update, remove→orphan→delete, and an interrupted-sync convergence case.
+### Out of Scope (this RFC's near phases)
 
-**End-to-end tests** run `speed init` and `speed skills sync` as the real bash commands, invoked as the real bash commands against a fixture repo, asserting the on-disk `.claude/skills/` tree and the status table. The `/workbench-draft` direct-invocation behavior is asserted at the contract level (skill discoverable, body/references intact), not by scripting Claude itself; model wording is not asserted.
-
-**Visual/UI tests:** none. A read-only dashboard readiness view is out of scope for this RFC.
-
-### Edge Cases
-
-- Project has no supported surface (`.claude/` absent): `sync` succeeds, status shows `unsupported`, exit `0`.
-- `.speed/skills/manifest.json` missing but projections present: classify from disk hashes; unmodified files adopt as `current`, modified as `conflicted` (never blind-overwrite).
-- Skill renamed in catalog: old name orphaned (removed if unmodified), new name absent→projected; Phase 2 adds a forwarding note.
-- Two skills reference the same relative filename: isolated per package, no collision.
-- Read-only project directory: `sync` fails with a clear filesystem error and exit `3`, writing nothing.
-
-### Out of Scope
-
-- Codex `.agents/skills/` projection (Phase 3; adapter only, no workflow change).
-- `speed draft` agent-launch invocation (Phase 4).
-- Per-skill enable/disable and per-skill model selection (product decision SK-D2/SK-D3: never).
-- Third-party/marketplace/user-authored skills and user-global installation.
-- Dashboard readiness surface.
+- Full compatibility/regression harness SK-T01…T13 and impact graph (Phase 4).
+- `catalog.json`, `CHANGELOG.md`, `catalog-events.jsonl` generation (Phase 4).
+- Per-skill semantic versioning enforcement and migration contracts (Phase 4).
+- Other module commands (`workbench discover|plan|audit|define`) (Phase 5).
+- Per-skill enable/disable and per-skill model selection (never; product decision).
 
 ## Security & Controls
 
-- **No new permissions.** A projected skill inherits the invoking agent surface's model, project permissions, and approval controls. Installing a skill grants nothing; there is no skill-specific model or credential.
-- **No path escape.** Validation rejects absolute paths, `..` traversal, and symlinks leaving the package, so a catalog package cannot write or read outside its own tree or the target surface directory.
-- **Bounded writes.** `sync` writes only under the detected surface roots (`.claude/skills/…`) and `.speed/skills/manifest.json`. It never touches unrelated agent configuration (`.claude/settings.json`, existing `.claude/agents/`, user skills it did not create).
-- **Separation of generation and approval.** A skill run cannot ratify its own output; review/approval stays in the existing Define ownership flow. This RFC adds no bypass.
-- **Helper honesty.** A helper-backed step that fails must surface the failure; the agent must not fabricate the missing result. Enforced by returning explicit error status from `scripts/`.
-- **Input trust.** Canonical packages ship inside the SPEED release and are validated at build; the engine treats them as trusted-but-verified and still runs path-safety checks at load.
+- No new permissions: a skill inherits the invoking surface's model, permissions, and approval controls. Installing grants nothing.
+- No path escape: validation rejects absolute paths, `..`, and escaping symlinks.
+- Bounded writes: sync writes only under detected surface roots, `.speed/skills/manifest.json`, and `.speed/skills/events.jsonl`. It never touches `.claude/settings.json`, existing `.claude/agents/`, or user skills it did not create.
+- Generation is separate from approval; a skill run cannot ratify its own output.
+- `workbench-hello` writes no artifact and touches no module state; the proof includes a no-write assertion.
+- Helper honesty: a failing helper surfaces its failure; the agent must not fabricate the result.
 
 ## Key Decisions
 
-| Decision | Choice | Alternatives Considered | Rationale |
+| Decision | Choice | Alternatives | Rationale |
 |---|---|---|---|
-| Projection engine | SPEED-native lean Python module in `lib/skills/` | Vendor/trim Forge Foundry `forge_sync`; implement in bash | Forge carries 5 harnesses, aliases, CI, and usage hooks SPEED does not need; a ~7-module native package fits SPEED's `lib/*.py` style and is fully owned. Bash cannot track per-file hashes and idempotency cleanly. |
-| CLI namespace | Extend `speed` (`speed skills …`, later `speed draft`) | Introduce a `workbench` top-level binary | The shipped CLI is `speed` with a case dispatch; adding cases is one-line integration. `workbench` remains product branding for docs, not a second binary to build and install. |
-| First surface | Claude Code only, Codex as a follow-up phase | Both surfaces in the first slice | One adapter proves the contract end to end and unlocks direct `/workbench-draft` invocation immediately; `targets.py` isolates the second adapter to an additive change. |
-| Managed-file identity | Manifest of per-file SHA-256 hashes + injected provenance front matter | Provenance marker only; timestamp comparison; git status | Content hashing is the only reliable way to distinguish SPEED-written bytes from user edits across interrupted syncs and manual deletion. Front-matter keys add human-readable provenance on top. |
-| Manifest location | `.speed/skills/manifest.json` (git-ignored) | Commit the manifest; store under `.claude/` | The manifest describes one checkout's generated state, not shared intent, matching how `.speed/` runtime state is already treated. |
-| Render purity | `render` returns bytes; `sync` is the sole writer | Write directly during render | Pure render makes idempotency and golden-file tests trivial and confines all filesystem risk to one reviewed function. |
-| Direct invocation first | Ship projection before any `speed draft` launcher | Build the CLI launcher alongside | Direct `/workbench-draft` needs zero runtime code once projected, so the projection alone delivers user value; the launcher is pure convenience and can follow. |
+| First skill | `workbench-hello`, helper-backed | `workbench-draft` first | The note requires proving the platform (catalog→projection→routing→discovery→provenance→idempotency→repair) with a minimal helper-backed skill before any module skill. |
+| Namespace | `workbench` canonical; `speed` temporary aliases | keep `speed skills` | The note mandates one platform namespace and a labeled, behaviorally identical alias for retained `speed` commands. |
+| Shared implementation | one canonical `scripts/hello.py`; adapters are thin | CLI reimplements greeting | Proves a command and an agent skill reuse one implementation; establishes the pattern for every later module command. |
+| Engine | SPEED-native lean Python in `lib/skills/` | vendor Forge `forge_sync` | Forge carries surfaces/CI/aliases SPEED does not need; a small owned package fits SPEED's `lib/*.py` style. |
+| First surface | Claude Code; Codex additive via `targets.py` | both at once | One adapter proves the contract and unlocks direct invocation immediately. |
+| Managed identity | per-file SHA-256 + provenance keys | provenance marker only; diff-vs-source | Hashing is the only reliable edit detector across interrupted sync and manual deletion. Injected front matter means diff-vs-source is invalid; the manifest hash is authoritative. |
+| Install events | `.speed/skills/events.jsonl` under a transaction id | none | Satisfies SK-S10 and lets interrupted multi-surface sync resume without repeating successes. |
 
 ## Drawbacks
 
-- A SPEED-native engine is code SPEED now owns and tests, where vendoring Forge would have reused proven conflict logic. The mitigation is scope: seven small modules, each independently testable, modeled on a design already validated next door.
-- Content hashing adds a manifest that can drift from disk if a user hand-deletes `.speed/`. The engine recovers by re-deriving state from disk, but the first post-deletion sync is more conservative (treats ambiguous files as conflicts).
-- Provenance front-matter keys (`x-speed-*`) are visible in the projected `SKILL.md`. They are inert to the host agent but add three lines a curious user will see.
-- Injecting front matter means the projected `SKILL.md` is not byte-identical to the canonical one, so "diff the copy against source" is not a valid conflict check; only the manifest hash is authoritative. This is called out so a future maintainer does not add a naive diff check.
-- Claude-first means Codex users see `unsupported` until Phase 3. Status reports this honestly rather than silently doing nothing.
+- A `workbench` binary plus `speed` aliases is a second entrypoint to maintain until `speed` retirement. Mitigation: aliases forward to one implementation; no second workflow exists.
+- Shipping `workbench-hello` adds a permanent smoke-test package. That is intentional; it is the release conformance fixture.
+- The full compatibility gate (SK-T01…T13) and versioned catalog are large and deferred to Phase 4; until then catalog version tracks the SPEED release and cross-skill regression is limited to the shipped tests. Status/doctor report honestly in the interim.
+- Provenance keys make the projected `SKILL.md` non-identical to source, so only the manifest hash is a valid conflict check (a naive diff would be wrong).
 
 ## Migration Strategy
 
-There is no existing skill data to migrate; this is additive. Rollout is by phase, each independently shippable:
+Additive; no existing skill data to migrate. Re-phased to match the note's bootstrap order:
 
 | Phase | Delivers | Unlocks |
 |---|---|---|
-| 1 | Catalog format, `validate`, Claude Code `project`/`render`, `manifest`, `sync`+`status`, `init` integration, `workbench-draft` package | Direct `/workbench-draft` in Claude Code |
-| 2 | `doctor`, conflict/orphan/rename hardening, rollback-on-downgrade behavior | Safe upgrades and repair |
-| 3 | Codex `targets`/adapter | Cross-surface parity |
-| 4 | `speed draft` agent-launch routing + workflow provenance record | Command entry point + auditability (SK-S9) |
+| 1 | catalog format, engine (validate/render/manifest/events), `workbench skills sync`/`status`, `workbench init` hook, `workbench-hello` + shared helper, `workbench hello`, `speed` aliases | platform proof: CLI + agent run one implementation |
+| 2 | `doctor` with one-repair-path, conflict/orphan/rename hardening, `workbench-draft` module skill + guided-authoring hook | module skills on the proven platform |
+| 3 | Codex `.agents/skills/` adapter | cross-surface parity |
+| 4 | `catalog.json`, change ledger, per-skill versioning, SK-T01…T13 compatibility gate | safe platform evolution |
+| 5 | other module commands (`workbench discover`, `plan`, `audit`, `define`) | full Workbench namespace |
 
-Rollback: because the catalog version equals the SPEED release, downgrading SPEED and running `speed skills sync` re-projects the previous release's catalog. Unmodified projections update down; conflicted ones are preserved. No data loss path exists because the canonical source is the release, not the project.
-
-Feature-flag posture: `init` calling `sync` is non-fatal. If projection fails or no surface is detected, `init` completes and prints the repair path, so the skill system cannot break existing setup.
+Rollback: catalog version tracks the SPEED release, so downgrading SPEED and syncing re-projects the prior catalog; unmodified projections update down, conflicts are preserved. `init` calling `sync` is non-fatal, so a projection failure or missing surface cannot break setup.
 
 ## File Impact
 
 New:
-
-- `skills/workbench-draft/SKILL.md` + `references/…`: first canonical package (body content owned by 03-guided-authoring).
-- `lib/skills/{__init__,__main__,catalog,validate,targets,project,manifest,sync}.py`: the engine.
-- `lib/cmd/skills.sh`: bash wrapper resolving the interpreter and dispatching `sync`/`status`/`doctor`.
-- `tests/skills/…`: package fixtures + unit/integration suites.
+- `skills/workbench-hello/{SKILL.md,scripts/hello.py}`: platform proof package.
+- `skills/workbench-draft/SKILL.md`: module skill (Phase 2 body from guided authoring).
+- `lib/skills/{__init__,__main__,frontmatter,catalog,validate,targets,project,manifest,events,sync}.py`: engine.
+- `lib/cmd/skills.sh`, `lib/cmd/hello.sh`: bash wrappers.
+- `workbench`: canonical dispatcher (forwards to the shared implementation).
+- `tests/skills/…`: fixtures + suites.
 
 Modified:
+- `speed`: `skills)`/`hello)` cases as temporary aliases with a notice.
+- `lib/cmd/project.sh`: `cmd_init` projection step (non-fatal); gitignore `.speed/skills/`.
 
-- `speed`: add `skills)` and (Phase 4) `draft)` cases to the dispatch block, and `source lib/cmd/skills.sh`.
-- `lib/cmd/project.sh`: add a projection step to `cmd_init` after the existing numbered steps, calling `speed skills sync` for detected surfaces (non-fatal).
-- `.speed/.gitignore` (or root `.gitignore` SPEED block): ignore `.speed/skills/`.
-
-Unchanged and explicitly not touched: `.claude/settings.json`, existing `.claude/agents/`, `speed.toml` (no `[skills]` section is added), and any user-authored skill directories.
+Not touched: `.claude/settings.json`, existing `.claude/agents/`, `speed.toml` (no `[skills]` section), user-authored skills.
 
 ## Dependencies
 
-- Python 3.12 with the project `.venv` (already required by `context_bridge.sh`, dashboard backend, and `toml.py`). Standard library only: `hashlib`, `json`, `pathlib`, `argparse`, plus a YAML reader. The repo already parses YAML/TOML in Python; the front-matter parser reuses that path rather than adding a new dependency.
-- The SPEED version source, to stamp `catalog_version`.
-- The `workbench-draft` interview contract and question banks from [03-guided-authoring.md](../product/define-module/03-guided-authoring.md). Phase 1 can ship the engine with a minimal placeholder `SKILL.md`; the full body lands when guided authoring is ready.
+- Python 3.11 project `.venv`, stdlib only (`hashlib`, `json`, `pathlib`, `argparse`, `uuid`, `dataclasses`). No `requirements.txt` change.
+- SPEED release version for `catalog_version`.
+- `workbench-draft` interview contract and question banks from [03-guided-authoring.md](../product/define-module/03-guided-authoring.md) (Phase 2).
 
 ## Unresolved Questions
 
 | Question | Blocks | Proposed path |
 |---|---|---|
-| YAML front-matter parsing: reuse an existing dependency or add `pyyaml`? | `project.render`, `validate` | Audit current `requirements.txt`/imports; front matter is simple key/value, so a minimal hand parser is viable if no YAML lib is already present. Resolve before Phase 1 coding. |
-| Where does workflow provenance (catalog version + skill name) get recorded for a Define run? | SK-S9, Phase 4 | Reuse the existing ceremony/feature record under `.speed/`; confirm the schema with the Define orchestration owner. |
-| Should `speed init` sync automatically on every run or only when a surface is newly detected? | `init` noise | Default to sync-if-detected and idempotent, so re-running `init` is quiet; revisit if it proves noisy. |
-| When more than one supported agent surface is present, which hosts a `speed draft` CLI launch? | Phase 4 only | Add a single repository-level agent preference (reuse `speed.toml [agent].provider`); no per-skill model config. |
+| Should `workbench` be a standalone binary or a mode of `speed`? | namespace shape | Phase 1 ships a thin `workbench` forwarder; revisit a full split when `speed` retirement is scheduled. |
+| Transaction-id source without wall-clock nondeterminism in tests | event-log tests | Use `uuid4` for the id and a passed/late-stamped timestamp; assert structure, not exact time. |
+| Where does cross-module workflow provenance live? | SK-S9/Phase 4 | reuse the module's existing `.speed/` feature record; confirm with the orchestration owner. |
+| `catalog.json` generation: build step vs first-load | Phase 4 | generate at release build; load-time only validates. |
