@@ -7,12 +7,25 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import sys
 from dataclasses import asdict
+from pathlib import Path
 
 from skills import CURRENT, CONFLICTED, UNSUPPORTED
 from skills.sync import sync, status
+
+
+def _load_hello_helper(skills_dir):
+    """Import the ONE canonical helper so the CLI reuses it (no duplicate logic)."""
+    helper = Path(skills_dir) / "workbench-hello" / "scripts" / "hello.py"
+    if not helper.exists():
+        raise FileNotFoundError(f"canonical helper missing: {helper}")
+    spec = importlib.util.spec_from_file_location("workbench_hello_helper", helper)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -27,6 +40,13 @@ def _build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--json", action="store_true")
         if name == "sync":
             sp.add_argument("--force", action="store_true")
+
+    hp = sub.add_parser("hello")
+    hp.add_argument("name", nargs="?", default="World")
+    hp.add_argument("--skills-dir", required=True)
+    hp.add_argument("--catalog-version", default="dev")
+    hp.add_argument("--surface", default="workbench-cli")
+    hp.add_argument("--json", action="store_true")
     return parser
 
 
@@ -42,6 +62,16 @@ def _print_table(catalog_version, rows) -> None:
 def main(argv=None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     args = _build_parser().parse_args(argv)
+
+    if args.cmd == "hello":
+        try:
+            helper = _load_hello_helper(args.skills_dir)
+            result = helper.build_result(args.name, args.catalog_version, args.surface)
+        except Exception as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 3
+        print(json.dumps(result, indent=2) if args.json else helper.format_text(result))
+        return 0
 
     try:
         if args.cmd == "sync":
