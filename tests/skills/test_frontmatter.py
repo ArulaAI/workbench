@@ -1,22 +1,22 @@
 from skills.frontmatter import parse, serialize
 
 SAMPLE = """---
-name: workbench-draft
+name: example-skill
 description: >
   Run a guided interview
   and draft a spec.
 ---
 
-# workbench-draft
+# example-skill
 Body line.
 """
 
 
 def test_parse_extracts_scalar_and_folded():
     meta, body = parse(SAMPLE)
-    assert meta["name"] == "workbench-draft"
+    assert meta["name"] == "example-skill"
     assert meta["description"] == "Run a guided interview and draft a spec."
-    assert body.startswith("# workbench-draft")
+    assert body.startswith("# example-skill")
 
 
 def test_parse_no_frontmatter_returns_empty_meta():

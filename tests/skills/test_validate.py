@@ -4,7 +4,7 @@ from skills.catalog import SkillPackage
 from skills.validate import validate_package, validate_catalog
 
 
-def _pkg(name="workbench-draft", meta=None, files=None):
+def _pkg(name="example-skill", meta=None, files=None):
     meta = meta if meta is not None else {"name": name, "description": "ok"}
     files = files if files is not None else {"SKILL.md": b"..."}
     return SkillPackage(name=name, root=Path("/x") / name, meta=meta, body="b", files=files)
@@ -25,7 +25,7 @@ def test_bad_name_charset_flagged():
 
 
 def test_missing_description_flagged():
-    v = validate_package(_pkg(meta={"name": "workbench-draft", "description": ""}))
+    v = validate_package(_pkg(meta={"name": "example-skill", "description": ""}))
     assert any("description" in x.reason for x in v)
 
 
@@ -39,6 +39,28 @@ def test_path_traversal_flagged():
     assert any(".." in (x.path or "") for x in v)
 
 
+def test_absolute_path_flagged():
+    violations = validate_package(
+        _pkg(files={"SKILL.md": b".", "/tmp/evil.md": b"x"})
+    )
+
+    assert any(item.path == "/tmp/evil.md" for item in violations)
+
+
 def test_duplicate_names_flagged():
     v = validate_catalog([_pkg(), _pkg()])
     assert any("duplicate" in x.reason.lower() for x in v)
+
+
+def test_escaping_symlink_flagged(tmp_path):
+    root = tmp_path / "example-skill"
+    root.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("outside\n")
+    (root / "escape.txt").symlink_to(outside)
+    pkg = _pkg()
+    pkg.root = root
+
+    violations = validate_package(pkg)
+
+    assert any("symlink escapes" in item.reason for item in violations)

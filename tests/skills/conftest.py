@@ -5,7 +5,7 @@ import pytest
 def tmp_catalog(tmp_path):
     """Factory that writes a valid canonical skill package under tmp_path/skills."""
 
-    def _make(name="workbench-draft", extra=None):
+    def _make(name="example-skill", extra=None):
         pkg = tmp_path / "skills" / name
         (pkg / "references").mkdir(parents=True)
         (pkg / "SKILL.md").write_text(

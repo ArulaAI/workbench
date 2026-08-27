@@ -64,4 +64,14 @@ def load_catalog(skills_dir: Path) -> list:
     for child in sorted(skills_dir.iterdir()):
         if child.is_dir() and (child / "SKILL.md").exists():
             pkgs.append(load_package(child))
+    # Import here to avoid a module cycle: validate needs SkillPackage.
+    from skills.validate import validate_catalog
+
+    violations = validate_catalog(pkgs)
+    if violations:
+        details = "; ".join(
+            f"{item.package}:{item.path or '-'}: {item.reason}"
+            for item in violations
+        )
+        raise ValueError(f"invalid skill catalog: {details}")
     return pkgs

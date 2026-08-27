@@ -5,7 +5,7 @@
 # Usage: speed <command> [options]
 #
 # Commands:
-#   init                    Initialize project for SPEED development
+#   init [--harness NAME]   Initialize project; target claude, codex, or copilot
 #   validate <specs-dir>    Cross-validate all specs for consistency
 #   plan <spec-file> [opts] Decompose a spec into a task DAG + contract
 #   verify                  Blind-verify the plan against the product spec
@@ -108,7 +108,7 @@ speed_help() {
     echo -e "    ${COLOR_DIM}8.${RESET} ${COLOR_STEP}integrate${RESET}  → ${COLOR_DIM}Merge + regression + contract + Guardian gate${RESET}"
     echo ""
     echo -e "${BOLD}COMMANDS${RESET}"
-    echo -e "    ${COLOR_STEP}init${RESET}                        Initialize project for SPEED development"
+    echo -e "    ${COLOR_STEP}init${RESET} [--harness NAME]       Initialize project; optionally target claude, codex, or copilot"
     echo -e "    ${COLOR_STEP}validate${RESET} <specs-dir>         Cross-validate all specs for consistency"
     echo -e "    ${COLOR_STEP}plan${RESET} <spec-file> [opts]      Decompose a product spec into task DAG + contract"
     echo -e "    ${COLOR_STEP}verify${RESET}                       Blind-verify plan against product spec"
@@ -130,6 +130,7 @@ speed_help() {
     echo -e "    ${COLOR_STEP}gates${RESET}   --task ID             Run quality gates for a task (used by Developer Agent mid-task)"
     echo -e "    ${COLOR_STEP}add-language${RESET} <lang>          Generate ast-grep rules for a new language"
     echo -e "    ${COLOR_STEP}test-rules${RESET}  [lang|--all]     Verify ast-grep rules against fixture files"
+    echo -e "    ${COLOR_STEP}skills${RESET} <sync|status|doctor>  Import and inspect Workbench skills"
     echo -e "    ${COLOR_STEP}help${RESET}                         Show this help message"
     echo ""
     echo -e "${BOLD}DASHBOARD${RESET}"
@@ -304,7 +305,6 @@ main() {
         review-status)  cmd_review_status "$@" ;;
         sync)           cmd_sync "$@" ;;
         skills)         cmd_skills "$@" ;;
-        hello)          cmd_hello "$@" ;;
         serve)          cmd_serve "$@" ;;
         dashboard) cmd_dashboard "$@" ;;
         self-update)   cmd_self_update "$@" ;;

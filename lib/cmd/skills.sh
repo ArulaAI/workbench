@@ -39,17 +39,16 @@ cmd_skills() {
     [[ $# -gt 0 ]] && shift
 
     case "$sub" in
-        sync|status) ;;
-        doctor)
-            # Phase 2 delivers a dedicated doctor; alias to status for now so the
-            # verb exists without overpromising a repair engine.
-            sub="status"
-            ;;
+        sync|status|doctor) ;;
         *)
             log_error "Unknown skills subcommand: ${sub} (expected: sync | status | doctor)"
             return 1
             ;;
     esac
+
+    if [[ "${JSON_OUTPUT:-false}" == "true" ]]; then
+        set -- "$@" --json
+    fi
 
     _speed_alias_notice skills
     PYTHONPATH="${SPEED_DIR}/lib" "$(_skills_python)" -m skills "$sub" \

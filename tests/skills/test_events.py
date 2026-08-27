@@ -13,7 +13,7 @@ def test_first_sync_logs_installed_under_one_transaction(tmp_catalog, tmp_projec
     assert len(events) == 1
     e = events[0]
     assert e["action"] == "installed"
-    assert e["skill"] == "workbench-draft"
+    assert e["skill"] == "example-skill"
     assert e["surface"] == "claude_code"
     assert e["catalog_version"] == "0.3.0"
     assert e["transaction"]
@@ -30,7 +30,7 @@ def test_unchanged_sync_appends_no_events(tmp_catalog, tmp_project):
 def test_conflict_is_logged(tmp_catalog, tmp_project):
     skills_dir = tmp_catalog()
     _sync(tmp_project, skills_dir)
-    edited = tmp_project / ".claude" / "skills" / "workbench-draft" / "SKILL.md"
+    edited = tmp_project / ".claude" / "skills" / "example-skill" / "SKILL.md"
     edited.write_text("HAND EDITED\n")
     _sync(tmp_project, skills_dir)  # no force
     actions = [e["action"] for e in read_events(tmp_project)]
