@@ -17,8 +17,8 @@ def render(pkg: SkillPackage, surface: Surface, catalog_version: str) -> dict:
         if rel != "SKILL.md":
             out[rel] = content
     meta = dict(pkg.meta)
-    meta["x-speed-managed"] = "true"
-    meta["x-speed-source"] = pkg.name
-    meta["x-speed-catalog-version"] = catalog_version
+    meta["x-workbench-managed"] = "true"
+    meta["x-workbench-source"] = pkg.name
+    meta["x-workbench-catalog-version"] = catalog_version
     out["SKILL.md"] = serialize(meta, pkg.body).encode()
     return out

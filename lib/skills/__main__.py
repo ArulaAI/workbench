@@ -1,44 +1,26 @@
-"""CLI entry: ``python -m skills sync|status``.
+"""CLI entry: ``python -m skills sync|status|doctor``.
 
 Exit codes:
   sync   -> 0 converged / 2 conflicts remain / 3 error
   status -> 0 all current / 1 drift or conflict present / 3 error
+  doctor -> 0 no issues / 1 issues found / 3 error
 """
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 import sys
 from dataclasses import asdict
-from pathlib import Path
 
 from skills import CURRENT, CONFLICTED, UNSUPPORTED
+from skills.doctor import diagnose
 from skills.sync import sync, status
-
-
-def _load_hello_helper(skills_dir):
-    """Import the ONE canonical helper so the CLI reuses it (no duplicate logic)."""
-    helper = Path(skills_dir) / "workbench-hello" / "scripts" / "hello.py"
-    if not helper.exists():
-        raise FileNotFoundError(f"canonical helper missing: {helper}")
-    spec = importlib.util.spec_from_file_location("workbench_hello_helper", helper)
-    mod = importlib.util.module_from_spec(spec)
-    # Do not write __pycache__ into the canonical package; a stray .pyc would
-    # otherwise be swept into the next projection.
-    prev = sys.dont_write_bytecode
-    sys.dont_write_bytecode = True
-    try:
-        spec.loader.exec_module(mod)
-    finally:
-        sys.dont_write_bytecode = prev
-    return mod
 
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="skills")
     sub = parser.add_subparsers(dest="cmd", required=True)
-    for name in ("sync", "status"):
+    for name in ("sync", "status", "doctor"):
         sp = sub.add_parser(name)
         sp.add_argument("--project-root", required=True)
         sp.add_argument("--skills-dir", required=True)
@@ -48,12 +30,6 @@ def _build_parser() -> argparse.ArgumentParser:
         if name == "sync":
             sp.add_argument("--force", action="store_true")
 
-    hp = sub.add_parser("hello")
-    hp.add_argument("name", nargs="?", default="World")
-    hp.add_argument("--skills-dir", required=True)
-    hp.add_argument("--catalog-version", default="dev")
-    hp.add_argument("--surface", default="workbench-cli")
-    hp.add_argument("--json", action="store_true")
     return parser
 
 
@@ -66,19 +42,29 @@ def _print_table(catalog_version, rows) -> None:
         print(line)
 
 
+def _doctor_result(catalog_version, diagnostics):
+    return {
+        "status": "healthy" if not diagnostics else "issues",
+        "catalog_version": catalog_version,
+        "diagnostics": [asdict(item) for item in diagnostics],
+    }
+
+
+def _print_doctor(result) -> None:
+    diagnostics = result["diagnostics"]
+    print(f"skills doctor: {result['status']} · {len(diagnostics)} issue(s)")
+    if not diagnostics:
+        print("All imported Workbench skills are current and ready to use.")
+        return
+    for item in diagnostics:
+        print(f"  {item['surface']} / {item['skill']} [{item['state']}]")
+        print(f"    diagnosis: {item['diagnosis']}")
+        print(f"    repair: {item['repair']}")
+
+
 def main(argv=None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     args = _build_parser().parse_args(argv)
-
-    if args.cmd == "hello":
-        try:
-            helper = _load_hello_helper(args.skills_dir)
-            result = helper.build_result(args.name, args.catalog_version, args.surface)
-        except Exception as exc:
-            print(f"error: {exc}", file=sys.stderr)
-            return 3
-        print(json.dumps(result, indent=2) if args.json else helper.format_text(result))
-        return 0
 
     try:
         if args.cmd == "sync":
@@ -89,8 +75,15 @@ def main(argv=None) -> int:
                 force=args.force,
                 only_surface=args.surface,
             )
-        else:
+        elif args.cmd == "status":
             rows = status(
+                args.project_root,
+                args.skills_dir,
+                args.catalog_version,
+                only_surface=args.surface,
+            )
+        else:
+            diagnostics = diagnose(
                 args.project_root,
                 args.skills_dir,
                 args.catalog_version,
@@ -99,6 +92,14 @@ def main(argv=None) -> int:
     except Exception as exc:  # config / catalog error
         print(f"error: {exc}", file=sys.stderr)
         return 3
+
+    if args.cmd == "doctor":
+        result = _doctor_result(args.catalog_version, diagnostics)
+        if args.json:
+            print(json.dumps(result, indent=2))
+        else:
+            _print_doctor(result)
+        return 0 if not diagnostics else 1
 
     if args.json:
         print(json.dumps([asdict(r) for r in rows], indent=2))

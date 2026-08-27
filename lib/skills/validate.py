@@ -40,6 +40,21 @@ def validate_package(pkg: SkillPackage) -> list:
     for rel in pkg.files:
         if rel.startswith("/") or ".." in rel.split("/"):
             out.append(Violation(pkg.name, rel, "unsafe path escapes package"))
+    root = pkg.root.resolve()
+    if pkg.root.is_dir():
+        for path in pkg.root.rglob("*"):
+            if not path.is_symlink():
+                continue
+            try:
+                path.resolve().relative_to(root)
+            except (OSError, ValueError):
+                out.append(
+                    Violation(
+                        pkg.name,
+                        path.relative_to(pkg.root).as_posix(),
+                        "symlink escapes package",
+                    )
+                )
     return out
 
 

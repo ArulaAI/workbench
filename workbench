@@ -9,7 +9,7 @@
 # they are running under their canonical name, so no temporary-alias notice is
 # printed.
 #
-# Usage: workbench <init|skills|hello|dashboard|...> [args]
+# Usage: workbench <init|skills|dashboard|...> [args]
 
 set -euo pipefail
 

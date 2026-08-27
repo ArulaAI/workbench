@@ -9,9 +9,9 @@ def _run(project, skills_dir, version="0.3.0", **kw):
 def test_sync_projects_then_idempotent(tmp_catalog, tmp_project):
     skills_dir = tmp_catalog()
     first = _run(tmp_project, skills_dir)
-    proj_skill = tmp_project / ".claude" / "skills" / "workbench-draft" / "SKILL.md"
+    proj_skill = tmp_project / ".claude" / "skills" / "example-skill" / "SKILL.md"
     assert proj_skill.exists()
-    assert first["workbench-draft@claude_code"].state == ABSENT  # pre-write classification
+    assert first["example-skill@claude_code"].state == ABSENT  # pre-write classification
     again = status(tmp_project, skills_dir, "0.3.0")
     assert all(s.state == CURRENT for s in again)
 
@@ -20,7 +20,7 @@ def test_second_sync_writes_nothing(tmp_catalog, tmp_project):
     skills_dir = tmp_catalog()
     _run(tmp_project, skills_dir)
     manifest = tmp_project / ".speed" / "skills" / "manifest.json"
-    projected = tmp_project / ".claude" / "skills" / "workbench-draft" / "SKILL.md"
+    projected = tmp_project / ".claude" / "skills" / "example-skill" / "SKILL.md"
     m0, p0 = manifest.stat().st_mtime_ns, projected.stat().st_mtime_ns
     _run(tmp_project, skills_dir)  # unchanged catalog
     assert manifest.stat().st_mtime_ns == m0  # manifest not rewritten
@@ -30,7 +30,7 @@ def test_second_sync_writes_nothing(tmp_catalog, tmp_project):
 def test_sync_preserves_user_edit_as_conflict(tmp_catalog, tmp_project):
     skills_dir = tmp_catalog()
     _run(tmp_project, skills_dir)
-    edited = tmp_project / ".claude" / "skills" / "workbench-draft" / "SKILL.md"
+    edited = tmp_project / ".claude" / "skills" / "example-skill" / "SKILL.md"
     edited.write_text("HAND EDITED\n")
     rows = status(tmp_project, skills_dir, "0.3.0")
     assert any(s.state == CONFLICTED for s in rows)
@@ -54,4 +54,43 @@ def test_no_surface_reports_unsupported(tmp_catalog, tmp_path):
     bare = tmp_path / "bare"
     bare.mkdir()
     rows = sync(bare, skills_dir, "0.3.0")
-    assert [r.state for r in rows] == ["unsupported"]
+    assert [r.surface for r in rows] == ["claude_code", "codex", "copilot"]
+    assert [r.state for r in rows] == ["unsupported"] * 3
+
+
+def test_explicit_surface_creates_only_selected_harness(tmp_catalog, tmp_path):
+    skills_dir = tmp_catalog()
+    project = tmp_path / "bare"
+    for marker in (".claude", ".agents", ".github/skills"):
+        (project / marker).mkdir(parents=True)
+
+    rows = sync(
+        project,
+        skills_dir,
+        "0.3.0",
+        only_surface="codex",
+    )
+
+    assert [row.surface for row in rows] == ["codex"]
+    assert (project / ".agents" / "skills" / "example-skill" / "SKILL.md").is_file()
+    assert not (
+        project / ".claude" / "skills" / "example-skill"
+    ).exists()
+    assert not (
+        project / ".github" / "skills" / "example-skill"
+    ).exists()
+
+
+def test_sync_without_selection_projects_all_detected_harnesses(
+    tmp_catalog, tmp_path
+):
+    skills_dir = tmp_catalog()
+    project = tmp_path / "multi-harness"
+    for marker in (".claude", ".agents", ".github/skills"):
+        (project / marker).mkdir(parents=True)
+
+    rows = sync(project, skills_dir, "0.3.0")
+
+    assert [row.surface for row in rows] == ["claude_code", "codex", "copilot"]
+    for skills_root in (".claude/skills", ".agents/skills", ".github/skills"):
+        assert (project / skills_root / "example-skill" / "SKILL.md").is_file()

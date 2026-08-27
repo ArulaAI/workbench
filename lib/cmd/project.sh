@@ -2,6 +2,38 @@
 # project.sh — Project lifecycle commands (init, validate, clean, new)
 
 cmd_init() {
+    local harness=""
+    local skill_surface=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --harness)
+                if [[ $# -lt 2 || -z "${2:-}" ]]; then
+                    log_error "--harness requires one of: claude, codex, copilot"
+                    return 3
+                fi
+                harness=$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')
+                shift 2
+                ;;
+            --help|-h)
+                echo "Usage: workbench init [--harness <claude|codex|copilot>]"
+                return 0
+                ;;
+            *)
+                log_error "Unknown init option: $1"
+                return 3
+                ;;
+        esac
+    done
+
+    case "$harness" in
+        "") ;;
+        claude|codex|copilot) skill_surface="$harness" ;;
+        *)
+            log_error "Unknown harness '${harness}' (expected: claude, codex, copilot)"
+            return 3
+            ;;
+    esac
+
     log_header "Initializing SPEED"
 
     # 1. Git repo
@@ -67,12 +99,21 @@ EOF
         log_info "${VISION_FILE} already exists, skipping"
     fi
 
-    # 8. Project the built-in skill catalog into detected agent surfaces
+    # 8. Project the built-in catalog into one selected harness, or all detected
+    # harnesses when --harness is omitted. Explicit selection creates its root.
     if [[ -d "${SPEED_DIR}/skills" ]]; then
-        if cmd_skills sync >/dev/null 2>&1; then
-            log_success "Skills projected into detected agent surfaces"
+        local sync_args=(sync)
+        if [[ -n "$skill_surface" ]]; then
+            sync_args+=(--surface "$skill_surface")
+        fi
+        if cmd_skills "${sync_args[@]}" >/dev/null 2>&1; then
+            if [[ -n "$harness" ]]; then
+                log_success "Skills projected for ${harness}"
+            else
+                log_success "Skill projection completed for detected harnesses"
+            fi
         else
-            log_info "Skill projection skipped (no supported surface or conflicts) — run: ${COLOR_STEP}speed skills status${RESET}"
+            log_info "Skill projection skipped (conflicts detected) — run: ${COLOR_STEP}workbench skills doctor${RESET}"
         fi
     fi
 

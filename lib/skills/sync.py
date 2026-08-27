@@ -12,7 +12,7 @@ from pathlib import Path
 
 from skills import ABSENT, STALE, CONFLICTED, ORPHANED, UNSUPPORTED
 from skills.catalog import load_catalog
-from skills.targets import SURFACES, detect_surfaces, dest_dir
+from skills.targets import SURFACES, detect_surfaces, dest_dir, get_surface
 from skills.project import render
 from skills.events import append_events, new_transaction, now_iso
 from skills.manifest import (
@@ -63,10 +63,13 @@ def _classify_all(project_root, skills_dir, catalog_version, surfaces):
 
 
 def _detected(project_root, only_surface):
+    if only_surface is not None:
+        # Explicit selection is authoritative. Sync can therefore create a
+        # missing harness root instead of requiring its marker to pre-exist.
+        return [get_surface(only_surface)]
     return [
         s
         for s in detect_surfaces(Path(project_root))
-        if only_surface in (None, s.id)
     ]
 
 
