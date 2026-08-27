@@ -10,16 +10,61 @@ SPEED turns markdown specs into implemented, reviewed, and integrated code. This
 ## Prerequisites
 
 1.  **SPEED installed** and available in your PATH.
-2.  **Claude CLI** or another supported agent provider installed.
+2.  **Claude Code, Codex, or GitHub Copilot** available as your agent harness.
 3.  **Git** initialized in your project.
 
 ## 1. Initialize the Project
 
 ```bash
-speed init
+# Choose the agent harness used by this project
+workbench init --harness claude
 ```
 
-SPEED creates a `.speed/` runtime directory, scaffolds a `speed.toml` configuration file, a `CLAUDE.md` for agent instructions, and a product vision template at `specs/product/overview.md` if one doesn't already exist.
+Use `claude`, `codex`, or `copilot` as the harness value. Explicit selection
+creates and configures only that harness's project skill directory:
+
+| Harness | Project skill directory |
+|---|---|
+| Claude Code | `.claude/skills/` |
+| Codex | `.agents/skills/` |
+| GitHub Copilot | `.github/skills/` |
+
+If `--harness` is omitted, Workbench detects existing supported harnesses and
+projects skills into each detected surface. `speed init` remains available as a
+temporary alias for `workbench init`.
+
+Initialization creates the `.speed/` runtime directory, scaffolds `speed.toml`,
+adds agent instructions and the product vision template at
+`specs/product/overview.md` when needed, and imports the managed Workbench skill
+catalog. The initial catalog contains the read-only `workbench-health` skill.
+
+### Verify the Imported Skills
+
+Invoke the health skill from your selected agent harness:
+
+```text
+/workbench-health
+```
+
+A successful result reports that the Workbench skills were imported and are
+ready to use. Health is an agent skill; there is intentionally no
+`workbench health` command.
+
+You can inspect the same managed installation from the terminal:
+
+```bash
+# Show the state of every imported skill
+workbench skills status
+
+# Diagnose missing, stale, modified, or obsolete projections
+workbench skills doctor
+
+# Import catalog updates or repair an unmodified projection
+workbench skills sync
+```
+
+Workbench preserves local edits to projected skills as conflicts. Review or
+back up an intentional edit before using `workbench skills sync --force`.
 
 ## 2. Write a Spec
 
