@@ -19,6 +19,9 @@
 #   context_classify_failure                — Classify a task failure
 #   context_spec_traceability               — Run spec-to-task coverage check
 #   context_score_and_compress_specs        — Score and compress related specs
+#   context_repository_digest_status        — Read stored repository-digest.json status (JSON)
+#   context_build_repository_digest         — Build/refresh repository-digest.json (JSON result)
+#   context_project_repository_digest_markdown — Bounded Markdown projection of the stored digest
 #
 # Requires: PROJECT_ROOT, python3 with lib/context/ on path.
 # Uses SPEED_PYTHON if set, falls back to .venv/bin/python3 then python3.
@@ -877,5 +880,65 @@ if agent_file_text:
     parts.append(f"## Project conventions\n\n{agent_file_text}\n")
 
 print("\n".join(parts))
+PYTHON_EOF
+}
+
+
+# ── Repository Digest ────────────────────────────────────────────
+
+context_repository_digest_status() {
+    # Prints {"load_status": "missing"|"malformed"|"ok", "digest": {...}|null, "reason": str|null}
+    $(_context_python) - <<'PYTHON_EOF'
+import sys, os, json
+sys.path.insert(0, os.environ.get("SPEED_DIR", "."))
+from lib.context.repository_digest import load_repository_digest_with_status
+
+project_root = os.environ.get("PROJECT_ROOT", ".")
+load_status, digest, reason = load_repository_digest_with_status(project_root)
+print(json.dumps({"load_status": load_status, "digest": digest, "reason": reason}))
+PYTHON_EOF
+}
+
+context_build_repository_digest() {
+    local narrative="${1:-false}"
+    local rebuild_discovery="${2:-false}"
+
+    if [[ "$rebuild_discovery" == "true" ]]; then
+        context_build_layer1 false >/dev/null
+    fi
+
+    $(_context_python) - "$narrative" <<'PYTHON_EOF'
+import sys, os, json
+sys.path.insert(0, os.environ.get("SPEED_DIR", "."))
+from lib.context.repository_digest import build_repository_digest, DigestInputError
+from lib.context.utils import load_speed_toml
+
+project_root = os.environ.get("PROJECT_ROOT", ".")
+narrative = sys.argv[1] == "true"
+config = load_speed_toml(project_root)
+try:
+    digest = build_repository_digest(project_root, config=config, narrative=narrative)
+    print(json.dumps({"ok": True, "status": digest["status"], "warnings": digest["warnings"]}))
+except DigestInputError as e:
+    print(json.dumps({"ok": False, "error": str(e)}))
+    sys.exit(1)
+PYTHON_EOF
+}
+
+context_project_repository_digest_markdown() {
+    local token_budget="${1:-4000}"
+    $(_context_python) - "$token_budget" <<'PYTHON_EOF'
+import sys, os
+sys.path.insert(0, os.environ.get("SPEED_DIR", "."))
+from lib.context.repository_digest import attach_effective_state, load_repository_digest, project_digest_for_agent
+from lib.context.utils import load_speed_toml
+
+project_root = os.environ.get("PROJECT_ROOT", ".")
+token_budget = int(sys.argv[1])
+digest = load_repository_digest(project_root)
+if digest is None:
+    sys.exit(1)
+digest = attach_effective_state(project_root, digest, config=load_speed_toml(project_root))
+sys.stdout.write(project_digest_for_agent(digest, token_budget=token_budget))
 PYTHON_EOF
 }

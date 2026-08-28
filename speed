@@ -250,6 +250,11 @@ main() {
     local command="${1:-help}"
     shift || true
 
+    # Dependency validation is scoped to the command being run — see
+    # lib/deps.sh's profile table. Must run before dispatch, after the
+    # command is known.
+    speed_check_deps "$command"
+
     # ── Extract global flags before dispatching ─────────────────
     GLOBAL_FEATURE=""
     local args=()
@@ -287,6 +292,7 @@ main() {
         new)       cmd_new "$@" ;;
         guardian)   cmd_guardian "$@" ;;
         audit)     cmd_audit "$@" ;;
+        digest)    cmd_digest "$@" ;;
         verify-spec) cmd_verify_spec "$@" ;;
         gates)     cmd_gates "$@" ;;
         clean)     cmd_clean "$@" ;;

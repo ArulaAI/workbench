@@ -142,6 +142,14 @@ class SpeedPaths:
     def context_dir(self) -> Path:
         return self.root / ".speed" / "context"
 
+    @property
+    def repository_digest_path(self) -> Path:
+        return self.context_dir / "repository-digest.json"
+
+    @property
+    def repository_digest_status_path(self) -> Path:
+        return self.context_dir / "repository-digest-status.json"
+
     # ── Singletons ───────────────────────────────────────────────
 
     @property

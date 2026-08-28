@@ -382,3 +382,59 @@ body {
     transition: none;
   }
 }
+
+/* Repository Digest — responsive layout.
+   See specs/tech/speed-repository-digest-dashboard.md > Dashboard Design >
+   Responsive behavior: two-column dense layout at 1280px+ (the base rules
+   below), 768-1279px keeps KPI cards in columns but stacks detail panels,
+   below 768px everything is one column, tables scroll horizontally, and
+   evidence opens as a full-height sheet instead of an inline panel. */
+.digest-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+}
+.digest-two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.digest-table-scroll {
+  overflow-x: auto;
+}
+.digest-evidence-scrim {
+  display: none;
+}
+.digest-evidence-panel {
+  margin-top: 6px;
+}
+
+@media (max-width: 1279px) {
+  .digest-two-col {
+    grid-template-columns: 1fr;
+  }
+  .digest-kpi-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 767px) {
+  .digest-evidence-scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 40;
+  }
+  .digest-evidence-panel {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    top: 10%;
+    margin-top: 0;
+    z-index: 41;
+    border-radius: 16px 16px 0 0;
+    overflow-y: auto;
+  }
+}

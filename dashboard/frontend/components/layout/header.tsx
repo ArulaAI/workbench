@@ -16,6 +16,10 @@ const views: Record<string, { title: string; description: string }> = {
     title: "Codebase Topology",
     description: "Symbol distribution and dependency structure across your codebase.",
   },
+  "/digest": {
+    title: "Repository Digest",
+    description: "A synthesized snapshot of the repository: domains, hotspots, commands, and conventions.",
+  },
   "/define": {
     title: "Define",
     description: "Spec coverage, draft specifications, and open defects for the active feature.",

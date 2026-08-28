@@ -23,6 +23,7 @@ class EventType(Enum):
     CONTEXT_ASSEMBLY_PROGRESS = "context_assembly_progress"
     DRAFT_GENERATION_PROGRESS = "draft_generation_progress"
     DECOMPOSITION_PROGRESS = "decomposition_progress"
+    REPOSITORY_DIGEST_STATUS_CHANGED = "repository_digest_status_changed"
 
 
 @dataclass
@@ -37,9 +38,19 @@ class SubscriptionManager:
 
     def __init__(self) -> None:
         self._subscribers: dict[str, asyncio.Queue[DashboardEvent]] = {}
+        # Captured lazily from the first subscribe() call, which always runs
+        # inside a subscription resolver on the real event loop (unlike
+        # __init__, which runs during app construction before the loop
+        # exists). Used by publish_sync to hop back onto that loop.
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     def subscribe(self) -> tuple[str, asyncio.Queue[DashboardEvent]]:
         """Register a new subscriber. Returns (subscriber_id, queue)."""
+        if self._loop is None:
+            try:
+                self._loop = asyncio.get_running_loop()
+            except RuntimeError:
+                pass  # subscribed outside a running loop (e.g. a sync test); publish_sync falls back to a direct put
         sub_id = uuid4().hex
         queue: asyncio.Queue[DashboardEvent] = asyncio.Queue(maxsize=256)
         self._subscribers[sub_id] = queue
@@ -54,15 +65,34 @@ class SubscriptionManager:
         self.publish_sync(event)
 
     def publish_sync(self, event: DashboardEvent) -> None:
-        """Push an event to all subscribers (sync-safe). Drops if queue is full."""
-        dead: list[str] = []
-        for sub_id, queue in self._subscribers.items():
-            try:
-                queue.put_nowait(event)
-            except asyncio.QueueFull:
-                dead.append(sub_id)
-        for sub_id in dead:
-            self._subscribers.pop(sub_id, None)
+        """Push an event to all subscribers (sync-safe). Drops if queue is full.
+
+        Thread-safe: a plain queue.put_nowait() only wakes an `async for
+        queue.get()` waiter when called from the same thread running the
+        event loop. A background thread that isn't bridged back through
+        run_in_executor (e.g. a long-lived daemon build thread) can put an
+        item without ever waking the loop's selector, leaving subscribers
+        stuck until something unrelated wakes it. Routing the actual
+        enqueue through call_soon_threadsafe makes delivery reliable
+        regardless of which thread calls publish_sync.
+        """
+        def _deliver() -> None:
+            dead: list[str] = []
+            for sub_id, queue in self._subscribers.items():
+                try:
+                    queue.put_nowait(event)
+                except asyncio.QueueFull:
+                    dead.append(sub_id)
+            for sub_id in dead:
+                self._subscribers.pop(sub_id, None)
+
+        if self._loop is None:
+            # No subscriber has ever registered from within a running loop
+            # (e.g. a synchronous test calling subscribe() directly) — fall
+            # back to an immediate put, same as the original implementation.
+            _deliver()
+        else:
+            self._loop.call_soon_threadsafe(_deliver)
 
     async def listen(
         self, event_type: EventType, feature: str | None = None
