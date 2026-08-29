@@ -89,11 +89,14 @@ cmd_mp_init() {
         # Update .speed/.gitignore to allowlist if still using old denylist
         if ! grep -q '^\*$' "${STATE_DIR}/.gitignore" 2>/dev/null; then
             cat > "${STATE_DIR}/.gitignore" <<'INNER_GITIGNORE'
-# Multi-player mode: only shared/ is committed, everything else is local
+# Multi-player mode: only shared/ and the skill manifest are committed, everything else is local
 *
 !shared/
 !shared/**
 !.gitignore
+!skills/
+!skills/manifest.json
+skills/events.jsonl
 INNER_GITIGNORE
             log_step "Updated .speed/.gitignore to allowlist"
         fi
@@ -207,11 +210,14 @@ INNER_GITIGNORE
 
     # ── Write .speed/.gitignore (ignore local/ only) ──────────────
     cat > "${STATE_DIR}/.gitignore" <<'INNER_GITIGNORE'
-# Multi-player mode: only shared/ is committed, everything else is local
+# Multi-player mode: only shared/ and the skill manifest are committed, everything else is local
 *
 !shared/
 !shared/**
 !.gitignore
+!skills/
+!skills/manifest.json
+skills/events.jsonl
 INNER_GITIGNORE
     log_step "Wrote .speed/.gitignore"
 

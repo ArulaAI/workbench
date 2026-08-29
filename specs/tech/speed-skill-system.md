@@ -76,7 +76,7 @@ When `--harness` is present, selection is authoritative: sync creates the select
 
 ### Manifest (managed-file identity)
 
-`${PROJECT_ROOT}/.speed/skills/manifest.json`. Records, per `(surface, skill)`: `projected_at_version`, optional skill `version`, and a `files` map of relpath to SHA-256. The recomputed on-disk hash versus the recorded hash is the only authority for distinguishing SPEED-managed bytes from user edits.
+`${PROJECT_ROOT}/.speed/skills/manifest.json`. Records, per `(surface, skill)`: `projected_at_version`, optional skill `version`, and a `files` map of relpath to SHA-256. The recomputed on-disk hash versus the recorded hash is the only authority for distinguishing SPEED-managed bytes from user edits. The manifest is git-tracked alongside the projections it describes: a clone that carries the projected files without their recorded hashes has no way to tell them apart from a user edit and classifies every one as `conflicted`.
 
 ### Project install-event log
 
@@ -241,7 +241,8 @@ New:
 
 Modified:
 - `speed`: `skills)` case as a temporary alias with a notice.
-- `lib/cmd/project.sh`: `cmd_init --harness` parsing, selective projection step (non-fatal), and gitignore `.speed/skills/`.
+- `lib/cmd/project.sh`: `cmd_init --harness` parsing, selective projection step (non-fatal), and a gitignore entry for `.speed/skills/events.jsonl` only, so `manifest.json` commits with the projections.
+- `lib/cmd/mp_init.sh`: the multi-player allowlist un-ignores `skills/manifest.json` and keeps `skills/events.jsonl` local.
 
 Not touched: harness settings, existing agent definitions, `speed.toml` (no `[skills]` section), user-authored skills, and unselected harness skill roots.
 

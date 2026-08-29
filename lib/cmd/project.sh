@@ -57,7 +57,7 @@ cmd_init() {
 .speed/state.json
 .speed/running/
 .speed/worktrees/
-.speed/skills/
+.speed/skills/events.jsonl
 EOF
         log_success "Updated .gitignore"
     fi

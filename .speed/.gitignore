@@ -1,5 +1,8 @@
-# Multi-player mode: only shared/ is committed, everything else is local
+# Multi-player mode: only shared/ and the skill manifest are committed, everything else is local
 *
 !shared/
 !shared/**
 !.gitignore
+!skills/
+!skills/manifest.json
+skills/events.jsonl
