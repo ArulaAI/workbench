@@ -76,7 +76,7 @@ When `--harness` is present, selection is authoritative: sync creates the select
 
 ### Manifest (managed-file identity)
 
-`${PROJECT_ROOT}/.speed/skills/manifest.json`. Records, per `(surface, skill)`: `projected_at_version`, optional skill `version`, and a `files` map of relpath to SHA-256. The recomputed on-disk hash versus the recorded hash is the only authority for distinguishing SPEED-managed bytes from user edits. The manifest is git-tracked alongside the projections it describes: a clone that carries the projected files without their recorded hashes has no way to tell them apart from a user edit and classifies every one as `conflicted`.
+`${PROJECT_ROOT}/.speed/skills/manifest.json`. Records, per `(surface, skill)`: `projected_at_version`, optional skill `version`, and a `files` map of relpath to SHA-256. The recomputed on-disk hash versus the recorded hash is the only authority for distinguishing SPEED-managed bytes from user edits. It also records `selected_surfaces` when a harness was chosen explicitly, so a later bare `sync` targets that choice instead of re-detecting and fanning out. The manifest is git-tracked alongside the projections it describes: a clone that carries the projected files without their recorded hashes has no way to tell them apart from a user edit and classifies every one as `conflicted`.
 
 ### Project install-event log
 
@@ -110,7 +110,7 @@ Each `(surface, skill)` resolves to one state. Manifest hashes plus on-disk hash
 | `workbench skills status [--json]` | `speed skills status …` | Read-only per-surface state table. |
 | `workbench skills doctor [--surface][--json]` | `speed skills doctor …` | Read-only diagnosis of every non-`current` state with exactly one repair path per finding. |
 
-Exit codes: `sync` 0 converged / 2 conflicts remain / 3 error; `status` 0 all current / 1 drift / 3 error; `doctor` 0 no findings / 1 findings present / 3 error.
+Sync rows report the state and `action` after the run, not the pre-run classification, so a forced repair reports `current`/`updated` rather than `conflicted`. Exit codes: `sync` 0 converged / 2 conflicts remain after the run / 3 error; `status` 0 all current / 1 drift / 3 error; `doctor` 0 no findings / 1 findings present / 3 error.
 
 The alias policy: a `speed` command is retained only with an explicit `workbench` target, identical implementation/state/gates/provenance, and a temporary-alias label. New lifecycle behavior is authored under `workbench`; no independent `speed` workflow is added.
 
@@ -156,6 +156,7 @@ Run whenever the canonical catalog is loaded; a future release build can reuse t
 - `workbench init` (and `speed init` alias) projects only `workbench-health` into every detected supported harness with provenance front matter and every file present.
 - `workbench init --harness <value>` accepts exactly `claude`, `codex`, or `copilot`, creates the selected harness root when absent, and projects the health-only catalog into that root.
 - With multiple harness markers already present, explicit init selection does not write skills into either unselected harness. Without `--harness`, existing supported harnesses continue to be auto-detected.
+- A manifest that records no skills, including an empty `{}` document, is reported `unhealthy`.
 - Direct `workbench-health` skill invocation reports `healthy` and the readiness message only when the manifest exists, at least one skill is recorded for the selected surface, and every recorded projected file exists with its expected hash.
 - Removing or modifying a projected file makes direct `workbench-health` invocation report `unhealthy`, list the affected skill/file, and exit nonzero.
 - Changing canonical `scripts/health.py` and syncing changes the projected-skill behavior without a CLI adapter.
@@ -200,6 +201,7 @@ Run whenever the canonical catalog is loaded; a future release build can reuse t
 
 - No new permissions: a skill inherits the invoking surface's model, permissions, and approval controls. Installing grants nothing.
 - No path escape: validation rejects absolute paths, `..`, and escaping symlinks.
+- Fail closed on catalog load: a missing or unreadable catalog directory is an installation error (exit 3), never an empty catalog. Sync plans no removals when the catalog cannot be read.
 - Bounded writes: sync writes only under detected or explicitly selected harness roots, `.speed/skills/manifest.json`, and `.speed/skills/events.jsonl`. It never touches harness settings, agent definitions, or user skills it did not create.
 - Generation is separate from approval; a skill run cannot ratify its own output.
 - `workbench-health` writes no artifact and touches no module state; the proof includes a no-write assertion.
@@ -242,6 +244,9 @@ New:
 Modified:
 - `speed`: `skills)` case as a temporary alias with a notice.
 - `lib/cmd/project.sh`: `cmd_init --harness` parsing, selective projection step (non-fatal), and a gitignore entry for `.speed/skills/events.jsonl` only, so `manifest.json` commits with the projections.
+- `install.sh`: links `workbench` into `~/.speed/bin` alongside the `speed` alias.
+- `lib/cmd/skills.sh` callers in `lib/cmd/project.sh`: init reports projection success, no-surface, conflict, and error as distinct outcomes instead of collapsing every failure into "conflicts detected".
+- `requirements-dev.txt` + README `## Tests`: declared pytest dependency and the canonical `PYTHONPATH=lib python3 -m pytest tests/skills/` command.
 - `lib/cmd/mp_init.sh`: the multi-player allowlist un-ignores `skills/manifest.json` and keeps `skills/events.jsonl` local.
 
 Not touched: harness settings, existing agent definitions, `speed.toml` (no `[skills]` section), user-authored skills, and unselected harness skill roots.

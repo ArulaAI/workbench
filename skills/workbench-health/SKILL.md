@@ -12,7 +12,9 @@ Verify the installed Workbench skill projection without changing project state.
 
 ## Behavior
 
-1. Run `scripts/health.py --project-root <project-root> --surface <surface>`.
+1. Run `scripts/health.py --project-root <project-root>`. The helper infers
+   its own surface from where it was projected; pass `--surface` only to
+   check a different harness.
 2. Return the helper's structured result without rewriting its status or
    message. The helper checks the project skill manifest and verifies every
    recorded projected file.

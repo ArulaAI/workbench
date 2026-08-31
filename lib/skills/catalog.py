@@ -59,7 +59,7 @@ def load_package(pkg_dir: Path) -> SkillPackage:
 def load_catalog(skills_dir: Path) -> list:
     skills_dir = Path(skills_dir)
     if not skills_dir.is_dir():
-        return []
+        raise ValueError(f"skill catalog directory not found: {skills_dir}")
     pkgs = []
     for child in sorted(skills_dir.iterdir()):
         if child.is_dir() and (child / "SKILL.md").exists():

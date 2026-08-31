@@ -176,6 +176,19 @@ Both methods work without additional configuration. SPEED resolves its own
 files from the script location and uses `pwd` as the project root (overridable
 via `SPEED_PROJECT_ROOT`).
 
+## Tests
+
+SPEED needs Python 3.11 or newer. Install the runtime and test dependencies, then
+run the Python suites from the repository root:
+
+```bash
+python3 -m pip install -r requirements.txt -r requirements-dev.txt
+PYTHONPATH=lib python3 -m pytest tests/skills/
+```
+
+`PYTHONPATH=lib` puts the `skills` package on the import path; collection fails
+without it. Shell suites run on their own: `bash tests/test_multiplayer.sh`.
+
 ## Documentation
 
 - **[Getting Started](docs/getting-started.md)** — Tutorial with example output

@@ -106,15 +106,30 @@ EOF
         if [[ -n "$skill_surface" ]]; then
             sync_args+=(--surface "$skill_surface")
         fi
-        if cmd_skills "${sync_args[@]}" >/dev/null 2>&1; then
-            if [[ -n "$harness" ]]; then
-                log_success "Skills projected for ${harness}"
-            else
-                log_success "Skill projection completed for detected harnesses"
-            fi
-        else
-            log_info "Skill projection skipped (conflicts detected) — run: ${COLOR_STEP}workbench skills doctor${RESET}"
-        fi
+        local sync_out sync_err sync_status
+        sync_err=$(mktemp)
+        sync_out=$(cmd_skills "${sync_args[@]}" --json 2>"$sync_err")
+        sync_status=$?
+
+        case "$sync_status" in
+            0)
+                if printf '%s' "$sync_out" | jq -e 'length > 0 and all(.[]; .state == "unsupported")' >/dev/null 2>&1; then
+                    log_info "No supported agent skill surface found — run: ${COLOR_STEP}workbench skills sync${RESET} once the project is open in an agent"
+                elif [[ -n "$harness" ]]; then
+                    log_success "Skills projected for ${harness}"
+                else
+                    log_success "Skill projection completed for detected harnesses"
+                fi
+                ;;
+            2)
+                log_info "Skill projection preserved local edits — run: ${COLOR_STEP}workbench skills doctor${RESET}"
+                ;;
+            *)
+                log_warn "Skill projection failed: $(tr '\n' ' ' < "$sync_err")"
+                log_info "Run: ${COLOR_STEP}workbench skills doctor${RESET}"
+                ;;
+        esac
+        rm -f "$sync_err"
     fi
 
     # 9. Initial commit

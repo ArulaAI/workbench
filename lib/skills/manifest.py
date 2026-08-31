@@ -63,6 +63,11 @@ def classify_skill(rendered, disk: dict, entry) -> str:
         return ORPHANED if disk == recorded else CONFLICTED
     if entry is None:
         return ABSENT if not disk else CONFLICTED
+    if not disk:
+        # The projection is gone entirely (git clean, an ignored harness root,
+        # a manual delete). There are no local edits to preserve, so re-project
+        # rather than demand --force to restore files nobody touched.
+        return ABSENT
     if disk != recorded:
         return CONFLICTED
     return CURRENT if _rendered_hashes(rendered) == recorded else STALE

@@ -10,7 +10,7 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-from skills import ABSENT, STALE, CONFLICTED, ORPHANED, UNSUPPORTED
+from skills import ABSENT, CURRENT, STALE, CONFLICTED, ORPHANED, UNSUPPORTED
 from skills.catalog import load_catalog
 from skills.targets import SURFACES, detect_surfaces, dest_dir, get_surface
 from skills.project import render
@@ -67,6 +67,11 @@ def _detected(project_root, only_surface):
         # Explicit selection is authoritative. Sync can therefore create a
         # missing harness root instead of requiring its marker to pre-exist.
         return [get_surface(only_surface)]
+    # A selection made at init time is remembered, so a later bare sync cannot
+    # fan out to harnesses the project never opted into.
+    recorded = load_manifest(project_root).get("selected_surfaces") or []
+    if recorded:
+        return [get_surface(item) for item in recorded]
     return [
         s
         for s in detect_surfaces(Path(project_root))
@@ -108,7 +113,7 @@ def sync(project_root, skills_dir, catalog_version, *, force=False, only_surface
     ts = now_iso()
     events: list = []
 
-    for surface, name, state, rendered, dest, version in plans:
+    for row, (surface, name, state, rendered, dest, version) in zip(rows, plans):
         surf = manifest["surfaces"].setdefault(
             surface.id, {"root": surface.skills_root, "skills": {}}
         )
@@ -123,6 +128,7 @@ def sync(project_root, skills_dir, catalog_version, *, force=False, only_surface
                 shutil.rmtree(dest)
             surf["skills"].pop(name, None)
             action = "removed"
+            row.state = ABSENT
             version = None
         elif write:
             if dest.exists():
@@ -137,10 +143,12 @@ def sync(project_root, skills_dir, catalog_version, *, force=False, only_surface
                 "version": version,
             }
             action = "installed" if state == ABSENT else "updated"
+            row.state = CURRENT
         elif state == CONFLICTED:
             action = "conflict"
 
         if action is not None:
+            row.action = action
             events.append({
                 "transaction": transaction,
                 "ts": ts,
@@ -152,6 +160,12 @@ def sync(project_root, skills_dir, catalog_version, *, force=False, only_surface
                 "new_version": version,
             })
 
+    if only_surface is not None:
+        # Accumulate: choosing a second harness must not strand the first one's
+        # projection outside the set that status, doctor, and sync can see.
+        chosen = {get_surface(only_surface).id}
+        chosen |= set(manifest.get("selected_surfaces") or [])
+        manifest["selected_surfaces"] = sorted(chosen)
     manifest["catalog_version"] = catalog_version
     after = json.dumps(manifest, sort_keys=True)
     if after != before:

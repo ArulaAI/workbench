@@ -29,8 +29,18 @@ def test_load_catalog_discovers_and_sorts(tmp_catalog):
     assert names == ["another-skill", "example-skill"]
 
 
-def test_load_catalog_missing_dir_is_empty(tmp_path):
-    assert load_catalog(tmp_path / "nope") == []
+def test_load_catalog_missing_dir_fails_closed(tmp_path):
+    """A missing catalog is an installation error, never an empty catalog."""
+    with pytest.raises(ValueError, match="skill catalog directory not found"):
+        load_catalog(tmp_path / "nope")
+
+
+def test_load_catalog_rejects_a_file_in_place_of_a_directory(tmp_path):
+    not_a_dir = tmp_path / "catalog"
+    not_a_dir.write_text("")
+
+    with pytest.raises(ValueError, match="skill catalog directory not found"):
+        load_catalog(not_a_dir)
 
 
 def test_load_catalog_rejects_invalid_package(tmp_catalog):
