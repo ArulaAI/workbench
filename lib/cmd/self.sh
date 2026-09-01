@@ -191,13 +191,6 @@ cmd_self_update() {
     # Swap the current symlink (atomic on POSIX)
     ln -sfn "$new_version_dir" "${SPEED_HOME}/current"
 
-    # Republish the bin/ entrypoints. Only install.sh created these, so an
-    # install that predates a new command would otherwise never gain it while
-    # the docs and every repair hint tell users to run it.
-    mkdir -p "${SPEED_HOME}/bin"
-    ln -sf "../current/speed" "${SPEED_HOME}/bin/speed"
-    ln -sf "../current/workbench" "${SPEED_HOME}/bin/workbench"
-
     # ── Update receipt ─────────────────────────────────────────
     local install_date
     install_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"

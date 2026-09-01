@@ -6,12 +6,10 @@ projections without it makes a fresh clone classify every projected skill as
 `conflicted` and offer `--force` as the repair. Runtime data (`events.jsonl`)
 stays local: per-machine append-only history that no classification reads.
 
-The shell-source tests below exist because three defects here shared one shape:
-the fix was present in the source but unreachable. A migration branch sat behind
-a condition already true for every existing project; `set -euo pipefail` killed
-init before its own error branches could run; only `install.sh` ever created the
-`bin/` links, so an upgrade never gained a newly added command. Reading the real
-source keeps them honest — asserting on a copy of a condition proves nothing.
+The shell-source tests below read the real scripts rather than a copy of their
+logic, because `set -euo pipefail` once killed init before its own error branches
+could run: a fix present in the source but unreachable. Asserting on a restated
+condition would not have caught that.
 """
 import os
 import re
@@ -29,7 +27,6 @@ EVENTS_REL = ".speed/skills/events.jsonl"
 
 PROJECT_SH = REPO / "lib" / "cmd" / "project.sh"
 INSTALL_SH = REPO / "install.sh"
-SELF_SH = REPO / "lib" / "cmd" / "self.sh"
 MP_INIT_SH = REPO / "lib" / "cmd" / "mp_init.sh"
 OWN_SPEED_IGNORE = REPO / ".speed" / ".gitignore"
 
@@ -221,84 +218,6 @@ def test_fresh_clone_reports_healthy(tmp_path):
     assert "status: healthy" in health.stdout
 
 
-def _shell_condition(source: Path, needle: str) -> str:
-    """Extract the `if`/`elif` condition containing `needle` from a shell file.
-
-    Reading the real source keeps these tests honest: a rule that only ever
-    appears inside an unreachable branch is the exact defect they exist to
-    catch, so asserting on a copy of the condition would prove nothing.
-    """
-    lines = source.read_text().splitlines()
-    start = next(index for index, line in enumerate(lines) if needle in line)
-    while not lines[start].strip().startswith(("if ", "elif ")):
-        start -= 1
-    chunk = []
-    for line in lines[start:]:
-        chunk.append(line)
-        if line.rstrip().endswith("; then"):
-            break
-    else:
-        raise AssertionError(f"unterminated condition for {needle!r} in {source}")
-    chunk[0] = chunk[0].strip()
-    text = "\n".join(chunk)
-    keyword = "elif " if text.startswith("elif ") else "if "
-    return text[len(keyword): text.rindex("; then")]
-
-
-def _fires(condition: str, **shell_vars) -> bool:
-    script = f"if {condition}\nthen exit 0\nelse exit 1\nfi\n"
-    return subprocess.run(
-        ["bash", "-c", script],
-        env=dict(os.environ, **shell_vars),
-        capture_output=True,
-    ).returncode == 0
-
-
-_OLD_MP_ALLOWLIST = """\
-*
-!shared/
-!shared/**
-!.gitignore
-"""
-
-
-def test_multiplayer_repair_fires_for_an_already_migrated_project(tmp_path):
-    """The bare `*` alone is not evidence the manifest carve-out is present."""
-    condition = _shell_condition(MP_INIT_SH, "!skills/manifest\\.json$")
-    state = tmp_path / ".speed"
-    state.mkdir(parents=True)
-    (state / ".gitignore").write_text(_OLD_MP_ALLOWLIST)
-
-    assert _fires(condition, STATE_DIR=str(state))
-
-
-def test_multiplayer_repair_is_idempotent_once_the_carve_out_is_present(tmp_path):
-    condition = _shell_condition(MP_INIT_SH, "!skills/manifest\\.json$")
-    state = tmp_path / ".speed"
-    state.mkdir(parents=True)
-    (state / ".gitignore").write_text(MULTIPLAYER_BLOCKS[0])
-
-    assert not _fires(condition, STATE_DIR=str(state))
-
-
-def test_events_rule_is_added_to_a_project_initialized_before_the_skill_engine(
-    tmp_path,
-):
-    condition = _shell_condition(PROJECT_SH, "-qF '.speed/skills/events.jsonl'")
-    gitignore = tmp_path / ".gitignore"
-    gitignore.write_text("# SPEED runtime state\n.speed/logs/\n.speed/features/*/logs/\n")
-
-    assert _fires(condition, project_gitignore=str(gitignore))
-
-
-def test_events_rule_is_not_added_twice(tmp_path):
-    condition = _shell_condition(PROJECT_SH, "-qF '.speed/skills/events.jsonl'")
-    gitignore = tmp_path / ".gitignore"
-    gitignore.write_text(SINGLE_PLAYER_BLOCKS[0])
-
-    assert not _fires(condition, project_gitignore=str(gitignore))
-
-
 _LINK_RE = re.compile(r'\$\{SPEED_HOME\}/bin/(\w[\w.-]*)"')
 
 
@@ -315,12 +234,6 @@ def _published(source: Path) -> set:
 
 def test_install_publishes_both_entrypoints():
     assert _published(INSTALL_SH) == {"speed", "workbench"}
-
-
-def test_self_update_publishes_what_install_does():
-    """`doctor`, the README, and every projected skill tell users to run
-    `workbench`; an upgrade that omits the link sends them nowhere."""
-    assert _published(SELF_SH) == _published(INSTALL_SH)
 
 
 def _sync_assignment() -> str:

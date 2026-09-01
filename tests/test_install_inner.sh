@@ -234,8 +234,8 @@ else
     fail "4b: Receipt updated_from" "Expected ${old_version}, got ${updated_from:-empty}"
 fi
 
-# 4b2: self-update republishes every bin/ entrypoint, not just the ones a
-# previous installer happened to create
+# 4b2: both entrypoints still resolve after an update. The bin/ links are
+# relative to current/, so repointing current/ must not strand either one.
 missing_bin=""
 for entrypoint in speed workbench; do
     if [[ ! -x "$(readlink -f "$HOME/.speed/bin/${entrypoint}" 2>/dev/null)" ]]; then

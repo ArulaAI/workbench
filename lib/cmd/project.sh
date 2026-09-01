@@ -45,9 +45,8 @@ cmd_init() {
     log_success "Directory structure created"
 
     # 3. .gitignore
-    local project_gitignore="${PROJECT_ROOT}/.gitignore"
-    if ! grep -q '.speed/features/' "$project_gitignore" 2>/dev/null; then
-        cat >> "$project_gitignore" << 'EOF'
+    if ! grep -q '.speed/features/' "$PROJECT_ROOT/.gitignore" 2>/dev/null; then
+        cat >> "$PROJECT_ROOT/.gitignore" << 'EOF'
 
 # SPEED runtime state
 .speed/logs/
@@ -61,12 +60,6 @@ cmd_init() {
 .speed/skills/events.jsonl
 EOF
         log_success "Updated .gitignore"
-    elif ! grep -qF '.speed/skills/events.jsonl' "$project_gitignore" 2>/dev/null; then
-        # A project initialized before the skill engine already has the runtime
-        # block, so the heredoc above never runs for it. Its per-machine event
-        # log still must not be committed.
-        printf '%s\n' '.speed/skills/events.jsonl' >> "$project_gitignore"
-        log_success "Updated .gitignore for the skill event log"
     fi
 
     # 4. Runtime state (global — for validate and cross-feature use)
