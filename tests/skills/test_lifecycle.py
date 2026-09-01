@@ -1,12 +1,20 @@
-"""Every ignore rule SPEED writes must commit the skill manifest.
+"""The bootstrap path outside the Python engine: install, init, commit, clone.
 
-The manifest is the sole record distinguishing SPEED-written bytes from a user
-edit. Committing the projections without it makes a fresh clone classify every
-projected skill as `conflicted` and offer `--force` as the repair. Runtime data
-(`events.jsonl`) stays local: it is per-machine append-only history that no
-classification reads.
+Every rule SPEED writes must commit the skill manifest. The manifest is the sole
+record distinguishing SPEED-written bytes from a user edit, so committing the
+projections without it makes a fresh clone classify every projected skill as
+`conflicted` and offer `--force` as the repair. Runtime data (`events.jsonl`)
+stays local: per-machine append-only history that no classification reads.
+
+The shell-source tests below exist because three defects here shared one shape:
+the fix was present in the source but unreachable. A migration branch sat behind
+a condition already true for every existing project; `set -euo pipefail` killed
+init before its own error branches could run; only `install.sh` ever created the
+`bin/` links, so an upgrade never gained a newly added command. Reading the real
+source keeps them honest — asserting on a copy of a condition proves nothing.
 """
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -20,6 +28,8 @@ MANIFEST_REL = ".speed/skills/manifest.json"
 EVENTS_REL = ".speed/skills/events.jsonl"
 
 PROJECT_SH = REPO / "lib" / "cmd" / "project.sh"
+INSTALL_SH = REPO / "install.sh"
+SELF_SH = REPO / "lib" / "cmd" / "self.sh"
 MP_INIT_SH = REPO / "lib" / "cmd" / "mp_init.sh"
 OWN_SPEED_IGNORE = REPO / ".speed" / ".gitignore"
 
@@ -209,3 +219,135 @@ def test_fresh_clone_reports_healthy(tmp_path):
     )
     assert health.returncode == 0, health.stdout
     assert "status: healthy" in health.stdout
+
+
+def _shell_condition(source: Path, needle: str) -> str:
+    """Extract the `if`/`elif` condition containing `needle` from a shell file.
+
+    Reading the real source keeps these tests honest: a rule that only ever
+    appears inside an unreachable branch is the exact defect they exist to
+    catch, so asserting on a copy of the condition would prove nothing.
+    """
+    lines = source.read_text().splitlines()
+    start = next(index for index, line in enumerate(lines) if needle in line)
+    while not lines[start].strip().startswith(("if ", "elif ")):
+        start -= 1
+    chunk = []
+    for line in lines[start:]:
+        chunk.append(line)
+        if line.rstrip().endswith("; then"):
+            break
+    else:
+        raise AssertionError(f"unterminated condition for {needle!r} in {source}")
+    chunk[0] = chunk[0].strip()
+    text = "\n".join(chunk)
+    keyword = "elif " if text.startswith("elif ") else "if "
+    return text[len(keyword): text.rindex("; then")]
+
+
+def _fires(condition: str, **shell_vars) -> bool:
+    script = f"if {condition}\nthen exit 0\nelse exit 1\nfi\n"
+    return subprocess.run(
+        ["bash", "-c", script],
+        env=dict(os.environ, **shell_vars),
+        capture_output=True,
+    ).returncode == 0
+
+
+_OLD_MP_ALLOWLIST = """\
+*
+!shared/
+!shared/**
+!.gitignore
+"""
+
+
+def test_multiplayer_repair_fires_for_an_already_migrated_project(tmp_path):
+    """The bare `*` alone is not evidence the manifest carve-out is present."""
+    condition = _shell_condition(MP_INIT_SH, "!skills/manifest\\.json$")
+    state = tmp_path / ".speed"
+    state.mkdir(parents=True)
+    (state / ".gitignore").write_text(_OLD_MP_ALLOWLIST)
+
+    assert _fires(condition, STATE_DIR=str(state))
+
+
+def test_multiplayer_repair_is_idempotent_once_the_carve_out_is_present(tmp_path):
+    condition = _shell_condition(MP_INIT_SH, "!skills/manifest\\.json$")
+    state = tmp_path / ".speed"
+    state.mkdir(parents=True)
+    (state / ".gitignore").write_text(MULTIPLAYER_BLOCKS[0])
+
+    assert not _fires(condition, STATE_DIR=str(state))
+
+
+def test_events_rule_is_added_to_a_project_initialized_before_the_skill_engine(
+    tmp_path,
+):
+    condition = _shell_condition(PROJECT_SH, "-qF '.speed/skills/events.jsonl'")
+    gitignore = tmp_path / ".gitignore"
+    gitignore.write_text("# SPEED runtime state\n.speed/logs/\n.speed/features/*/logs/\n")
+
+    assert _fires(condition, project_gitignore=str(gitignore))
+
+
+def test_events_rule_is_not_added_twice(tmp_path):
+    condition = _shell_condition(PROJECT_SH, "-qF '.speed/skills/events.jsonl'")
+    gitignore = tmp_path / ".gitignore"
+    gitignore.write_text(SINGLE_PLAYER_BLOCKS[0])
+
+    assert not _fires(condition, project_gitignore=str(gitignore))
+
+
+_LINK_RE = re.compile(r'\$\{SPEED_HOME\}/bin/(\w[\w.-]*)"')
+
+
+def _published(source: Path) -> set:
+    """Entrypoint names this script symlinks into `~/.speed/bin`."""
+    return {
+        match.group(1)
+        for line in source.read_text().splitlines()
+        if line.strip().startswith("ln ")
+        for match in [_LINK_RE.search(line)]
+        if match
+    }
+
+
+def test_install_publishes_both_entrypoints():
+    assert _published(INSTALL_SH) == {"speed", "workbench"}
+
+
+def test_self_update_publishes_what_install_does():
+    """`doctor`, the README, and every projected skill tell users to run
+    `workbench`; an upgrade that omits the link sends them nowhere."""
+    assert _published(SELF_SH) == _published(INSTALL_SH)
+
+
+def _sync_assignment() -> str:
+    """The real line init uses to run sync and record its exit status."""
+    for line in PROJECT_SH.read_text().splitlines():
+        if "cmd_skills " in line and "--json" in line:
+            return line.strip()
+    raise AssertionError(f"no cmd_skills --json invocation in {PROJECT_SH}")
+
+
+@pytest.mark.parametrize("rc", [0, 2, 3])
+def test_init_records_the_sync_status_instead_of_dying_on_it(rc):
+    """Sync exits 2 on a conflict and 3 on a catalog error. Either one used to
+    kill init before its own branches and before the initial commit."""
+    script = f"""
+set -euo pipefail
+cmd_skills() {{ echo '[]'; return {rc}; }}
+sync_args=(sync)
+sync_status=0
+sync_err=$(mktemp)
+{_sync_assignment()}
+echo "STATUS=$sync_status"
+echo "CONTINUED"
+rm -f "$sync_err"
+"""
+    result = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+
+    assert result.returncode == 0, result.stderr
+    assert f"STATUS={rc}" in result.stdout
+    assert "CONTINUED" in result.stdout

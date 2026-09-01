@@ -11,7 +11,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from skills import ABSENT, CURRENT, STALE, CONFLICTED, ORPHANED
+from skills import ABSENT, CURRENT, STALE, CONFLICTED, ORPHANED, is_junk
 
 _MANIFEST_REL = ".speed/skills/manifest.json"
 
@@ -26,8 +26,14 @@ def hash_disk(dest: Path) -> dict:
     if not dest.is_dir():
         return out
     for p in sorted(dest.rglob("*")):
-        if p.is_file():
-            out[p.relative_to(dest).as_posix()] = hash_bytes(p.read_bytes())
+        if not p.is_file():
+            continue
+        rel = p.relative_to(dest).as_posix()
+        # Same exclusions the catalog reader applies, so a Finder visit or a
+        # stray __pycache__ cannot be mistaken for a hand edit.
+        if is_junk(rel):
+            continue
+        out[rel] = hash_bytes(p.read_bytes())
     return out
 
 

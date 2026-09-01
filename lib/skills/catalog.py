@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from skills import is_junk
 from skills.frontmatter import parse
 
 
@@ -16,28 +17,13 @@ class SkillPackage:
     files: dict = field(default_factory=dict)
 
 
-# Generated/OS junk that must never become part of a package or its projection.
-_EXCLUDE_DIRS = {"__pycache__", ".git"}
-_EXCLUDE_SUFFIXES = (".pyc", ".pyo")
-_EXCLUDE_NAMES = {".DS_Store"}
-
-
-def _is_junk(rel: str) -> bool:
-    parts = rel.split("/")
-    if any(part in _EXCLUDE_DIRS for part in parts):
-        return True
-    if parts[-1] in _EXCLUDE_NAMES:
-        return True
-    return rel.endswith(_EXCLUDE_SUFFIXES)
-
-
 def _read_files(root: Path) -> dict:
     files: dict = {}
     for p in sorted(root.rglob("*")):
         if not p.is_file():
             continue
         rel = p.relative_to(root).as_posix()
-        if _is_junk(rel):
+        if is_junk(rel):
             continue
         files[rel] = p.read_bytes()
     return files

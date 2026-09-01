@@ -45,8 +45,9 @@ cmd_init() {
     log_success "Directory structure created"
 
     # 3. .gitignore
-    if ! grep -q '.speed/features/' "$PROJECT_ROOT/.gitignore" 2>/dev/null; then
-        cat >> "$PROJECT_ROOT/.gitignore" << 'EOF'
+    local project_gitignore="${PROJECT_ROOT}/.gitignore"
+    if ! grep -q '.speed/features/' "$project_gitignore" 2>/dev/null; then
+        cat >> "$project_gitignore" << 'EOF'
 
 # SPEED runtime state
 .speed/logs/
@@ -60,6 +61,12 @@ cmd_init() {
 .speed/skills/events.jsonl
 EOF
         log_success "Updated .gitignore"
+    elif ! grep -qF '.speed/skills/events.jsonl' "$project_gitignore" 2>/dev/null; then
+        # A project initialized before the skill engine already has the runtime
+        # block, so the heredoc above never runs for it. Its per-machine event
+        # log still must not be committed.
+        printf '%s\n' '.speed/skills/events.jsonl' >> "$project_gitignore"
+        log_success "Updated .gitignore for the skill event log"
     fi
 
     # 4. Runtime state (global — for validate and cross-feature use)
@@ -106,10 +113,13 @@ EOF
         if [[ -n "$skill_surface" ]]; then
             sync_args+=(--surface "$skill_surface")
         fi
-        local sync_out sync_err sync_status
+        local sync_out sync_err
+        # `set -e` aborts the whole script on a bare failing assignment, which
+        # would skip every branch below plus the initial commit. `|| status=$?`
+        # keeps the nonzero result reportable.
+        local sync_status=0
         sync_err=$(mktemp)
-        sync_out=$(cmd_skills "${sync_args[@]}" --json 2>"$sync_err")
-        sync_status=$?
+        sync_out=$(cmd_skills "${sync_args[@]}" --json 2>"$sync_err") || sync_status=$?
 
         case "$sync_status" in
             0)

@@ -1,9 +1,10 @@
+import json
 import shutil
 
 import pytest
 
 from skills.sync import sync, status
-from skills.manifest import load_manifest
+from skills.manifest import hash_bytes, load_manifest
 from skills import CURRENT, STALE, CONFLICTED, ABSENT
 
 
@@ -45,9 +46,16 @@ def test_sync_preserves_user_edit_as_conflict(tmp_catalog, tmp_project):
     assert "HAND EDITED" not in edited.read_text()
 
 
-def test_version_bump_marks_stale_then_updates(tmp_catalog, tmp_project):
+def _edit_catalog(skills_dir, name="example-skill", body="Do a different thing."):
+    (skills_dir / name / "SKILL.md").write_text(
+        f"---\nname: {name}\ndescription: A test skill\n---\n\n# {name}\n{body}\n"
+    )
+
+
+def test_catalog_change_marks_stale_then_updates(tmp_catalog, tmp_project):
     skills_dir = tmp_catalog()
     _run(tmp_project, skills_dir, version="0.3.0")
+    _edit_catalog(skills_dir)
     rows = status(tmp_project, skills_dir, "0.4.0")
     assert any(s.state == STALE for s in rows)
     _run(tmp_project, skills_dir, version="0.4.0")
@@ -109,9 +117,10 @@ def test_sync_reports_post_apply_state_and_action(tmp_catalog, tmp_project):
     assert row.action == "installed"
 
 
-def test_sync_reports_update_after_version_bump(tmp_catalog, tmp_project):
+def test_sync_reports_update_after_catalog_change(tmp_catalog, tmp_project):
     skills_dir = tmp_catalog()
     _run(tmp_project, skills_dir, version="0.3.0")
+    _edit_catalog(skills_dir)
     row = _run(tmp_project, skills_dir, version="0.4.0")["example-skill@claude_code"]
     assert row.state == CURRENT
     assert row.action == "updated"
@@ -247,3 +256,143 @@ def test_explicit_surfaces_accumulate(tmp_catalog, tmp_project):
         "claude_code",
         "codex",
     }
+
+
+def _poison_manifest(project, key, files):
+    """Write a manifest entry under an arbitrary key, as a bad commit would."""
+    path = project / ".speed" / "skills" / "manifest.json"
+    data = json.loads(path.read_text())
+    data["surfaces"]["claude_code"]["skills"][key] = {"files": files}
+    path.write_text(json.dumps(data))
+
+
+def test_manifest_skill_name_cannot_steer_removal_outside_the_project(
+    tmp_catalog, tmp_project
+):
+    """manifest.json is committed, so its keys are untrusted input to rmtree."""
+    skills_dir = tmp_catalog()
+    _run(tmp_project, skills_dir)
+    victim = tmp_project.parent / "victim"
+    victim.mkdir()
+    (victim / "important.txt").write_text("keep me\n")
+    escape = "../../../victim"
+    _poison_manifest(
+        tmp_project,
+        escape,
+        {"important.txt": hash_bytes(b"keep me\n")},  # matches disk -> orphaned
+    )
+
+    rows = _run(tmp_project, skills_dir)
+
+    assert (victim / "important.txt").is_file()
+    assert escape not in {row.skill for row in rows.values()}
+
+
+def test_forced_sync_cannot_delete_outside_the_project(tmp_catalog, tmp_project):
+    """--force is the documented repair, so it must not widen the blast radius."""
+    skills_dir = tmp_catalog()
+    _run(tmp_project, skills_dir)
+    victim = tmp_project.parent / "victim"
+    victim.mkdir()
+    (victim / "important.txt").write_text("keep me\n")
+    _poison_manifest(
+        tmp_project,
+        "../../../victim",
+        {"important.txt": "sha256:deadbeef"},  # mismatched -> conflicted
+    )
+
+    _run(tmp_project, skills_dir, force=True)
+
+    assert (victim / "important.txt").is_file()
+
+
+def test_unsafe_manifest_entry_is_pruned(tmp_catalog, tmp_project):
+    skills_dir = tmp_catalog()
+    _run(tmp_project, skills_dir)
+    _poison_manifest(tmp_project, "../../../victim", {"important.txt": "sha256:dead"})
+
+    _run(tmp_project, skills_dir)
+
+    skills = load_manifest(tmp_project)["surfaces"]["claude_code"]["skills"]
+    assert set(skills) == {"example-skill"}
+
+
+@pytest.mark.parametrize(
+    "junk", [".DS_Store", "__pycache__/x.pyc", "references/.DS_Store"]
+)
+def test_generated_junk_beside_a_projection_is_not_a_conflict(
+    tmp_catalog, tmp_project, junk
+):
+    """render() never emits these, so their presence says nothing about drift."""
+    skills_dir = tmp_catalog()
+    _run(tmp_project, skills_dir)
+    dropped = tmp_project / ".claude" / "skills" / "example-skill" / junk
+    dropped.parent.mkdir(parents=True, exist_ok=True)
+    dropped.write_bytes(b"\x00")
+
+    assert [r.state for r in status(tmp_project, skills_dir, "0.3.0")] == [CURRENT]
+
+
+def test_failure_on_a_later_surface_keeps_earlier_writes_recorded(
+    tmp_catalog, tmp_path
+):
+    """A half-finished sync must be resumable, not permanently conflicted."""
+    skills_dir = tmp_catalog()
+    project = tmp_path / "two-harness"
+    (project / ".claude").mkdir(parents=True)
+    (project / ".agents").mkdir(parents=True)
+    # A regular file where codex needs a directory: claude_code is written
+    # first, then codex raises part-way through the same sync.
+    (project / ".agents" / "skills").write_text("not a directory\n")
+
+    with pytest.raises(OSError):
+        sync(project, skills_dir, "0.3.0")
+
+    written = project / ".claude" / "skills" / "example-skill" / "SKILL.md"
+    assert written.is_file()
+    rows = status(project, skills_dir, "0.3.0", only_surface="claude")
+    assert [r.state for r in rows] == [CURRENT]
+
+
+def test_a_different_install_leaves_a_committed_projection_alone(
+    tmp_catalog, tmp_project
+):
+    """Teammates on different SPEED builds must not fight over the manifest."""
+    skills_dir = tmp_catalog()
+    _run(tmp_project, skills_dir, version="install-a")
+    manifest = tmp_project / ".speed" / "skills" / "manifest.json"
+    projected = tmp_project / ".claude" / "skills" / "example-skill" / "SKILL.md"
+    m0, p0 = manifest.stat().st_mtime_ns, projected.stat().st_mtime_ns
+
+    assert [r.state for r in status(tmp_project, skills_dir, "install-b")] == [CURRENT]
+
+    _run(tmp_project, skills_dir, version="install-b")
+
+    assert manifest.stat().st_mtime_ns == m0
+    assert projected.stat().st_mtime_ns == p0
+
+
+def test_structured_front_matter_survives_projection(tmp_catalog, tmp_project):
+    """A list or a colon in a description must not break the projected skill."""
+    yaml = pytest.importorskip("yaml")
+    skills_dir = tmp_catalog()
+    (skills_dir / "example-skill" / "SKILL.md").write_text(
+        "---\n"
+        "name: example-skill\n"
+        "description: >\n"
+        "  Use when: the user asks about charts.\n"
+        "allowed-tools:\n"
+        "  - Read\n"
+        "  - Bash(git status:*)\n"
+        "---\n\n"
+        "# example-skill\n"
+    )
+
+    _run(tmp_project, skills_dir)
+
+    projected = tmp_project / ".claude" / "skills" / "example-skill" / "SKILL.md"
+    meta = yaml.safe_load(projected.read_text().split("---\n")[1])
+    assert meta["allowed-tools"] == ["Read", "Bash(git status:*)"]
+    assert meta["description"].strip() == "Use when: the user asks about charts."
+    assert meta["x-workbench-managed"] is True  # unquoted true, as YAML reads it
+    assert [r.state for r in status(tmp_project, skills_dir, "0.3.0")] == [CURRENT]

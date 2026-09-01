@@ -70,7 +70,7 @@ Workbench supports three project harness targets:
 | `codex` | `codex` | `.agents/skills/` |
 | `copilot` | `copilot` | `.github/skills/` |
 
-[GitHub documents](https://docs.github.com/en/copilot/concepts/agents/about-agent-skills) `.github/skills`, `.agents/skills`, and `.claude/skills` as supported Copilot project skill locations; Workbench uses `.github/skills` as the harness-specific Copilot target. Each projection mirrors the canonical package with two differences: front matter is normalized to the surface's keys and Workbench provenance keys are injected (`x-workbench-managed: true`, `x-workbench-source: <name>`, `x-workbench-catalog-version: <v>`). All other files, including `scripts/health.py`, are copied byte-for-byte, so the projected helper hash equals the canonical helper hash. Projection is deterministic.
+[GitHub documents](https://docs.github.com/en/copilot/concepts/agents/about-agent-skills) `.github/skills`, `.agents/skills`, and `.claude/skills` as supported Copilot project skill locations; Workbench uses `.github/skills` as the harness-specific Copilot target. Each projection mirrors the canonical package with two differences: front matter is normalized to the surface's keys and Workbench provenance keys are injected (`x-workbench-managed: true`, `x-workbench-source: <name>`). The projecting install is recorded in `manifest.json`, not in the projected file, so that a committed projection is byte-identical for every teammate regardless of which SPEED build ran the sync. All other files, including `scripts/health.py`, are copied byte-for-byte, so the projected helper hash equals the canonical helper hash. Projection is deterministic.
 
 When `--harness` is present, selection is authoritative: sync creates the selected projection root if its marker directory is absent and does not project to any other harness. Without the flag, init retains marker-based auto-detection and projects to every existing supported harness. Copilot detection requires `.github/skills/`; a generic `.github/` directory alone does not imply Copilot usage.
 
@@ -120,7 +120,7 @@ Invoked as `PYTHONPATH="${SPEED_DIR}/lib" <python> -m skills <sub> …` (because
 
 | Module | Responsibility |
 |---|---|
-| `frontmatter.py` | parse/serialize SKILL.md front matter (stdlib) |
+| `frontmatter.py` | read SKILL.md front matter and inject provenance in place (stdlib) |
 | `catalog.py` | discover canonical packages and reject catalog validation failures at load |
 | `validate.py` | package + catalog contract (names, metadata, paths, symlinks, uniqueness) |
 | `targets.py` | harness registry, marker detection, explicit selection, and destination |

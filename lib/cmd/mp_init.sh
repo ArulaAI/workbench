@@ -86,8 +86,12 @@ cmd_mp_init() {
             log_step "Wrote missing init event"
         fi
 
-        # Update .speed/.gitignore to allowlist if still using old denylist
-        if ! grep -q '^\*$' "${STATE_DIR}/.gitignore" 2>/dev/null; then
+        # Bring .speed/.gitignore up to the current allowlist. Testing for the
+        # bare `*` alone would skip every project that was already migrated
+        # before the skill manifest needed its own carve-out, leaving the
+        # manifest ignored and every teammate's clone reporting conflicts.
+        if ! grep -q '^\*$' "${STATE_DIR}/.gitignore" 2>/dev/null \
+            || ! grep -q '^!skills/manifest\.json$' "${STATE_DIR}/.gitignore" 2>/dev/null; then
             cat > "${STATE_DIR}/.gitignore" <<'INNER_GITIGNORE'
 # Multi-player mode: only shared/ and the skill manifest are committed, everything else is local
 *

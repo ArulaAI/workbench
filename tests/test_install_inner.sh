@@ -96,6 +96,13 @@ else
     fail "1c: bin/speed symlink" "~/.speed/bin/speed missing or not executable"
 fi
 
+# 1c2: bin/workbench symlink exists and is executable
+if [[ -L "$HOME/.speed/bin/workbench" ]] && [[ -x "$(readlink -f "$HOME/.speed/bin/workbench")" ]]; then
+    pass "1c2: bin/workbench symlink executable"
+else
+    fail "1c2: bin/workbench symlink" "~/.speed/bin/workbench missing or not executable"
+fi
+
 # 1d: receipt.json exists and has valid content
 if [[ -f "$HOME/.speed/receipt.json" ]]; then
     version=$(jq -r ".version" "$HOME/.speed/receipt.json" 2>/dev/null || echo "")
@@ -225,6 +232,20 @@ if [[ "$updated_from" == "$old_version" ]]; then
     pass "4b: Receipt tracks previous version"
 else
     fail "4b: Receipt updated_from" "Expected ${old_version}, got ${updated_from:-empty}"
+fi
+
+# 4b2: self-update republishes every bin/ entrypoint, not just the ones a
+# previous installer happened to create
+missing_bin=""
+for entrypoint in speed workbench; do
+    if [[ ! -x "$(readlink -f "$HOME/.speed/bin/${entrypoint}" 2>/dev/null)" ]]; then
+        missing_bin="${missing_bin} ${entrypoint}"
+    fi
+done
+if [[ -z "$missing_bin" ]]; then
+    pass "4b2: Self-update keeps bin/speed and bin/workbench executable"
+else
+    fail "4b2: Self-update bin entrypoints" "Missing after update:${missing_bin}"
 fi
 
 # 4c: current symlink points to new version

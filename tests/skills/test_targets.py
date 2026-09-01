@@ -59,3 +59,17 @@ def test_resolves_harness(harness, surface_id, skills_root):
 def test_rejects_unknown_harness():
     with pytest.raises(ValueError, match="expected: claude, codex, copilot"):
         surface_for_harness("cursor")
+
+
+@pytest.mark.parametrize(
+    "name", ["../escape", "a/b", "/abs", "..", "Upper", ".hidden", ""]
+)
+def test_dest_dir_refuses_names_that_are_not_legal_skill_names(tmp_path, name):
+    with pytest.raises(ValueError, match="unsafe skill name"):
+        dest_dir(SURFACES[0], name, tmp_path)
+
+
+def test_dest_dir_resolves_a_legal_name_under_the_surface_root(tmp_path):
+    assert dest_dir(SURFACES[0], "workbench-health", tmp_path) == (
+        tmp_path / ".claude" / "skills" / "workbench-health"
+    )

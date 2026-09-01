@@ -42,9 +42,24 @@ def _print_table(catalog_version, rows) -> None:
         print(line)
 
 
+def _actionable(diagnostics):
+    """Diagnostics a user can repair here and now.
+
+    A missing harness is advice, not drift: `status` already exits 0 on it, and
+    `workbench init` sends users to `doctor` for exactly that advice.
+    """
+    return [item for item in diagnostics if item.state != UNSUPPORTED]
+
+
+def _doctor_status(diagnostics) -> str:
+    if not diagnostics:
+        return "healthy"
+    return "issues" if _actionable(diagnostics) else "unsupported"
+
+
 def _doctor_result(catalog_version, diagnostics):
     return {
-        "status": "healthy" if not diagnostics else "issues",
+        "status": _doctor_status(diagnostics),
         "catalog_version": catalog_version,
         "diagnostics": [asdict(item) for item in diagnostics],
     }
@@ -52,7 +67,8 @@ def _doctor_result(catalog_version, diagnostics):
 
 def _print_doctor(result) -> None:
     diagnostics = result["diagnostics"]
-    print(f"skills doctor: {result['status']} · {len(diagnostics)} issue(s)")
+    noun = "note" if result["status"] == "unsupported" else "issue"
+    print(f"skills doctor: {result['status']} · {len(diagnostics)} {noun}(s)")
     if not diagnostics:
         print("All imported Workbench skills are current and ready to use.")
         return
@@ -99,7 +115,7 @@ def main(argv=None) -> int:
             print(json.dumps(result, indent=2))
         else:
             _print_doctor(result)
-        return 0 if not diagnostics else 1
+        return 1 if _actionable(diagnostics) else 0
 
     if args.json:
         print(json.dumps([asdict(r) for r in rows], indent=2))

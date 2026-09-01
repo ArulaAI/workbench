@@ -4,6 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from skills import is_valid_skill_name
+
 
 @dataclass(frozen=True)
 class Surface:
@@ -61,4 +63,12 @@ def surface_for_harness(harness: str) -> Surface:
 
 
 def dest_dir(surface: Surface, skill_name: str, project_root: Path) -> Path:
+    """Resolve where a skill projects to, refusing names that escape the root.
+
+    Names reach this function from the committed manifest as well as from the
+    catalog, so a corrupted or hostile entry must never be able to steer a
+    caller's write or rmtree at a path outside the surface's skills root.
+    """
+    if not is_valid_skill_name(skill_name):
+        raise ValueError(f"unsafe skill name '{skill_name}'")
     return Path(project_root) / surface.skills_root / skill_name

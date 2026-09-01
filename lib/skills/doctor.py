@@ -49,6 +49,19 @@ def diagnose(project_root, skills_dir, catalog_version, *, only_surface=None):
         catalog_version,
         only_surface=only_surface,
     )
+    if rows and all(row.state == UNSUPPORTED for row in rows):
+        # Having no harness is one fact about the project, not one per harness
+        # SPEED knows how to project into.
+        diagnosis, repair = _GUIDANCE[UNSUPPORTED]
+        return [
+            Diagnostic(
+                surface="-",
+                skill="*",
+                state=UNSUPPORTED,
+                diagnosis=diagnosis,
+                repair=repair,
+            )
+        ]
     diagnostics = []
     for row in rows:
         if row.state == CURRENT:

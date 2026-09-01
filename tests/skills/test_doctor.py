@@ -25,6 +25,9 @@ def test_doctor_gives_sync_path_for_absent_skill(tmp_catalog, tmp_project):
 def test_doctor_gives_sync_path_for_stale_skill(tmp_catalog, tmp_project):
     skills_dir = tmp_catalog()
     sync(tmp_project, skills_dir, "0.3.0")
+    (skills_dir / "example-skill" / "SKILL.md").write_text(
+        "---\nname: example-skill\ndescription: A test skill\n---\n\nNewer text.\n"
+    )
 
     diagnostics = diagnose(tmp_project, skills_dir, "0.4.0")
 
@@ -115,3 +118,34 @@ def test_doctor_cli_json_reports_issue_and_repair(
     assert result["status"] == "issues"
     assert result["diagnostics"][0]["state"] == ABSENT
     assert result["diagnostics"][0]["repair"] == "Run `workbench skills sync`."
+
+
+def test_doctor_states_a_missing_surface_once(tmp_catalog, tmp_path):
+    """It is one project-level fact, not one per harness we know about."""
+    skills_dir = tmp_catalog()
+    project = tmp_path / "no-surface"
+    project.mkdir()
+
+    diagnostics = diagnose(project, skills_dir, "0.3.0")
+
+    assert [d.state for d in diagnostics] == [UNSUPPORTED]
+
+
+def test_doctor_agrees_with_status_on_a_project_with_no_surface(
+    tmp_catalog, tmp_path, capsys
+):
+    """init routes this case to doctor, so doctor must not report failure."""
+    skills_dir = tmp_catalog()
+    project = tmp_path / "no-surface"
+    project.mkdir()
+    argv = [
+        "--project-root", str(project),
+        "--skills-dir", str(skills_dir),
+        "--catalog-version", "0.3.0",
+        "--json",
+    ]
+
+    assert cli.main(["status", *argv]) == 0
+    capsys.readouterr()
+    assert cli.main(["doctor", *argv]) == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "unsupported"

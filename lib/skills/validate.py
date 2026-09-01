@@ -5,12 +5,10 @@ fixture in tests/skills/test_validate.py.
 """
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 
+from skills import is_valid_skill_name
 from skills.catalog import SkillPackage
-
-_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 
 @dataclass
@@ -24,7 +22,7 @@ def validate_package(pkg: SkillPackage) -> list:
     out: list = []
     if "SKILL.md" not in pkg.files:
         out.append(Violation(pkg.name, "SKILL.md", "missing SKILL.md"))
-    if not _NAME_RE.match(pkg.name or ""):
+    if not is_valid_skill_name(pkg.name):
         out.append(Violation(pkg.name, None, f"invalid skill name '{pkg.name}'"))
     declared = pkg.meta.get("name", "")
     if declared != pkg.name:
