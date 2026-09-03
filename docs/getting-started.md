@@ -30,13 +30,45 @@ creates and configures only that harness's project skill directory:
 | GitHub Copilot | `.github/skills/` |
 
 If `--harness` is omitted, Workbench detects existing supported harnesses and
-projects skills into each detected agent harness. `speed init` remains available as a
+uses the first available policy in this order: `WORKBENCH_HARNESSES`,
+`[skills].harnesses` in `speed.toml`, a legacy manifest selection, then detected
+agent harnesses. A project with no configured or detectable harness must supply
+`--harness`. Repeat the flag to initialize more than one harness.
+
+Initialization records the resolved choice in project configuration:
+
+```toml
+[skills]
+harnesses = ["claude"]
+```
+
+This is separate from `[agent].provider`: the provider runs agents, while the
+harness hosts projected skills. They may intentionally name different products.
+Later `init`, `status`, `doctor`, and `sync` commands use the persisted skill
+policy instead of re-detecting directories. `speed init` remains available as a
 temporary alias for `workbench init`.
 
 Initialization creates the `.speed/` runtime directory, scaffolds `speed.toml`,
 adds agent instructions and the product vision template at
 `specs/product/overview.md` when needed, and imports the managed Workbench skill
 catalog. The initial catalog contains the read-only `workbench-health` skill.
+Initialization verifies every selected projection before reporting success.
+Conflicts exit 2; configuration, catalog, sync, and verification errors exit 3.
+
+Initialization leaves its files uncommitted by default. To create a commit after
+successful verification, use:
+
+```bash
+workbench init --harness claude --commit
+```
+
+Only Workbench-owned initialization paths are staged; unrelated working-tree
+changes are not included.
+
+On repeated initialization, Workbench also reconciles the current Git tracking
+policy. Projects created by older releases are updated so
+`.speed/skills/manifest.json` is trackable and the machine-local
+`.speed/skills/events.jsonl` remains ignored.
 
 ### Verify the Imported Skills
 

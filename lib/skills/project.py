@@ -9,10 +9,12 @@ from __future__ import annotations
 from skills.frontmatter import MANAGED_PREFIX, inject
 from skills.models import Harness, SkillPackage
 
-# Provenance keys stamped into every projected SKILL.md. The values are written
-# as raw, unquoted YAML scalars, so ``true`` reaches the harness as the boolean
-# true rather than the string "true"; validate reserves the MANAGED_PREFIX
-# namespace so a package can never declare these and lose them at projection.
+# Provenance keys stamped into every projected SKILL.md. The values are passed
+# with their real Python types and serialized by PyYAML, so ``managed`` reaches
+# the harness as a boolean and a skill whose name would otherwise read as one
+# (``true``, ``on``, ``null``) is quoted instead. validate reserves the
+# MANAGED_PREFIX namespace so a package can never declare these and lose them
+# at projection.
 _PROVENANCE_MANAGED = f"{MANAGED_PREFIX}managed"
 _PROVENANCE_SOURCE = f"{MANAGED_PREFIX}source"
 
@@ -37,6 +39,6 @@ def render(pkg: SkillPackage, harness: Harness, catalog_version: str) -> dict:
     source = pkg.files.get("SKILL.md", b"").decode("utf-8")
     out["SKILL.md"] = inject(
         source,
-        {_PROVENANCE_MANAGED: "true", _PROVENANCE_SOURCE: pkg.name},
+        {_PROVENANCE_MANAGED: True, _PROVENANCE_SOURCE: pkg.name},
     ).encode("utf-8")
     return out

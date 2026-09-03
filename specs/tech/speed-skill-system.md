@@ -1,6 +1,6 @@
 # RFC: Workbench Skill System
 
-This RFC specifies the technical design for the Workbench Skill System: a canonical skill catalog, a lean stdlib Python projection engine, managed-file identity, the `workbench` command namespace with temporary `speed` aliases, and `workbench-health` as the sole platform proof skill.
+This RFC specifies the technical design for the Workbench Skill System: a canonical skill catalog, a lean Python projection engine, managed-file identity, the `workbench` command namespace with temporary `speed` aliases, and `workbench-health` as the sole platform proof skill.
 
 Scope here is packaging, validation, harness projection, routing, health verification, diagnostics, and lifecycle. Module workflow skills are intentionally excluded and belong on separate feature branches after this platform foundation is accepted.
 
@@ -80,13 +80,15 @@ the only place the list exists: the Bash commands query it through
 
 [GitHub documents](https://docs.github.com/en/copilot/concepts/agents/about-agent-skills) `.github/skills`, `.agents/skills`, and `.claude/skills` as supported Copilot project skill locations; Workbench uses `.github/skills` as the harness-specific Copilot target. Each projection mirrors the canonical package with two differences: front matter is normalized to the harness's keys and Workbench provenance keys are injected (`x-workbench-managed: true`, `x-workbench-source: <name>`). The projecting install is recorded in `manifest.json`, not in the projected file, so that a committed projection is byte-identical for every teammate regardless of which SPEED build ran the sync. All other files, including `scripts/health.py`, are copied byte-for-byte, so the projected helper hash equals the canonical helper hash. Projection is deterministic.
 
-When `--harness` is present, selection is authoritative: sync creates the selected projection root if its marker directory is absent and does not project to any other harness. Without the flag, init retains marker-based auto-detection and projects to every existing supported harness. Copilot detection requires `.github/skills/`; a generic `.github/` directory alone does not imply Copilot usage.
+Execution provider and skill harness are independent. `[agent].provider` selects the backend that runs Workbench agents; `[skills].harnesses` selects the project roots that host skills. A Claude provider with a Codex skill harness is therefore valid, as is a project that hosts skills in several harnesses.
+
+`[skills].harnesses` in `speed.toml` is the durable source of project intent. Initialization resolves policy in this order: repeated `--harness` flags, `WORKBENCH_HARNESSES`, `[skills].harnesses`, the legacy manifest selection for migration, then existing harness markers. The resolved initialization policy is persisted to `speed.toml`; the legacy manifest field is removed. A later bare `sync` therefore cannot forget the init choice or fan out because a new marker appeared. If no level yields a harness, init exits 3 before writing and asks for `workbench init --harness <name>`. Copilot detection requires `.github/skills/`; a generic `.github/` directory alone does not imply Copilot usage.
 
 ### Manifest (managed-file identity)
 
-`${PROJECT_ROOT}/.speed/skills/manifest.json`. Records, under `harnesses.<harness>.skills.<skill>`: `projected_at_version`, optional skill `version`, and a `files` map of relpath to SHA-256. The recomputed on-disk hash versus the recorded hash is the only authority for distinguishing Workbench-managed bytes from user edits. It also records `selected_harnesses` when a harness was chosen explicitly, so a later bare `sync` targets that choice instead of re-detecting and fanning out. The manifest is git-tracked alongside the projections it describes: a clone that carries the projected files without their recorded hashes has no way to tell them apart from a user edit and classifies every one as `conflicted`.
+`${PROJECT_ROOT}/.speed/skills/manifest.json`. Records, under `harnesses.<harness>.skills.<skill>`: `projected_at_version`, optional skill `version`, and a `files` map of relpath to SHA-256. The recomputed on-disk hash versus the recorded hash is the only authority for distinguishing Workbench-managed bytes from user edits. The manifest records observed installation state, not desired harness policy. It is git-tracked alongside the projections it describes: a clone that carries the projected files without their recorded hashes has no way to tell them apart from a user edit and classifies every one as `conflicted`.
 
-The state layout is defined once, as `SkillPaths` in `skills/__init__.py`: `state_root` is `.speed/skills`, with `manifest.json` and `events.jsonl` derived from it. Every module that touches those files reads the path from there. The projected health helper is the one exception, because it runs as a copy with no package to import from, so it carries its own literals and a test asserts they still agree with the canonical layout. The gitignore policy is tested the same way, which is what keeps durable manifest state and disposable event history from drifting apart again.
+The state layout is defined once, as `SkillPaths` in `skills/__init__.py`: `state_root` is `.speed/skills`, with `manifest.json` and `events.jsonl` derived from it. Every module that touches those files reads the path from there. The projected health helper is the one exception, because it runs as a copy with no package to import from, so it carries its own literals and a test asserts they still agree with the canonical layout. Init reconciles a versioned Git-policy block on every run rather than treating the historical `# SPEED runtime state` header as proof that current rules exist. The later policy explicitly re-includes `.speed/skills/manifest.json` and ignores `.speed/skills/events.jsonl`, migrating both released projects with no skill rules and early projects that ignored `.speed/skills/` wholesale.
 
 ### Project install-event log
 
@@ -117,7 +119,7 @@ Each `(harness, skill)` resolves to one state. Manifest hashes plus on-disk hash
 
 | Canonical (`workbench`) | Temporary alias (`speed`) | Behavior |
 |---|---|---|
-| `workbench init [--harness <claude\|codex\|copilot>]` | `speed init …` | Bootstrap project; explicitly create and project only the selected harness, or project all detected harnesses when omitted. Projection *outcomes* remain non-fatal: no detected harness, remaining conflicts, and sync errors are each reported distinctly and init continues. A missing `${SPEED_DIR}/skills` is different in kind. It is a broken installation rather than a projection outcome, so init rejects it with exit 3 before writing any scaffolding, leaving nothing half-created to clean up. |
+| `workbench init [--harness <claude\|codex\|copilot>]... [--commit]` | `speed init …` | Resolve and persist project harness policy, scaffold the project, project skills, verify convergence, apply Git policy, and optionally commit only Workbench-owned files. Missing policy, invalid configuration/catalog, conflicts, sync errors, and failed verification stop the lifecycle before commit. |
 | `workbench skills sync [--harness][--force][--json]` | `speed skills sync …` | Converge harnesses to the catalog; append install events. |
 | `workbench skills status [--harness][--json]` | `speed skills status …` | Read-only per-harness state table. `--harness` narrows the table the same way it narrows `doctor`, which reads the identical inspection. |
 | `workbench skills doctor [--harness][--json]` | `speed skills doctor …` | Read-only diagnosis of every non-`current` finding, each with a stable code, its evidence, and exactly one repair path. |
@@ -128,9 +130,26 @@ Usage and configuration errors exit 3 on every subcommand, never 1 or 2. A missi
 
 Errors carry detail rather than a bare line. `WORKBENCH_DEBUG=1` prints a traceback, `--json` emits `{"status": "error", "error": {"type", "message"}}` on stdout, and the one-line message stays on stderr for the shell callers that read it.
 
-`workbench skills` is the only supported entrance to the engine. `python -m skills` is private plumbing: its `--project-root`, `--skills-dir` and `--catalog-version` arguments are context the wrapper resolves and passes in, which is why they are required and have no defaults, and the wrapper's option whitelist is what keeps them out of a caller's reach. The one subcommand that carries no project context is `harnesses`, which exists so the Bash commands can query the canonical harness registry instead of restating it.
+`workbench skills` is the only supported entrance to the engine. `python -m skills` is private plumbing: its `--project-root`, `--skills-dir` and `--catalog-version` arguments are context the wrapper resolves and passes in, which is why they are required and have no defaults, and the wrapper's option whitelist is what keeps them out of a caller's reach. The one subcommand that carries no project context is `harnesses`, which exists so the Bash commands can query the canonical harness registry instead of restating it. Its JSON form returns each harness id, projection root, and marker; the init commit phase derives its pathspecs from those records rather than carrying a Bash copy of the harness-to-root map.
 
 Catalog version resolution distinguishes the three cases that once all reported `dev`: a `.git` directory in the install is a development checkout and reports `dev`, a receipt naming a version reports that version, and a missing or unparseable receipt is a broken managed installation that exits 3.
+
+### Initialization ownership and ordering
+
+`lib/skills/bootstrap.py` owns skill-bootstrap inspection, policy resolution, policy persistence, legacy migration, and post-sync verification. `cmd_init` is the single project-level coordinator and invokes the phases in this order:
+
+1. Inspect existing configuration, manifest state, and harness markers; validate the canonical catalog.
+2. Resolve the harness policy without writing.
+3. Acquire the project mutation lock and create or preserve the general project scaffold.
+4. Persist `[skills].harnesses` and retire legacy manifest intent.
+5. Project the catalog into exactly the resolved harnesses.
+6. Verify every selected projection is `current`.
+7. Apply the Git tracking policy.
+8. When `--commit` is present, stage only Workbench-owned paths and commit after convergence.
+
+Fresh init, repeated init, post-clone setup, and upgrades use the same reconciliation path. Repeated init preserves runtime and user-owned files. Post-clone init reads the committed policy and manifest. Catalog upgrades flow through `skills sync` under that same policy. `--harness` on a lifecycle command is an operational scope; only initialization persists a changed project policy.
+
+The bootstrap plan exposes only values the coordinator consumes: resolved harnesses, their source, and whether persistence or legacy migration is required. Malformed `speed.toml` is a configuration error at process startup and produces one error message; commands do not continue with defaults or run a second parser that reports the same failure again.
 
 The alias policy: a `speed` command is retained only with an explicit `workbench` target, identical implementation/state/gates/provenance, and a temporary-alias label. New lifecycle behavior is authored under `workbench`; no independent `speed` workflow is added.
 
@@ -140,13 +159,14 @@ Invoked as `PYTHONPATH="${SPEED_DIR}/lib" <python> -m skills <sub> …` (because
 
 | Module | Responsibility |
 |---|---|
-| `frontmatter.py` | read SKILL.md front matter and inject provenance in place (stdlib) |
+| `frontmatter.py` | load SKILL.md front matter as YAML (PyYAML) and inject provenance in place |
 | `catalog.py` | discover canonical packages and reject catalog validation failures at load |
 | `validate.py` | package + catalog contract (names, metadata, paths, symlinks, uniqueness) |
 | `targets.py` | marker detection, harness lookup, and bounded destinations |
 | `project.py` | pure render to bytes with provenance injection |
 | `manifest.py` | hashing, manifest I/O, and classification with evidence |
 | `events.py` | append-only install-event log |
+| `bootstrap.py` | initialization inspection, harness-policy precedence and persistence, legacy migration, and verification |
 | `models.py` | shared vocabulary: `SkillState`, `Harness`, `SkillPackage`, `Finding`, `Inspection`, `SkillPlan`, `SyncOutcome`, and the harness registry |
 | `__init__.py` | `SkillPaths`, the legal skill-name rule, junk exclusions, and re-exported vocabulary |
 | `inspect.py` | read-only: assemble the whole picture as an `Inspection` (no writes) |
@@ -190,6 +210,8 @@ Run whenever the canonical catalog is loaded; a future release build can reuse t
 | `SKILL.md` presence | required per skill | reject, name dir |
 | `name` | `^[a-z0-9][a-z0-9-]*$`, equals dir name | reject |
 | `description` | non-empty | reject |
+| `name`, `description`, `version` types | must be YAML strings; quote a value that would load as a bool, number or null | reject, name field and type |
+| front-matter shape | block holds a mapping with string keys, no repeated key | reject |
 | name uniqueness | unique across catalog | reject, name collision |
 | path safety | no absolute, no `..`, no symlink of any kind | reject, name path |
 | reserved keys | no author-declared `x-workbench-*` front matter | reject, name key |
@@ -201,8 +223,12 @@ Run whenever the canonical catalog is loaded; a future release build can reuse t
 ### Acceptance Criteria
 
 - `workbench init` (and `speed init` alias) projects only `workbench-health` into every detected supported harness with provenance front matter and every file present.
-- `workbench init --harness <value>` accepts exactly `claude`, `codex`, or `copilot`, creates the selected harness root when absent, and projects the health-only catalog into that root.
-- With multiple harness markers already present, explicit init selection does not write skills into either unselected harness. Without `--harness`, existing supported harnesses continue to be auto-detected.
+- `workbench init --harness <value>` accepts exactly `claude`, `codex`, or `copilot`, creates the selected harness root when absent, persists it under `[skills].harnesses`, and projects the health-only catalog into that root.
+- Repeated `--harness` flags persist and initialize multiple harnesses. Without the flag, environment, project configuration, legacy migration, and existing markers are checked in documented precedence order.
+- A fresh project with no resolvable harness policy exits 3 before creating a Git repository or scaffold.
+- `[agent].provider` and `[skills].harnesses` may name different products without either overriding the other.
+- Repeated and post-clone init use the persisted project policy and do not fan out when a new harness marker appears.
+- Init commits only with `--commit`, only after verification, and never stages unrelated project files.
 - A manifest that records no skills, including an empty `{}` document, is reported `unhealthy`.
 - Direct `workbench-health` skill invocation reports `healthy` and the readiness message only when the manifest exists, at least one skill is recorded for the selected harness, and every recorded projected file exists with its expected hash.
 - Removing or modifying a projected file makes direct `workbench-health` invocation report `unhealthy`, list the affected skill/file, and exit nonzero.
@@ -264,7 +290,7 @@ Run whenever the canonical catalog is loaded; a future release build can reuse t
 | Namespace | `workbench` canonical; `speed` temporary aliases | keep `speed skills` | The note mandates one platform namespace and a labeled, behaviorally identical alias for retained `speed` commands. |
 | Health invocation | agent skill only; projected `scripts/health.py` is the implementation | add `workbench health` / `speed health` commands | Keeps readiness in the installed skill harness while `workbench skills doctor` owns CLI diagnostics. |
 | Engine | SPEED-native lean Python in `lib/skills/` | vendor Forge `forge_sync` | Forge carries harness/CI/alias machinery SPEED does not need; a small owned package fits SPEED's `lib/*.py` style. |
-| Harness selection | optional `--harness claude\|codex\|copilot`; explicit selection creates and targets one root | require pre-existing markers; always project all detected roots | Makes fresh-project setup deterministic while preventing unwanted copies across installed harnesses. |
+| Harness policy | `[skills].harnesses`; CLI > environment > config > legacy manifest > detection | derive from `[agent].provider`; keep manifest-only intent | Provider and skill host are separate business concepts, while durable project configuration prevents init and later sync from selecting different targets. |
 | Managed identity | per-file SHA-256 + provenance keys | provenance marker only; diff-vs-source | Hashing is the only reliable edit detector across interrupted sync and manual deletion. Injected front matter means diff-vs-source is invalid; the manifest hash is authoritative. |
 | Install events | `.speed/skills/events.jsonl` under a transaction id | none | Provides an auditable record of projection mutations and conflicts without logging prompts or generated content. |
 
@@ -279,30 +305,34 @@ Run whenever the canonical catalog is loaded; a future release build can reuse t
 
 This branch delivers the catalog format, engine, Claude/Codex/Copilot harness targets, selective `workbench init --harness`, `workbench skills sync|status|doctor`, and agent-only `workbench-health`. Downstream workflow skills must be introduced on separate branches with their own contracts and tests.
 
-If a project manifest contains a managed skill that is no longer in this health-only catalog, normal orphan handling applies: sync removes an unmodified projection and preserves a modified projection as a conflict. Downgrading and syncing re-projects the prior catalog; conflicts are never overwritten silently. Init keeps projection non-fatal so a missing harness or conflict cannot break project setup.
+If a project manifest contains a managed skill that is no longer in this health-only catalog, normal orphan handling applies: sync removes an unmodified projection and preserves a modified projection as a conflict. Downgrading and syncing re-projects the prior catalog; conflicts are never overwritten silently. Init succeeds only after the selected projections verify as current; a conflict exits 2 and an operational or verification failure exits 3 without creating an initialization commit.
 
 ## File Impact
 
 New:
 - `skills/workbench-health/{SKILL.md,scripts/health.py}`: platform readiness package.
-- `lib/skills/{__init__,__main__,frontmatter,catalog,validate,targets,project,manifest,events,sync,doctor}.py`: engine and read-only diagnostics.
+- `lib/skills/{__init__,__main__,bootstrap,frontmatter,catalog,validate,targets,project,manifest,events,sync,doctor}.py`: engine, bootstrap coordinator, and read-only diagnostics.
 - `lib/cmd/skills.sh`: bash wrapper for skill lifecycle and doctor commands.
 - `workbench`: canonical dispatcher (forwards to the shared implementation).
 - `tests/skills/…`: fixtures + suites.
 
 Modified:
 - `speed`: `skills)` case as a temporary alias with a notice.
-- `lib/cmd/project.sh`: `cmd_init --harness` parsing, selective projection step (non-fatal), and a gitignore entry for `.speed/skills/events.jsonl` only, so `manifest.json` commits with the projections.
+- `lib/cmd/project.sh`: ordered init phases, repeatable `--harness`, verification gate, explicit Git policy, and scoped `--commit` behavior.
 - `install.sh`: links `workbench` into `~/.speed/bin` alongside the `speed` alias.
-- `lib/cmd/skills.sh` callers in `lib/cmd/project.sh`: init reports projection success, no-harness, conflict, and error as distinct outcomes instead of collapsing every failure into "conflicts detected".
+- `lib/cmd/skills.sh`: applies CLI, environment, and project-config harness precedence and forwards multiple resolved harnesses.
+- `lib/toml.py` + `templates/speed-toml.toml`: `[skills].harnesses` project configuration.
 - `requirements-dev.txt` + README `## Tests`: declared pytest dependency and the canonical `PYTHONPATH=lib python3 -m pytest tests/skills/` command.
 - `lib/cmd/mp_init.sh`: the multi-player allowlist un-ignores `skills/manifest.json` and keeps `skills/events.jsonl` local.
 
-Not touched: harness settings, existing agent definitions, `speed.toml` (no `[skills]` section), user-authored skills, and unselected harness skill roots.
+Not touched: harness settings, existing agent definitions, `[agent].provider`, user-authored skills, and unselected harness skill roots.
 
 ## Dependencies
 
-- Python 3.11 project `.venv`, stdlib only (`hashlib`, `json`, `pathlib`, `argparse`, `uuid`, `dataclasses`). No `requirements.txt` change.
+- Python 3.11 project `.venv`. The engine is stdlib (`hashlib`, `json`, `pathlib`, `argparse`, `uuid`, `dataclasses`) plus `PyYAML>=6.0,<7.0`, declared in `requirements.txt`.
+- Front matter is YAML, so it is read by a YAML implementation rather than approximated. A partial parser misreads the inputs a partial parser misreads: a quoted `name` keeps its quotes and is reported as disagreeing with its own directory, a `#` comment becomes a key, and every scalar arrives as a string. `parse` runs `yaml.safe_load` and then enforces two rules on top: the block must hold a mapping with string keys, and a repeated key is an error rather than a last-one-wins.
+- `inject` still edits the block in place and does not round-trip through `safe_dump`, because re-emitting a parsed document reorders keys, drops comments, and rewrites an author's quoting and block scalars, all of which would appear as a diff in a committed projection. The values Workbench writes are serialized by `safe_dump`, so `managed` is the boolean `true` while a skill named `true` or `on` is quoted.
+- `scripts/health.py` stays stdlib-only. It is projected into a harness directory and executed there with no package around it, so it can import nothing, PyYAML included.
 - SPEED release version for `catalog_version`.
 
 ## Unresolved Questions

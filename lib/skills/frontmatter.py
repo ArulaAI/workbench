@@ -1,24 +1,76 @@
-"""Minimal, stdlib-only YAML front-matter handling for SKILL.md.
+"""YAML front-matter handling for SKILL.md.
 
-Two jobs, both deliberately narrow:
+Front matter is YAML, so it is read by a YAML implementation. ``parse`` runs
+``yaml.safe_load`` over the block and then enforces the two structural rules
+Workbench needs on top of it. A partial parser lived here before and misread
+exactly the inputs a partial parser misreads: ``name: "demo"`` kept its quotes
+and was reported as disagreeing with its own directory, a ``#`` comment became
+a key, and every scalar arrived as a string.
 
-``parse``  reads the scalar keys the engine needs (``name``, ``description``,
-           ``version``) and skips anything it cannot model rather than
-           inventing a key for it.
+Two jobs, with different reasons for their shape:
+
+``parse``  loads the block as YAML and returns ``(meta, body)``. Quoting,
+           comments, escapes, anchors, sequences, nested mappings, block
+           scalars and scalar types are the library's business, not ours.
 ``inject`` sets Workbench's provenance keys in an existing block and leaves
            every other line byte-for-byte intact.
 
-Rebuilding a block from a parsed dict would corrupt it: real front matter
-carries sequences, nested mappings, quoted strings and folded scalars, and a
-serializer that models only ``key: value`` silently emits invalid YAML. Editing
-in place sidesteps that entirely, so PyYAML stays an unnecessary dependency.
+``inject`` deliberately does not round-trip through ``safe_dump``. Re-emitting
+a parsed document reorders keys, drops comments, and rewrites an author's
+quoting and block scalars, all of which would show up as a diff in a committed
+projection. Editing the block in place means only the lines Workbench owns
+change; the values it writes are still serialized by ``safe_dump``, so a skill
+named ``true`` or ``on`` is quoted rather than projected as a boolean.
+
+Boundary and newline policy, stated because both are observable:
+
+* ``parse`` returns the body starting after the closing fence, with a single
+  newline directly following that fence removed and nothing else touched. The
+  body is never re-indented, re-wrapped, or re-encoded.
+* ``inject`` writes its lines with the terminator the opening fence already
+  uses, so a CRLF document stays CRLF instead of gaining mixed endings.
+* Both work on ``str``. Decoding is the caller's job and is always UTF-8.
 """
 from __future__ import annotations
+
+try:
+    import yaml
+except ModuleNotFoundError as exc:  # pragma: no cover - install-time problem
+    raise ModuleNotFoundError(
+        "PyYAML is required to read skill front matter. It is declared in "
+        "requirements.txt; install it with `python3 -m pip install -r "
+        "requirements.txt`, or run Workbench through its managed interpreter."
+    ) from exc
 
 _FENCE = "---"
 # Reserved for Workbench provenance. validate refuses these keys in a canonical
 # package so that projection can set them without overwriting an author's data.
 MANAGED_PREFIX = "x-workbench-"
+
+
+class _NoDuplicateKeys(yaml.SafeLoader):
+    """``SafeLoader`` that refuses a repeated key instead of keeping the last.
+
+    YAML itself allows the duplicate and says nothing about it, so front matter
+    declaring ``name`` twice would project under whichever line came last with
+    the author never told the other was discarded.
+    """
+
+    def construct_mapping(self, node, deep=False):
+        seen: list = []
+        for key_node, _ in node.value:
+            key = self.construct_object(key_node, deep=deep)
+            # Membership by equality rather than a set: YAML permits a sequence
+            # or mapping as a key, and those are unhashable.
+            if key in seen:
+                raise yaml.constructor.ConstructorError(
+                    "while reading front matter",
+                    node.start_mark,
+                    f"duplicate key '{key}'",
+                    key_node.start_mark,
+                )
+            seen.append(key)
+        return super().construct_mapping(node, deep=deep)
 
 
 def _closing_fence(lines: list):
@@ -44,80 +96,68 @@ def _is_entry(line: str) -> bool:
     return bool(line) and not line[0].isspace() and ":" in line
 
 
-def _continuation(raw: list, i: int):
-    """Collect the blank and more-indented lines belonging to entry ``i``."""
-    out: list = []
-    i += 1
-    while i < len(raw) and (not raw[i].strip() or raw[i][0].isspace()):
-        out.append(raw[i])
-        i += 1
-    return out, i
-
-
-def _dedent(block: list) -> list:
-    filled = [line for line in block if line.strip()]
-    if not filled:
-        return []
-    pad = min(len(line) - len(line.lstrip()) for line in filled)
-    return [line[pad:] if line.strip() else "" for line in block]
-
-
-def _reject_duplicate(meta: dict, key: str) -> None:
-    """Refuse a repeated key instead of letting the last one win.
-
-    Silently keeping the final value means a package whose front matter declares
-    `name` twice projects under whichever came last, with nothing telling the
-    author the other line was discarded.
-    """
-    if key in meta:
-        raise ValueError(f"malformed front matter: duplicate key '{key}'")
-
-
-def _parse_block(raw: list) -> dict:
-    meta: dict = {}
-    i = 0
-    while i < len(raw):
-        line = raw[i]
-        if not _is_entry(line):
-            # A sequence item or an orphaned continuation. Naming it would put
-            # values like "- Read" in meta as if they were keys.
-            i += 1
-            continue
-        key, _, val = line.partition(":")
-        key, val = key.strip(), val.strip()
-        if val.startswith(">"):
-            folded, i = _continuation(raw, i)
-            _reject_duplicate(meta, key)
-            meta[key] = " ".join(part.strip() for part in folded if part.strip())
-        elif val.startswith("|"):
-            literal, i = _continuation(raw, i)
-            _reject_duplicate(meta, key)
-            meta[key] = "\n".join(_dedent(literal)).strip("\n")
-        elif val:
-            _reject_duplicate(meta, key)
-            meta[key] = val
-            i += 1
-        else:
-            # A bare "key:" introduces a sequence or a nested mapping, neither
-            # of which this module models. Leave the key out rather than guess.
-            _, i = _continuation(raw, i)
-    return meta
+def _newline(line: str) -> str:
+    """The terminator ``line`` ends with, so injected lines can match it."""
+    return "\r\n" if line.endswith("\r\n") else "\n"
 
 
 def parse(text: str) -> tuple[dict, str]:
     """Return ``(meta, body)``. No front matter -> ``({}, text)``.
 
-    Raises ValueError when a front-matter block is opened but never closed.
+    Raises ValueError when the block is opened but never closed, is not valid
+    YAML, does not hold a mapping, or repeats a key. An empty or comment-only
+    block is a mapping with nothing in it, not an error.
     """
     lines = text.splitlines(keepends=True)
     end = _closing_fence(lines)
     if end is None:
         return {}, text
-    meta = _parse_block([line.rstrip("\n") for line in lines[1:end]])
+
+    block = "".join(lines[1:end])
+    try:
+        loaded = yaml.load(block, Loader=_NoDuplicateKeys)
+    except yaml.YAMLError as exc:
+        raise ValueError(f"malformed front matter: {exc}") from exc
+    if loaded is None:
+        loaded = {}
+    if not isinstance(loaded, dict):
+        raise ValueError(
+            "malformed front matter: expected a mapping of keys to values, "
+            f"got {type(loaded).__name__}"
+        )
+    for key in loaded:
+        # A non-string key cannot be a skill metadata field, and every consumer
+        # downstream indexes meta by name.
+        if not isinstance(key, str):
+            raise ValueError(
+                f"malformed front matter: key {key!r} is not a string"
+            )
+
     body = "".join(lines[end + 1:])
-    if body.startswith("\n"):
+    if body.startswith("\r\n"):
+        body = body[2:]
+    elif body.startswith("\n"):
         body = body[1:]
-    return meta, body
+    return loaded, body
+
+
+def _emit(key: str, value, newline: str) -> str:
+    """One front-matter line, serialized by PyYAML so its type survives.
+
+    ``safe_dump`` is what decides quoting, which is the point: ``True`` becomes
+    the bare ``true`` a reader loads back as a boolean, while a string that
+    would otherwise read as one (``true``, ``on``, ``null``) comes back quoted.
+    ``width`` is set past any real value so a long one is never line-wrapped
+    into a continuation this module would then have to model.
+    """
+    line = yaml.safe_dump(
+        {key: value},
+        default_flow_style=False,
+        sort_keys=False,
+        allow_unicode=True,
+        width=10**9,
+    ).rstrip("\n")
+    return line + newline
 
 
 def _without_managed(block: list) -> list:
@@ -125,7 +165,7 @@ def _without_managed(block: list) -> list:
     out: list = []
     dropping = False
     for line in block:
-        if _is_entry(line.rstrip("\n")):
+        if _is_entry(line.rstrip("\r\n")):
             key = line.split(":", 1)[0].strip()
             dropping = key.startswith(MANAGED_PREFIX)
             if dropping:
@@ -140,15 +180,18 @@ def inject(text: str, extra: dict) -> str:
     """Return ``text`` with ``extra`` set in its front matter. Deterministic.
 
     Only ``x-workbench-*`` keys are rewritten; the rest of the block is copied
-    verbatim, which is what keeps lists, nested mappings, quoted values and
-    folded scalars valid in the projection. An unterminated block raises rather
-    than gaining a second one stacked on top of it.
+    verbatim, which is what keeps an author's comments, key order, quoting,
+    sequences, nested mappings and block scalars exactly as written. An
+    unterminated block raises rather than gaining a second one stacked on top.
     """
-    added = [f"{key}: {val}\n" for key, val in extra.items()]
     lines = text.splitlines(keepends=True)
     end = _closing_fence(lines)
+    newline = _newline(lines[0]) if lines else "\n"
+    added = [_emit(key, value, newline) for key, value in extra.items()]
     if end is None:
-        opening = "".join([_FENCE + "\n", *added, _FENCE + "\n", "\n"])
-        return opening + text.lstrip("\n")
+        opening = "".join(
+            [_FENCE + newline, *added, _FENCE + newline, newline]
+        )
+        return opening + text.lstrip("\r\n")
     kept = _without_managed(lines[1:end])
     return "".join([lines[0], *kept, *added, *lines[end:]])

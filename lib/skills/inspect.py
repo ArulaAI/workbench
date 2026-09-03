@@ -15,6 +15,7 @@ from pathlib import Path
 from skills import is_valid_skill_name
 from skills.catalog import load_catalog
 from skills.manifest import (
+    SELECTED_KEY,
     hash_disk,
     inspect_skill,
     load_manifest,
@@ -42,14 +43,24 @@ def resolve_harnesses(project_root, only_harness=None) -> list:
     into. Detection is the last resort.
     """
     if only_harness is not None:
-        return [get_harness(only_harness)]
-    recorded = load_manifest(project_root).get("selected_harnesses") or []
+        selected = (
+            [only_harness] if isinstance(only_harness, str) else list(only_harness)
+        )
+        return [get_harness(item) for item in selected]
+    recorded = load_manifest(project_root).get(SELECTED_KEY) or []
     if recorded:
         return [get_harness(item) for item in recorded]
     return detect_harnesses(Path(project_root))
 
 
 def _unsupported(only_harness) -> list:
+    selected = (
+        None
+        if only_harness is None
+        else {only_harness}
+        if isinstance(only_harness, str)
+        else set(only_harness)
+    )
     return [
         SkillInspection(
             harness=h.id,
@@ -58,7 +69,7 @@ def _unsupported(only_harness) -> list:
             findings=[Finding(HARNESS_UNSUPPORTED)],
         )
         for h in HARNESSES
-        if only_harness in (None, h.id)
+        if selected is None or h.id in selected
     ]
 
 

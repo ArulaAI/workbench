@@ -122,6 +122,18 @@ def emit(data: dict) -> None:
         if val is not None:
             print(f"TOML_PROJECT_AGENT_FILE='{shell_escape(str(val))}'")
 
+    # [skills] section — independent from [agent].provider. The provider
+    # selects the execution backend; harnesses select skill projection roots.
+    skills = data.get("skills", {})
+    if isinstance(skills, dict):
+        val = skills.get("harnesses")
+        if val is not None:
+            if isinstance(val, list):
+                joined = " ".join(str(item) for item in val)
+            else:
+                joined = str(val)
+            print(f"TOML_SKILLS_HARNESSES='{shell_escape(joined)}'")
+
     # [worktree.symlinks] section — emit as space-separated key:value pairs
     worktree = data.get("worktree", {})
     if isinstance(worktree, dict):
@@ -207,9 +219,10 @@ def main() -> None:
         data = parse_toml(path)
         emit(data)
     except Exception as e:
-        # Parse failure — emit nothing, all defaults apply
-        print(f"Warning: could not parse {path}: {e}", file=sys.stderr)
-        sys.exit(0)
+        # The shell owns user-facing context and severity. Emit only the parser
+        # detail so it can produce one message rather than nesting prefixes.
+        print(str(e), file=sys.stderr)
+        sys.exit(3)
 
 
 if __name__ == "__main__":

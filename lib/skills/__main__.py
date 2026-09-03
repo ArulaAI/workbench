@@ -28,7 +28,7 @@ from dataclasses import asdict
 
 from skills.doctor import NOTE, diagnose
 from skills.inspect import inspect
-from skills.models import HARNESS_IDS, SkillState
+from skills.models import HARNESSES, HARNESS_IDS, SkillState
 from skills.sync import sync
 
 ERROR = 3
@@ -42,7 +42,7 @@ def _build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--project-root", required=True)
         sp.add_argument("--skills-dir", required=True)
         sp.add_argument("--catalog-version", default="dev")
-        sp.add_argument("--harness", default=None)
+        sp.add_argument("--harness", action="append", default=None)
         sp.add_argument("--json", action="store_true")
         if name == "sync":
             sp.add_argument("--force", action="store_true")
@@ -162,7 +162,7 @@ def main(argv=None) -> int:
 
     if args.cmd == "harnesses":
         if args.json:
-            print(json.dumps(list(HARNESS_IDS)))
+            print(json.dumps([asdict(item) for item in HARNESSES]))
         else:
             print("\n".join(HARNESS_IDS))
         return 0

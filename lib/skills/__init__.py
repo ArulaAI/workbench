@@ -5,10 +5,11 @@ Module map, in the order a sync moves through them:
 ``models``      shared vocabulary: states, harnesses, packages, plans, findings
 ``catalog``     discovers and reads canonical packages from the built-in catalog
 ``validate``    enforces the package contract and reports violations with codes
-``frontmatter`` reads the scalar SKILL.md keys and injects provenance in place
+``frontmatter`` loads SKILL.md front matter as YAML, injects provenance in place
 ``project``     renders one package for one harness, purely, as relpath -> bytes
 ``manifest``    hashes projections, persists the manifest, classifies each skill
 ``targets``     the harness registry, marker detection, and bounded destinations
+``bootstrap``   init policy resolution, persistence, migration, and verification
 ``inspect``     read-only: assembles the whole picture as an ``Inspection``
 ``sync``        the only writer: plans from an inspection, then applies
 ``doctor``      read-only: turns inspection findings into coded diagnostics

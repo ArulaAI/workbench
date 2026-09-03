@@ -371,7 +371,15 @@ def test_cli_help_exits_zero(capsys):
 def test_cli_lists_the_canonical_harness_registry(capsys):
     """The Bash commands query this instead of restating the harness list."""
     assert cli.main(["harnesses", "--json"]) == 0
-    assert json.loads(capsys.readouterr().out) == ["claude", "codex", "copilot"]
+    assert json.loads(capsys.readouterr().out) == [
+        {"id": "claude", "skills_root": ".claude/skills", "marker": ".claude"},
+        {"id": "codex", "skills_root": ".agents/skills", "marker": ".agents"},
+        {
+            "id": "copilot",
+            "skills_root": ".github/skills",
+            "marker": ".github/skills",
+        },
+    ]
 
 
 def _broken_catalog_argv(tmp_project, tmp_path, *extra):

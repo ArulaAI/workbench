@@ -7,11 +7,9 @@
 # skipping the step silently produced a project that reported success while no
 # skill was ever imported and no manifest was ever written.
 #
-# Init checks this before it touches anything, next to the --harness check, for
-# the same reason: a later abort would leave a half-scaffolded uncommitted
-# project behind, since the initial commit runs after projection. Projection
-# outcomes stay non-fatal per the RFC; a missing catalog is a precondition, not
-# an outcome.
+# Init checks this before it touches anything, as part of the read-only
+# bootstrap plan. Projection conflicts and operational failures stop before
+# verification, Git-policy application, and the optional commit phase.
 _init_require_skill_catalog() {
     [[ -d "${SPEED_DIR}/skills" ]] && return 0
     log_error "Built-in skill catalog not found: ${SPEED_DIR}/skills"
@@ -19,63 +17,16 @@ _init_require_skill_catalog() {
     return 3
 }
 
-cmd_init() {
-    local harness=""
-    local selected_harness=""
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --harness)
-                if [[ $# -lt 2 || -z "${2:-}" ]]; then
-                    log_error "--harness requires one of: $(workbench_harness_list)"
-                    return 3
-                fi
-                harness=$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')
-                shift 2
-                ;;
-            --help|-h)
-                echo "Usage: workbench init [--harness <$(workbench_harness_choices)>]"
-                return 0
-                ;;
-            *)
-                log_error "Unknown init option: $1"
-                return 3
-                ;;
-        esac
-    done
-
-    # The supported set comes from the engine's registry rather than a second
-    # list written out here, so a harness Workbench can project into is never
-    # one the CLI refuses.
-    if [[ -n "$harness" ]]; then
-        local supported
-        supported=$(workbench_harness_ids) || supported=""
-        if [[ -z "$supported" ]]; then
-            log_error "Could not read the supported harness list from this SPEED installation"
-            log_error "Reinstall SPEED or run: speed self-update"
-            return 3
-        fi
-        if ! printf '%s\n' "$supported" | grep -qxF "$harness"; then
-            log_error "Unknown harness '${harness}' (expected: $(workbench_harness_list))"
-            return 3
-        fi
-        selected_harness="$harness"
-    fi
-
-    _init_require_skill_catalog || return 3
-
-    log_header "Initializing SPEED"
-
-    # 1. Git repo
-    git_ensure_repo
-    log_success "Git repository ready"
-
-    # 2. Directory structure
-    mkdir -p "$FEATURES_DIR" "$LOGS_DIR" src tests
-    log_success "Directory structure created"
-
-    # 3. .gitignore
-    if ! grep -q '.speed/features/' "$PROJECT_ROOT/.gitignore" 2>/dev/null; then
-        cat >> "$PROJECT_ROOT/.gitignore" << 'EOF'
+# Reconcile the current Git policy even when an older SPEED runtime block is
+# already present. Historical projects may have no skill rules at all, or may
+# ignore `.speed/skills/` wholesale. The versioned block is deliberately
+# appended after either form so its later rules make the durable manifest
+# trackable while keeping the per-machine event log ignored.
+_init_reconcile_gitignore() {
+    local gitignore="${PROJECT_ROOT}/.gitignore"
+    local changed=false
+    if ! grep -q '# SPEED runtime state' "$gitignore" 2>/dev/null; then
+        cat >> "$gitignore" << 'EOF'
 
 # SPEED runtime state
 .speed/logs/
@@ -86,16 +37,113 @@ cmd_init() {
 .speed/state.json
 .speed/running/
 .speed/worktrees/
+EOF
+        changed=true
+    fi
+    if ! grep -q '# Workbench skill state policy v2' "$gitignore" 2>/dev/null; then
+        cat >> "$gitignore" << 'EOF'
+
+# Workbench skill state policy v2
+!.speed/skills/
+!.speed/skills/manifest.json
 .speed/skills/events.jsonl
 EOF
-        log_success "Updated .gitignore"
+        changed=true
+    fi
+    [[ "$changed" == "true" ]]
+}
+
+cmd_init() {
+    local requested_harnesses=()
+    local commit_requested=false
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --harness)
+                if [[ $# -lt 2 || -z "${2:-}" || "${2}" == -* ]]; then
+                    log_error "--harness requires one of: $(workbench_harness_list)"
+                    return 3
+                fi
+                requested_harnesses+=("$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')")
+                shift 2
+                ;;
+            --commit)
+                commit_requested=true
+                shift
+                ;;
+            --help|-h)
+                echo "Usage: workbench init [--harness <$(workbench_harness_choices)>]... [--commit]"
+                return 0
+                ;;
+            *)
+                log_error "Unknown init option: $1"
+                return 3
+                ;;
+        esac
+    done
+
+    # Phase 1: preflight and policy resolution are read-only. The bootstrap
+    # planner validates the catalog and config, then applies the documented
+    # precedence before Git initialization or any scaffold write can run.
+    _init_require_skill_catalog || return 3
+    local plan_args=(
+        plan
+        --project-root "$PROJECT_ROOT"
+        --skills-dir "${SPEED_DIR}/skills"
+        --config "${PROJECT_ROOT}/speed.toml"
+    )
+    local harness
+    for harness in "${requested_harnesses[@]}"; do
+        plan_args+=(--harness "$harness")
+    done
+    if [[ -n "${WORKBENCH_HARNESSES:-}" ]]; then
+        plan_args+=(--environment "$WORKBENCH_HARNESSES")
+    fi
+    local init_plan plan_error
+    plan_error=$(mktemp)
+    if ! init_plan=$(PYTHONPATH="${SPEED_DIR}/lib" "$(_context_python)" \
+        -m skills.bootstrap "${plan_args[@]}" 2>"$plan_error"); then
+        log_error "Initialization preflight failed: $(tr '\n' ' ' < "$plan_error")"
+        rm -f "$plan_error"
+        return 3
+    fi
+    rm -f "$plan_error"
+
+    local selected_harnesses=()
+    while IFS= read -r harness; do
+        [[ -n "$harness" ]] && selected_harnesses+=("$harness")
+    done < <(printf '%s' "$init_plan" | jq -r '.harnesses[]')
+    local policy_source
+    policy_source=$(printf '%s' "$init_plan" | jq -r '.source')
+    local persist_required
+    persist_required=$(printf '%s' "$init_plan" | jq -r '.persist_required')
+
+    # Serialize the write phases. Preflight runs first so an invalid request
+    # still leaves a fresh directory untouched; once policy is valid, the
+    # project lock prevents two initializers from applying competing plans.
+    speed_acquire_lock "init" || return 3
+
+    log_header "Initializing SPEED"
+    log_info "Skill harness policy: ${selected_harnesses[*]} (${policy_source})"
+
+    # Phase 2: apply the general project scaffold. Repeated init does not
+    # overwrite runtime state or user-owned files.
+    if ! _git rev-parse --git-dir &>/dev/null; then
+        _git init
+        log_info "Initialized git repository"
+    fi
+    log_success "Git repository ready"
+
+    mkdir -p "$FEATURES_DIR" "$LOGS_DIR" src tests
+    log_success "Directory structure created"
+
+    if [[ ! -f "${STATE_DIR}/state.json" ]]; then
+        echo '{"status":"idle","agents":[],"started_at":null}' | jq '.' > "${STATE_DIR}/state.json"
+        log_success "Runtime state initialized"
+    else
+        log_info "Runtime state already exists, preserving"
     fi
 
-    # 4. Runtime state (global — for validate and cross-feature use)
-    echo '{"status":"idle","agents":[],"started_at":null}' | jq '.' > "${STATE_DIR}/state.json"
-    log_success "Runtime state initialized"
-
-    # 5. Project agent file
+    local created_agent_file=false
     if [[ -n "$AGENT_FILE_PATH" ]] && [[ -f "$AGENT_FILE_PATH" ]]; then
         log_info "${AGENT_FILE} already exists, skipping"
     else
@@ -104,67 +152,142 @@ EOF
         local project_name
         project_name=$(basename "$PROJECT_ROOT")
         sed "s/{{PROJECT_NAME}}/${project_name}/g" "${TEMPLATES_DIR}/agents-file.md" > "$AGENT_FILE_PATH"
+        created_agent_file=true
         log_success "Created ${AGENT_FILE} — ${COLOR_DIM}customize this file!${RESET}"
     fi
 
-    # 6. speed.toml
+    # Phase 3: persist the resolved harness policy. This is intentionally
+    # separate from [agent].provider: provider selects execution, harnesses
+    # select skill hosts. Persist also retires the legacy manifest selection.
     local speed_toml="${PROJECT_ROOT}/speed.toml"
-    if [[ ! -f "$speed_toml" ]]; then
-        cp "${TEMPLATES_DIR}/speed-toml.toml" "$speed_toml"
-        log_success "Created speed.toml — ${COLOR_DIM}configure providers and settings${RESET}"
+    local persist_args=(
+        persist
+        --project-root "$PROJECT_ROOT"
+        --config "$speed_toml"
+        --template "${TEMPLATES_DIR}/speed-toml.toml"
+    )
+    for harness in "${selected_harnesses[@]}"; do
+        persist_args+=(--harness "$harness")
+    done
+    if [[ "$persist_required" == "true" ]]; then
+        if ! PYTHONPATH="${SPEED_DIR}/lib" "$(_context_python)" \
+            -m skills.bootstrap "${persist_args[@]}"; then
+            log_error "Could not persist the skill harness policy"
+            return 3
+        fi
+        log_success "Recorded skill harness policy in speed.toml"
     else
-        log_info "speed.toml already exists, skipping"
+        log_info "Skill harness policy already recorded in speed.toml"
     fi
 
-    # 7. Vision file template
+    local created_vision=false
     local vision_path="${PROJECT_ROOT}/${VISION_FILE}"
     local vision_dir
     vision_dir=$(dirname "$vision_path")
     if [[ ! -f "$vision_path" ]]; then
         mkdir -p "$vision_dir"
         cp "${TEMPLATES_DIR}/overview.md" "$vision_path"
+        created_vision=true
         log_success "Created ${VISION_FILE} — ${COLOR_DIM}define your product vision${RESET}"
     else
         log_info "${VISION_FILE} already exists, skipping"
     fi
 
-    # 8. Project the built-in catalog into one selected harness, or all detected
-    # harnesses when --harness is omitted. Explicit selection creates its root.
-    # The catalog's presence was established before any scaffolding ran.
+    # Phase 4: project the catalog into exactly the resolved policy. Passing
+    # every harness explicitly prevents later directory detection from changing
+    # this initialization run.
     local sync_args=(sync)
-    if [[ -n "$selected_harness" ]]; then
-        sync_args+=(--harness "$selected_harness")
-    fi
+    for harness in "${selected_harnesses[@]}"; do
+        sync_args+=(--harness "$harness")
+    done
     local sync_out sync_err
-    # `set -e` aborts the whole script on a bare failing assignment, which
-    # would skip every branch below plus the initial commit. `|| status=$?`
-    # keeps the nonzero result reportable.
     local sync_status=0
     sync_err=$(mktemp)
     sync_out=$(cmd_skills "${sync_args[@]}" --json 2>"$sync_err") || sync_status=$?
 
     case "$sync_status" in
         0)
-            if printf '%s' "$sync_out" | jq -e 'length > 0 and all(.[]; .final_state == "unsupported")' >/dev/null 2>&1; then
-                log_info "No supported agent harness found — run: ${COLOR_STEP}workbench skills sync${RESET} once the project is open in an agent"
-            elif [[ -n "$harness" ]]; then
-                log_success "Skills projected for ${harness}"
-            else
-                log_success "Skill projection completed for detected harnesses"
-            fi
+            log_success "Skills projected for ${selected_harnesses[*]}"
             ;;
         2)
-            log_info "Skill projection preserved local edits — run: ${COLOR_STEP}workbench skills doctor${RESET}"
+            log_error "Skill projection preserved local edits; initialization did not converge"
+            log_info "Run: ${COLOR_STEP}workbench skills doctor${RESET}"
+            rm -f "$sync_err"
+            return 2
             ;;
         *)
-            log_warn "Skill projection failed: $(tr '\n' ' ' < "$sync_err")"
+            log_error "Skill projection failed: $(tr '\n' ' ' < "$sync_err")"
             log_info "Run: ${COLOR_STEP}workbench skills doctor${RESET}"
+            rm -f "$sync_err"
+            return 3
             ;;
     esac
     rm -f "$sync_err"
 
-    # 9. Initial commit
-    (cd "$PROJECT_ROOT" && git add -A && git commit -m "speed init: project scaffold" 2>/dev/null) || true
+    # Phase 5: verify the post-operation state independently from sync's return
+    # value. A project is initialized only when every selected projection is
+    # current.
+    local catalog_version verify_args
+    catalog_version=$(_skills_catalog_version) || return 3
+    verify_args=(
+        verify
+        --project-root "$PROJECT_ROOT"
+        --skills-dir "${SPEED_DIR}/skills"
+        --catalog-version "$catalog_version"
+    )
+    for harness in "${selected_harnesses[@]}"; do
+        verify_args+=(--harness "$harness")
+    done
+    if ! PYTHONPATH="${SPEED_DIR}/lib" "$(_context_python)" \
+        -m skills.bootstrap "${verify_args[@]}" >/dev/null; then
+        log_error "Skill installation verification failed"
+        log_info "Run: ${COLOR_STEP}workbench skills doctor${RESET}"
+        return 3
+    fi
+    log_success "Skill installation verified"
+
+    # Phase 6: apply the explicit Git policy only after convergence. Durable
+    # projections and manifest are trackable; local runtime events are ignored.
+    if _init_reconcile_gitignore; then
+        log_success "Updated .gitignore"
+    fi
+
+    # Phase 7: committing is explicit. Stage only files this initializer owns;
+    # never `git add -A`, which can capture unrelated work in an existing repo.
+    if [[ "$commit_requested" == "true" ]]; then
+        local commit_paths=(".gitignore" "speed.toml" ".speed/skills/manifest.json")
+        [[ "$created_agent_file" == "true" ]] && commit_paths+=("$AGENT_FILE")
+        [[ "$created_vision" == "true" ]] && commit_paths+=("$VISION_FILE")
+        local harness_registry projected_root skill
+        if ! harness_registry=$(PYTHONPATH="${SPEED_DIR}/lib" "$(_context_python)" \
+            -m skills harnesses --json); then
+            log_error "Could not read the canonical harness registry"
+            return 3
+        fi
+        while IFS=$'\t' read -r harness skill; do
+            projected_root=$(printf '%s' "$harness_registry" | jq -r \
+                --arg harness "$harness" '.[] | select(.id == $harness) | .skills_root')
+            if [[ -z "$projected_root" || "$projected_root" == "null" ]]; then
+                log_error "Sync returned an unknown harness: ${harness}"
+                return 3
+            fi
+            commit_paths+=("${projected_root}/${skill}")
+        done < <(printf '%s' "$sync_out" | jq -r '.[] | select(.skill != "*") | [.harness, .skill] | @tsv')
+        if ! (cd "$PROJECT_ROOT" && git add -A -- "${commit_paths[@]}"); then
+            log_error "Could not stage the Workbench initialization files"
+            return 3
+        fi
+        if (cd "$PROJECT_ROOT" && git diff --cached --quiet); then
+            log_info "No Workbench initialization changes to commit"
+        elif ! (cd "$PROJECT_ROOT" && git commit -m "workbench init: project scaffold"); then
+            log_error "Could not commit the Workbench initialization files"
+            return 3
+        else
+            log_success "Committed Workbench initialization files"
+        fi
+    else
+        log_info "Initialization files were not committed; use --commit to create a commit"
+    fi
 
     echo ""
     log_success "SPEED initialized! Next steps:"
@@ -174,6 +297,7 @@ EOF
     echo -e "  4. Create a product spec: ${COLOR_STEP}speed new prd my-feature${RESET}"
     echo -e "  5. Plan your tasks: ${COLOR_STEP}speed plan specs/tech/my-feature.md${RESET}"
     echo ""
+    speed_release_lock
 }
 
 cmd_validate() {

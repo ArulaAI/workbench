@@ -33,6 +33,7 @@ RESERVED_KEY = "reserved_front_matter_key"
 UNSAFE_PATH = "unsafe_path"
 SYMLINK = "package_symlink"
 DUPLICATE_NAME = "duplicate_skill_name"
+INVALID_METADATA_TYPE = "invalid_metadata_type"
 
 
 @dataclass(frozen=True)
@@ -70,6 +71,36 @@ def _loader_code(reason: str) -> str:
     return SYMLINK if reason == NO_SYMLINKS else UNREADABLE_PACKAGE
 
 
+# The scalar metadata fields the engine reads, and the type each has to be.
+# Front matter is real YAML, so `version: 1.0` arrives as a float and
+# `name: true` as a boolean. Enforcing that here is what keeps every consumer
+# downstream free to treat these as strings.
+_STRING_FIELDS = ("name", "description", "version")
+
+
+def _string_fields(pkg: SkillPackage) -> tuple:
+    """Return ``(violations, bad_keys)`` for metadata fields of the wrong type."""
+    out: list = []
+    bad: set = set()
+    for field in _STRING_FIELDS:
+        if field not in pkg.meta:
+            continue
+        value = pkg.meta[field]
+        if isinstance(value, str):
+            continue
+        bad.add(field)
+        out.append(
+            Violation(
+                pkg.name,
+                "SKILL.md",
+                f"front-matter '{field}' must be a string, got "
+                f"{type(value).__name__}; quote the value",
+                INVALID_METADATA_TYPE,
+            )
+        )
+    return out, bad
+
+
 def validate_package(pkg: SkillPackage) -> list:
     out: list = [
         Violation(pkg.name, path, reason, _loader_code(reason))
@@ -85,23 +116,30 @@ def validate_package(pkg: SkillPackage) -> list:
                 pkg.name, None, f"invalid skill name '{pkg.name}'", INVALID_SKILL_NAME
             ))
     if not unreadable:
-        declared = pkg.meta.get("name", "")
-        if declared != pkg.name:
-            out.append(
-                Violation(
-                    pkg.name,
-                    "SKILL.md",
-                    f"front-matter name '{declared}' != directory '{pkg.name}'",
-                    NAME_MISMATCH,
+        typed, mistyped = _string_fields(pkg)
+        out.extend(typed)
+        # A field of the wrong type is already reported. Comparing or stripping
+        # it as well would either crash or add a second, misleading violation
+        # about a name or description the author did spell out.
+        if "name" not in mistyped:
+            declared = pkg.meta.get("name", "")
+            if declared != pkg.name:
+                out.append(
+                    Violation(
+                        pkg.name,
+                        "SKILL.md",
+                        f"front-matter name '{declared}' != directory '{pkg.name}'",
+                        NAME_MISMATCH,
+                    )
                 )
-            )
-        if not pkg.meta.get("description", "").strip():
-            out.append(Violation(
-                    pkg.name,
-                    "SKILL.md",
-                    "empty or missing description",
-                    MISSING_DESCRIPTION,
-                ))
+        if "description" not in mistyped:
+            if not pkg.meta.get("description", "").strip():
+                out.append(Violation(
+                        pkg.name,
+                        "SKILL.md",
+                        "empty or missing description",
+                        MISSING_DESCRIPTION,
+                    ))
     for key in pkg.meta:
         if key.startswith(MANAGED_PREFIX):
             # Projection sets these. An author who declares one would see it

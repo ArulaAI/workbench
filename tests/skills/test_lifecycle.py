@@ -32,7 +32,7 @@ INSTALL_SH = REPO / "install.sh"
 MP_INIT_SH = REPO / "lib" / "cmd" / "mp_init.sh"
 OWN_SPEED_IGNORE = REPO / ".speed" / ".gitignore"
 
-_SINGLE_PLAYER_SENTINEL = "# SPEED runtime state"
+_SINGLE_PLAYER_SENTINEL = "# Workbench skill state policy v2"
 _MULTIPLAYER_SENTINEL = (
     "# Multi-player mode: only shared/ and the skill manifest are committed, everything else is local"
 )
@@ -131,6 +131,46 @@ def test_workbench_own_state_ignore_commits_manifest(tmp_path):
     )
     assert not _ignored(repo, MANIFEST_REL)
     assert _ignored(repo, EVENTS_REL)
+
+
+def _reconcile_single_player_ignore(project: Path):
+    script = f"""
+set -euo pipefail
+PROJECT_ROOT={_q(project)}
+source {_q(PROJECT_SH)}
+_init_reconcile_gitignore || true
+"""
+    return _bash(script)
+
+
+@pytest.mark.parametrize(
+    "historical",
+    [
+        """# SPEED runtime state
+.speed/logs/
+.speed/features/*/logs/
+.speed/state.json
+""",
+        """# SPEED runtime state
+.speed/logs/
+.speed/skills/
+""",
+    ],
+    ids=("released-block-without-skill-rules", "early-block-ignoring-all-skills"),
+)
+def test_repeated_init_reconciles_historical_gitignore_blocks(tmp_path, historical):
+    repo = _repo_with_ignore(tmp_path, "historical", ".gitignore", historical)
+
+    result = _reconcile_single_player_ignore(repo)
+
+    assert result.returncode == 0, result.stderr
+    assert not _ignored(repo, MANIFEST_REL)
+    assert _ignored(repo, EVENTS_REL)
+    text = (repo / ".gitignore").read_text()
+    assert text.count("# Workbench skill state policy v2") == 1
+
+    _reconcile_single_player_ignore(repo)
+    assert (repo / ".gitignore").read_text() == text
 
 
 def test_fresh_clone_of_committed_project_is_current(tmp_path):
@@ -357,6 +397,7 @@ def _skills_harness(tmp_path, speed_dir=None, home=None) -> tuple:
         "#!/usr/bin/env bash\n"
         'if [[ "${1:-}" == "-c" ]]; then exec ' + _q(PY) + ' "$@"; fi\n'
         'if [[ "${3:-}" == "harnesses" ]]; then exec ' + _q(PY) + ' "$@"; fi\n'
+        'if [[ "${2:-}" == "skills.bootstrap" ]]; then exec ' + _q(PY) + ' "$@"; fi\n'
         'printf "%s\\n" "$@" > "$ARGV_LOG"\n'
     )
     recorder.chmod(0o755)
@@ -365,10 +406,25 @@ def _skills_harness(tmp_path, speed_dir=None, home=None) -> tuple:
     return recorder, argv_log, speed_dir, home
 
 
-def _run_skills(tmp_path, *args, speed_dir=None, home=None, verbosity=None):
+def _run_skills(
+    tmp_path,
+    *args,
+    speed_dir=None,
+    home=None,
+    verbosity=None,
+    configured_harnesses=None,
+    environment_harnesses=None,
+):
     recorder, argv_log, speed_dir, home = _skills_harness(tmp_path, speed_dir, home)
     project = tmp_path / "proj"
     project.mkdir(exist_ok=True)
+    if configured_harnesses is not None:
+        values = ", ".join(
+            f'"{item}"' for item in configured_harnesses.split()
+        )
+        (project / "speed.toml").write_text(
+            f"[skills]\nharnesses = [{values}]\n"
+        )
     verbosity_line = f"VERBOSITY={verbosity}\n" if verbosity is not None else ""
     script = f"""
 set -euo pipefail
@@ -389,7 +445,16 @@ cmd_skills "$@"
         ["bash", "-c", script, "bash", *args],
         capture_output=True,
         text=True,
-        env=dict(os.environ, ARGV_LOG=str(argv_log), WORKBENCH_NS="1"),
+        env=dict(
+            os.environ,
+            ARGV_LOG=str(argv_log),
+            WORKBENCH_NS="1",
+            **(
+                {"WORKBENCH_HARNESSES": environment_harnesses}
+                if environment_harnesses is not None
+                else {}
+            ),
+        ),
     )
     recorded = argv_log.read_text().splitlines() if argv_log.exists() else None
     return result, recorded
@@ -479,6 +544,48 @@ def test_skills_forwards_the_documented_public_options(tmp_path):
     assert "--force" in recorded
     assert recorded[recorded.index("--harness") + 1] == "codex"
     assert recorded[recorded.index("--project-root") + 1] == str(tmp_path / "proj")
+
+
+def test_skills_uses_project_harness_policy_when_flag_is_absent(tmp_path):
+    result, recorded = _run_skills(
+        tmp_path, "status", configured_harnesses="claude codex"
+    )
+
+    assert result.returncode == 0, result.stderr
+    positions = [i for i, value in enumerate(recorded) if value == "--harness"]
+    assert [recorded[i + 1] for i in positions] == ["claude", "codex"]
+
+
+def test_skills_harness_precedence_is_flag_then_environment_then_config(tmp_path):
+    from_env, env_argv = _run_skills(
+        tmp_path,
+        "status",
+        configured_harnesses="claude",
+        environment_harnesses="codex",
+    )
+    from_flag, flag_argv = _run_skills(
+        tmp_path,
+        "status",
+        "--harness",
+        "copilot",
+        configured_harnesses="claude",
+        environment_harnesses="codex",
+    )
+
+    assert from_env.returncode == 0, from_env.stderr
+    assert env_argv[env_argv.index("--harness") + 1] == "codex"
+    assert from_flag.returncode == 0, from_flag.stderr
+    assert flag_argv[flag_argv.index("--harness") + 1] == "copilot"
+
+
+def test_skills_fails_closed_on_invalid_project_harness_policy(tmp_path):
+    result, recorded = _run_skills(
+        tmp_path, "status", configured_harnesses="cursor"
+    )
+
+    assert result.returncode == 3
+    assert recorded is None
+    assert "speed.toml" in result.stderr
 
 
 def test_skills_rejects_force_outside_sync(tmp_path):

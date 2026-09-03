@@ -10,6 +10,25 @@ import pytest
 REPO = Path(__file__).resolve().parents[2]
 PY = sys.executable  # the interpreter running the tests (works in a worktree too)
 
+_GIT_ENV = {
+    "GIT_CONFIG_GLOBAL": "/dev/null",
+    "GIT_CONFIG_SYSTEM": "/dev/null",
+    "GIT_AUTHOR_NAME": "workbench-test",
+    "GIT_AUTHOR_EMAIL": "workbench@test.invalid",
+    "GIT_COMMITTER_NAME": "workbench-test",
+    "GIT_COMMITTER_EMAIL": "workbench@test.invalid",
+}
+
+
+def _git(project, *args):
+    return subprocess.run(
+        ["git", *args],
+        cwd=project,
+        capture_output=True,
+        text=True,
+        env=dict(os.environ, **_GIT_ENV),
+    )
+
 
 def _skills(project, *args):
     env = dict(os.environ, PYTHONPATH=str(REPO / "lib"))
@@ -62,6 +81,7 @@ def _workbench(project, *args):
         os.environ,
         SPEED_PROJECT_ROOT=str(project),
         SPEED_PYTHON=PY,
+        **_GIT_ENV,
     )
     return subprocess.run(
         [str(REPO / "workbench"), *args],
@@ -180,6 +200,9 @@ def test_workbench_init_creates_only_selected_harness(
     assert health_result["status"] == "healthy"
     assert health_result["skills"] == ["workbench-health"]
     assert f"Skills projected for {harness}" in initialized.stdout
+    assert f'harnesses = ["{harness}"]' in (project / "speed.toml").read_text()
+    assert _git(project, "log", "--oneline").returncode != 0
+    assert "speed.toml" in _git(project, "status", "--short").stdout
     roots = {
         ".claude/skills": project / ".claude" / "skills",
         ".agents/skills": project / ".agents" / "skills",
@@ -201,6 +224,101 @@ def test_workbench_init_rejects_unknown_harness_before_writing(tmp_path):
     assert initialized.returncode == 3
     assert "expected: claude, codex, copilot" in initialized.stderr
     assert not (project / ".git").exists()
+
+
+def test_workbench_init_requires_a_resolvable_harness_before_writing(tmp_path):
+    project = tmp_path / "no-policy"
+    project.mkdir()
+
+    initialized = _workbench(project, "init")
+
+    assert initialized.returncode == 3
+    assert "no skill harness policy" in initialized.stderr
+    assert list(project.iterdir()) == []
+
+
+def test_repeated_init_uses_persisted_policy_not_new_marker_detection(tmp_path):
+    project = tmp_path / "repeat"
+    project.mkdir()
+    first = _workbench(project, "init", "--harness", "codex")
+    assert first.returncode == 0, first.stderr
+    (project / ".claude").mkdir()
+
+    repeated = _workbench(project, "init")
+
+    assert repeated.returncode == 0, repeated.stderr
+    assert (project / ".agents/skills/workbench-health/SKILL.md").is_file()
+    assert not (project / ".claude/skills").exists()
+
+
+def test_provider_does_not_override_persisted_skill_harness(tmp_path):
+    project = tmp_path / "independent"
+    project.mkdir()
+    initialized = _workbench(project, "init", "--harness", "codex")
+    assert initialized.returncode == 0, initialized.stderr
+    config = project / "speed.toml"
+    config.write_text(config.read_text().replace(
+        '# provider = "claude-code"', 'provider = "claude-code"'
+    ))
+
+    repeated = _workbench(project, "init")
+
+    assert repeated.returncode == 0, repeated.stderr
+    assert (project / ".agents/skills/workbench-health/SKILL.md").is_file()
+
+
+def test_init_commit_excludes_unrelated_existing_work(tmp_path):
+    project = tmp_path / "commit-scope"
+    project.mkdir()
+    _git(project, "init", "-q", "-b", "main")
+    unrelated = project / "unrelated.txt"
+    unrelated.write_text("do not stage me\n")
+
+    initialized = _workbench(project, "init", "--harness", "claude", "--commit")
+
+    assert initialized.returncode == 0, initialized.stderr
+    assert "workbench init: project scaffold" in _git(
+        project, "log", "-1", "--pretty=%s"
+    ).stdout
+    assert "unrelated.txt" in _git(project, "status", "--short").stdout
+    assert "unrelated.txt" not in _git(project, "show", "--name-only", "--pretty=").stdout
+
+
+def test_init_commit_migrates_an_ignore_all_skills_policy(tmp_path):
+    project = tmp_path / "old-ignore"
+    project.mkdir()
+    _git(project, "init", "-q", "-b", "main")
+    (project / ".gitignore").write_text(
+        "# SPEED runtime state\n.speed/logs/\n.speed/skills/\n"
+    )
+    _git(project, "add", ".gitignore")
+    _git(project, "commit", "-qm", "old project")
+
+    initialized = _workbench(project, "init", "--harness", "claude", "--commit")
+
+    assert initialized.returncode == 0, initialized.stderr
+    tracked = _git(project, "ls-files").stdout.splitlines()
+    assert ".speed/skills/manifest.json" in tracked
+    assert ".speed/skills/events.jsonl" not in tracked
+    ignored = _git(
+        project, "check-ignore", "-q", ".speed/skills/events.jsonl"
+    )
+    assert ignored.returncode == 0
+
+
+def test_malformed_speed_toml_is_reported_once(tmp_path):
+    project = tmp_path / "bad-config"
+    project.mkdir()
+    (project / "speed.toml").write_text("[skills\nharnesses = [\"claude\"]\n")
+
+    result = _workbench(project, "skills", "status")
+
+    assert result.returncode == 3
+    messages = [line for line in result.stderr.splitlines() if line.strip()]
+    assert len(messages) == 1, result.stderr
+    assert messages[0].startswith("Error: could not parse ")
+    assert "Warning: Warning:" not in result.stderr
+    assert "ValueError:" not in result.stderr
 
 
 def test_a_leading_global_flag_is_not_taken_as_the_command(tmp_path):

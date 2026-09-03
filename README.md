@@ -84,6 +84,9 @@ support_model = "sonnet"       # structured: guardian, reviewer, developer defau
 timeout = 600                  # agent timeout in seconds
 max_turns = 50                 # max turns for developer agents
 
+[skills]
+harnesses = ["claude"]         # independent skill host(s): claude, codex, copilot
+
 [worktree.symlinks]
 # Symlink these dirs from main repo into git worktrees
 "src/frontend/node_modules" = "src/frontend/node_modules"
@@ -112,6 +115,7 @@ For verbosity: `--quiet`/`--verbose`/`--debug` flag > `SPEED_VERBOSITY` env > `u
 | Setting | Env var | TOML key | Default |
 |---------|---------|----------|---------|
 | Provider | `SPEED_PROVIDER` | `agent.provider` | `claude-code` |
+| Skill harnesses | `WORKBENCH_HARNESSES` | `skills.harnesses` | resolved during `workbench init` |
 | Planning model | `SPEED_PLANNING_MODEL` | `agent.planning_model` | `opus` |
 | Support model | `SPEED_SUPPORT_MODEL` | `agent.support_model` | `sonnet` |
 | Timeout | `SPEED_TIMEOUT` | `agent.timeout` | `600` |
@@ -195,7 +199,11 @@ the real `workbench` entrypoint, which preflights its interpreter for
 the skill system, but the check runs first, so an interpreter missing them cannot
 reach any lifecycle code. The suite reports those tests as skips naming the fix
 rather than as failures, so a green run under a bare `python3` is not a complete
-run. Expect `242 passed` with the venv and `235 passed, 7 skipped` without it.
+run. Expect `283 passed` with the venv and `270 passed, 13 skipped` without it.
+
+`PyYAML` is different from those three: the skill engine reads SKILL.md front
+matter with it, so an interpreter without it cannot import `skills` at all and
+collection fails rather than skipping. It is in `requirements.txt`.
 
 Shell suites run on their own: `bash tests/test_multiplayer.sh`.
 

@@ -1,3 +1,6 @@
+# Skill catalog: SKILL.md front matter is YAML and is parsed as YAML.
+PyYAML>=6.0,<7.0
+
 tree-sitter>=0.23,<1.0
 tree-sitter-python
 tree-sitter-javascript

@@ -46,6 +46,39 @@ workbench_harness_list() {
     workbench_harness_ids | paste -sd ',' - | sed 's/,/, /g'
 }
 
+# Resolve the operational harness scope after command-line flags. A transient
+# environment override wins over the durable project policy. Legacy manifest
+# selection and marker detection remain engine fallbacks for migration only.
+_skills_policy_harnesses() {
+    local raw source
+    if [[ -n "${WORKBENCH_HARNESSES:-}" ]]; then
+        raw="$WORKBENCH_HARNESSES"
+        source=WORKBENCH_HARNESSES
+    else
+        source=speed.toml
+        [[ ! -f "${PROJECT_ROOT}/speed.toml" ]] && return 0
+        if ! raw=$(PYTHONPATH="${SPEED_DIR}/lib" "$(_context_python)" \
+            -m skills.bootstrap configured --config "${PROJECT_ROOT}/speed.toml"); then
+            log_error "Could not read [skills].harnesses from speed.toml"
+            return 3
+        fi
+    fi
+    [[ -z "$raw" ]] && return 0
+    local value supported seen=" "
+    supported=$(workbench_harness_ids) || return 3
+    raw=${raw//,/ }
+    for value in $raw; do
+        value=$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')
+        if ! printf '%s\n' "$supported" | grep -qxF "$value"; then
+            log_error "Unknown harness '${value}' from ${source} (expected: $(workbench_harness_list))"
+            return 3
+        fi
+        [[ "$seen" == *" ${value} "* ]] && continue
+        seen+="${value} "
+        printf '%s\n' "$value"
+    done
+}
+
 # Read the installed catalog version, keeping three outcomes distinct that used
 # to collapse into the single string "dev": a source checkout is a development
 # build, a receipt naming a version is a managed install, and a receipt that
@@ -108,6 +141,8 @@ $(printf '  %-32s  %s' "--harness <$(workbench_harness_choices)>" "Limit the com
   --json                            Emit machine-readable output
 
 Exit codes: 0 ok · 1 drift or findings · 2 conflicts remain after sync · 3 error
+
+Harness precedence: --harness · WORKBENCH_HARNESSES · [skills].harnesses · legacy manifest · detection
 USAGE
 }
 
@@ -137,6 +172,7 @@ cmd_skills() {
     # the last occurrence of a flag, so passing them through from the tail would
     # let any caller redirect the project or swap the canonical catalog.
     local user_args=()
+    local harness_explicit=false
     local want_json="${JSON_OUTPUT:-false}"
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -158,6 +194,7 @@ cmd_skills() {
                     return 3
                 fi
                 user_args+=(--harness "$2")
+                harness_explicit=true
                 shift 2
                 ;;
             --harness=*)
@@ -167,6 +204,7 @@ cmd_skills() {
                     return 3
                 fi
                 user_args+=(--harness "$value")
+                harness_explicit=true
                 shift
                 ;;
             --help|-h)
@@ -180,6 +218,14 @@ cmd_skills() {
                 ;;
         esac
     done
+    if [[ "$harness_explicit" != "true" ]]; then
+        local policy_harnesses policy_status=0 value
+        policy_harnesses=$(_skills_policy_harnesses) || policy_status=$?
+        [[ $policy_status -eq 0 ]] || return 3
+        while IFS= read -r value; do
+            [[ -n "$value" ]] && user_args+=(--harness "$value")
+        done <<< "$policy_harnesses"
+    fi
     [[ "$want_json" == "true" ]] && user_args+=(--json)
 
     local catalog_version

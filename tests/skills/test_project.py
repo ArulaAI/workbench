@@ -14,7 +14,7 @@ def test_render_injects_provenance_and_keeps_refs(tmp_catalog):
     assert out["references/notes.md"] == b"ref body\n"
     meta, body = parse(out["SKILL.md"].decode())
     assert meta["name"] == "example-skill"
-    assert meta["x-workbench-managed"] == "true"
+    assert meta["x-workbench-managed"] is True
     assert meta["x-workbench-source"] == "example-skill"
     assert "Do the thing." in body
 

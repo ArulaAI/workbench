@@ -25,7 +25,6 @@ from skills.events import append_events, new_transaction, now_iso
 from skills.inspect import inspect
 from skills.manifest import (
     HARNESSES_KEY,
-    SELECTED_KEY,
     hash_bytes,
     save_manifest,
 )
@@ -158,7 +157,7 @@ def _persist(project_root, manifest, before, events) -> None:
     append_events(project_root, events)
 
 
-def apply(inspection, plans, *, only_harness=None) -> list:
+def apply(inspection, plans) -> list:
     """Perform ``plans``, record what happened, and report where each skill ended.
 
     Returns one ``SyncOutcome`` per inspected skill, including the untouched
@@ -240,13 +239,6 @@ def apply(inspection, plans, *, only_harness=None) -> list:
                 "new_version": version,
             })
 
-        if only_harness is not None:
-            # Accumulate: choosing a second harness must not strand the first
-            # one's projection outside the set that status, doctor, and sync
-            # can see.
-            chosen = {get_harness(only_harness).id}
-            chosen |= set(manifest.get(SELECTED_KEY) or [])
-            manifest[SELECTED_KEY] = sorted(chosen)
         if mutated:
             # Record the projecting install only when a projection actually
             # changed. Stamping it on every run would make a teammate on a
@@ -273,4 +265,4 @@ def sync(project_root, skills_dir, catalog_version, *, force=False, only_harness
             )
             for item in inspection.skills
         ]
-    return apply(inspection, plan(inspection, force=force), only_harness=only_harness)
+    return apply(inspection, plan(inspection, force=force))

@@ -174,17 +174,13 @@ def test_missing_catalog_never_removes_a_projection(tmp_catalog, tmp_project):
     assert projected.is_dir()
 
 
-def test_explicit_harness_is_remembered_by_later_syncs(tmp_catalog, tmp_project):
-    """Init picks a harness; a later bare sync must not fan out to others."""
+def test_explicit_harness_is_an_operational_scope_not_manifest_policy(tmp_catalog, tmp_project):
+    """Durable harness intent belongs in speed.toml, not generated state."""
     skills_dir = tmp_catalog()
     (tmp_project / ".agents").mkdir(parents=True, exist_ok=True)
 
     _run(tmp_project, skills_dir, only_harness="codex")
-    assert load_manifest(tmp_project)["selected_harnesses"] == ["codex"]
-
-    rows = status(tmp_project, skills_dir, "0.3.0")
-
-    assert {r.harness for r in rows} == {"codex"}
+    assert "selected_harnesses" not in load_manifest(tmp_project)
     assert not (tmp_project / ".claude" / "skills").exists()
 
 
@@ -254,16 +250,16 @@ def test_partial_deletion_is_still_a_conflict(tmp_catalog, tmp_project):
     assert [r.state for r in status(tmp_project, skills_dir, "0.3.0")] == [SkillState.CONFLICTED]
 
 
-def test_explicit_harnesses_accumulate(tmp_catalog, tmp_project):
-    """Choosing a second harness must not orphan the first one's projection."""
+def test_multiple_explicit_harnesses_are_supported_in_one_operation(tmp_catalog, tmp_project):
     skills_dir = tmp_catalog()
     (tmp_project / ".agents").mkdir(parents=True, exist_ok=True)
 
-    _run(tmp_project, skills_dir, only_harness="claude")
-    _run(tmp_project, skills_dir, only_harness="codex")
+    _run(tmp_project, skills_dir, only_harness=("claude", "codex"))
 
-    assert load_manifest(tmp_project)["selected_harnesses"] == ["claude", "codex"]
-    assert {r.harness for r in status(tmp_project, skills_dir, "0.3.0")} == {
+    assert "selected_harnesses" not in load_manifest(tmp_project)
+    assert {r.harness for r in status(
+        tmp_project, skills_dir, "0.3.0", only_harness=("claude", "codex")
+    )} == {
         "claude",
         "codex",
     }

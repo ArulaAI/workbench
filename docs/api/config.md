@@ -5,6 +5,9 @@ description: Reference for speed.toml and environment variables.
 
 SPEED is configured via a project-level `speed.toml` file. All configuration values can also be overridden by environment variables.
 
+A malformed `speed.toml` is a configuration error. Workbench reports it once
+and exits with status 3 instead of silently continuing with defaults.
+
 ## Precedence
 
 Configuration is resolved in the following order (highest to lowest):
@@ -24,6 +27,20 @@ Configure the AI providers and model tiers used by the orchestrator.
 | `agent.support_model` | `SPEED_SUPPORT_MODEL` | `sonnet` | Model used for structured support tasks (Guardian, Reviewer). |
 | `agent.timeout` | `SPEED_TIMEOUT` | `600` | Max seconds allowed for a single agent run. |
 | `agent.max_turns` | `SPEED_MAX_TURNS` | `50` | Max conversation turns allowed for developer agents. |
+
+## Skill Settings
+
+Skill harness policy is independent from `agent.provider`. The provider chooses
+the execution backend; the harness list chooses where Workbench projects skills.
+
+| TOML Key | Environment Var | Default | Description |
+|---|---|---|---|
+| `skills.harnesses` | `WORKBENCH_HARNESSES` | none | Durable project list containing `claude`, `codex`, and/or `copilot`. |
+
+For initialization and skill lifecycle commands, harness selection precedence is
+explicit `--harness`, `WORKBENCH_HARNESSES`, `skills.harnesses`, legacy manifest
+selection during migration, then marker detection. `workbench init` persists the
+resolved choice in `speed.toml`.
 
 ## Rate Limiting
 

@@ -160,3 +160,52 @@ def test_a_violation_is_immutable_and_allows_a_pathless_finding(tmp_path):
     assert pathless, "a package-level violation should carry no path"
     with pytest.raises(dataclasses.FrozenInstanceError):
         pathless[0].reason = "rewritten"
+
+
+# Real YAML parsing means front matter can now hand the engine an int, a float,
+# a bool or None where it expects a string. The contract is enforced here so no
+# consumer downstream has to re-check the type.
+
+
+@pytest.mark.parametrize(
+    "value, kind",
+    [(True, "bool"), (1.0, "float"), (2, "int"), (None, "NoneType"), (["a"], "list")],
+)
+def test_a_mistyped_metadata_field_is_reported_with_its_type(value, kind):
+    pkg = _pkg(meta={"name": "example-skill", "description": value})
+
+    violations = validate_package(pkg)
+
+    assert [item.code for item in violations] == [validate.INVALID_METADATA_TYPE]
+    assert kind in violations[0].reason
+    assert "quote the value" in violations[0].reason
+
+
+def test_a_mistyped_name_is_not_also_reported_as_a_mismatch():
+    """One cause, one violation: `name: true` is a type error, not a rename."""
+    pkg = _pkg(meta={"name": True, "description": "ok"})
+
+    codes = {item.code for item in validate_package(pkg)}
+
+    assert codes == {validate.INVALID_METADATA_TYPE}
+    assert validate.NAME_MISMATCH not in codes
+
+
+def test_a_mistyped_description_does_not_crash_on_strip():
+    """`.strip()` on a float used to raise AttributeError from inside validate."""
+    assert validate_package(_pkg(meta={"name": "example-skill", "description": 1.5}))
+
+
+def test_a_non_string_version_is_rejected_so_the_manifest_records_a_string():
+    pkg = _pkg(meta={"name": "example-skill", "description": "ok", "version": 1.0})
+
+    violations = validate_package(pkg)
+
+    assert [item.code for item in violations] == [validate.INVALID_METADATA_TYPE]
+    assert "'version'" in violations[0].reason
+
+
+def test_a_quoted_version_is_accepted():
+    assert validate_package(
+        _pkg(meta={"name": "example-skill", "description": "ok", "version": "1.0"})
+    ) == []
