@@ -105,12 +105,18 @@ Each `(surface, skill)` resolves to one state. Manifest hashes plus on-disk hash
 
 | Canonical (`workbench`) | Temporary alias (`speed`) | Behavior |
 |---|---|---|
-| `workbench init [--harness <claude\|codex\|copilot>]` | `speed init …` | Bootstrap project; explicitly create and project only the selected harness, or project all detected harnesses when omitted. Projection remains non-fatal. |
+| `workbench init [--harness <claude\|codex\|copilot>]` | `speed init …` | Bootstrap project; explicitly create and project only the selected harness, or project all detected harnesses when omitted. Projection *outcomes* remain non-fatal: no detected surface, remaining conflicts, and sync errors are each reported distinctly and init continues. A missing `${SPEED_DIR}/skills` is different in kind. It is a broken installation rather than a projection outcome, so init rejects it with exit 3 before writing any scaffolding, leaving nothing half-created to clean up. |
 | `workbench skills sync [--surface][--force][--json]` | `speed skills sync …` | Converge surfaces to the catalog; append install events. |
-| `workbench skills status [--json]` | `speed skills status …` | Read-only per-surface state table. |
+| `workbench skills status [--surface][--json]` | `speed skills status …` | Read-only per-surface state table. `--surface` narrows the table the same way it narrows `doctor`, which reads the identical classification. |
 | `workbench skills doctor [--surface][--json]` | `speed skills doctor …` | Read-only diagnosis of every non-`current` state with exactly one repair path per finding. |
 
 Sync rows report the state and `action` after the run, not the pre-run classification, so a forced repair reports `current`/`updated` rather than `conflicted`. Exit codes: `sync` 0 converged / 2 conflicts remain after the run / 3 error; `status` 0 all current / 1 drift / 3 error; `doctor` 0 no findings / 1 findings present / 3 error.
+
+Usage and configuration errors exit 3 on every subcommand, never 1 or 2. A missing subcommand, an unknown subcommand, an unsupported option, and an argparse parse failure all land there, so 1 keeps meaning drift and 2 keeps meaning conflicts. `workbench skills` without a subcommand prints usage and exits 3; `workbench skills --help` prints the same usage and exits 0. The public wrapper accepts only `--surface`, `--force`, `--json`, and `--help`, so a caller cannot redirect the resolved project root or canonical catalog through the argument tail.
+
+Errors carry detail rather than a bare line. `WORKBENCH_DEBUG=1` prints a traceback, `--json` emits `{"status": "error", "error": {"type", "message"}}` on stdout, and the one-line message stays on stderr for the shell callers that read it.
+
+Catalog version resolution distinguishes the three cases that once all reported `dev`: a `.git` directory in the install is a development checkout and reports `dev`, a receipt naming a version reports that version, and a missing or unparseable receipt is a broken managed installation that exits 3.
 
 The alias policy: a `speed` command is retained only with an explicit `workbench` target, identical implementation/state/gates/provenance, and a temporary-alias label. New lifecycle behavior is authored under `workbench`; no independent `speed` workflow is added.
 
@@ -133,7 +139,9 @@ Invoked as `PYTHONPATH="${SPEED_DIR}/lib" <python> -m skills <sub> …` (because
 
 The projected `workbench-health` skill executes its packaged `scripts/health.py` directly. The helper reads `.speed/skills/manifest.json`, verifies that the selected surface has installed skills, and checks each projected file against its recorded SHA-256. It performs no writes and has no Workbench CLI adapter.
 
-`doctor` consumes the same state classification as `status` and emits only non-`current` findings. `absent` and `stale` point to `workbench skills sync`; `conflicted` points to reviewing or backing up edits followed by `workbench skills sync --force`; `orphaned` points to sync removal; and `unsupported` points to creating a supported agent surface followed by sync. A healthy result contains no diagnostics. Text and JSON outputs carry the same diagnosis and repair fields.
+`doctor` consumes the same state classification as `status` and emits only non-`current` findings. `absent` and `stale` point to `workbench skills sync`; `conflicted` points to reviewing or backing up whatever is local at that path followed by `workbench skills sync --surface <surface> --force`; `orphaned` points to sync removal; and `unsupported` points to `workbench init --harness <claude|codex|copilot>`.
+
+Only the destructive repair is scoped. `--surface` is the narrowest scope sync accepts, so a harness carrying two conflicts still repairs both; per-skill scoping would require a new flag. The non-destructive repairs stay project-wide because nothing they do can lose work. One case is reported for the project rather than per skill: when projections exist but `.speed/skills/manifest.json` does not, every skill would otherwise classify as `conflicted` and be blamed on a local edit, when the files are untouched and the record of them is what went missing. A healthy result contains no diagnostics. Text and JSON outputs carry the same diagnosis and repair fields.
 
 ## Validation Rules
 
@@ -145,7 +153,8 @@ Run whenever the canonical catalog is loaded; a future release build can reuse t
 | `name` | `^[a-z0-9][a-z0-9-]*$`, equals dir name | reject |
 | `description` | non-empty | reject |
 | name uniqueness | unique across catalog | reject, name collision |
-| path safety | no absolute, no `..`, no escaping symlink | reject, name path |
+| path safety | no absolute, no `..`, no symlink of any kind | reject, name path |
+| reserved keys | no author-declared `x-workbench-*` front matter | reject, name key |
 | helper-backed skill | projected helper is byte-identical to canonical helper | conformance test fails |
 | idempotency | second render equals first | fail test/release gate |
 
@@ -200,7 +209,9 @@ Run whenever the canonical catalog is loaded; a future release build can reuse t
 ## Security & Controls
 
 - No new permissions: a skill inherits the invoking surface's model, permissions, and approval controls. Installing grants nothing.
-- No path escape: validation rejects absolute paths, `..`, and escaping symlinks.
+- No path escape: validation rejects absolute paths and `..`. Packages prohibit symlinks outright rather than only escaping ones, because projection copies bytes and never preserves a link, so no supported use case needs them. Refusal happens at read time, before any linked target is opened, which makes validation the actual boundary instead of a check run after unsafe content is already in memory.
+- No read-through: harness markers, projection roots, and projected files are all walked without following links. A symlink where a managed file belongs is reported as `conflicted`, never hashed through.
+- Durable state: the manifest is written to a staging file in the same directory and swapped in with `os.replace`, so an interrupted run cannot truncate the one record that distinguishes a managed byte from a user edit. A projection is staged in full and swapped into place, so a failed write leaves the previous projection intact rather than a half-installed skill.
 - Fail closed on catalog load: a missing or unreadable catalog directory is an installation error (exit 3), never an empty catalog. Sync plans no removals when the catalog cannot be read.
 - Bounded writes: sync writes only under detected or explicitly selected harness roots, `.speed/skills/manifest.json`, and `.speed/skills/events.jsonl`. It never touches harness settings, agent definitions, or user skills it did not create.
 - Generation is separate from approval; a skill run cannot ratify its own output.

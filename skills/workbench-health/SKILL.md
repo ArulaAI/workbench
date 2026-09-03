@@ -10,33 +10,72 @@ description: >
 
 Verify the installed Workbench skill projection without changing project state.
 
-## Behavior
+## Run the check
 
-1. Run `scripts/health.py --project-root <project-root>`. The helper infers
-   its own surface from where it was projected; pass `--surface` only to
-   check a different harness.
-2. Return the helper's structured result without rewriting its status or
-   message. The helper checks the project skill manifest and verifies every
-   recorded projected file.
-3. On `healthy`, tell the user that Workbench skills were imported successfully
-   and are ready to use.
-4. On `unhealthy`, show every reported issue and recommend
-   `workbench skills sync`; do not claim the skills are available.
+The project root is the nearest directory at or above the working directory
+that contains `.speed/`. In a git checkout, `git rev-parse --show-toplevel`
+prints that same path. Start there and run the helper through an explicit
+interpreter:
 
-```text
-skill: workbench-health
-status: <healthy|unhealthy>
-message: <readiness summary>
-catalog_version: <installed-catalog-version>
-surface: <claude_code|codex|copilot|other>
-skills: <installed Workbench skill names>
-issue: <missing or modified projection; present only when unhealthy>
+```bash
+cd "$(git rev-parse --show-toplevel)"
+python3 .claude/skills/workbench-health/scripts/health.py --project-root . --json
 ```
+
+Projection copies file bytes and not the executable bit, so the helper runs as
+an argument to an interpreter rather than as a command of its own. Where a
+project pins its own interpreter, use that path (`.venv/bin/python3`) instead
+of `python3`.
+
+The command above names the Claude Code projection root. Substitute the root
+this skill was projected into:
+
+| Harness | Helper path from the project root |
+|---|---|
+| Claude Code | `.claude/skills/workbench-health/scripts/health.py` |
+| Codex | `.agents/skills/workbench-health/scripts/health.py` |
+| GitHub Copilot | `.github/skills/workbench-health/scripts/health.py` |
+
+Surface detection needs no argument: the helper reads its own location. Pass
+`--surface claude|codex|copilot` only to check a harness other than the one it
+was projected into.
+
+## Report the result
+
+`--json` prints the structured result. Exit status 1 means the projection is
+unhealthy, not that the helper failed.
+
+```json
+{
+  "skill": "workbench-health",
+  "status": "unhealthy",
+  "message": "Workbench skills are not ready to use.",
+  "catalog_version": "0.1.0",
+  "surface": "claude_code",
+  "skills": ["workbench-health"],
+  "issues": ["workbench-health: modified SKILL.md"],
+  "remediation": ["Review or back up local edits, then run `workbench skills sync --surface claude_code --force`."]
+}
+```
+
+Pass `status` and `message` through as written. A `healthy` result means the
+Workbench skills were imported successfully and are ready to use. On
+`unhealthy`, list every entry in `issues`, quote every command in
+`remediation`, and do not claim the skills are available.
+
+Repairs are issue-specific, which is why they come from the helper rather than
+from this file: a locally edited projection needs `--force`, a broken manifest
+has to be restored before any sync can help, and an unsupported harness needs
+`workbench init --harness` first. Never substitute a repair of your own. When
+the user wants the state of every managed projection rather than this project's
+readiness, point them at `workbench skills doctor`.
 
 ## Safety
 
-- Require no additional permission. Read only `.speed/skills/manifest.json` and
-  the projected skill directory for the selected surface.
-- Write no file and touch no module state.
+- No additional permission is required. The helper reads
+  `.speed/skills/manifest.json` and the projected skill directory for the
+  selected surface, refusing symlinks and any path that resolves outside the
+  project.
+- It writes no file and touches no module state.
 - If the helper cannot run, report the failure. Do not fabricate a healthy
   result.

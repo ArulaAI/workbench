@@ -73,3 +73,70 @@ def test_dest_dir_resolves_a_legal_name_under_the_surface_root(tmp_path):
     assert dest_dir(SURFACES[0], "workbench-health", tmp_path) == (
         tmp_path / ".claude" / "skills" / "workbench-health"
     )
+
+
+# ── Bounded writes: a marker must be a real directory inside the project ───
+
+
+def test_symlinked_marker_is_not_a_detected_surface(tmp_path):
+    """A symlinked .claude would let sync write wherever the link points."""
+    project = tmp_path / "proj"
+    project.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (project / ".claude").symlink_to(outside, target_is_directory=True)
+
+    assert detect_surfaces(project) == []
+
+
+def test_marker_reached_through_a_symlinked_parent_is_not_detected(tmp_path):
+    project = tmp_path / "proj"
+    project.mkdir()
+    outside = tmp_path / "outside"
+    (outside / "skills").mkdir(parents=True)
+    (project / ".github").symlink_to(outside, target_is_directory=True)
+
+    assert detect_surfaces(project) == []
+
+
+def test_marker_symlinked_within_the_project_is_still_refused(tmp_path):
+    """Even an inward link is refused: the rule stays simple and checkable."""
+    project = tmp_path / "proj"
+    (project / "real").mkdir(parents=True)
+    (project / ".claude").symlink_to(project / "real", target_is_directory=True)
+
+    assert detect_surfaces(project) == []
+
+
+def test_dest_dir_refuses_a_projection_root_that_leaves_the_project(tmp_path):
+    project = tmp_path / "proj"
+    project.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (project / ".claude").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="outside the project"):
+        dest_dir(SURFACES[0], "example-skill", project)
+
+
+def test_dest_dir_refuses_a_symlinked_skills_root(tmp_path):
+    project = tmp_path / "proj"
+    (project / ".claude").mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (project / ".claude" / "skills").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="outside the project"):
+        dest_dir(SURFACES[0], "example-skill", project)
+
+
+def test_dest_dir_accepts_a_project_reached_through_a_symlinked_parent(tmp_path):
+    """A project checked out under a symlinked path is ordinary, not an escape."""
+    real = tmp_path / "real-project"
+    (real / ".claude").mkdir(parents=True)
+    link = tmp_path / "via-link"
+    link.symlink_to(real, target_is_directory=True)
+
+    assert dest_dir(SURFACES[0], "example-skill", link) == (
+        link / ".claude" / "skills" / "example-skill"
+    )

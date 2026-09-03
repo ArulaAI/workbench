@@ -7,8 +7,15 @@ Deterministic: identical inputs produce byte-identical output.
 from __future__ import annotations
 
 from skills.catalog import SkillPackage
-from skills.frontmatter import inject
+from skills.frontmatter import MANAGED_PREFIX, inject
 from skills.targets import Surface
+
+# Provenance keys stamped into every projected SKILL.md. The values are written
+# as raw, unquoted YAML scalars, so ``true`` reaches the harness as the boolean
+# true rather than the string "true"; validate reserves the MANAGED_PREFIX
+# namespace so a package can never declare these and lose them at projection.
+_PROVENANCE_MANAGED = f"{MANAGED_PREFIX}managed"
+_PROVENANCE_SOURCE = f"{MANAGED_PREFIX}source"
 
 
 def render(pkg: SkillPackage, surface: Surface, catalog_version: str) -> dict:
@@ -28,9 +35,9 @@ def render(pkg: SkillPackage, surface: Surface, catalog_version: str) -> dict:
     for rel, content in pkg.files.items():
         if rel != "SKILL.md":
             out[rel] = content
-    source = pkg.files.get("SKILL.md", b"").decode()
+    source = pkg.files.get("SKILL.md", b"").decode("utf-8")
     out["SKILL.md"] = inject(
         source,
-        {"x-workbench-managed": "true", "x-workbench-source": pkg.name},
-    ).encode()
+        {_PROVENANCE_MANAGED: "true", _PROVENANCE_SOURCE: pkg.name},
+    ).encode("utf-8")
     return out

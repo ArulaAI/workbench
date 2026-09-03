@@ -10,6 +10,12 @@ CONFLICTED = "conflicted"
 ORPHANED = "orphaned"
 UNSUPPORTED = "unsupported"
 
+# The closed set, so a consumer can assert it handles every member instead of
+# discovering a gap at runtime. doctor validates its catalog against this.
+STATES = frozenset(
+    {ABSENT, CURRENT, STALE, CONFLICTED, ORPHANED, UNSUPPORTED}
+)
+
 # A legal skill name is also the only legal path segment for a projection
 # directory. Keeping the pattern here lets both the package contract and the
 # path builder enforce the same rule without importing each other.

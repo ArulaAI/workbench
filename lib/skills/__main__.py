@@ -4,17 +4,26 @@ Exit codes:
   sync   -> 0 converged / 2 conflicts remain / 3 error
   status -> 0 all current / 1 drift or conflict present / 3 error
   doctor -> 0 no issues / 1 issues found / 3 error
+
+Usage and configuration errors are errors: they exit 3, never 1 or 2. argparse
+would spend its own 2 on a malformed command line, which `sync` has already
+promised means "conflicts remain", so a parser failure is remapped here.
+Set WORKBENCH_DEBUG=1 to get the traceback behind an error message.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+import traceback
 from dataclasses import asdict
 
 from skills import CURRENT, CONFLICTED, UNSUPPORTED
 from skills.doctor import diagnose
 from skills.sync import sync, status
+
+ERROR = 3
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -78,9 +87,47 @@ def _print_doctor(result) -> None:
         print(f"    repair: {item['repair']}")
 
 
+def _parse(argv):
+    """Parse argv, translating argparse's own exit statuses into ours.
+
+    Returns the namespace, or an int for a caller that should stop now: 0 when
+    argparse already answered (`--help`), ERROR for a bad command line.
+    """
+    try:
+        return _build_parser().parse_args(argv)
+    except SystemExit as exc:
+        return 0 if exc.code in (None, 0) else ERROR
+
+
+def _report_error(exc, *, as_json) -> int:
+    """One failure, reported once per requested format, with a way to get more.
+
+    The stderr line is what `speed init` shows a human and what a shell caller
+    reads. The stdout object is what `--json` consumers parse; they get invalid
+    JSON, or nothing at all, if the only report is prose on stderr.
+    """
+    if os.environ.get("WORKBENCH_DEBUG"):
+        traceback.print_exc(file=sys.stderr)
+    kind = type(exc).__name__
+    print(f"error: {kind}: {exc}", file=sys.stderr)
+    if as_json:
+        print(
+            json.dumps(
+                {
+                    "status": "error",
+                    "error": {"type": kind, "message": str(exc)},
+                },
+                indent=2,
+            )
+        )
+    return ERROR
+
+
 def main(argv=None) -> int:
     argv = sys.argv[1:] if argv is None else argv
-    args = _build_parser().parse_args(argv)
+    args = _parse(argv)
+    if isinstance(args, int):
+        return args
 
     try:
         if args.cmd == "sync":
@@ -105,9 +152,8 @@ def main(argv=None) -> int:
                 args.catalog_version,
                 only_surface=args.surface,
             )
-    except Exception as exc:  # config / catalog error
-        print(f"error: {exc}", file=sys.stderr)
-        return 3
+    except Exception as exc:  # config / catalog / manifest error
+        return _report_error(exc, as_json=args.json)
 
     if args.cmd == "doctor":
         result = _doctor_result(args.catalog_version, diagnostics)

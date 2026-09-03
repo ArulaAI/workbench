@@ -1,6 +1,24 @@
 #!/usr/bin/env bash
 # project.sh — Project lifecycle commands (init, validate, clean, new)
 
+# Importing the built-in catalog is part of the documented init contract, and
+# the catalog ships with the installation rather than with the project. A
+# missing one is therefore a broken install, not a project that opted out, and
+# skipping the step silently produced a project that reported success while no
+# skill was ever imported and no manifest was ever written.
+#
+# Init checks this before it touches anything, next to the --harness check, for
+# the same reason: a later abort would leave a half-scaffolded uncommitted
+# project behind, since the initial commit runs after projection. Projection
+# outcomes stay non-fatal per the RFC; a missing catalog is a precondition, not
+# an outcome.
+_init_require_skill_catalog() {
+    [[ -d "${SPEED_DIR}/skills" ]] && return 0
+    log_error "Built-in skill catalog not found: ${SPEED_DIR}/skills"
+    log_error "This SPEED installation is incomplete. Reinstall SPEED or run: speed self-update"
+    return 3
+}
+
 cmd_init() {
     local harness=""
     local skill_surface=""
@@ -33,6 +51,8 @@ cmd_init() {
             return 3
             ;;
     esac
+
+    _init_require_skill_catalog || return 3
 
     log_header "Initializing SPEED"
 
@@ -101,39 +121,38 @@ EOF
 
     # 8. Project the built-in catalog into one selected harness, or all detected
     # harnesses when --harness is omitted. Explicit selection creates its root.
-    if [[ -d "${SPEED_DIR}/skills" ]]; then
-        local sync_args=(sync)
-        if [[ -n "$skill_surface" ]]; then
-            sync_args+=(--surface "$skill_surface")
-        fi
-        local sync_out sync_err
-        # `set -e` aborts the whole script on a bare failing assignment, which
-        # would skip every branch below plus the initial commit. `|| status=$?`
-        # keeps the nonzero result reportable.
-        local sync_status=0
-        sync_err=$(mktemp)
-        sync_out=$(cmd_skills "${sync_args[@]}" --json 2>"$sync_err") || sync_status=$?
-
-        case "$sync_status" in
-            0)
-                if printf '%s' "$sync_out" | jq -e 'length > 0 and all(.[]; .state == "unsupported")' >/dev/null 2>&1; then
-                    log_info "No supported agent skill surface found — run: ${COLOR_STEP}workbench skills sync${RESET} once the project is open in an agent"
-                elif [[ -n "$harness" ]]; then
-                    log_success "Skills projected for ${harness}"
-                else
-                    log_success "Skill projection completed for detected harnesses"
-                fi
-                ;;
-            2)
-                log_info "Skill projection preserved local edits — run: ${COLOR_STEP}workbench skills doctor${RESET}"
-                ;;
-            *)
-                log_warn "Skill projection failed: $(tr '\n' ' ' < "$sync_err")"
-                log_info "Run: ${COLOR_STEP}workbench skills doctor${RESET}"
-                ;;
-        esac
-        rm -f "$sync_err"
+    # The catalog's presence was established before any scaffolding ran.
+    local sync_args=(sync)
+    if [[ -n "$skill_surface" ]]; then
+        sync_args+=(--surface "$skill_surface")
     fi
+    local sync_out sync_err
+    # `set -e` aborts the whole script on a bare failing assignment, which
+    # would skip every branch below plus the initial commit. `|| status=$?`
+    # keeps the nonzero result reportable.
+    local sync_status=0
+    sync_err=$(mktemp)
+    sync_out=$(cmd_skills "${sync_args[@]}" --json 2>"$sync_err") || sync_status=$?
+
+    case "$sync_status" in
+        0)
+            if printf '%s' "$sync_out" | jq -e 'length > 0 and all(.[]; .state == "unsupported")' >/dev/null 2>&1; then
+                log_info "No supported agent skill surface found — run: ${COLOR_STEP}workbench skills sync${RESET} once the project is open in an agent"
+            elif [[ -n "$harness" ]]; then
+                log_success "Skills projected for ${harness}"
+            else
+                log_success "Skill projection completed for detected harnesses"
+            fi
+            ;;
+        2)
+            log_info "Skill projection preserved local edits — run: ${COLOR_STEP}workbench skills doctor${RESET}"
+            ;;
+        *)
+            log_warn "Skill projection failed: $(tr '\n' ' ' < "$sync_err")"
+            log_info "Run: ${COLOR_STEP}workbench skills doctor${RESET}"
+            ;;
+    esac
+    rm -f "$sync_err"
 
     # 9. Initial commit
     (cd "$PROJECT_ROOT" && git add -A && git commit -m "speed init: project scaffold" 2>/dev/null) || true

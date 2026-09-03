@@ -1,6 +1,12 @@
 import importlib.util
+import json
+import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 from skills.catalog import load_package
 from skills.project import render
@@ -167,3 +173,239 @@ def test_projected_helper_infers_its_own_surface(tmp_path):
 
     assert result["surface"] == "codex"
     assert result["status"] == "healthy", result["issues"]
+
+
+# --- Review fixes: manifest validation, path containment, doc truth ---------
+
+
+def _write_manifest(project, data):
+    path = project / ".speed" / "skills" / "manifest.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2) + "\n")
+    return path
+
+
+@pytest.mark.parametrize(
+    ("manifest", "expected"),
+    [
+        ({"surfaces": []}, "skill manifest surfaces must be an object"),
+        (
+            {"surfaces": {"claude_code": []}},
+            "manifest entry for surface 'claude_code' must be an object",
+        ),
+        (
+            {"surfaces": {"claude_code": {"skills": ""}}},
+            "manifest skills for surface 'claude_code' must be an object",
+        ),
+        (
+            {"surfaces": {"claude_code": {"skills": {"workbench-health": []}}}},
+            "workbench-health: manifest entry must be an object",
+        ),
+        (
+            {
+                "surfaces": {
+                    "claude_code": {"skills": {"workbench-health": {"files": 0}}}
+                }
+            },
+            "workbench-health: manifest files must be an object",
+        ),
+    ],
+)
+def test_helper_reports_falsey_non_object_manifest_nodes(
+    tmp_project, manifest, expected
+):
+    """A falsey wrong-type node must be reported, not crash the type check."""
+    _write_manifest(tmp_project, manifest)
+
+    result = _load_helper().build_result(tmp_project, "claude_code")
+
+    assert result["status"] == "unhealthy"
+    assert any(expected in issue for issue in result["issues"]), result["issues"]
+
+
+def test_helper_rejects_unknown_harness(tmp_project):
+    """An unsupported surface has no canonical root, so nothing may be resolved."""
+    _sync_project(tmp_project)
+
+    result = _load_helper().build_result(tmp_project, "weird")
+
+    assert result["status"] == "unhealthy"
+    assert any("not a supported agent harness" in i for i in result["issues"])
+    assert any("workbench init --harness" in f for f in result["remediation"])
+
+
+def test_helper_ignores_manifest_supplied_root(tmp_project):
+    """Only the canonical root is resolved; a manifest root could point anywhere."""
+    _sync_project(tmp_project)
+    path = tmp_project / ".speed" / "skills" / "manifest.json"
+    data = json.loads(path.read_text())
+    data["surfaces"]["claude_code"]["root"] = "../../etc"
+    path.write_text(json.dumps(data, indent=2))
+
+    result = _load_helper().build_result(tmp_project, "claude_code")
+
+    assert result["status"] == "healthy", result["issues"]
+
+
+def test_helper_rejects_unsafe_skill_name(tmp_project):
+    """A manifest key that is not a legal skill name cannot name a projection."""
+    _write_manifest(
+        tmp_project,
+        {
+            "surfaces": {
+                "claude_code": {
+                    "skills": {"../../x": {"files": {"a.md": "sha256:0"}}}
+                }
+            }
+        },
+    )
+
+    result = _load_helper().build_result(tmp_project, "claude_code")
+
+    assert result["status"] == "unhealthy"
+    assert any("unsafe skill name" in i for i in result["issues"]), result["issues"]
+
+
+def test_helper_rejects_symlinked_projection_file(tmp_project):
+    """A link out of the projection hashes its target, so the read must be refused."""
+    _sync_project(tmp_project)
+    projected = (
+        tmp_project / ".claude" / "skills" / "workbench-health" / "SKILL.md"
+    )
+    outside = tmp_project.parent / "outside-SKILL.md"
+    outside.write_bytes(projected.read_bytes())
+    projected.unlink()
+    projected.symlink_to(outside)
+
+    result = _load_helper().build_result(tmp_project, "claude_code")
+
+    assert result["status"] == "unhealthy", result
+    assert any(
+        "symlink" in issue and "SKILL.md" in issue for issue in result["issues"]
+    ), result["issues"]
+
+
+def test_helper_rejects_symlinked_projection_directory(tmp_project):
+    """The whole projection directory can be relinked just as easily."""
+    _sync_project(tmp_project)
+    projected = tmp_project / ".claude" / "skills" / "workbench-health"
+    moved = tmp_project.parent / "outside-projection"
+    projected.rename(moved)
+    projected.symlink_to(moved, target_is_directory=True)
+
+    result = _load_helper().build_result(tmp_project, "claude_code")
+
+    assert result["status"] == "unhealthy", result
+    assert any(
+        "projection directory is a symlink" in issue for issue in result["issues"]
+    ), result["issues"]
+
+
+def test_healthy_result_carries_no_remediation(tmp_project):
+    _sync_project(tmp_project)
+
+    result = _load_helper().build_result(tmp_project, "claude_code")
+
+    assert result["remediation"] == []
+
+
+def test_remediation_is_issue_specific(tmp_project):
+    """One command cannot repair every state; each issue names its own fix."""
+    helper = _load_helper()
+    missing = helper.build_result(tmp_project, "claude_code")
+    assert missing["remediation"] == ["Run `workbench skills sync`."]
+
+    _sync_project(tmp_project)
+    projected = (
+        tmp_project / ".claude" / "skills" / "workbench-health" / "SKILL.md"
+    )
+    projected.write_text(projected.read_text() + "\nuser edit\n")
+    modified = helper.build_result(tmp_project, "claude_code")
+    assert modified["remediation"] == [
+        "Review or back up local edits, then run `workbench skills sync --surface claude_code --force`."
+    ]
+
+
+def test_unreadable_manifest_does_not_recommend_sync(tmp_project):
+    """Sync reads the same broken file, so it cannot be the advertised repair."""
+    _write_manifest(tmp_project, {})
+    (tmp_project / ".speed" / "skills" / "manifest.json").write_text("{not json")
+
+    result = _load_helper().build_result(tmp_project, "claude_code")
+
+    assert result["status"] == "unhealthy"
+    assert result["remediation"] == [
+        "Restore `.speed/skills/manifest.json` from version control, then run "
+        "`workbench skills sync`."
+    ]
+
+
+SKILL_MD = REPO / "skills" / "workbench-health" / "SKILL.md"
+
+
+def _documented_invocation():
+    """The helper command line from the first shell block in SKILL.md."""
+    block = re.search(r"```(?:bash|sh|console)\n(.*?)```", SKILL_MD.read_text(), re.S)
+    assert block, "SKILL.md documents no shell block"
+    for line in block.group(1).splitlines():
+        if "scripts/health.py" in line:
+            return line.strip()
+    raise AssertionError("SKILL.md shell block does not invoke the helper")
+
+
+@pytest.mark.skipif(
+    shutil.which("python3") is None, reason="documented command needs python3"
+)
+def test_documented_invocation_runs_as_written(tmp_project):
+    """Step 1 must be executable without the agent inventing path resolution."""
+    _sync_project(tmp_project)
+    command = _documented_invocation()
+
+    assert command.startswith("python3 "), command
+    assert "<" not in command, f"unresolved placeholder: {command}"
+    assert "--json" in command, command
+
+    completed = subprocess.run(
+        command, shell=True, cwd=tmp_project, capture_output=True, text=True
+    )
+
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+    assert json.loads(completed.stdout)["status"] == "healthy"
+
+
+def test_documented_result_block_matches_real_output(tmp_project):
+    """The example result is the helper's actual shape, keys and repair text."""
+    _sync_project(tmp_project)
+    projected = (
+        tmp_project / ".claude" / "skills" / "workbench-health" / "SKILL.md"
+    )
+    projected.write_text(projected.read_text() + "\nuser edit\n")
+    result = _load_helper().build_result(tmp_project, "claude_code")
+
+    block = re.search(r"```json\n(.*?)```", SKILL_MD.read_text(), re.S)
+    assert block, "SKILL.md documents no result block"
+    documented = json.loads(block.group(1))
+
+    assert set(documented) == set(result)
+    assert documented["status"] == result["status"]
+    assert documented["message"] == result["message"]
+    assert documented["issues"] == result["issues"]
+    assert documented["remediation"] == result["remediation"]
+
+
+def test_helper_names_an_in_project_symlink_as_a_symlink(tmp_project):
+    """A link that stays inside the repo is still a link, and says so."""
+    _sync_project(tmp_project)
+    projected = (
+        tmp_project / ".claude" / "skills" / "workbench-health" / "SKILL.md"
+    )
+    twin = tmp_project / "twin.md"
+    twin.write_bytes(projected.read_bytes())
+    projected.unlink()
+    projected.symlink_to(twin)
+
+    result = _load_helper().build_result(tmp_project, "claude_code")
+
+    assert result["status"] == "unhealthy"
+    assert "workbench-health: symlink at SKILL.md" in result["issues"]
+    assert not any("escapes" in issue for issue in result["issues"])

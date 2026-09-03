@@ -1,5 +1,6 @@
 import json
 import shutil
+from pathlib import Path
 
 import pytest
 
@@ -396,3 +397,142 @@ def test_structured_front_matter_survives_projection(tmp_catalog, tmp_project):
     assert meta["description"].strip() == "Use when: the user asks about charts."
     assert meta["x-workbench-managed"] is True  # unquoted true, as YAML reads it
     assert [r.state for r in status(tmp_project, skills_dir, "0.3.0")] == [CURRENT]
+
+
+# ── Replacing a projection must be all-or-nothing ──────────────────────────
+
+
+def _tree(root):
+    return {
+        p.relative_to(root).as_posix(): p.read_bytes()
+        for p in sorted(root.rglob("*"))
+        if p.is_file()
+    }
+
+
+def test_a_failed_write_leaves_the_previous_projection_intact(
+    tmp_catalog, tmp_project, monkeypatch
+):
+    """An update that dies half-way must not strand a partial skill on disk."""
+    skills_dir = tmp_catalog()
+    _run(tmp_project, skills_dir, version="0.3.0")
+    installed = tmp_project / ".claude" / "skills" / "example-skill"
+    before = _tree(installed)
+    _edit_catalog(skills_dir)
+
+    real_write = Path.write_bytes
+    calls = {"n": 0}
+
+    def flaky(self, data):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise OSError("no space left on device")
+        return real_write(self, data)
+
+    monkeypatch.setattr(Path, "write_bytes", flaky)
+    with pytest.raises(OSError):
+        sync(tmp_project, skills_dir, "0.4.0")
+    monkeypatch.undo()
+
+    assert _tree(installed) == before
+    assert [r.state for r in status(tmp_project, skills_dir, "0.4.0")] == [STALE]
+    assert [p.name for p in installed.parent.iterdir()] == ["example-skill"]
+
+
+def test_a_replaced_projection_drops_files_the_catalog_no_longer_ships(
+    tmp_catalog, tmp_project
+):
+    skills_dir = tmp_catalog()
+    (skills_dir / "example-skill" / "references" / "old.md").write_text(
+        "retired\n", encoding="utf-8"
+    )
+    _run(tmp_project, skills_dir, version="0.3.0")
+    installed = tmp_project / ".claude" / "skills" / "example-skill"
+    assert (installed / "references" / "old.md").is_file()
+
+    (skills_dir / "example-skill" / "references" / "old.md").unlink()
+    _run(tmp_project, skills_dir, version="0.4.0")
+
+    assert not (installed / "references" / "old.md").exists()
+    assert (installed / "SKILL.md").is_file()
+
+
+# ── A projection path can already hold something SPEED did not write ───────
+
+
+def test_a_file_where_a_skill_belongs_is_a_conflict_not_an_overwrite(
+    tmp_catalog, tmp_project
+):
+    skills_dir = tmp_catalog()
+    occupied = tmp_project / ".claude" / "skills" / "example-skill"
+    occupied.parent.mkdir(parents=True)
+    occupied.write_text("someone else's file\n", encoding="utf-8")
+
+    rows = _run(tmp_project, skills_dir)
+
+    assert rows["example-skill@claude_code"].state == CONFLICTED
+    assert occupied.read_text(encoding="utf-8") == "someone else's file\n"
+
+
+def test_force_replaces_a_file_occupying_the_projection_path(
+    tmp_catalog, tmp_project
+):
+    skills_dir = tmp_catalog()
+    occupied = tmp_project / ".claude" / "skills" / "example-skill"
+    occupied.parent.mkdir(parents=True)
+    occupied.write_text("someone else's file\n", encoding="utf-8")
+
+    _run(tmp_project, skills_dir, force=True)
+
+    assert (occupied / "SKILL.md").is_file()
+
+
+def test_a_symlinked_projection_is_a_conflict(tmp_catalog, tmp_project, tmp_path):
+    """Following the link would write outside the project's harness root."""
+    skills_dir = tmp_catalog()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    dest = tmp_project / ".claude" / "skills" / "example-skill"
+    dest.parent.mkdir(parents=True)
+    dest.symlink_to(outside, target_is_directory=True)
+
+    rows = _run(tmp_project, skills_dir)
+
+    assert rows["example-skill@claude_code"].state == CONFLICTED
+    assert list(outside.iterdir()) == []
+
+
+# ── The manifest has to be able to converge ────────────────────────────────
+
+
+def _empty_catalog(tmp_path):
+    empty = tmp_path / "empty-catalog"
+    empty.mkdir()
+    return empty
+
+
+def test_a_manifest_entry_with_no_projection_left_is_dropped(
+    tmp_catalog, tmp_project, tmp_path
+):
+    """Skill gone from the catalog, projection already deleted: the record must go."""
+    skills_dir = tmp_catalog()
+    _run(tmp_project, skills_dir)
+    shutil.rmtree(tmp_project / ".claude" / "skills" / "example-skill")
+
+    rows = _run(tmp_project, _empty_catalog(tmp_path))
+
+    assert rows["example-skill@claude_code"].action == "removed"
+    assert load_manifest(tmp_project)["surfaces"]["claude_code"]["skills"] == {}
+
+
+def test_the_converged_manifest_stays_quiet_on_the_next_sync(
+    tmp_catalog, tmp_project, tmp_path
+):
+    skills_dir = tmp_catalog()
+    empty = _empty_catalog(tmp_path)
+    _run(tmp_project, skills_dir)
+    shutil.rmtree(tmp_project / ".claude" / "skills" / "example-skill")
+    _run(tmp_project, empty)
+
+    assert _run(tmp_project, empty) == {}
+    assert status(tmp_project, empty, "0.3.0") == []

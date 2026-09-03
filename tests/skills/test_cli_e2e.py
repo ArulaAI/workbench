@@ -1,3 +1,4 @@
+import importlib
 import json
 import os
 import subprocess
@@ -31,7 +32,32 @@ def _skills(project, *args):
     )
 
 
+# The entrypoint preflights its interpreter for the packages context extraction
+# needs. None of them belong to the skill system, but the check runs before any
+# skill code, so an interpreter without them turns every lifecycle test into a
+# failure that names `sklearn`. Report that as a skip carrying the fix, rather
+# than as a fault in the code under test.
+_PREFLIGHT_MODULES = ("tree_sitter", "sklearn", "networkx")
+
+
+def _missing_preflight_modules():
+    missing = []
+    for name in _PREFLIGHT_MODULES:
+        try:
+            importlib.import_module(name)
+        except ImportError:
+            missing.append(name)
+    return missing
+
+
 def _workbench(project, *args):
+    missing = _missing_preflight_modules()
+    if missing:
+        pytest.skip(
+            f"{PY} cannot import {', '.join(missing)}, which the entrypoint "
+            "preflight requires. Build a venv from requirements.txt and run "
+            "PYTHONPATH=lib .venv/bin/python3 -m pytest tests/skills/"
+        )
     env = dict(
         os.environ,
         SPEED_PROJECT_ROOT=str(project),
@@ -84,7 +110,9 @@ def test_end_to_end_projects_and_verifies_workbench_health(tmp_path):
     doctor = _skills(project, "doctor")
     assert doctor.returncode == 1
     assert "[conflicted]" in doctor.stdout
-    assert "workbench skills sync --force" in doctor.stdout
+    # Scoped to the conflicting surface: an unscoped --force would also
+    # overwrite conflicts on harnesses this finding says nothing about.
+    assert "workbench skills sync --surface claude_code --force" in doctor.stdout
 
 
 def test_workbench_doctor_shell_route_forwards_json(tmp_path):
@@ -173,3 +201,24 @@ def test_workbench_init_rejects_unknown_harness_before_writing(tmp_path):
     assert initialized.returncode == 3
     assert "expected: claude, codex, copilot" in initialized.stderr
     assert not (project / ".git").exists()
+
+
+def test_a_leading_global_flag_is_not_taken_as_the_command(tmp_path):
+    """`workbench --json skills status` used to die with "Unknown command".
+
+    main() read $1 as the command before the global-flag loop ran, so every
+    global flag in the leading position became a command name. The trailing
+    form worked, which is why it went unnoticed.
+    """
+    project = tmp_path / "proj"
+    (project / ".claude").mkdir(parents=True)
+    _workbench(project, "skills", "sync")
+
+    leading = _workbench(project, "--json", "skills", "status")
+
+    assert "Unknown command" not in leading.stderr
+    rows = json.loads(leading.stdout)
+    assert [row["state"] for row in rows] == ["current"]
+
+    trailing = _workbench(project, "skills", "status", "--json")
+    assert json.loads(trailing.stdout) == rows

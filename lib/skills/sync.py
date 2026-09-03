@@ -1,12 +1,16 @@
 """Sync/status orchestration: detect -> classify -> apply -> rewrite manifest.
 
-This is the only module that writes to disk. Rendering stays pure in project.py;
-classification stays pure in manifest.py.
+Every filesystem change to a projection originates here. The manifest and the
+event log are written by manifest.py and events.py, which this module calls and
+nothing else does. Rendering stays pure in project.py; classification stays pure
+in manifest.py.
 """
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -30,6 +34,58 @@ from skills.manifest import (
     save_manifest,
     classify_skill,
 )
+
+
+def _remove_path(path: Path) -> None:
+    """Delete whatever occupies a projection path: link, file, or directory."""
+    if path.is_symlink() or path.is_file():
+        path.unlink()
+    elif path.is_dir():
+        shutil.rmtree(path)
+
+
+def _write_projection(dest: Path, rendered: dict) -> None:
+    """Swap a complete projection into place, never a half-written one.
+
+    Files land in a staging directory beside the destination first. Only once
+    every byte is written does the old projection move aside and the staged one
+    take its name, so a failure part-way through leaves the skill exactly as it
+    was instead of stranding a skill with, say, a SKILL.md and no scripts.
+
+    Renaming also handles the cases where the path holds something else: a
+    regular file or a symlink is moved aside untouched, and nothing is ever
+    written through a link.
+    """
+    parent = dest.parent
+    parent.mkdir(parents=True, exist_ok=True)
+    stamp = uuid.uuid4().hex[:8]
+    staging = parent / f".{dest.name}.new-{stamp}"
+    replaced = parent / f".{dest.name}.old-{stamp}"
+    try:
+        staging.mkdir()
+        for rel, content in rendered.items():
+            target = staging / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(content)
+        if dest.is_symlink() or dest.exists():
+            os.rename(dest, replaced)
+        try:
+            os.rename(staging, dest)
+        except BaseException:
+            if replaced.is_symlink() or replaced.exists():
+                os.rename(replaced, dest)
+            raise
+    finally:
+        if staging.is_symlink() or staging.exists():
+            _remove_path(staging)
+        # The superseded copy goes only once something occupies the destination
+        # again, whether that is the new projection or the restored old one. If
+        # both renames failed, it is the sole surviving copy and is left in
+        # place under its staging name rather than deleted.
+        if (replaced.is_symlink() or replaced.exists()) and (
+            dest.is_symlink() or dest.exists()
+        ):
+            _remove_path(replaced)
 
 
 @dataclass
@@ -66,8 +122,10 @@ def _classify_all(project_root, skills_dir, catalog_version, surfaces):
                 # projection to reconcile. Skipping keeps dest_dir out of it.
                 continue
             dest = dest_dir(surface, name, project_root)
-            if not dest.exists():
-                continue
+            # An entry whose projection is already gone still gets a row. Left
+            # out, a skill that has both left the catalog and lost its files
+            # would keep its manifest record for good, and the manifest would
+            # never converge on what is actually installed.
             state = classify_skill(None, hash_disk(dest), entry)
             rows.append(SkillState(surface.id, name, state))
             plans.append((surface, name, state, None, dest, None))
@@ -165,20 +223,15 @@ def sync(project_root, skills_dir, catalog_version, *, force=False, only_surface
             )
             action = None
             if remove:
-                if dest.exists():
-                    shutil.rmtree(dest)
+                if dest.is_symlink() or dest.exists():
+                    _remove_path(dest)
                 surf["skills"].pop(name, None)
                 action = "removed"
                 row.state = ABSENT
                 version = None
                 mutated = True
             elif write:
-                if dest.exists():
-                    shutil.rmtree(dest)
-                for rel, content in rendered.items():
-                    target = dest / rel
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    target.write_bytes(content)
+                _write_projection(dest, rendered)
                 surf["skills"][name] = {
                     "files": {
                         rel: hash_bytes(content) for rel, content in rendered.items()
@@ -191,6 +244,10 @@ def sync(project_root, skills_dir, catalog_version, *, force=False, only_surface
                 mutated = True
             elif state == CONFLICTED:
                 action = "conflict"
+                # Nothing was installed, so the catalog's version has no place
+                # in the record: a reader must not see a version bump that
+                # never happened.
+                version = None
 
             if action is not None:
                 row.action = action

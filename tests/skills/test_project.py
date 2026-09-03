@@ -1,3 +1,5 @@
+import pytest
+
 from skills.catalog import load_package
 from skills.targets import SURFACES
 from skills.project import render
@@ -31,3 +33,30 @@ def test_render_ignores_the_install_version(tmp_catalog):
     assert render(pkg, SURFACES[0], "0.3.0") == render(pkg, SURFACES[0], "9.9.9")
     meta, _ = parse(render(pkg, SURFACES[0], "0.3.0")["SKILL.md"].decode())
     assert "x-workbench-catalog-version" not in meta
+
+
+def test_provenance_reaches_the_harness_as_a_yaml_boolean(tmp_catalog):
+    """inject writes raw lines, so an unquoted `true` is already a YAML boolean."""
+    yaml = pytest.importorskip("yaml")
+    skills_dir = tmp_catalog()
+    pkg = load_package(skills_dir / "example-skill")
+
+    text = render(pkg, SURFACES[0], "0.3.0")["SKILL.md"].decode("utf-8")
+
+    assert "x-workbench-managed: true\n" in text
+    meta = yaml.safe_load(text.split("---\n")[1])
+    assert meta["x-workbench-managed"] is True
+    assert meta["x-workbench-source"] == "example-skill"
+
+
+def test_non_ascii_front_matter_survives_projection(tmp_catalog):
+    skills_dir = tmp_catalog()
+    (skills_dir / "example-skill" / "SKILL.md").write_text(
+        "---\nname: example-skill\ndescription: Prüfen Sie den Zustand\n---\n\n# ok\n",
+        encoding="utf-8",
+    )
+    pkg = load_package(skills_dir / "example-skill")
+
+    out = render(pkg, SURFACES[0], "0.3.0")["SKILL.md"].decode("utf-8")
+
+    assert "Prüfen Sie den Zustand" in out

@@ -248,10 +248,11 @@ speed_help() {
 # ── Main ─────────────────────────────────────────────────────────
 
 main() {
-    local command="${1:-help}"
-    shift || true
-
-    # ── Extract global flags before dispatching ─────────────────
+    # ── Extract global flags before selecting the command ───────
+    # The command used to be read from $1 before this loop ran, so a global
+    # flag in the leading position was taken as the command name and every
+    # `speed --json <cmd>` died with "Unknown command: --json". Scanning first
+    # means a flag is a flag wherever it appears.
     GLOBAL_FEATURE=""
     local args=()
     while [[ $# -gt 0 ]]; do
@@ -265,6 +266,9 @@ main() {
         esac
     done
     set -- "${args[@]+"${args[@]}"}"
+
+    local command="${1:-help}"
+    shift || true
 
     # Track current command for roster and emit heartbeat
     _SPEED_CURRENT_COMMAND="$command"

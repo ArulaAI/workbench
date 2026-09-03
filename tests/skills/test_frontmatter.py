@@ -85,3 +85,39 @@ def test_injected_front_matter_still_loads_as_yaml(source):
     loaded = yaml.safe_load(out.split("---\n")[1])
     assert loaded["name"] == "example-skill"
     assert loaded["x-workbench-source"] == "s"
+
+
+UNTERMINATED = """---
+name: example-skill
+description: someone deleted the closing fence
+
+# example-skill
+Body line.
+"""
+
+
+def test_parse_reports_an_unterminated_fence_instead_of_ignoring_it():
+    """An opened block that never closes is a syntax error, not 'no front matter'."""
+    with pytest.raises(ValueError, match="front matter"):
+        parse(UNTERMINATED)
+
+
+def test_inject_refuses_to_add_a_second_block_to_broken_front_matter():
+    with pytest.raises(ValueError, match="front matter"):
+        inject(UNTERMINATED, {"x-workbench-managed": "true"})
+
+
+def test_a_fence_that_is_only_a_body_horizontal_rule_is_not_front_matter():
+    """A rule further down the file must not be read as an opening fence."""
+    text = "# doc\n\n---\n\nmore body\n"
+    meta, body = parse(text)
+    assert meta == {}
+    assert body == text
+
+
+def test_a_duplicate_key_is_reported_not_silently_overwritten():
+    """Keeping the last value discards the first with nothing said about it."""
+    text = "---\nname: first\nname: second\ndescription: d\n---\n\nBody.\n"
+
+    with pytest.raises(ValueError, match="duplicate key 'name'"):
+        parse(text)

@@ -178,16 +178,26 @@ via `SPEED_PROJECT_ROOT`).
 
 ## Tests
 
-SPEED needs Python 3.11 or newer. Install the runtime and test dependencies, then
-run the Python suites from the repository root:
+SPEED needs Python 3.11 or newer. Build a virtual environment with both the
+runtime and the test dependencies, then run the Python suites from the
+repository root:
 
 ```bash
-python3 -m pip install -r requirements.txt -r requirements-dev.txt
-PYTHONPATH=lib python3 -m pytest tests/skills/
+uv venv --python 3.12 .venv && uv pip install -r requirements.txt -r requirements-dev.txt
+PYTHONPATH=lib .venv/bin/python3 -m pytest tests/skills/
 ```
 
-`PYTHONPATH=lib` puts the `skills` package on the import path; collection fails
-without it. Shell suites run on their own: `bash tests/test_multiplayer.sh`.
+Two parts of that command are load-bearing. `PYTHONPATH=lib` puts the `skills`
+package on the import path, and collection fails without it. Using the venv
+interpreter rather than a bare `python3` matters because the end-to-end tests run
+the real `workbench` entrypoint, which preflights its interpreter for
+`tree_sitter`, `sklearn`, and `networkx`. Those packages have nothing to do with
+the skill system, but the check runs first, so an interpreter missing them cannot
+reach any lifecycle code. The suite reports those tests as skips naming the fix
+rather than as failures, so a green run under a bare `python3` is not a complete
+run. Expect `227 passed` with the venv and `221 passed, 6 skipped` without it.
+
+Shell suites run on their own: `bash tests/test_multiplayer.sh`.
 
 ## Documentation
 

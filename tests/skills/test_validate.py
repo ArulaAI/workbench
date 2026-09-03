@@ -1,5 +1,9 @@
+import dataclasses
 from pathlib import Path
 
+import pytest
+
+from skills import validate
 from skills.catalog import SkillPackage
 from skills.validate import validate_package, validate_catalog
 
@@ -63,4 +67,96 @@ def test_escaping_symlink_flagged(tmp_path):
 
     violations = validate_package(pkg)
 
-    assert any("symlink escapes" in item.reason for item in violations)
+    assert any("symlink" in item.reason for item in violations)
+
+
+def test_symlink_inside_the_package_is_flagged_too(tmp_path):
+    """The contract bans links outright, so nothing has to resolve one to judge it."""
+    root = tmp_path / "example-skill"
+    (root / "references").mkdir(parents=True)
+    (root / "references" / "notes.md").write_text("notes\n")
+    (root / "alias.md").symlink_to(root / "references" / "notes.md")
+    pkg = _pkg()
+    pkg.root = root
+
+    violations = validate_package(pkg)
+
+    assert [item.path for item in violations] == ["alias.md"]
+
+
+def test_a_symlink_is_reported_once_even_when_the_reader_already_saw_it(tmp_path):
+    root = tmp_path / "example-skill"
+    root.mkdir()
+    (root / "alias.md").symlink_to(tmp_path / "outside.txt")
+    pkg = _pkg()
+    pkg.root = root
+    pkg.errors = [("alias.md", "package files must not be symlinks")]
+
+    violations = validate_package(pkg)
+
+    assert [item.path for item in violations] == ["alias.md"]
+
+
+def test_reader_errors_become_violations():
+    pkg = _pkg()
+    pkg.errors = [(None, "package directory must not be a symlink")]
+
+    violations = validate_package(pkg)
+
+    assert any("must not be a symlink" in item.reason for item in violations)
+
+
+def test_reserved_provenance_key_is_rejected():
+    """Projection sets x-workbench-*, so a package declaring one would lose it."""
+    violations = validate_package(
+        _pkg(
+            meta={
+                "name": "example-skill",
+                "description": "ok",
+                "x-workbench-managed": "false",
+            }
+        )
+    )
+
+    assert any("reserved front-matter key" in item.reason for item in violations)
+
+
+def test_unreadable_front_matter_is_not_also_reported_as_a_missing_description():
+    pkg = _pkg(meta={})
+    pkg.errors = [("SKILL.md", "malformed front matter: the opening '---' has no closing '---'")]
+
+    reasons = [item.reason for item in validate_package(pkg)]
+
+    assert reasons == ["malformed front matter: the opening '---' has no closing '---'"]
+
+
+def test_every_violation_carries_a_stable_code(tmp_path):
+    """Callers should match on a code, not on prose that is free to improve."""
+    pkg = SkillPackage(
+        name="Bad_Name",
+        root=tmp_path / "missing",
+        meta={"x-workbench-managed": "true"},
+        body="",
+        files={},
+    )
+
+    violations = validate_package(pkg)
+
+    codes = {item.code for item in violations}
+    assert validate.MISSING_SKILL_MD in codes
+    assert validate.INVALID_SKILL_NAME in codes
+    assert validate.RESERVED_KEY in codes
+    assert all(item.code for item in violations), "a violation with no code"
+
+
+def test_a_violation_is_immutable_and_allows_a_pathless_finding(tmp_path):
+    pkg = SkillPackage(
+        name="Bad_Name", root=tmp_path / "missing", meta={}, body="", files={}
+    )
+
+    violations = validate_package(pkg)
+    pathless = [item for item in violations if item.path is None]
+
+    assert pathless, "a package-level violation should carry no path"
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        pathless[0].reason = "rewritten"

@@ -264,3 +264,268 @@ rm -f "$sync_err"
     assert result.returncode == 0, result.stderr
     assert f"STATUS={rc}" in result.stdout
     assert "CONTINUED" in result.stdout
+
+
+# ── Shell wrapper contract ───────────────────────────────────────
+#
+# `cmd_init` and `cmd_skills` are sourced and called directly. Restating their
+# conditions in the test would prove nothing: the bugs below are all about what
+# the real scripts do with an argument or a missing directory.
+
+SKILLS_SH = REPO / "lib" / "cmd" / "skills.sh"
+
+_LOG_STUBS = """
+log_error()   { echo "ERROR: $*" >&2; }
+log_warn()    { echo "WARN: $*" >&2; }
+log_info()    { echo "INFO: $*" >&2; }
+log_success() { echo "OK: $*" >&2; }
+log_step()    { :; }
+log_header()  { :; }
+"""
+
+
+def _bash(script, env=None):
+    return subprocess.run(
+        ["bash", "-c", script],
+        capture_output=True,
+        text=True,
+        env=dict(os.environ, **(env or {})),
+    )
+
+
+def _q(value) -> str:
+    return "'" + str(value).replace("'", "'\\''") + "'"
+
+
+def _init_script(speed_dir, project_root, body="cmd_init") -> str:
+    return f"""
+set -euo pipefail
+{_LOG_STUBS}
+git_ensure_repo() {{ echo "SCAFFOLDED"; }}
+SPEED_DIR={_q(speed_dir)}
+PROJECT_ROOT={_q(project_root)}
+source {_q(PROJECT_SH)}
+{body}
+"""
+
+
+def test_init_reports_a_missing_catalog_as_an_installation_error(tmp_path):
+    """A catalog directory ships with the install, so its absence is a broken
+    install, not a project that opted out of skills."""
+    broken_install = tmp_path / "speed-install"
+    broken_install.mkdir()
+    project = tmp_path / "proj"
+    project.mkdir()
+
+    result = _bash(_init_script(broken_install, project))
+
+    assert result.returncode == 3, result.stdout + result.stderr
+    assert "SCAFFOLDED" not in result.stdout
+    assert str(broken_install / "skills") in result.stderr
+    assert sorted(p.name for p in project.iterdir()) == []
+
+
+def test_init_accepts_an_installation_that_carries_its_catalog(tmp_path):
+    speed_dir = tmp_path / "speed-install"
+    (speed_dir / "skills").mkdir(parents=True)
+    project = tmp_path / "proj"
+    project.mkdir()
+
+    result = _bash(
+        _init_script(speed_dir, project, body="_init_require_skill_catalog; echo READY")
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "READY" in result.stdout
+
+
+# ── cmd_skills argument handling ─────────────────────────────────
+
+
+def _skills_harness(tmp_path, speed_dir=None, home=None) -> tuple:
+    """A sourced `cmd_skills` whose interpreter records the argv it receives."""
+    recorder = tmp_path / "record-python"
+    argv_log = tmp_path / "argv.txt"
+    recorder.write_text(
+        "#!/usr/bin/env bash\n"
+        'if [[ "${1:-}" == "-c" ]]; then exec ' + _q(PY) + ' "$@"; fi\n'
+        'printf "%s\\n" "$@" > "$ARGV_LOG"\n'
+    )
+    recorder.chmod(0o755)
+    speed_dir = speed_dir or REPO
+    home = home or tmp_path / "speed-home"
+    return recorder, argv_log, speed_dir, home
+
+
+def _run_skills(tmp_path, *args, speed_dir=None, home=None, verbosity=None):
+    recorder, argv_log, speed_dir, home = _skills_harness(tmp_path, speed_dir, home)
+    project = tmp_path / "proj"
+    project.mkdir(exist_ok=True)
+    verbosity_line = f"VERBOSITY={verbosity}\n" if verbosity is not None else ""
+    script = f"""
+set -euo pipefail
+{_LOG_STUBS}
+{verbosity_line}SPEED_DIR={_q(speed_dir)}
+PROJECT_ROOT={_q(project)}
+SPEED_PYTHON={_q(recorder)}
+SPEED_HOME={_q(home)}
+source {_q(SKILLS_SH)}
+cmd_skills "$@"
+"""
+    result = subprocess.run(
+        ["bash", "-c", script, "bash", *args],
+        capture_output=True,
+        text=True,
+        env=dict(os.environ, ARGV_LOG=str(argv_log), WORKBENCH_NS="1"),
+    )
+    recorded = argv_log.read_text().splitlines() if argv_log.exists() else None
+    return result, recorded
+
+
+def test_skills_rejects_an_unknown_subcommand_with_the_error_code(tmp_path):
+    """Exit 1 is reserved for drift and doctor findings; usage errors are 3."""
+    result, recorded = _run_skills(tmp_path, "resync")
+
+    assert result.returncode == 3, result.stderr
+    assert recorded is None
+    assert "resync" in result.stderr
+
+
+def test_skills_requires_a_subcommand_instead_of_guessing_status(tmp_path):
+    result, recorded = _run_skills(tmp_path)
+
+    assert result.returncode == 3, result.stderr
+    assert recorded is None
+    assert "sync" in result.stderr and "doctor" in result.stderr
+
+
+def test_skills_help_is_a_real_command(tmp_path):
+    result, recorded = _run_skills(tmp_path, "--help")
+
+    assert result.returncode == 0, result.stderr
+    assert recorded is None
+    assert "workbench skills" in result.stdout
+    assert "--force" in result.stdout
+
+
+def test_skills_refuses_to_let_a_caller_redirect_the_project_root(tmp_path):
+    """`--project-root` is resolved by Workbench, not supplied by the caller."""
+    result, recorded = _run_skills(
+        tmp_path, "status", "--project-root", "/tmp/elsewhere"
+    )
+
+    assert result.returncode == 3, result.stderr
+    assert recorded is None
+    assert "--project-root" in result.stderr
+
+
+def test_skills_refuses_to_let_a_caller_redirect_the_catalog(tmp_path):
+    result, recorded = _run_skills(
+        tmp_path, "sync", "--skills-dir", "/tmp/other", "--catalog-version", "9.9.9"
+    )
+
+    assert result.returncode == 3, result.stderr
+    assert recorded is None
+
+
+def test_skills_forwards_the_documented_public_options(tmp_path):
+    result, recorded = _run_skills(tmp_path, "sync", "--surface", "codex", "--force")
+
+    assert result.returncode == 0, result.stderr
+    assert recorded[:2] == ["-m", "skills"]
+    assert "--force" in recorded
+    assert recorded[recorded.index("--surface") + 1] == "codex"
+    assert recorded[recorded.index("--project-root") + 1] == str(tmp_path / "proj")
+
+
+def test_skills_rejects_force_outside_sync(tmp_path):
+    result, recorded = _run_skills(tmp_path, "status", "--force")
+
+    assert result.returncode == 3, result.stderr
+    assert recorded is None
+
+
+def test_skills_rejects_a_surface_flag_with_no_value(tmp_path):
+    result, recorded = _run_skills(tmp_path, "doctor", "--surface")
+
+    assert result.returncode == 3, result.stderr
+    assert recorded is None
+
+
+def test_skills_reads_the_catalog_version_from_a_managed_receipt(tmp_path):
+    home = tmp_path / "speed-home"
+    home.mkdir()
+    (home / "receipt.json").write_text('{"version": "1.4.2"}\n')
+    managed = tmp_path / "managed-install"
+    (managed / "skills").mkdir(parents=True)
+
+    result, recorded = _run_skills(
+        tmp_path, "status", speed_dir=managed, home=home
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert recorded[recorded.index("--catalog-version") + 1] == "1.4.2"
+
+
+def test_skills_calls_a_git_checkout_a_development_build(tmp_path):
+    checkout = tmp_path / "checkout"
+    (checkout / "skills").mkdir(parents=True)
+    (checkout / ".git").mkdir()
+    home = tmp_path / "speed-home"
+    home.mkdir()
+    (home / "receipt.json").write_text('{"version": "1.4.2"}\n')
+
+    result, recorded = _run_skills(tmp_path, "status", speed_dir=checkout, home=home)
+
+    assert result.returncode == 0, result.stderr
+    assert recorded[recorded.index("--catalog-version") + 1] == "dev"
+
+
+def test_skills_refuses_to_invent_a_version_for_a_broken_install(tmp_path):
+    """A corrupt receipt used to project the same provenance as a dev checkout."""
+    home = tmp_path / "speed-home"
+    home.mkdir()
+    (home / "receipt.json").write_text("{not json\n")
+    managed = tmp_path / "managed-install"
+    (managed / "skills").mkdir(parents=True)
+
+    result, recorded = _run_skills(tmp_path, "status", speed_dir=managed, home=home)
+
+    assert result.returncode == 3, result.stdout
+    assert recorded is None
+    assert "receipt" in result.stderr
+
+
+def test_skills_reports_a_missing_receipt_for_a_managed_install(tmp_path):
+    home = tmp_path / "speed-home"
+    home.mkdir()
+    managed = tmp_path / "managed-install"
+    (managed / "skills").mkdir(parents=True)
+
+    result, recorded = _run_skills(tmp_path, "status", speed_dir=managed, home=home)
+
+    assert result.returncode == 3, result.stdout
+    assert recorded is None
+
+
+def test_skills_forwards_debug_intent_to_the_engine(tmp_path):
+    """`--debug` raises VERBOSITY in the dispatcher; the engine reads an env var."""
+    recorder = tmp_path / "show-env"
+    recorder.write_text("#!/usr/bin/env bash\necho \"DEBUG=${WORKBENCH_DEBUG:-}\"\n")
+    recorder.chmod(0o755)
+    project = tmp_path / "proj"
+    project.mkdir()
+    script = f"""
+set -euo pipefail
+{_LOG_STUBS}
+VERBOSITY=3
+SPEED_DIR={_q(REPO)}
+PROJECT_ROOT={_q(project)}
+SPEED_PYTHON={_q(recorder)}
+source {_q(SKILLS_SH)}
+cmd_skills status
+"""
+    result = _bash(script, env={"WORKBENCH_NS": "1"})
+
+    assert result.returncode == 0, result.stderr
+    assert "DEBUG=1" in result.stdout
