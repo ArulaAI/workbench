@@ -1,6 +1,6 @@
 """Append-only project install-event log at .speed/skills/events.jsonl.
 
-Records the changes and the detected conflicts on each surface, one entry per
+Records the changes and the detected conflicts on each harness, one entry per
 skill per sync transaction. A preserved conflict is logged even though no file
 moved, because the fact that sync declined to write is itself history. Contains
 only names, versions, metadata excluding file hashes, and actions: no prompts,

@@ -8,6 +8,7 @@ import pytest
 from skills.sync import sync
 from skills.events import read_events
 from skills import PATHS
+from skills.models import SkillState
 
 LIB = Path(__file__).resolve().parents[2] / "lib"
 
@@ -24,7 +25,7 @@ def test_first_sync_logs_installed_under_one_transaction(tmp_catalog, tmp_projec
     e = events[0]
     assert e["action"] == "installed"
     assert e["skill"] == "example-skill"
-    assert e["surface"] == "claude_code"
+    assert e["harness"] == "claude"
     assert e["catalog_version"] == "0.3.0"
     assert e["transaction"]
 

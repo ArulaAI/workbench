@@ -1,8 +1,32 @@
-"""Workbench skill system: canonical catalog projection engine."""
+"""Workbench skill system: canonical catalog projection engine.
+
+Module map, in the order a sync moves through them:
+
+``models``      shared vocabulary: states, harnesses, packages, plans, findings
+``catalog``     discovers and reads canonical packages from the built-in catalog
+``validate``    enforces the package contract and reports violations with codes
+``frontmatter`` reads the scalar SKILL.md keys and injects provenance in place
+``project``     renders one package for one harness, purely, as relpath -> bytes
+``manifest``    hashes projections, persists the manifest, classifies each skill
+``targets``     the harness registry, marker detection, and bounded destinations
+``inspect``     read-only: assembles the whole picture as an ``Inspection``
+``sync``        the only writer: plans from an inspection, then applies
+``doctor``      read-only: turns inspection findings into coded diagnostics
+``events``      appends the per-transaction install log
+``__main__``    the CLI the ``workbench skills`` wrapper delegates to
+"""
 
 import re
 from dataclasses import dataclass
 from pathlib import Path
+
+from skills.models import (  # noqa: F401  (re-exported vocabulary)
+    HARNESSES,
+    HARNESS_IDS,
+    STATES,
+    Harness,
+    SkillState,
+)
 
 # Where the skill system keeps its project state, relative to the project root.
 # Every module that touches these files derives its path from here, and the
@@ -22,20 +46,6 @@ class SkillPaths:
 
 PATHS = SkillPaths()
 
-
-# Projection state vocabulary (single source of truth).
-ABSENT = "absent"
-CURRENT = "current"
-STALE = "stale"
-CONFLICTED = "conflicted"
-ORPHANED = "orphaned"
-UNSUPPORTED = "unsupported"
-
-# The closed set, so a consumer can assert it handles every member instead of
-# discovering a gap at runtime. doctor validates its catalog against this.
-STATES = frozenset(
-    {ABSENT, CURRENT, STALE, CONFLICTED, ORPHANED, UNSUPPORTED}
-)
 
 # A legal skill name is also the only legal path segment for a projection
 # directory. Keeping the pattern here lets both the package contract and the

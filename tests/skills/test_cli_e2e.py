@@ -91,8 +91,8 @@ def test_end_to_end_projects_and_verifies_workbench_health(tmp_path):
             str(project / ".claude" / "skills" / "workbench-health" / "scripts" / "health.py"),
             "--project-root",
             str(project),
-            "--surface",
-            "claude_code",
+            "--harness",
+            "claude",
         ],
         capture_output=True,
         text=True,
@@ -110,9 +110,9 @@ def test_end_to_end_projects_and_verifies_workbench_health(tmp_path):
     doctor = _skills(project, "doctor")
     assert doctor.returncode == 1
     assert "[conflicted]" in doctor.stdout
-    # Scoped to the conflicting surface: an unscoped --force would also
+    # Scoped to the conflicting harness: an unscoped --force would also
     # overwrite conflicts on harnesses this finding says nothing about.
-    assert "workbench skills sync --surface claude_code --force" in doctor.stdout
+    assert "workbench skills sync --harness claude --force" in doctor.stdout
 
 
 def test_workbench_doctor_shell_route_forwards_json(tmp_path):
@@ -167,7 +167,7 @@ def test_workbench_init_creates_only_selected_harness(
             str(selected.parent / "scripts" / "health.py"),
             "--project-root",
             str(project),
-            "--surface",
+            "--harness",
             harness,
             "--json",
         ],

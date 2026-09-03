@@ -1,9 +1,16 @@
-"""Sync/status orchestration: detect -> classify -> apply -> rewrite manifest.
+"""The only writer: plan filesystem operations from an inspection, then apply.
 
-Every filesystem change to a projection originates here. The manifest and the
-event log are written by manifest.py and events.py, which this module calls and
-nothing else does. Rendering stays pure in project.py; classification stays pure
-in manifest.py.
+Three steps, each usable on its own:
+
+``plan``   turns a read-only ``Inspection`` plus the ``--force`` choice into a
+           list of ``SkillPlan`` operations. Pure: it touches nothing.
+``apply``  performs those operations, rewrites the manifest, appends the event
+           log, and reports a ``SyncOutcome`` per skill.
+``sync``   composes inspect -> plan -> apply for the CLI.
+
+Every projection change in the system originates in ``apply``. The manifest and
+the event log are written by ``manifest.py`` and ``events.py``, which only this
+module calls.
 """
 from __future__ import annotations
 
@@ -11,29 +18,30 @@ import json
 import os
 import shutil
 import uuid
-from dataclasses import dataclass
 from pathlib import Path
 
-from skills import (
-    ABSENT,
-    CURRENT,
-    STALE,
-    CONFLICTED,
-    ORPHANED,
-    UNSUPPORTED,
-    is_valid_skill_name,
-)
-from skills.catalog import load_catalog
-from skills.targets import SURFACES, detect_surfaces, dest_dir, get_surface
-from skills.project import render
+from skills import is_valid_skill_name
 from skills.events import append_events, new_transaction, now_iso
+from skills.inspect import inspect
 from skills.manifest import (
+    HARNESSES_KEY,
+    SELECTED_KEY,
     hash_bytes,
-    hash_disk,
-    load_manifest,
     save_manifest,
-    classify_skill,
 )
+from skills.models import (
+    CONFLICT,
+    INSTALLED,
+    PRESERVE,
+    REMOVE,
+    REMOVED,
+    UPDATED,
+    WRITE,
+    SkillPlan,
+    SkillState,
+    SyncOutcome,
+)
+from skills.targets import get_harness
 
 
 def _remove_path(path: Path) -> None:
@@ -88,48 +96,42 @@ def _write_projection(dest: Path, rendered: dict) -> None:
             _remove_path(replaced)
 
 
-@dataclass
-class SkillState:
-    surface: str
-    skill: str
-    state: str
-    action: str = ""
+def _operation(item, force: bool) -> str | None:
+    """Which filesystem operation one inspected skill calls for, if any."""
+    orphan = item.rendered is None
+    if item.state is SkillState.ORPHANED or (
+        orphan and force and item.state is SkillState.CONFLICTED
+    ):
+        return REMOVE
+    if item.state in (SkillState.ABSENT, SkillState.STALE) or (
+        item.state is SkillState.CONFLICTED and force and not orphan
+    ):
+        return WRITE
+    if item.state is SkillState.CONFLICTED:
+        return PRESERVE
+    return None
 
 
-def _classify_all(project_root, skills_dir, catalog_version, surfaces):
-    pkgs = load_catalog(skills_dir)
-    by_name = {p.name: p for p in pkgs}
-    manifest = load_manifest(project_root)
-    rows: list = []
-    plans: list = []  # (surface, skill, state, rendered_or_None, dest, version)
-    for surface in surfaces:
-        surf_entry = (
-            manifest.get("surfaces", {}).get(surface.id, {}).get("skills", {})
+def plan(inspection, *, force: bool = False) -> list:
+    """The operations needed to converge this inspection. Writes nothing."""
+    plans: list = []
+    for item in inspection.skills:
+        operation = _operation(item, force)
+        if operation is None:
+            continue
+        plans.append(
+            SkillPlan(
+                harness=item.harness,
+                skill=item.skill,
+                state=item.state,
+                operation=operation,
+                rendered=item.rendered,
+                dest=item.dest,
+                version=item.version,
+                prev_version=item.prev_version,
+            )
         )
-        seen = set()
-        for name, pkg in by_name.items():
-            seen.add(name)
-            rendered = render(pkg, surface, catalog_version)
-            dest = dest_dir(surface, name, project_root)
-            state = classify_skill(rendered, hash_disk(dest), surf_entry.get(name))
-            rows.append(SkillState(surface.id, name, state))
-            plans.append((surface, name, state, rendered, dest, pkg.meta.get("version")))
-        for name, entry in surf_entry.items():
-            if name in seen:
-                continue
-            if not is_valid_skill_name(name):
-                # Nothing Workbench wrote can carry this key, so there is no
-                # projection to reconcile. Skipping keeps dest_dir out of it.
-                continue
-            dest = dest_dir(surface, name, project_root)
-            # An entry whose projection is already gone still gets a row. Left
-            # out, a skill that has both left the catalog and lost its files
-            # would keep its manifest record for good, and the manifest would
-            # never converge on what is actually installed.
-            state = classify_skill(None, hash_disk(dest), entry)
-            rows.append(SkillState(surface.id, name, state))
-            plans.append((surface, name, state, None, dest, None))
-    return rows, plans, manifest
+    return plans
 
 
 def _prune_unsafe_names(manifest) -> None:
@@ -138,44 +140,10 @@ def _prune_unsafe_names(manifest) -> None:
     Such an entry cannot describe a projection Workbench made, and leaving it in
     place would keep offering an unusable name to every later sync.
     """
-    for surf in manifest.get("surfaces", {}).values():
-        skills = surf.get("skills", {})
+    for record in manifest.get(HARNESSES_KEY, {}).values():
+        skills = record.get("skills", {})
         for name in [n for n in skills if not is_valid_skill_name(n)]:
             del skills[name]
-
-
-def _detected(project_root, only_surface):
-    if only_surface is not None:
-        # Explicit selection is authoritative. Sync can therefore create a
-        # missing harness root instead of requiring its marker to pre-exist.
-        return [get_surface(only_surface)]
-    # A selection made at init time is remembered, so a later bare sync cannot
-    # fan out to harnesses the project never opted into.
-    recorded = load_manifest(project_root).get("selected_surfaces") or []
-    if recorded:
-        return [get_surface(item) for item in recorded]
-    return [
-        s
-        for s in detect_surfaces(Path(project_root))
-    ]
-
-
-def _unsupported_rows(only_surface):
-    return [
-        SkillState(s.id, "*", UNSUPPORTED)
-        for s in SURFACES
-        if only_surface in (None, s.id)
-    ]
-
-
-def status(project_root, skills_dir, catalog_version, *, only_surface=None):
-    surfaces = _detected(project_root, only_surface)
-    if not surfaces:
-        return _unsupported_rows(only_surface)
-    rows, _, _ = _classify_all(
-        Path(project_root), Path(skills_dir), catalog_version, surfaces
-    )
-    return rows
 
 
 def _persist(project_root, manifest, before, events) -> None:
@@ -190,85 +158,95 @@ def _persist(project_root, manifest, before, events) -> None:
     append_events(project_root, events)
 
 
-def sync(project_root, skills_dir, catalog_version, *, force=False, only_surface=None):
-    project_root = Path(project_root)
-    skills_dir = Path(skills_dir)
-    surfaces = _detected(project_root, only_surface)
-    if not surfaces:
-        return _unsupported_rows(only_surface)
+def apply(inspection, plans, *, only_harness=None) -> list:
+    """Perform ``plans``, record what happened, and report where each skill ended.
 
-    rows, plans, manifest = _classify_all(
-        project_root, skills_dir, catalog_version, surfaces
-    )
+    Returns one ``SyncOutcome`` per inspected skill, including the untouched
+    ones, so the caller's table and exit code describe the project after the run
+    rather than the classification it started from.
+    """
+    project_root = Path(inspection.project_root)
+    catalog_version = inspection.catalog_version
+    manifest = inspection.manifest
     before = json.dumps(manifest, sort_keys=True)
-    manifest.setdefault("surfaces", {})
+    manifest.setdefault(HARNESSES_KEY, {})
     _prune_unsafe_names(manifest)
 
+    by_key = {(p.harness, p.skill): p for p in plans}
     transaction = new_transaction()
     ts = now_iso()
     events: list = []
+    outcomes: list = []
     mutated = False
 
     try:
-        for row, (surface, name, state, rendered, dest, version) in zip(rows, plans):
-            surf = manifest["surfaces"].setdefault(
-                surface.id, {"root": surface.skills_root, "skills": {}}
+        for item in inspection.skills:
+            outcome = SyncOutcome(
+                harness=item.harness,
+                skill=item.skill,
+                previous_state=item.state,
+                action="",
+                final_state=item.state,
             )
-            prev_version = surf["skills"].get(name, {}).get("version")
-            remove = state == ORPHANED or (
-                rendered is None and force and state == CONFLICTED
+            outcomes.append(outcome)
+            step = by_key.get((item.harness, item.skill))
+            if step is None:
+                continue
+
+            harness = get_harness(item.harness)
+            record = manifest[HARNESSES_KEY].setdefault(
+                harness.id, {"root": harness.skills_root, "skills": {}}
             )
-            write = state in (ABSENT, STALE) or (
-                state == CONFLICTED and force and rendered is not None
-            )
-            action = None
-            if remove:
-                if dest.is_symlink() or dest.exists():
-                    _remove_path(dest)
-                surf["skills"].pop(name, None)
-                action = "removed"
-                row.state = ABSENT
+            version = step.version
+            if step.operation == REMOVE:
+                if step.dest.is_symlink() or step.dest.exists():
+                    _remove_path(step.dest)
+                record["skills"].pop(item.skill, None)
+                outcome.action = REMOVED
+                outcome.final_state = SkillState.ABSENT
                 version = None
                 mutated = True
-            elif write:
-                _write_projection(dest, rendered)
-                surf["skills"][name] = {
+            elif step.operation == WRITE:
+                _write_projection(step.dest, step.rendered)
+                record["skills"][item.skill] = {
                     "files": {
-                        rel: hash_bytes(content) for rel, content in rendered.items()
+                        rel: hash_bytes(content)
+                        for rel, content in step.rendered.items()
                     },
                     "projected_at_version": catalog_version,
                     "version": version,
                 }
-                action = "installed" if state == ABSENT else "updated"
-                row.state = CURRENT
+                outcome.action = (
+                    INSTALLED if step.state is SkillState.ABSENT else UPDATED
+                )
+                outcome.final_state = SkillState.CURRENT
                 mutated = True
-            elif state == CONFLICTED:
-                action = "conflict"
+            else:
+                outcome.action = CONFLICT
+                outcome.final_state = SkillState.CONFLICTED
                 # Nothing was installed, so the catalog's version has no place
                 # in the record: a reader must not see a version bump that
                 # never happened.
                 version = None
 
-            if action is not None:
-                row.action = action
-                events.append({
-                    "transaction": transaction,
-                    "ts": ts,
-                    "catalog_version": catalog_version,
-                    "surface": surface.id,
-                    "skill": name,
-                    "action": action,
-                    "prev_version": prev_version,
-                    "new_version": version,
-                })
+            events.append({
+                "transaction": transaction,
+                "ts": ts,
+                "catalog_version": catalog_version,
+                "harness": item.harness,
+                "skill": item.skill,
+                "action": outcome.action,
+                "prev_version": step.prev_version,
+                "new_version": version,
+            })
 
-        if only_surface is not None:
+        if only_harness is not None:
             # Accumulate: choosing a second harness must not strand the first
             # one's projection outside the set that status, doctor, and sync
             # can see.
-            chosen = {get_surface(only_surface).id}
-            chosen |= set(manifest.get("selected_surfaces") or [])
-            manifest["selected_surfaces"] = sorted(chosen)
+            chosen = {get_harness(only_harness).id}
+            chosen |= set(manifest.get(SELECTED_KEY) or [])
+            manifest[SELECTED_KEY] = sorted(chosen)
         if mutated:
             # Record the projecting install only when a projection actually
             # changed. Stamping it on every run would make a teammate on a
@@ -276,4 +254,23 @@ def sync(project_root, skills_dir, catalog_version, *, force=False, only_surface
             manifest["catalog_version"] = catalog_version
     finally:
         _persist(project_root, manifest, before, events)
-    return rows
+    return outcomes
+
+
+def sync(project_root, skills_dir, catalog_version, *, force=False, only_harness=None) -> list:
+    """Converge this project's projections, and report where each skill ended."""
+    inspection = inspect(
+        project_root, skills_dir, catalog_version, only_harness=only_harness
+    )
+    if not inspection.supported:
+        return [
+            SyncOutcome(
+                harness=item.harness,
+                skill=item.skill,
+                previous_state=item.state,
+                action="",
+                final_state=item.state,
+            )
+            for item in inspection.skills
+        ]
+    return apply(inspection, plan(inspection, force=force), only_harness=only_harness)

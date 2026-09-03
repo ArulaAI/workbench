@@ -1,4 +1,11 @@
-"""CLI entry: ``python -m skills sync|status|doctor``.
+"""CLI entry: ``python -m skills sync|status|doctor|harnesses``.
+
+Private plumbing. ``workbench skills`` is the only supported entrance for a
+user; this module's ``--project-root``, ``--skills-dir`` and
+``--catalog-version`` arguments are internal context that the wrapper resolves
+and passes in, which is why they are required here and have no defaults. The
+``harnesses`` subcommand exists so the Bash commands can query the one canonical
+harness registry instead of restating it.
 
 Exit codes:
   sync   -> 0 converged / 2 conflicts remain / 3 error
@@ -19,9 +26,10 @@ import sys
 import traceback
 from dataclasses import asdict
 
-from skills import CURRENT, CONFLICTED, UNSUPPORTED
-from skills.doctor import diagnose
-from skills.sync import sync, status
+from skills.doctor import NOTE, diagnose
+from skills.inspect import inspect
+from skills.models import HARNESS_IDS, SkillState
+from skills.sync import sync
 
 ERROR = 3
 
@@ -34,20 +42,35 @@ def _build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--project-root", required=True)
         sp.add_argument("--skills-dir", required=True)
         sp.add_argument("--catalog-version", default="dev")
-        sp.add_argument("--surface", default=None)
+        sp.add_argument("--harness", default=None)
         sp.add_argument("--json", action="store_true")
         if name == "sync":
             sp.add_argument("--force", action="store_true")
-
+    # No project context: this only reports what Workbench supports.
+    listing = sub.add_parser("harnesses")
+    listing.add_argument("--json", action="store_true")
     return parser
 
 
-def _print_table(catalog_version, rows) -> None:
+def _status_rows(inspection) -> list:
+    return [
+        {"harness": item.harness, "skill": item.skill, "state": item.state}
+        for item in inspection.skills
+    ]
+
+
+def _print_status(catalog_version, rows) -> None:
     print(f"catalog {catalog_version} · {len(rows)} row(s)")
-    for r in rows:
-        line = f"  {r.surface:<12} {r.skill:<20} {r.state}"
-        if r.action:
-            line += f"  ({r.action})"
+    for row in rows:
+        print(f"  {row['harness']:<10} {row['skill']:<20} {row['state']}")
+
+
+def _print_sync(catalog_version, outcomes) -> None:
+    print(f"catalog {catalog_version} · {len(outcomes)} row(s)")
+    for row in outcomes:
+        line = f"  {row.harness:<10} {row.skill:<20} {row.final_state}"
+        if row.action:
+            line += f"  ({row.action} from {row.previous_state})"
         print(line)
 
 
@@ -57,7 +80,7 @@ def _actionable(diagnostics):
     A missing harness is advice, not drift: `status` already exits 0 on it, and
     `workbench init` sends users to `doctor` for exactly that advice.
     """
-    return [item for item in diagnostics if item.state != UNSUPPORTED]
+    return [item for item in diagnostics if item.severity != NOTE]
 
 
 def _doctor_status(diagnostics) -> str:
@@ -82,9 +105,17 @@ def _print_doctor(result) -> None:
         print("All imported Workbench skills are current and ready to use.")
         return
     for item in diagnostics:
-        print(f"  {item['surface']} / {item['skill']} [{item['state']}]")
-        print(f"    diagnosis: {item['diagnosis']}")
-        print(f"    repair: {item['repair']}")
+        head = f"  {item['harness']} / {item['skill']} [{item['state']}]"
+        print(f"{head} {item['severity']}: {item['code']}")
+        if item["path"]:
+            print(f"    path: {item['path']}")
+        if item["expected"] or item["actual"]:
+            print(f"    expected: {item['expected'] or '-'}")
+            print(f"    actual:   {item['actual'] or '-'}")
+        print(f"    message: {item['message']}")
+        repair = item["repair_command"]
+        suffix = "  (destructive)" if item["destructive"] else ""
+        print(f"    repair: `{repair}`{suffix}")
 
 
 def _parse(argv):
@@ -129,33 +160,43 @@ def main(argv=None) -> int:
     if isinstance(args, int):
         return args
 
+    if args.cmd == "harnesses":
+        if args.json:
+            print(json.dumps(list(HARNESS_IDS)))
+        else:
+            print("\n".join(HARNESS_IDS))
+        return 0
+
     try:
         if args.cmd == "sync":
-            rows = sync(
+            outcomes = sync(
                 args.project_root,
                 args.skills_dir,
                 args.catalog_version,
                 force=args.force,
-                only_surface=args.surface,
-            )
-        elif args.cmd == "status":
-            rows = status(
-                args.project_root,
-                args.skills_dir,
-                args.catalog_version,
-                only_surface=args.surface,
+                only_harness=args.harness,
             )
         else:
-            diagnostics = diagnose(
+            inspection = inspect(
                 args.project_root,
                 args.skills_dir,
                 args.catalog_version,
-                only_surface=args.surface,
+                only_harness=args.harness,
             )
     except Exception as exc:  # config / catalog / manifest error
         return _report_error(exc, as_json=args.json)
 
+    if args.cmd == "sync":
+        if args.json:
+            print(json.dumps([asdict(item) for item in outcomes], indent=2))
+        else:
+            _print_sync(args.catalog_version, outcomes)
+        return 2 if any(
+            item.final_state is SkillState.CONFLICTED for item in outcomes
+        ) else 0
+
     if args.cmd == "doctor":
+        diagnostics = diagnose(inspection)
         result = _doctor_result(args.catalog_version, diagnostics)
         if args.json:
             print(json.dumps(result, indent=2))
@@ -163,14 +204,14 @@ def main(argv=None) -> int:
             _print_doctor(result)
         return 1 if _actionable(diagnostics) else 0
 
+    rows = _status_rows(inspection)
     if args.json:
-        print(json.dumps([asdict(r) for r in rows], indent=2))
+        print(json.dumps(rows, indent=2))
     else:
-        _print_table(args.catalog_version, rows)
-
-    if args.cmd == "sync":
-        return 2 if any(r.state == CONFLICTED for r in rows) else 0
-    return 0 if all(r.state in (CURRENT, UNSUPPORTED) for r in rows) else 1
+        _print_status(args.catalog_version, rows)
+    return 0 if all(
+        row["state"] in (SkillState.CURRENT, SkillState.UNSUPPORTED) for row in rows
+    ) else 1
 
 
 if __name__ == "__main__":

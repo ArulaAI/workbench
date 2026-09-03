@@ -21,19 +21,19 @@ _init_require_skill_catalog() {
 
 cmd_init() {
     local harness=""
-    local skill_surface=""
+    local selected_harness=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --harness)
                 if [[ $# -lt 2 || -z "${2:-}" ]]; then
-                    log_error "--harness requires one of: claude, codex, copilot"
+                    log_error "--harness requires one of: $(workbench_harness_list)"
                     return 3
                 fi
                 harness=$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')
                 shift 2
                 ;;
             --help|-h)
-                echo "Usage: workbench init [--harness <claude|codex|copilot>]"
+                echo "Usage: workbench init [--harness <$(workbench_harness_choices)>]"
                 return 0
                 ;;
             *)
@@ -43,14 +43,23 @@ cmd_init() {
         esac
     done
 
-    case "$harness" in
-        "") ;;
-        claude|codex|copilot) skill_surface="$harness" ;;
-        *)
-            log_error "Unknown harness '${harness}' (expected: claude, codex, copilot)"
+    # The supported set comes from the engine's registry rather than a second
+    # list written out here, so a harness Workbench can project into is never
+    # one the CLI refuses.
+    if [[ -n "$harness" ]]; then
+        local supported
+        supported=$(workbench_harness_ids) || supported=""
+        if [[ -z "$supported" ]]; then
+            log_error "Could not read the supported harness list from this SPEED installation"
+            log_error "Reinstall SPEED or run: speed self-update"
             return 3
-            ;;
-    esac
+        fi
+        if ! printf '%s\n' "$supported" | grep -qxF "$harness"; then
+            log_error "Unknown harness '${harness}' (expected: $(workbench_harness_list))"
+            return 3
+        fi
+        selected_harness="$harness"
+    fi
 
     _init_require_skill_catalog || return 3
 
@@ -123,8 +132,8 @@ EOF
     # harnesses when --harness is omitted. Explicit selection creates its root.
     # The catalog's presence was established before any scaffolding ran.
     local sync_args=(sync)
-    if [[ -n "$skill_surface" ]]; then
-        sync_args+=(--surface "$skill_surface")
+    if [[ -n "$selected_harness" ]]; then
+        sync_args+=(--harness "$selected_harness")
     fi
     local sync_out sync_err
     # `set -e` aborts the whole script on a bare failing assignment, which
@@ -136,8 +145,8 @@ EOF
 
     case "$sync_status" in
         0)
-            if printf '%s' "$sync_out" | jq -e 'length > 0 and all(.[]; .state == "unsupported")' >/dev/null 2>&1; then
-                log_info "No supported agent skill surface found — run: ${COLOR_STEP}workbench skills sync${RESET} once the project is open in an agent"
+            if printf '%s' "$sync_out" | jq -e 'length > 0 and all(.[]; .final_state == "unsupported")' >/dev/null 2>&1; then
+                log_info "No supported agent harness found — run: ${COLOR_STEP}workbench skills sync${RESET} once the project is open in an agent"
             elif [[ -n "$harness" ]]; then
                 log_success "Skills projected for ${harness}"
             else

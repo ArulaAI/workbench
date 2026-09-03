@@ -4,13 +4,21 @@ from pathlib import Path
 
 import pytest
 
-from skills.sync import sync, status
+from skills.inspect import inspect
+from skills.sync import sync
 from skills.manifest import hash_bytes, load_manifest
-from skills import CURRENT, STALE, CONFLICTED, ABSENT
+from skills.models import SkillState
 
 
 def _run(project, skills_dir, version="0.3.0", **kw):
-    return {s.skill + "@" + s.surface: s for s in sync(project, skills_dir, version, **kw)}
+    """Sync, keyed by skill@harness. Values are SyncOutcome, so a caller reads
+    `previous_state`, `action` and `final_state` rather than one blended state."""
+    return {s.skill + "@" + s.harness: s for s in sync(project, skills_dir, version, **kw)}
+
+
+def status(project, skills_dir, version="0.3.0", **kw):
+    """The read-only rows `workbench skills status` prints, via inspection."""
+    return inspect(project, skills_dir, version, **kw).skills
 
 
 def test_sync_projects_then_idempotent(tmp_catalog, tmp_project):
@@ -18,9 +26,9 @@ def test_sync_projects_then_idempotent(tmp_catalog, tmp_project):
     first = _run(tmp_project, skills_dir)
     proj_skill = tmp_project / ".claude" / "skills" / "example-skill" / "SKILL.md"
     assert proj_skill.exists()
-    assert first["example-skill@claude_code"].state == CURRENT  # post-write state
+    assert first["example-skill@claude"].final_state == SkillState.CURRENT  # post-write state
     again = status(tmp_project, skills_dir, "0.3.0")
-    assert all(s.state == CURRENT for s in again)
+    assert all(s.state == SkillState.CURRENT for s in again)
 
 
 def test_second_sync_writes_nothing(tmp_catalog, tmp_project):
@@ -40,7 +48,7 @@ def test_sync_preserves_user_edit_as_conflict(tmp_catalog, tmp_project):
     edited = tmp_project / ".claude" / "skills" / "example-skill" / "SKILL.md"
     edited.write_text("HAND EDITED\n")
     rows = status(tmp_project, skills_dir, "0.3.0")
-    assert any(s.state == CONFLICTED for s in rows)
+    assert any(s.state == SkillState.CONFLICTED for s in rows)
     _run(tmp_project, skills_dir)  # no force: must not clobber
     assert edited.read_text() == "HAND EDITED\n"
     _run(tmp_project, skills_dir, force=True)  # force overwrites
@@ -58,21 +66,23 @@ def test_catalog_change_marks_stale_then_updates(tmp_catalog, tmp_project):
     _run(tmp_project, skills_dir, version="0.3.0")
     _edit_catalog(skills_dir)
     rows = status(tmp_project, skills_dir, "0.4.0")
-    assert any(s.state == STALE for s in rows)
+    assert any(s.state == SkillState.STALE for s in rows)
     _run(tmp_project, skills_dir, version="0.4.0")
-    assert all(s.state == CURRENT for s in status(tmp_project, skills_dir, "0.4.0"))
+    assert all(s.state == SkillState.CURRENT for s in status(tmp_project, skills_dir, "0.4.0"))
 
 
-def test_no_surface_reports_unsupported(tmp_catalog, tmp_path):
+def test_no_harness_reports_unsupported(tmp_catalog, tmp_path):
     skills_dir = tmp_catalog()
     bare = tmp_path / "bare"
     bare.mkdir()
     rows = sync(bare, skills_dir, "0.3.0")
-    assert [r.surface for r in rows] == ["claude_code", "codex", "copilot"]
-    assert [r.state for r in rows] == ["unsupported"] * 3
+    assert [r.harness for r in rows] == ["claude", "codex", "copilot"]
+    assert [r.final_state for r in rows] == [SkillState.UNSUPPORTED] * 3
+    # Nothing was attempted, so nothing is reported as having happened.
+    assert [r.action for r in rows] == ["", "", ""]
 
 
-def test_explicit_surface_creates_only_selected_harness(tmp_catalog, tmp_path):
+def test_explicit_harness_creates_only_selected_harness(tmp_catalog, tmp_path):
     skills_dir = tmp_catalog()
     project = tmp_path / "bare"
     for marker in (".claude", ".agents", ".github/skills"):
@@ -82,10 +92,10 @@ def test_explicit_surface_creates_only_selected_harness(tmp_catalog, tmp_path):
         project,
         skills_dir,
         "0.3.0",
-        only_surface="codex",
+        only_harness="codex",
     )
 
-    assert [row.surface for row in rows] == ["codex"]
+    assert [row.harness for row in rows] == ["codex"]
     assert (project / ".agents" / "skills" / "example-skill" / "SKILL.md").is_file()
     assert not (
         project / ".claude" / "skills" / "example-skill"
@@ -105,7 +115,7 @@ def test_sync_without_selection_projects_all_detected_harnesses(
 
     rows = sync(project, skills_dir, "0.3.0")
 
-    assert [row.surface for row in rows] == ["claude_code", "codex", "copilot"]
+    assert [row.harness for row in rows] == ["claude", "codex", "copilot"]
     for skills_root in (".claude/skills", ".agents/skills", ".github/skills"):
         assert (project / skills_root / "example-skill" / "SKILL.md").is_file()
 
@@ -113,8 +123,8 @@ def test_sync_without_selection_projects_all_detected_harnesses(
 def test_sync_reports_post_apply_state_and_action(tmp_catalog, tmp_project):
     """A row must describe the world after sync ran, not before it started."""
     skills_dir = tmp_catalog()
-    row = _run(tmp_project, skills_dir)["example-skill@claude_code"]
-    assert row.state == CURRENT
+    row = _run(tmp_project, skills_dir)["example-skill@claude"]
+    assert row.final_state == SkillState.CURRENT
     assert row.action == "installed"
 
 
@@ -122,8 +132,8 @@ def test_sync_reports_update_after_catalog_change(tmp_catalog, tmp_project):
     skills_dir = tmp_catalog()
     _run(tmp_project, skills_dir, version="0.3.0")
     _edit_catalog(skills_dir)
-    row = _run(tmp_project, skills_dir, version="0.4.0")["example-skill@claude_code"]
-    assert row.state == CURRENT
+    row = _run(tmp_project, skills_dir, version="0.4.0")["example-skill@claude"]
+    assert row.final_state == SkillState.CURRENT
     assert row.action == "updated"
 
 
@@ -133,11 +143,11 @@ def test_forced_repair_reports_current_not_conflicted(tmp_catalog, tmp_project):
     edited = tmp_project / ".claude" / "skills" / "example-skill" / "SKILL.md"
     edited.write_text("HAND EDITED\n")
 
-    row = _run(tmp_project, skills_dir, force=True)["example-skill@claude_code"]
+    row = _run(tmp_project, skills_dir, force=True)["example-skill@claude"]
 
-    assert row.state == CURRENT
+    assert row.final_state == SkillState.CURRENT
     assert row.action == "updated"
-    assert all(s.state == CURRENT for s in status(tmp_project, skills_dir, "0.3.0"))
+    assert all(s.state == SkillState.CURRENT for s in status(tmp_project, skills_dir, "0.3.0"))
 
 
 def test_unforced_conflict_still_reports_conflicted(tmp_catalog, tmp_project):
@@ -146,9 +156,9 @@ def test_unforced_conflict_still_reports_conflicted(tmp_catalog, tmp_project):
     edited = tmp_project / ".claude" / "skills" / "example-skill" / "SKILL.md"
     edited.write_text("HAND EDITED\n")
 
-    row = _run(tmp_project, skills_dir)["example-skill@claude_code"]
+    row = _run(tmp_project, skills_dir)["example-skill@claude"]
 
-    assert row.state == CONFLICTED
+    assert row.final_state == SkillState.CONFLICTED
     assert row.action == "conflict"
 
 
@@ -164,29 +174,29 @@ def test_missing_catalog_never_removes_a_projection(tmp_catalog, tmp_project):
     assert projected.is_dir()
 
 
-def test_explicit_surface_is_remembered_by_later_syncs(tmp_catalog, tmp_project):
+def test_explicit_harness_is_remembered_by_later_syncs(tmp_catalog, tmp_project):
     """Init picks a harness; a later bare sync must not fan out to others."""
     skills_dir = tmp_catalog()
     (tmp_project / ".agents").mkdir(parents=True, exist_ok=True)
 
-    _run(tmp_project, skills_dir, only_surface="codex")
-    assert load_manifest(tmp_project)["selected_surfaces"] == ["codex"]
+    _run(tmp_project, skills_dir, only_harness="codex")
+    assert load_manifest(tmp_project)["selected_harnesses"] == ["codex"]
 
     rows = status(tmp_project, skills_dir, "0.3.0")
 
-    assert {r.surface for r in rows} == {"codex"}
+    assert {r.harness for r in rows} == {"codex"}
     assert not (tmp_project / ".claude" / "skills").exists()
 
 
-def test_detection_still_applies_when_no_surface_was_chosen(tmp_catalog, tmp_project):
+def test_detection_still_applies_when_no_harness_was_chosen(tmp_catalog, tmp_project):
     skills_dir = tmp_catalog()
     (tmp_project / ".agents").mkdir(parents=True, exist_ok=True)
 
     _run(tmp_project, skills_dir)
 
-    assert "selected_surfaces" not in load_manifest(tmp_project)
-    assert {r.surface for r in status(tmp_project, skills_dir, "0.3.0")} == {
-        "claude_code",
+    assert "selected_harnesses" not in load_manifest(tmp_project)
+    assert {r.harness for r in status(tmp_project, skills_dir, "0.3.0")} == {
+        "claude",
         "codex",
     }
 
@@ -228,7 +238,7 @@ def test_deleted_projection_is_reprojected_without_force(tmp_catalog, tmp_projec
     projected = tmp_project / ".claude" / "skills" / "example-skill"
     shutil.rmtree(projected)
 
-    assert [r.state for r in status(tmp_project, skills_dir, "0.3.0")] == [ABSENT]
+    assert [r.state for r in status(tmp_project, skills_dir, "0.3.0")] == [SkillState.ABSENT]
 
     _run(tmp_project, skills_dir)  # no --force
 
@@ -241,20 +251,20 @@ def test_partial_deletion_is_still_a_conflict(tmp_catalog, tmp_project):
     _run(tmp_project, skills_dir)
     (tmp_project / ".claude" / "skills" / "example-skill" / "references" / "notes.md").unlink()
 
-    assert [r.state for r in status(tmp_project, skills_dir, "0.3.0")] == [CONFLICTED]
+    assert [r.state for r in status(tmp_project, skills_dir, "0.3.0")] == [SkillState.CONFLICTED]
 
 
-def test_explicit_surfaces_accumulate(tmp_catalog, tmp_project):
+def test_explicit_harnesses_accumulate(tmp_catalog, tmp_project):
     """Choosing a second harness must not orphan the first one's projection."""
     skills_dir = tmp_catalog()
     (tmp_project / ".agents").mkdir(parents=True, exist_ok=True)
 
-    _run(tmp_project, skills_dir, only_surface="claude")
-    _run(tmp_project, skills_dir, only_surface="codex")
+    _run(tmp_project, skills_dir, only_harness="claude")
+    _run(tmp_project, skills_dir, only_harness="codex")
 
-    assert load_manifest(tmp_project)["selected_surfaces"] == ["claude_code", "codex"]
-    assert {r.surface for r in status(tmp_project, skills_dir, "0.3.0")} == {
-        "claude_code",
+    assert load_manifest(tmp_project)["selected_harnesses"] == ["claude", "codex"]
+    assert {r.harness for r in status(tmp_project, skills_dir, "0.3.0")} == {
+        "claude",
         "codex",
     }
 
@@ -263,7 +273,7 @@ def _poison_manifest(project, key, files):
     """Write a manifest entry under an arbitrary key, as a bad commit would."""
     path = project / ".speed" / "skills" / "manifest.json"
     data = json.loads(path.read_text())
-    data["surfaces"]["claude_code"]["skills"][key] = {"files": files}
+    data["harnesses"]["claude"]["skills"][key] = {"files": files}
     path.write_text(json.dumps(data))
 
 
@@ -314,7 +324,7 @@ def test_unsafe_manifest_entry_is_pruned(tmp_catalog, tmp_project):
 
     _run(tmp_project, skills_dir)
 
-    skills = load_manifest(tmp_project)["surfaces"]["claude_code"]["skills"]
+    skills = load_manifest(tmp_project)["harnesses"]["claude"]["skills"]
     assert set(skills) == {"example-skill"}
 
 
@@ -331,10 +341,10 @@ def test_generated_junk_beside_a_projection_is_not_a_conflict(
     dropped.parent.mkdir(parents=True, exist_ok=True)
     dropped.write_bytes(b"\x00")
 
-    assert [r.state for r in status(tmp_project, skills_dir, "0.3.0")] == [CURRENT]
+    assert [r.state for r in status(tmp_project, skills_dir, "0.3.0")] == [SkillState.CURRENT]
 
 
-def test_failure_on_a_later_surface_keeps_earlier_writes_recorded(
+def test_failure_on_a_later_harness_keeps_earlier_writes_recorded(
     tmp_catalog, tmp_path
 ):
     """A half-finished sync must be resumable, not permanently conflicted."""
@@ -342,7 +352,7 @@ def test_failure_on_a_later_surface_keeps_earlier_writes_recorded(
     project = tmp_path / "two-harness"
     (project / ".claude").mkdir(parents=True)
     (project / ".agents").mkdir(parents=True)
-    # A regular file where codex needs a directory: claude_code is written
+    # A regular file where codex needs a directory: claude is written
     # first, then codex raises part-way through the same sync.
     (project / ".agents" / "skills").write_text("not a directory\n")
 
@@ -351,8 +361,8 @@ def test_failure_on_a_later_surface_keeps_earlier_writes_recorded(
 
     written = project / ".claude" / "skills" / "example-skill" / "SKILL.md"
     assert written.is_file()
-    rows = status(project, skills_dir, "0.3.0", only_surface="claude")
-    assert [r.state for r in rows] == [CURRENT]
+    rows = status(project, skills_dir, "0.3.0", only_harness="claude")
+    assert [r.state for r in rows] == [SkillState.CURRENT]
 
 
 def test_a_different_install_leaves_a_committed_projection_alone(
@@ -365,7 +375,7 @@ def test_a_different_install_leaves_a_committed_projection_alone(
     projected = tmp_project / ".claude" / "skills" / "example-skill" / "SKILL.md"
     m0, p0 = manifest.stat().st_mtime_ns, projected.stat().st_mtime_ns
 
-    assert [r.state for r in status(tmp_project, skills_dir, "install-b")] == [CURRENT]
+    assert [r.state for r in status(tmp_project, skills_dir, "install-b")] == [SkillState.CURRENT]
 
     _run(tmp_project, skills_dir, version="install-b")
 
@@ -396,7 +406,7 @@ def test_structured_front_matter_survives_projection(tmp_catalog, tmp_project):
     assert meta["allowed-tools"] == ["Read", "Bash(git status:*)"]
     assert meta["description"].strip() == "Use when: the user asks about charts."
     assert meta["x-workbench-managed"] is True  # unquoted true, as YAML reads it
-    assert [r.state for r in status(tmp_project, skills_dir, "0.3.0")] == [CURRENT]
+    assert [r.state for r in status(tmp_project, skills_dir, "0.3.0")] == [SkillState.CURRENT]
 
 
 # ── Replacing a projection must be all-or-nothing ──────────────────────────
@@ -435,7 +445,7 @@ def test_a_failed_write_leaves_the_previous_projection_intact(
     monkeypatch.undo()
 
     assert _tree(installed) == before
-    assert [r.state for r in status(tmp_project, skills_dir, "0.4.0")] == [STALE]
+    assert [r.state for r in status(tmp_project, skills_dir, "0.4.0")] == [SkillState.STALE]
     assert [p.name for p in installed.parent.iterdir()] == ["example-skill"]
 
 
@@ -470,7 +480,7 @@ def test_a_file_where_a_skill_belongs_is_a_conflict_not_an_overwrite(
 
     rows = _run(tmp_project, skills_dir)
 
-    assert rows["example-skill@claude_code"].state == CONFLICTED
+    assert rows["example-skill@claude"].final_state == SkillState.CONFLICTED
     assert occupied.read_text(encoding="utf-8") == "someone else's file\n"
 
 
@@ -498,7 +508,7 @@ def test_a_symlinked_projection_is_a_conflict(tmp_catalog, tmp_project, tmp_path
 
     rows = _run(tmp_project, skills_dir)
 
-    assert rows["example-skill@claude_code"].state == CONFLICTED
+    assert rows["example-skill@claude"].final_state == SkillState.CONFLICTED
     assert list(outside.iterdir()) == []
 
 
@@ -521,8 +531,8 @@ def test_a_manifest_entry_with_no_projection_left_is_dropped(
 
     rows = _run(tmp_project, _empty_catalog(tmp_path))
 
-    assert rows["example-skill@claude_code"].action == "removed"
-    assert load_manifest(tmp_project)["surfaces"]["claude_code"]["skills"] == {}
+    assert rows["example-skill@claude"].action == "removed"
+    assert load_manifest(tmp_project)["harnesses"]["claude"]["skills"] == {}
 
 
 def test_the_converged_manifest_stays_quiet_on_the_next_sync(

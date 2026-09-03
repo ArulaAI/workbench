@@ -195,7 +195,7 @@ the real `workbench` entrypoint, which preflights its interpreter for
 the skill system, but the check runs first, so an interpreter missing them cannot
 reach any lifecycle code. The suite reports those tests as skips naming the fix
 rather than as failures, so a green run under a bare `python3` is not a complete
-run. Expect `227 passed` with the venv and `221 passed, 6 skipped` without it.
+run. Expect `242 passed` with the venv and `235 passed, 7 skipped` without it.
 
 Shell suites run on their own: `bash tests/test_multiplayer.sh`.
 

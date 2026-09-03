@@ -30,7 +30,7 @@ creates and configures only that harness's project skill directory:
 | GitHub Copilot | `.github/skills/` |
 
 If `--harness` is omitted, Workbench detects existing supported harnesses and
-projects skills into each detected surface. `speed init` remains available as a
+projects skills into each detected agent harness. `speed init` remains available as a
 temporary alias for `workbench init`.
 
 Initialization creates the `.speed/` runtime directory, scaffolds `speed.toml`,

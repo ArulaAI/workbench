@@ -4,6 +4,9 @@ Run at catalog load time. Nothing in this release invokes it as a separate
 catalog-build step; it is written to be reusable by one when that exists. Every
 rule maps to a fixture in tests/skills/test_validate.py.
 
+This module depends only on ``models``, never on the loader, so validation of
+a package built in memory needs no filesystem at all.
+
 Two of the rules are enforced twice on purpose. The loader refuses symlinks and
 records an unreadable SKILL.md while it walks the package, because catching
 those later would mean reading a linked file first; repeating them here keeps
@@ -15,7 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from skills import is_valid_skill_name
-from skills.catalog import NO_SYMLINKS, SkillPackage
+from skills.models import NO_SYMLINKS, SkillPackage
 from skills.frontmatter import MANAGED_PREFIX
 
 

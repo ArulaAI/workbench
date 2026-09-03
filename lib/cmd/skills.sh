@@ -7,7 +7,10 @@
 #
 # Two things this file resolves before delegating:
 #
-#   interpreter  SPEED_PYTHON, then the install venv, then the project venv.
+#   interpreter  `_context_python` from lib/context_bridge.sh, the same resolver
+#                the dashboard, security and rules commands use. A private copy
+#                of that order once lived here, which meant two commands could
+#                pick different environments as installation behavior evolved.
 #   catalog      the installation receipt, parsed through the same interpreter.
 #
 # `workbench skills` is the only supported entrance to the engine. `python -m
@@ -23,16 +26,24 @@
 # configuration problems detected here are errors, so they exit 3 as well; a
 # caller must never read a mistyped flag as drift.
 
-_skills_python() {
-    if [[ -n "${SPEED_PYTHON:-}" ]]; then
-        echo "$SPEED_PYTHON"
-    elif [[ -x "${SPEED_DIR}/.venv/bin/python3" ]]; then
-        echo "${SPEED_DIR}/.venv/bin/python3"
-    elif [[ -x "${PROJECT_ROOT}/.venv/bin/python3" ]]; then
-        echo "${PROJECT_ROOT}/.venv/bin/python3"
-    else
-        echo "python3"
-    fi
+# The canonical harness registry lives in lib/skills/models.py and is queried,
+# never restated. Bash had its own `claude|codex|copilot` list in two places,
+# which is exactly the kind of duplication that lets a fourth harness ship to
+# the engine and stay unreachable from the CLI. Defined here because `speed`
+# sources every lib/cmd/*.sh file, so `cmd_init` can call it too.
+workbench_harness_ids() {
+    PYTHONPATH="${SPEED_DIR}/lib" "$(_context_python)" -m skills harnesses 2>/dev/null
+}
+
+# `claude|codex|copilot` for usage text.
+workbench_harness_choices() {
+    workbench_harness_ids | paste -sd '|' -
+}
+
+# `claude, codex, copilot` for prose. `paste -d ', '` cycles through the
+# delimiter's characters one per join, so it produces `claude,codex copilot`.
+workbench_harness_list() {
+    workbench_harness_ids | paste -sd ',' - | sed 's/,/, /g'
 }
 
 # Read the installed catalog version, keeping three outcomes distinct that used
@@ -56,7 +67,7 @@ _skills_catalog_version() {
     fi
 
     local version
-    if ! version=$("$(_skills_python)" -c '
+    if ! version=$("$(_context_python)" -c '
 import json, sys
 try:
     with open(sys.argv[1], encoding="utf-8") as handle:
@@ -87,12 +98,12 @@ _skills_usage() {
     cat <<USAGE
 Usage: workbench skills <sync|status|doctor> [options]
 
-  sync     Import the built-in catalog into every detected agent surface
+  sync     Import the built-in catalog into every detected agent harness
   status   Show the managed state of each projected skill (read-only)
   doctor   Diagnose every non-current skill with one repair path (read-only)
 
 Options:
-$(printf '  %-32s  %s' "--surface <claude|codex|copilot>" "Limit the command to one agent surface")
+$(printf '  %-32s  %s' "--harness <$(workbench_harness_choices)>" "Limit the command to one agent harness")
   --force                           sync only: overwrite conflicting projections
   --json                            Emit machine-readable output
 
@@ -141,21 +152,21 @@ cmd_skills() {
                 user_args+=(--force)
                 shift
                 ;;
-            --surface)
+            --harness)
                 if [[ $# -lt 2 || -z "${2:-}" || "${2}" == -* ]]; then
-                    log_error "--surface requires one of: claude, codex, copilot"
+                    log_error "--harness requires one of: $(workbench_harness_list)"
                     return 3
                 fi
-                user_args+=(--surface "$2")
+                user_args+=(--harness "$2")
                 shift 2
                 ;;
-            --surface=*)
-                local value="${1#--surface=}"
+            --harness=*)
+                local value="${1#--harness=}"
                 if [[ -z "$value" || "$value" == -* ]]; then
-                    log_error "--surface requires one of: claude, codex, copilot"
+                    log_error "--harness requires one of: $(workbench_harness_list)"
                     return 3
                 fi
-                user_args+=(--surface "$value")
+                user_args+=(--harness "$value")
                 shift
                 ;;
             --help|-h)
@@ -163,7 +174,7 @@ cmd_skills() {
                 return 0
                 ;;
             *)
-                log_error "Unknown option for 'skills ${sub}': $1 (supported: --surface, --force, --json)"
+                log_error "Unknown option for 'skills ${sub}': $1 (supported: --harness, --force, --json)"
                 _skills_usage >&2
                 return 3
                 ;;
@@ -182,7 +193,7 @@ cmd_skills() {
     fi
 
     _speed_alias_notice skills
-    PYTHONPATH="${SPEED_DIR}/lib" "$(_skills_python)" -m skills "$sub" \
+    PYTHONPATH="${SPEED_DIR}/lib" "$(_context_python)" -m skills "$sub" \
         ${user_args[@]+"${user_args[@]}"} \
         --project-root "${PROJECT_ROOT}" \
         --skills-dir "${SPEED_DIR}/skills" \

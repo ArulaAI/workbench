@@ -1,4 +1,4 @@
-"""Pure projection: render a canonical package to a surface's files.
+"""Pure projection: render a canonical package to one harness's files.
 
 Returns relpath -> bytes and never touches the filesystem. SKILL.md is
 re-serialized with injected provenance keys; every other file is copied verbatim.
@@ -6,9 +6,8 @@ Deterministic: identical inputs produce byte-identical output.
 """
 from __future__ import annotations
 
-from skills.catalog import SkillPackage
 from skills.frontmatter import MANAGED_PREFIX, inject
-from skills.targets import Surface
+from skills.models import Harness, SkillPackage
 
 # Provenance keys stamped into every projected SKILL.md. The values are written
 # as raw, unquoted YAML scalars, so ``true`` reaches the harness as the boolean
@@ -18,8 +17,8 @@ _PROVENANCE_MANAGED = f"{MANAGED_PREFIX}managed"
 _PROVENANCE_SOURCE = f"{MANAGED_PREFIX}source"
 
 
-def render(pkg: SkillPackage, surface: Surface, catalog_version: str) -> dict:
-    """Project ``pkg`` onto ``surface``.
+def render(pkg: SkillPackage, harness: Harness, catalog_version: str) -> dict:
+    """Project ``pkg`` onto ``harness``.
 
     ``catalog_version`` identifies the Workbench install running the sync, not the
     catalog content, so it is deliberately kept out of the returned bytes:

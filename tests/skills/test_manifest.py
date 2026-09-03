@@ -3,16 +3,17 @@ import json
 import pytest
 
 from skills.manifest import (
-    WRONG_TYPE,
+    WrongType,
     classify_skill,
+    inspect_skill,
     hash_bytes,
     hash_disk,
     load_manifest,
     manifest_state,
     save_manifest,
 )
-from skills import CURRENT, STALE, CONFLICTED, ORPHANED, ABSENT
 from skills import PATHS
+from skills.models import SkillState
 
 
 def _hashes(d):  # rendered dict -> hash map
@@ -23,41 +24,41 @@ R = {"SKILL.md": b"v1", "references/n.md": b"ref"}
 
 
 def test_absent():
-    assert classify_skill(R, {}, None) == ABSENT
+    assert classify_skill(R, {}, None) == SkillState.ABSENT
 
 
 def test_current():
     entry = {"files": _hashes(R)}
-    assert classify_skill(R, _hashes(R), entry) == CURRENT
+    assert classify_skill(R, _hashes(R), entry) == SkillState.CURRENT
 
 
 def test_stale_when_catalog_changed_but_disk_unmodified():
     entry = {"files": _hashes(R)}
     r2 = {"SKILL.md": b"v2", "references/n.md": b"ref"}
-    assert classify_skill(r2, _hashes(R), entry) == STALE
+    assert classify_skill(r2, _hashes(R), entry) == SkillState.STALE
 
 
 def test_conflicted_when_disk_edited():
     entry = {"files": _hashes(R)}
     disk = dict(_hashes(R))
     disk["SKILL.md"] = hash_bytes(b"user-edit")
-    assert classify_skill(R, disk, entry) == CONFLICTED
+    assert classify_skill(R, disk, entry) == SkillState.CONFLICTED
 
 
 def test_conflicted_when_unknown_preexisting_files():
-    assert classify_skill(R, _hashes(R), None) == CONFLICTED
+    assert classify_skill(R, _hashes(R), None) == SkillState.CONFLICTED
 
 
 def test_orphaned_when_removed_and_unmodified():
     entry = {"files": _hashes(R)}
-    assert classify_skill(None, _hashes(R), entry) == ORPHANED
+    assert classify_skill(None, _hashes(R), entry) == SkillState.ORPHANED
 
 
 def test_orphaned_edited_downgrades_to_conflicted():
     entry = {"files": _hashes(R)}
     disk = dict(_hashes(R))
     disk["SKILL.md"] = hash_bytes(b"user-edit")
-    assert classify_skill(None, disk, entry) == CONFLICTED
+    assert classify_skill(None, disk, entry) == SkillState.CONFLICTED
 
 
 # ── Manifest schema (a committed file is untrusted input) ──────────────────
@@ -73,11 +74,11 @@ def _write_manifest(project, payload):
 
 
 def test_load_manifest_of_a_fresh_project_is_the_empty_record(tmp_path):
-    assert load_manifest(tmp_path) == {"catalog_version": None, "surfaces": {}}
+    assert load_manifest(tmp_path) == {"catalog_version": None, "harnesses": {}}
 
 
 def test_load_manifest_round_trips_what_save_wrote(tmp_path):
-    data = {"catalog_version": "0.3.0", "surfaces": {}, "selected_surfaces": ["codex"]}
+    data = {"catalog_version": "0.3.0", "harnesses": {}, "selected_harnesses": ["codex"]}
     save_manifest(tmp_path, data)
     assert load_manifest(tmp_path) == data
 
@@ -86,27 +87,27 @@ def test_load_manifest_round_trips_what_save_wrote(tmp_path):
     ("payload", "where"),
     [
         ([], "document root"),
-        ({"surfaces": None}, "surfaces"),
-        ({"surfaces": {"claude_code": []}}, "surfaces.claude_code"),
-        ({"surfaces": {"claude_code": {"root": 7}}}, "surfaces.claude_code.root"),
+        ({"harnesses": None}, "harnesses"),
+        ({"harnesses": {"claude": []}}, "harnesses.claude"),
+        ({"harnesses": {"claude": {"root": 7}}}, "harnesses.claude.root"),
         (
-            {"surfaces": {"claude_code": {"skills": "none"}}},
-            "surfaces.claude_code.skills",
+            {"harnesses": {"claude": {"skills": "none"}}},
+            "harnesses.claude.skills",
         ),
         (
-            {"surfaces": {"claude_code": {"skills": {"a": "x"}}}},
-            "surfaces.claude_code.skills.a",
+            {"harnesses": {"claude": {"skills": {"a": "x"}}}},
+            "harnesses.claude.skills.a",
         ),
         (
-            {"surfaces": {"claude_code": {"skills": {"a": {"files": []}}}}},
-            "surfaces.claude_code.skills.a.files",
+            {"harnesses": {"claude": {"skills": {"a": {"files": []}}}}},
+            "harnesses.claude.skills.a.files",
         ),
         (
-            {"surfaces": {"claude_code": {"skills": {"a": {"files": {"x": 1}}}}}},
-            "surfaces.claude_code.skills.a.files.x",
+            {"harnesses": {"claude": {"skills": {"a": {"files": {"x": 1}}}}}},
+            "harnesses.claude.skills.a.files.x",
         ),
-        ({"selected_surfaces": "codex"}, "selected_surfaces"),
-        ({"selected_surfaces": [2]}, "selected_surfaces[0]"),
+        ({"selected_harnesses": "codex"}, "selected_harnesses"),
+        ({"selected_harnesses": [2]}, "selected_harnesses[0]"),
     ],
 )
 def test_malformed_manifest_names_the_offending_path(tmp_path, payload, where):
@@ -147,7 +148,7 @@ def test_manifest_state_separates_a_new_install_from_a_lost_record(tmp_path):
     _write_skill(skills_root, "example-skill", managed=True)
     assert manifest_state(project) == "lost"
 
-    save_manifest(project, {"catalog_version": None, "surfaces": {}})
+    save_manifest(project, {"catalog_version": None, "harnesses": {}})
     assert manifest_state(project) == "present"
 
 
@@ -169,7 +170,7 @@ def test_save_manifest_keeps_the_previous_record_when_the_commit_fails(
     """An interrupted write must not truncate the only record of managed files."""
     import skills.manifest as manifest_module
 
-    save_manifest(tmp_path, {"catalog_version": "0.3.0", "surfaces": {}})
+    save_manifest(tmp_path, {"catalog_version": "0.3.0", "harnesses": {}})
     before = (tmp_path / MANIFEST_REL).read_text(encoding="utf-8")
 
     def refuse(src, dst):
@@ -178,7 +179,7 @@ def test_save_manifest_keeps_the_previous_record_when_the_commit_fails(
     monkeypatch.setattr(manifest_module.os, "replace", refuse)
 
     with pytest.raises(OSError):
-        save_manifest(tmp_path, {"catalog_version": "0.4.0", "surfaces": {}})
+        save_manifest(tmp_path, {"catalog_version": "0.4.0", "harnesses": {}})
 
     assert (tmp_path / MANIFEST_REL).read_text(encoding="utf-8") == before
     leftovers = sorted(p.name for p in (tmp_path / ".speed" / "skills").iterdir())
@@ -187,7 +188,7 @@ def test_save_manifest_keeps_the_previous_record_when_the_commit_fails(
 
 def test_manifest_reads_as_utf8_under_an_ascii_locale(tmp_path, ascii_locale_python):
     """The same manifest must load identically on every teammate's machine."""
-    _write_manifest(tmp_path, {"catalog_version": "0.3.0-ünïcode", "surfaces": {}})
+    _write_manifest(tmp_path, {"catalog_version": "0.3.0-ünïcode", "harnesses": {}})
 
     result = ascii_locale_python(
         "from skills.manifest import load_manifest\n"
@@ -211,7 +212,7 @@ def test_hash_disk_reports_a_file_where_a_projection_belongs(tmp_path):
     occupied = tmp_path / "example-skill"
     occupied.write_text("someone else's file\n", encoding="utf-8")
 
-    assert hash_disk(occupied) is WRONG_TYPE
+    assert isinstance(hash_disk(occupied), WrongType)
 
 
 def test_hash_disk_refuses_a_symlinked_projection_directory(tmp_path):
@@ -221,7 +222,7 @@ def test_hash_disk_refuses_a_symlinked_projection_directory(tmp_path):
     link = tmp_path / "example-skill"
     link.symlink_to(real, target_is_directory=True)
 
-    assert hash_disk(link) is WRONG_TYPE
+    assert isinstance(hash_disk(link), WrongType)
 
 
 def test_hash_disk_refuses_to_read_through_a_symlink_inside_a_projection(tmp_path):
@@ -232,15 +233,15 @@ def test_hash_disk_refuses_to_read_through_a_symlink_inside_a_projection(tmp_pat
     (dest / "SKILL.md").write_text("body\n", encoding="utf-8")
     (dest / "leak.txt").symlink_to(outside)
 
-    assert hash_disk(dest) is WRONG_TYPE
+    assert isinstance(hash_disk(dest), WrongType)
 
 
 def test_a_wrong_type_projection_path_is_a_conflict_not_an_absent_skill():
-    assert classify_skill(R, WRONG_TYPE, None) == CONFLICTED
-    assert classify_skill(R, WRONG_TYPE, {"files": _hashes(R)}) == CONFLICTED
-    assert classify_skill(None, WRONG_TYPE, {"files": _hashes(R)}) == CONFLICTED
+    assert classify_skill(R, WrongType("occupied"), None) == SkillState.CONFLICTED
+    assert classify_skill(R, WrongType("occupied"), {"files": _hashes(R)}) == SkillState.CONFLICTED
+    assert classify_skill(None, WrongType("occupied"), {"files": _hashes(R)}) == SkillState.CONFLICTED
 
 
 def test_a_manifest_entry_with_nothing_on_disk_is_orphaned_so_it_can_converge():
     """The skill left the catalog and its projection is gone: drop the record."""
-    assert classify_skill(None, {}, {"files": _hashes(R)}) == ORPHANED
+    assert classify_skill(None, {}, {"files": _hashes(R)}) == SkillState.ORPHANED

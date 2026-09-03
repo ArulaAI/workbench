@@ -36,9 +36,11 @@ this skill was projected into:
 | Codex | `.agents/skills/workbench-health/scripts/health.py` |
 | GitHub Copilot | `.github/skills/workbench-health/scripts/health.py` |
 
-Surface detection needs no argument: the helper reads its own location. Pass
-`--surface claude|codex|copilot` only to check a harness other than the one it
-was projected into.
+Harness detection needs no argument: the helper reads its own location. Pass
+`--harness claude|codex|copilot` to check a harness other than the one it was
+projected into, or when running a copy that does not sit in a projection root.
+Without either, the helper reports that it cannot tell which harness to check
+rather than guessing one.
 
 ## Report the result
 
@@ -51,10 +53,10 @@ unhealthy, not that the helper failed.
   "status": "unhealthy",
   "message": "Workbench skills are not ready to use.",
   "catalog_version": "0.1.0",
-  "surface": "claude_code",
+  "harness": "claude",
   "skills": ["workbench-health"],
   "issues": ["workbench-health: modified SKILL.md"],
-  "remediation": ["Review or back up local edits, then run `workbench skills sync --surface claude_code --force`."]
+  "remediation": ["Review or back up local edits, then run `workbench skills sync --harness claude --force`."]
 }
 ```
 
@@ -74,7 +76,7 @@ readiness, point them at `workbench skills doctor`.
 
 - No additional permission is required. The helper reads
   `.speed/skills/manifest.json` and the projected skill directory for the
-  selected surface, refusing symlinks and any path that resolves outside the
+  selected harness, refusing symlinks and any path that resolves outside the
   project.
 - It writes no file and touches no module state.
 - If the helper cannot run, report the failure. Do not fabricate a healthy

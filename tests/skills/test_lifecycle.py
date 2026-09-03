@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 from skills import PATHS
+from skills.models import SkillState
 
 REPO = Path(__file__).resolve().parents[2]
 PY = sys.executable
@@ -274,6 +275,7 @@ rm -f "$sync_err"
 # the real scripts do with an argument or a missing directory.
 
 SKILLS_SH = REPO / "lib" / "cmd" / "skills.sh"
+CONTEXT_BRIDGE_SH = REPO / "lib" / "context_bridge.sh"
 
 _LOG_STUBS = """
 log_error()   { echo "ERROR: $*" >&2; }
@@ -347,9 +349,14 @@ def _skills_harness(tmp_path, speed_dir=None, home=None) -> tuple:
     """A sourced `cmd_skills` whose interpreter records the argv it receives."""
     recorder = tmp_path / "record-python"
     argv_log = tmp_path / "argv.txt"
+    # `-c` is the receipt parser and `harnesses` is the canonical harness
+    # registry query: both are real work the wrapper does before it delegates,
+    # so they run for real and are not recorded. The log therefore holds the
+    # lifecycle invocation and nothing else.
     recorder.write_text(
         "#!/usr/bin/env bash\n"
         'if [[ "${1:-}" == "-c" ]]; then exec ' + _q(PY) + ' "$@"; fi\n'
+        'if [[ "${3:-}" == "harnesses" ]]; then exec ' + _q(PY) + ' "$@"; fi\n'
         'printf "%s\\n" "$@" > "$ARGV_LOG"\n'
     )
     recorder.chmod(0o755)
@@ -370,6 +377,11 @@ set -euo pipefail
 PROJECT_ROOT={_q(project)}
 SPEED_PYTHON={_q(recorder)}
 SPEED_HOME={_q(home)}
+# The real dispatcher sources context_bridge.sh before any command file, and
+# skills.sh now takes its interpreter from that shared resolver rather than
+# keeping a private copy. Sourcing it here keeps the harness honest: a rename
+# on either side fails the test instead of silently diverging.
+source {_q(CONTEXT_BRIDGE_SH)}
 source {_q(SKILLS_SH)}
 cmd_skills "$@"
 """
@@ -381,6 +393,36 @@ cmd_skills "$@"
     )
     recorded = argv_log.read_text().splitlines() if argv_log.exists() else None
     return result, recorded
+
+
+def test_bash_reads_the_same_harness_registry_as_the_engine(tmp_path):
+    """Bash used to carry its own `claude|codex|copilot` list in two files.
+
+    A harness added to the engine has to reach the CLI, so the shell asks the
+    registry instead of restating it.
+    """
+    from skills.models import HARNESS_IDS
+
+    script = f"""
+set -euo pipefail
+{_LOG_STUBS}
+SPEED_DIR={_q(REPO)}
+PROJECT_ROOT={_q(tmp_path)}
+source {_q(CONTEXT_BRIDGE_SH)}
+source {_q(SKILLS_SH)}
+workbench_harness_ids
+echo "---"
+workbench_harness_choices
+echo "---"
+workbench_harness_list
+"""
+    result = _bash(script, env={"WORKBENCH_NS": "1"})
+
+    assert result.returncode == 0, result.stderr
+    ids, choices, prose = result.stdout.strip().split("---")
+    assert ids.split() == list(HARNESS_IDS)
+    assert choices.strip() == "|".join(HARNESS_IDS)
+    assert prose.strip() == ", ".join(HARNESS_IDS)
 
 
 def test_skills_rejects_an_unknown_subcommand_with_the_error_code(tmp_path):
@@ -430,12 +472,12 @@ def test_skills_refuses_to_let_a_caller_redirect_the_catalog(tmp_path):
 
 
 def test_skills_forwards_the_documented_public_options(tmp_path):
-    result, recorded = _run_skills(tmp_path, "sync", "--surface", "codex", "--force")
+    result, recorded = _run_skills(tmp_path, "sync", "--harness", "codex", "--force")
 
     assert result.returncode == 0, result.stderr
     assert recorded[:2] == ["-m", "skills"]
     assert "--force" in recorded
-    assert recorded[recorded.index("--surface") + 1] == "codex"
+    assert recorded[recorded.index("--harness") + 1] == "codex"
     assert recorded[recorded.index("--project-root") + 1] == str(tmp_path / "proj")
 
 
@@ -446,8 +488,8 @@ def test_skills_rejects_force_outside_sync(tmp_path):
     assert recorded is None
 
 
-def test_skills_rejects_a_surface_flag_with_no_value(tmp_path):
-    result, recorded = _run_skills(tmp_path, "doctor", "--surface")
+def test_skills_rejects_a_harness_flag_with_no_value(tmp_path):
+    result, recorded = _run_skills(tmp_path, "doctor", "--harness")
 
     assert result.returncode == 3, result.stderr
     assert recorded is None
@@ -523,6 +565,7 @@ VERBOSITY=3
 SPEED_DIR={_q(REPO)}
 PROJECT_ROOT={_q(project)}
 SPEED_PYTHON={_q(recorder)}
+source {_q(CONTEXT_BRIDGE_SH)}
 source {_q(SKILLS_SH)}
 cmd_skills status
 """

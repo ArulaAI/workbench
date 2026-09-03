@@ -10,24 +10,14 @@ instead of splitting it between the reader and the validator.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
 from pathlib import Path
 
 from skills import is_junk
 from skills.frontmatter import parse
+from skills.models import NO_SYMLINKS, SkillPackage
+from skills.validate import validate_catalog
 
-NO_SYMLINKS = "package files must not be symlinks"
-
-
-@dataclass
-class SkillPackage:
-    name: str
-    root: Path
-    meta: dict
-    body: str
-    files: dict = field(default_factory=dict)
-    # (relative path or None, reason) pairs found while reading the package.
-    errors: list = field(default_factory=list)
+__all__ = ["NO_SYMLINKS", "SkillPackage", "load_catalog", "load_package"]
 
 
 def _read_files(root: Path):
@@ -117,9 +107,6 @@ def load_catalog(skills_dir: Path) -> list:
         for child in sorted(skills_dir.iterdir())
         if _is_candidate(child)
     ]
-    # Import here to avoid a module cycle: validate needs SkillPackage.
-    from skills.validate import validate_catalog
-
     violations = validate_catalog(pkgs)
     if violations:
         details = "; ".join(

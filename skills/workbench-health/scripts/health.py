@@ -21,15 +21,16 @@ from pathlib import Path
 SKILL = "workbench-health"
 HEALTHY = "healthy"
 UNHEALTHY = "unhealthy"
-# The only projection roots that exist. A `root` recorded in the manifest is
-# deliberately never resolved: honoring it would let the manifest pick the
-# directory this helper reads.
+# The only projection roots that exist, keyed by harness id. These mirror the
+# registry in lib/skills/models.py, restated because a projected helper has no
+# package to import from, and asserted equal to it by a test. A `root` recorded
+# in the manifest is deliberately never resolved: honoring it would let the
+# manifest pick the directory this helper reads.
 SKILLS_ROOTS = {
-    "claude_code": ".claude/skills",
+    "claude": ".claude/skills",
     "codex": ".agents/skills",
     "copilot": ".github/skills",
 }
-SURFACE_ALIASES = {"claude": "claude_code"}
 # Same rule as `is_valid_skill_name` in lib/skills/__init__.py, restated here
 # because a projected helper has no library to import it from. A skill name is
 # also the only legal path segment for its projection directory.
@@ -40,7 +41,7 @@ SKILL_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 FIX_SYNC = "Run `workbench skills sync`."
 FIX_FORCE = (
     "Review or back up local edits, then run "
-    "`workbench skills sync --surface {surface} --force`."
+    "`workbench skills sync --harness {harness} --force`."
 )
 FIX_MANIFEST = (
     "Restore `.speed/skills/manifest.json` from version control, then run "
@@ -66,8 +67,8 @@ class _Findings:
     matters: a result needing two different repairs.
     """
 
-    def __init__(self, surface: str):
-        self.surface = surface
+    def __init__(self, harness: str):
+        self.harness = harness
         self.issues: list[str] = []
         self.repairs: list[str] = []
 
@@ -75,7 +76,7 @@ class _Findings:
         self.issues.append(issue)
         # A plain substitution rather than str.format, matching doctor.py, so a
         # repair string stays free to contain a brace of its own.
-        scoped = repair.replace("{surface}", self.surface)
+        scoped = repair.replace("{harness}", self.harness)
         if scoped not in self.repairs:
             self.repairs.append(scoped)
 
@@ -93,23 +94,29 @@ def _is_valid_skill_name(name) -> bool:
     return bool(isinstance(name, str) and SKILL_NAME_RE.match(name))
 
 
-def _surface_from_location(project_root):
-    """Infer the surface from the harness root this helper was projected into."""
+def _harness_from_location(project_root):
+    """Infer the harness from the projection root this helper was copied into."""
     try:
         root = Path(__file__).resolve().parents[2]
     except IndexError:
         return None
-    for surface_id, relative in SKILLS_ROOTS.items():
+    for harness_id, relative in SKILLS_ROOTS.items():
         if root == project_root / relative:
-            return surface_id
+            return harness_id
     return None
 
 
-def _normalize_surface(surface, project_root):
-    if not surface:
-        return _surface_from_location(project_root) or "claude_code"
-    normalized = str(surface).strip().lower()
-    return SURFACE_ALIASES.get(normalized, normalized)
+def _resolve_harness(harness, project_root):
+    """The harness to check: the explicit one, else the one this copy lives in.
+
+    There is deliberately no fallback default. Guessing `claude` meant a copy
+    invoked from anywhere else silently verified an installation the caller
+    never asked about and could report healthy while the harness in front of
+    them had nothing installed.
+    """
+    if harness:
+        return str(harness).strip().lower()
+    return _harness_from_location(project_root)
 
 
 def _hash_file(path: Path) -> str:
@@ -248,49 +255,59 @@ def _check_skill(skill_root, project_root, skill_name, expected_files, findings)
         findings.add(f"{skill_name}: unexpected {relative_path}", FIX_FORCE)
 
 
-def build_result(project_root, surface=None):
+def build_result(project_root, harness=None):
     """Verify that every manifested skill file exists, is managed, and is unchanged."""
     project_root = Path(project_root).resolve()
-    surface = _normalize_surface(surface, project_root)
-    findings = _Findings(surface)
+    harness = _resolve_harness(harness, project_root)
+    findings = _Findings(harness or "unknown")
 
-    if surface not in SKILLS_ROOTS:
+    if harness is None:
+        # Neither asked for nor inferable: this copy is not sitting in a
+        # projection root, so there is no installation it can speak for.
+        findings.add(
+            "cannot determine which agent harness to check: pass --harness "
+            f"({', '.join(sorted(SKILLS_ROOTS))})",
+            FIX_HARNESS,
+        )
+        return _result("unknown", {}, "unknown", findings)
+
+    if harness not in SKILLS_ROOTS:
         # Without a canonical root there is nothing safe to resolve, so the
         # check stops before it touches the filesystem.
         findings.add(
-            f"'{surface}' is not a supported agent harness (expected one of: "
+            f"'{harness}' is not a supported agent harness (expected one of: "
             f"{', '.join(sorted(SKILLS_ROOTS))})",
             FIX_HARNESS,
         )
-        return _result(surface, {}, "unknown", findings)
+        return _result(harness, {}, "unknown", findings)
 
     manifest, manifest_loaded = _load_manifest(project_root, findings)
 
-    surfaces, state = _as_mapping(manifest, "surfaces")
+    harnesses, state = _as_mapping(manifest, "harnesses")
     schema_ok = state != "invalid"
     if state == "invalid":
-        findings.add("skill manifest surfaces must be an object", FIX_MANIFEST)
+        findings.add("skill manifest harnesses must be an object", FIX_MANIFEST)
 
-    surface_entry, state = _as_mapping(surfaces, surface)
+    harness_entry, state = _as_mapping(harnesses, harness)
     if state == "invalid":
         schema_ok = False
         findings.add(
-            f"manifest entry for surface '{surface}' must be an object", FIX_MANIFEST
+            f"manifest entry for harness '{harness}' must be an object", FIX_MANIFEST
         )
 
-    skills, state = _as_mapping(surface_entry, "skills")
+    skills, state = _as_mapping(harness_entry, "skills")
     if state == "invalid":
         schema_ok = False
         findings.add(
-            f"manifest skills for surface '{surface}' must be an object", FIX_MANIFEST
+            f"manifest skills for harness '{harness}' must be an object", FIX_MANIFEST
         )
 
     if manifest_loaded and schema_ok and not skills:
         findings.add(
-            f"no Workbench skills are imported for surface '{surface}'", FIX_SYNC
+            f"no Workbench skills are imported for harness '{harness}'", FIX_SYNC
         )
 
-    skills_root = project_root / SKILLS_ROOTS[surface]
+    skills_root = project_root / SKILLS_ROOTS[harness]
     for skill_name in sorted(skills, key=str):
         entry = skills[skill_name]
         if not _is_valid_skill_name(skill_name):
@@ -325,10 +342,10 @@ def build_result(project_root, surface=None):
     version = manifest.get("catalog_version")
     if not isinstance(version, str) or not version:
         version = "unknown"
-    return _result(surface, skills, version, findings)
+    return _result(harness, skills, version, findings)
 
 
-def _result(surface, skills, catalog_version, findings):
+def _result(harness, skills, catalog_version, findings):
     healthy = not findings.issues
     return {
         "skill": SKILL,
@@ -339,7 +356,7 @@ def _result(surface, skills, catalog_version, findings):
             else "Workbench skills are not ready to use."
         ),
         "catalog_version": catalog_version,
-        "surface": surface,
+        "harness": harness,
         "skills": sorted(str(name) for name in skills),
         "issues": findings.issues,
         "remediation": findings.repairs,
@@ -352,7 +369,7 @@ def format_text(result):
         f"status: {result['status']}",
         f"message: {result['message']}",
         f"catalog_version: {result['catalog_version']}",
-        f"surface: {result['surface']}",
+        f"harness: {result['harness']}",
         f"skills: {', '.join(result['skills']) or 'none'}",
     ]
     lines.extend(f"issue: {issue}" for issue in result["issues"])
@@ -364,10 +381,10 @@ def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     parser = argparse.ArgumentParser(prog="workbench-health")
     parser.add_argument("--project-root", default=".")
-    parser.add_argument("--surface", default=None)
+    parser.add_argument("--harness", default=None)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
-    result = build_result(args.project_root, args.surface)
+    result = build_result(args.project_root, args.harness)
     print(json.dumps(result, indent=2) if args.json else format_text(result))
     return 0 if result["status"] == HEALTHY else 1
 

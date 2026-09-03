@@ -10,9 +10,9 @@ import pytest
 
 from skills import PATHS
 from skills.catalog import load_package
+from skills.models import HARNESSES, SkillState
 from skills.project import render
 from skills.sync import sync
-from skills.targets import SURFACES
 
 REPO = Path(__file__).resolve().parents[2]
 HELPER = REPO / "skills" / "workbench-health" / "scripts" / "health.py"
@@ -37,7 +37,7 @@ def _sync_project(project):
 
 def test_helper_reports_imported_skills_ready(tmp_project):
     _sync_project(tmp_project)
-    result = _load_helper().build_result(tmp_project, "claude_code")
+    result = _load_helper().build_result(tmp_project, "claude")
 
     assert result["skill"] == "workbench-health"
     assert result["status"] == "healthy"
@@ -45,7 +45,7 @@ def test_helper_reports_imported_skills_ready(tmp_project):
         "Workbench skills were imported successfully and are ready to use."
     )
     assert result["catalog_version"] == "test"
-    assert result["surface"] == "claude_code"
+    assert result["harness"] == "claude"
     assert result["skills"] == ["workbench-health"]
     assert result["issues"] == []
 
@@ -56,11 +56,11 @@ def test_helper_accepts_claude_harness_alias(tmp_project):
     result = _load_helper().build_result(tmp_project, "claude")
 
     assert result["status"] == "healthy"
-    assert result["surface"] == "claude_code"
+    assert result["harness"] == "claude"
 
 
 def test_helper_reports_missing_manifest(tmp_project):
-    result = _load_helper().build_result(tmp_project, "claude_code")
+    result = _load_helper().build_result(tmp_project, "claude")
 
     assert result["status"] == "unhealthy"
     assert result["skills"] == []
@@ -78,7 +78,7 @@ def test_helper_reports_modified_projection(tmp_project):
     )
     projected.write_text(projected.read_text() + "\nuser edit\n")
 
-    result = _load_helper().build_result(tmp_project, "claude_code")
+    result = _load_helper().build_result(tmp_project, "claude")
 
     assert result["status"] == "unhealthy"
     assert "workbench-health: modified SKILL.md" in result["issues"]
@@ -96,7 +96,7 @@ def test_helper_reports_missing_projection_file(tmp_project):
     )
     projected.unlink()
 
-    result = _load_helper().build_result(tmp_project, "claude_code")
+    result = _load_helper().build_result(tmp_project, "claude")
 
     assert result["status"] == "unhealthy"
     assert "workbench-health: missing scripts/health.py" in result["issues"]
@@ -113,7 +113,7 @@ def test_helper_reports_unexpected_projection_file(tmp_project):
     )
     unexpected.write_text("not managed\n")
 
-    result = _load_helper().build_result(tmp_project, "claude_code")
+    result = _load_helper().build_result(tmp_project, "claude")
 
     assert result["status"] == "unhealthy"
     assert "workbench-health: unexpected unexpected.txt" in result["issues"]
@@ -121,7 +121,7 @@ def test_helper_reports_unexpected_projection_file(tmp_project):
 
 def test_projection_helper_is_byte_identical_to_canonical():
     package = load_package(REPO / "skills" / "workbench-health")
-    output = render(package, SURFACES[0], "test")
+    output = render(package, HARNESSES[0], "test")
     assert output["scripts/health.py"] == HELPER.read_bytes()
 
 
@@ -131,7 +131,7 @@ def test_helper_rejects_empty_manifest(tmp_project):
     manifest.parent.mkdir(parents=True, exist_ok=True)
     manifest.write_text("{}\n")
 
-    result = _load_helper().build_result(tmp_project, "claude_code")
+    result = _load_helper().build_result(tmp_project, "claude")
 
     assert result["status"] == "unhealthy"
     assert result["skills"] == []
@@ -158,21 +158,21 @@ def test_helper_ignores_generated_junk(tmp_project):
     (projected / "scripts" / "__pycache__").mkdir(parents=True, exist_ok=True)
     (projected / "scripts" / "__pycache__" / "health.pyc").write_bytes(b"\x00")
 
-    result = _load_helper().build_result(tmp_project, "claude_code")
+    result = _load_helper().build_result(tmp_project, "claude")
 
     assert result["status"] == "healthy", result["issues"]
 
 
-def test_projected_helper_infers_its_own_surface(tmp_path):
-    """A codex projection must not check itself against the claude surface."""
+def test_projected_helper_infers_its_own_harness(tmp_path):
+    """A codex projection must not check itself against the claude harness."""
     project = tmp_path / "codex-only"
     (project / ".agents").mkdir(parents=True)
-    sync(project, REPO / "skills", "test", only_surface="codex")
+    sync(project, REPO / "skills", "test", only_harness="codex")
     helper = project / ".agents" / "skills" / "workbench-health" / "scripts" / "health.py"
 
     result = _load_projected_helper(helper).build_result(project)
 
-    assert result["surface"] == "codex"
+    assert result["harness"] == "codex"
     assert result["status"] == "healthy", result["issues"]
 
 
@@ -189,23 +189,23 @@ def _write_manifest(project, data):
 @pytest.mark.parametrize(
     ("manifest", "expected"),
     [
-        ({"surfaces": []}, "skill manifest surfaces must be an object"),
+        ({"harnesses": []}, "skill manifest harnesses must be an object"),
         (
-            {"surfaces": {"claude_code": []}},
-            "manifest entry for surface 'claude_code' must be an object",
+            {"harnesses": {"claude": []}},
+            "manifest entry for harness 'claude' must be an object",
         ),
         (
-            {"surfaces": {"claude_code": {"skills": ""}}},
-            "manifest skills for surface 'claude_code' must be an object",
+            {"harnesses": {"claude": {"skills": ""}}},
+            "manifest skills for harness 'claude' must be an object",
         ),
         (
-            {"surfaces": {"claude_code": {"skills": {"workbench-health": []}}}},
+            {"harnesses": {"claude": {"skills": {"workbench-health": []}}}},
             "workbench-health: manifest entry must be an object",
         ),
         (
             {
-                "surfaces": {
-                    "claude_code": {"skills": {"workbench-health": {"files": 0}}}
+                "harnesses": {
+                    "claude": {"skills": {"workbench-health": {"files": 0}}}
                 }
             },
             "workbench-health: manifest files must be an object",
@@ -218,14 +218,14 @@ def test_helper_reports_falsey_non_object_manifest_nodes(
     """A falsey wrong-type node must be reported, not crash the type check."""
     _write_manifest(tmp_project, manifest)
 
-    result = _load_helper().build_result(tmp_project, "claude_code")
+    result = _load_helper().build_result(tmp_project, "claude")
 
     assert result["status"] == "unhealthy"
     assert any(expected in issue for issue in result["issues"]), result["issues"]
 
 
 def test_helper_rejects_unknown_harness(tmp_project):
-    """An unsupported surface has no canonical root, so nothing may be resolved."""
+    """An unsupported harness has no canonical root, so nothing may be resolved."""
     _sync_project(tmp_project)
 
     result = _load_helper().build_result(tmp_project, "weird")
@@ -240,10 +240,10 @@ def test_helper_ignores_manifest_supplied_root(tmp_project):
     _sync_project(tmp_project)
     path = tmp_project / ".speed" / "skills" / "manifest.json"
     data = json.loads(path.read_text())
-    data["surfaces"]["claude_code"]["root"] = "../../etc"
+    data["harnesses"]["claude"]["root"] = "../../etc"
     path.write_text(json.dumps(data, indent=2))
 
-    result = _load_helper().build_result(tmp_project, "claude_code")
+    result = _load_helper().build_result(tmp_project, "claude")
 
     assert result["status"] == "healthy", result["issues"]
 
@@ -253,15 +253,15 @@ def test_helper_rejects_unsafe_skill_name(tmp_project):
     _write_manifest(
         tmp_project,
         {
-            "surfaces": {
-                "claude_code": {
+            "harnesses": {
+                "claude": {
                     "skills": {"../../x": {"files": {"a.md": "sha256:0"}}}
                 }
             }
         },
     )
 
-    result = _load_helper().build_result(tmp_project, "claude_code")
+    result = _load_helper().build_result(tmp_project, "claude")
 
     assert result["status"] == "unhealthy"
     assert any("unsafe skill name" in i for i in result["issues"]), result["issues"]
@@ -278,7 +278,7 @@ def test_helper_rejects_symlinked_projection_file(tmp_project):
     projected.unlink()
     projected.symlink_to(outside)
 
-    result = _load_helper().build_result(tmp_project, "claude_code")
+    result = _load_helper().build_result(tmp_project, "claude")
 
     assert result["status"] == "unhealthy", result
     assert any(
@@ -294,7 +294,7 @@ def test_helper_rejects_symlinked_projection_directory(tmp_project):
     projected.rename(moved)
     projected.symlink_to(moved, target_is_directory=True)
 
-    result = _load_helper().build_result(tmp_project, "claude_code")
+    result = _load_helper().build_result(tmp_project, "claude")
 
     assert result["status"] == "unhealthy", result
     assert any(
@@ -305,7 +305,7 @@ def test_helper_rejects_symlinked_projection_directory(tmp_project):
 def test_healthy_result_carries_no_remediation(tmp_project):
     _sync_project(tmp_project)
 
-    result = _load_helper().build_result(tmp_project, "claude_code")
+    result = _load_helper().build_result(tmp_project, "claude")
 
     assert result["remediation"] == []
 
@@ -313,7 +313,7 @@ def test_healthy_result_carries_no_remediation(tmp_project):
 def test_remediation_is_issue_specific(tmp_project):
     """One command cannot repair every state; each issue names its own fix."""
     helper = _load_helper()
-    missing = helper.build_result(tmp_project, "claude_code")
+    missing = helper.build_result(tmp_project, "claude")
     assert missing["remediation"] == ["Run `workbench skills sync`."]
 
     _sync_project(tmp_project)
@@ -321,9 +321,9 @@ def test_remediation_is_issue_specific(tmp_project):
         tmp_project / ".claude" / "skills" / "workbench-health" / "SKILL.md"
     )
     projected.write_text(projected.read_text() + "\nuser edit\n")
-    modified = helper.build_result(tmp_project, "claude_code")
+    modified = helper.build_result(tmp_project, "claude")
     assert modified["remediation"] == [
-        "Review or back up local edits, then run `workbench skills sync --surface claude_code --force`."
+        "Review or back up local edits, then run `workbench skills sync --harness claude --force`."
     ]
 
 
@@ -332,7 +332,7 @@ def test_unreadable_manifest_does_not_recommend_sync(tmp_project):
     _write_manifest(tmp_project, {})
     (tmp_project / ".speed" / "skills" / "manifest.json").write_text("{not json")
 
-    result = _load_helper().build_result(tmp_project, "claude_code")
+    result = _load_helper().build_result(tmp_project, "claude")
 
     assert result["status"] == "unhealthy"
     assert result["remediation"] == [
@@ -381,7 +381,7 @@ def test_documented_result_block_matches_real_output(tmp_project):
         tmp_project / ".claude" / "skills" / "workbench-health" / "SKILL.md"
     )
     projected.write_text(projected.read_text() + "\nuser edit\n")
-    result = _load_helper().build_result(tmp_project, "claude_code")
+    result = _load_helper().build_result(tmp_project, "claude")
 
     block = re.search(r"```json\n(.*?)```", SKILL_MD.read_text(), re.S)
     assert block, "SKILL.md documents no result block"
@@ -405,7 +405,7 @@ def test_helper_names_an_in_project_symlink_as_a_symlink(tmp_project):
     projected.unlink()
     projected.symlink_to(twin)
 
-    result = _load_helper().build_result(tmp_project, "claude_code")
+    result = _load_helper().build_result(tmp_project, "claude")
 
     assert result["status"] == "unhealthy"
     assert "workbench-health: symlink at SKILL.md" in result["issues"]
@@ -421,7 +421,7 @@ def test_the_helper_agrees_with_the_canonical_layout():
     """
     helper = _load_helper()
     assert helper.SKILLS_ROOTS == {
-        surface.id: surface.skills_root for surface in SURFACES
+        harness.id: harness.skills_root for harness in HARNESSES
     }
 
     source = HELPER.read_text(encoding="utf-8")
