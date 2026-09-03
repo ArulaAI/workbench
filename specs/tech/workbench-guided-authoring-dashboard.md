@@ -71,7 +71,7 @@ the UI stays a generic renderer of the returned fields.
 | Field | Source of truth | Behaviour |
 |---|---|---|
 | Title | New helper field `feature_title` | Free text. Becomes the PRD H1 and the display name. |
-| Slug | Existing `feature_slug` | Derived from the title by the helper's own normalisation, shown and editable, validated against `FEATURE_RE` before any write. |
+| Slug | Existing `feature_slug` | Derived client-side by `deriveSlug`, a mirror of the helper's `_slugify` held in place by `__tests__/guided/slug.test.ts`. Editable; the helper validates against `FEATURE_RE` before any write. |
 | Description | Existing `feature_description` | Persisted as direct problem evidence. P-Q1 is skipped when it is sufficient. |
 
 Today the PRD H1 is reconstructed from the slug, so `due-dates-for-tasks` renders
@@ -117,7 +117,10 @@ Rules for the adapter:
 
 ## Helper Contract Additions
 
-Implemented in `draft.py` so the CLI and the agent inherit all of them.
+Implemented in `draft.py` so the CLI and the agent inherit all of them. All five
+landed on `codex/guided-prd-dashboard-ui`, including path resolution, so the
+multiplayer refusal below now guards only a layout that changes under a live
+session.
 
 | # | Addition | Why the dashboard needs it | Blocking |
 |---|---|---|---|

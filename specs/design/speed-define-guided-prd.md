@@ -5,6 +5,9 @@
 > See [dashboard RFC](../tech/workbench-guided-authoring-dashboard.md) for the GraphQL surface, adapter, and helper additions this design depends on.
 > Sibling design spec: [speed-define-ceremony-context.md](speed-define-ceremony-context.md) for the intent-first ceremony branch that shares `/define/new`.
 > Design system: `dashboard/frontend/app/globals.css`
+> Status: implemented on `codex/guided-prd-dashboard-ui`. Components live in
+> `dashboard/frontend/components/ceremony/guided/`, grouped into one file per
+> region rather than one file per component.
 
 <!--
   WHO READS THIS SPEC
@@ -161,31 +164,31 @@ Header strip (32px) with `PRD · rev N`, the artifact path in mono, and an exter
 
 | Component ID | Type | Location | Parent Region | Role |
 |--------------|------|----------|---------------|------|
-| ArtifactChoice | new | `ceremony/guided/ArtifactChoice.tsx` | `intake-card` | Renders the helper's `artifact_type` options. PRD continues into the form; Design shows the CLI command and does not open a UI interview. |
-| GuidedPrdIntakeForm | new | `ceremony/guided/GuidedPrdIntakeForm.tsx` | `intake-card` | Title, SlugField, description. Renders from `next_input.fields`; submits `startAuthoring`. |
-| SlugField | new | `ceremony/guided/SlugField.tsx` | GuidedPrdIntakeForm | Derived-but-editable identifier with inline validation and the resulting artifact path. |
-| AuthoringBar | new | `ceremony/guided/AuthoringBar.tsx` | `authoring-bar` | Feature title, artifact chip, revision, SaveStateChip, progress count. |
-| SaveStateChip | new | `ceremony/guided/SaveStateChip.tsx` | AuthoringBar | Saved / Saving / Conflict. Never optimistic. |
-| ConflictBanner | new | `ceremony/guided/ConflictBanner.tsx` | `conflict-banner` | Held revision, current revision, reload action, assurance that typed text is kept. |
-| CoverageRail | new | `ceremony/guided/CoverageRail.tsx` | `coverage-rail` | CoverageProgress plus one CoverageRow per `coverage` entry. |
-| CoverageProgress | new | `ceremony/guided/CoverageProgress.tsx` | CoverageRail | `confirmed/total` and the adaptive-plan caption. No bar segments for unplanned questions. |
-| CoverageRow | new | `ceremony/guided/CoverageRow.tsx` | CoverageRail | State dot, question ID, confidence label, impact. Read-only for unanswered rows; confirmed rows link to their section. |
-| QuestionCard | new | `ceremony/guided/QuestionCard.tsx` | `question-column` | The six-slot card above. Owns no interview text of its own. |
-| EvidenceNote | new | `ceremony/guided/EvidenceNote.tsx` | QuestionCard | "Evidence to consider" block, clamped with expand. |
-| SuggestionPanel | new | `ceremony/guided/SuggestionPanel.tsx` | QuestionCard | Confidence chip, suggestion body or the explicit no-suggestion line, SourcePathRef list, GapList. |
-| GapList | new | `ceremony/guided/GapList.tsx` | SuggestionPanel | Helper gap strings. Secondary text, never tertiary: these are read to make a decision. |
-| SourcePathRef | modified | `define/ref-marker.tsx` | SuggestionPanel | Existing marker, extended with a `status` prop for `available`, `missing`, `stale`. |
-| ResponseControl | new | `ceremony/guided/ResponseControl.tsx` | QuestionCard | Dispatcher on `response_control.input_type`. Unknown type renders an explicit unsupported-control message, never a guess. |
-| ActionChoiceGroup | new | `ceremony/guided/ActionChoiceGroup.tsx` | ResponseControl | Radio group over the returned options, in the returned order, with the returned labels. |
-| AnswerTextarea | new | `ceremony/guided/AnswerTextarea.tsx` | ResponseControl | Auto-growing field prefilled from `initial_value`, labelled by the control prompt. |
-| FollowUpNotice | new | `ceremony/guided/FollowUpNotice.tsx` | QuestionCard | The single declared follow-up prompt, framed as a targeted addition rather than a rejection. |
-| FindingsNotice | new | `ceremony/guided/FindingsNotice.tsx` | QuestionCard | Self-review findings for the current question, each with its message. |
-| BlockingNotice | new | `ceremony/guided/BlockingNotice.tsx` | `question-column` | Deferred required questions and what unblocks generation. |
-| DraftPreview | modified | `editor/SpecPreview.tsx` | `draft-preview` | Existing Markdown renderer, wrapped to add the header strip and per-section provenance footers. Read-only. |
-| SectionProvenance | new | `ceremony/guided/SectionProvenance.tsx` | DraftPreview | Source question IDs plus Edit for one section. |
-| SelfReviewSummary | new | `ceremony/guided/SelfReviewSummary.tsx` | `question-column` | Terminal state: passed, or open questions with their source IDs. |
-| ResumeCard | new | `ceremony/guided/ResumeCard.tsx` | `/define/:feature` page body | Artifact, status, `confirmed/total`, resume link. |
-| HelperUnavailable | new | `ceremony/guided/HelperUnavailable.tsx` | `question-column`, `intake-card` | Adapter failure with the resolved helper path and interpreter. |
+| ArtifactChoice | new | `guided/IntakeForm.tsx` | `intake-card` | Renders the helper's `artifact_type` options. PRD continues into the form; Design shows the CLI command and does not open a UI interview. |
+| GuidedPrdIntakeForm | new | `guided/IntakeForm.tsx` | `intake-card` | Title, SlugField, description. Renders from `next_input.fields`; submits `startAuthoring`. |
+| SlugField | new | `guided/IntakeForm.tsx` | GuidedPrdIntakeForm | Derived-but-editable identifier with inline validation and the resulting artifact path. |
+| AuthoringBar | new | `guided/AuthoringBar.tsx` | `authoring-bar` | Feature title, artifact chip, revision, SaveStateChip, progress count. |
+| SaveStateChip | new | `guided/AuthoringBar.tsx` | AuthoringBar | Saved / Saving / Conflict. Never optimistic. |
+| ConflictBanner | new | `guided/AuthoringBar.tsx` | `conflict-banner` | Held revision, current revision, reload action, assurance that typed text is kept. |
+| CoverageRail | new | `guided/CoverageRail.tsx` | `coverage-rail` | CoverageProgress plus one CoverageRow per `coverage` entry. |
+| CoverageProgress | new | `guided/CoverageRail.tsx` | CoverageRail | `confirmed/total` and the adaptive-plan caption. No bar segments for unplanned questions. |
+| CoverageRow | new | `guided/CoverageRail.tsx` | CoverageRail | State dot, question ID, confidence label, impact. Read-only for unanswered rows; confirmed rows link to their section. |
+| QuestionCard | new | `guided/QuestionCard.tsx` | `question-column` | The six-slot card above. Owns no interview text of its own. |
+| EvidenceNote | new | `guided/QuestionCard.tsx` | QuestionCard | "Evidence to consider" block, clamped with expand. |
+| SuggestionPanel | new | `guided/QuestionCard.tsx` | QuestionCard | Confidence chip, suggestion body or the explicit no-suggestion line, SourcePathRef list, GapList. |
+| GapList | new | `guided/QuestionCard.tsx` | SuggestionPanel | Helper gap strings. Secondary text, never tertiary: these are read to make a decision. |
+| SourcePathRef | inline | `guided/QuestionCard.tsx` | SuggestionPanel | Source id plus middle-truncated path; a non-available source status tints the path amber. |
+| ResponseControl | inline | `guided/QuestionCard.tsx` | QuestionCard | Dispatch on `response_control.input_type` inside QuestionCard: `textarea` renders AnswerTextarea, anything else renders ActionChoiceGroup over the returned options. |
+| ActionChoiceGroup | new | `guided/QuestionCard.tsx` | ResponseControl | Radio group over the returned options, in the returned order, with the returned labels. |
+| AnswerTextarea | new | `guided/QuestionCard.tsx` | ResponseControl | Auto-growing field prefilled from `initial_value`, labelled by the control prompt. |
+| FollowUpNotice | new | `guided/Notices.tsx` | QuestionCard | The single declared follow-up prompt, framed as a targeted addition rather than a rejection. |
+| FindingsNotice | new | `guided/Notices.tsx` | QuestionCard | Self-review findings for the current question, each with its message. |
+| BlockingNotice | new | `guided/Notices.tsx` | `question-column` | Deferred required questions and what unblocks generation. |
+| DraftPreview | new | `guided/DraftPreview.tsx` | `draft-preview` | Existing Markdown renderer, wrapped to add the header strip and per-section provenance footers. Read-only. |
+| SectionProvenance | new | `guided/DraftPreview.tsx` | DraftPreview | Source question IDs plus Edit for one section. |
+| SelfReviewSummary | new | `guided/Notices.tsx` | `question-column` | Terminal state: passed, or open questions with their source IDs. |
+| ResumeCard | new | `guided/ResumeCard.tsx` | `/define/:feature` page body | Artifact, status, `confirmed/total`, resume link. |
+| HelperUnavailable | new | `guided/Notices.tsx` | `question-column`, `intake-card` | Adapter failure with the resolved helper path and interpreter. |
 
 ### Component Props
 
@@ -688,7 +691,7 @@ Placeholders are hints only. No field on the intake form is pre-filled with exam
 - `response_control.options` is the whole truth about available actions. Never synthesise Accept for a `partial` suggestion, never render an omitted action as disabled, and never reorder options to a house convention.
 - The preview must not steal focus. It re-renders on every confirmed answer, so key the document container by revision and keep the focused element in the question column untouched.
 - `authoring-bar` and `coverage-rail` use `position: sticky`, which fails inside an ancestor with `overflow: hidden`. The existing `<main>` in the Define pages sets `overflow: auto`; keep the sticky elements outside any wrapper that clips.
-- Reuse `editor/SpecPreview.tsx` for Markdown rendering rather than adding a second renderer. Wrap it for the header strip and provenance footers; do not fork its typography.
+- `guided/DraftPreview.tsx` renders per-section so each section can carry its own provenance footer, which `editor/SpecPreview.tsx` cannot do as a single Markdown block. It reuses that component's typography rules verbatim; keep the two in sync when either changes.
 - `progress.total` can decrease when the planner drops an unsurfaced question. Derive the count from each payload and never persist it in component state across fetches.
 - `--peek` is required for every read path, including the slug collision check and the ResumeCard. A plain call creates the checkpoint and generates the draft, so a hover-prefetch or a stray poll would create feature state the author never asked for.
 - Do: use `.surface` for the question card, intake card, and preview panel. Don't: apply a shadow without its paired border, and don't elevate the suggestion panel, which is an inset block.
