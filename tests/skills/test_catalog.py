@@ -7,8 +7,9 @@ from skills.catalog import load_catalog, load_package
 REPO = Path(__file__).resolve().parents[2]
 
 
-def test_real_catalog_contains_only_health():
+def test_real_catalog_contains_health_and_draft():
     assert [pkg.name for pkg in load_catalog(REPO / "skills")] == [
+        "workbench-draft",
         "workbench-health"
     ]
 

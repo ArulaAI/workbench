@@ -6,6 +6,7 @@
 #
 # Commands:
 #   init [options]          Initialize project and its persisted skill policy
+#   draft prd <feature>     Interview the owner and generate a PRD draft
 #   validate <specs-dir>    Cross-validate all specs for consistency
 #   plan <spec-file> [opts] Decompose a spec into a task DAG + contract
 #   verify                  Blind-verify the plan against the product spec
@@ -109,6 +110,7 @@ speed_help() {
     echo ""
     echo -e "${BOLD}COMMANDS${RESET}"
     echo -e "    ${COLOR_STEP}init${RESET} [--harness NAME]...    Initialize project with a persisted skill-harness policy"
+    echo -e "    ${COLOR_STEP}draft${RESET} prd <feature>          Interview the owner and generate a reviewable PRD draft"
     echo -e "    ${COLOR_STEP}validate${RESET} <specs-dir>         Cross-validate all specs for consistency"
     echo -e "    ${COLOR_STEP}plan${RESET} <spec-file> [opts]      Decompose a product spec into task DAG + contract"
     echo -e "    ${COLOR_STEP}verify${RESET}                       Blind-verify plan against product spec"
@@ -219,6 +221,7 @@ speed_help() {
     echo ""
     echo -e "${BOLD}EXAMPLES${RESET}"
     echo "    speed init"
+    echo "    workbench draft prd add-due-date-to-task"
     echo "    speed validate specs/"
     echo "    speed plan specs/tech/auth.md --specs-dir specs/"
     echo "    speed run"
@@ -277,6 +280,7 @@ main() {
 
     case "$command" in
         init)      cmd_init "$@" ;;
+        draft)     cmd_draft "$@" ;;
         validate)  cmd_validate "$@" ;;
         plan)      cmd_plan "$@" ;;
         verify)    cmd_verify "$@" ;;

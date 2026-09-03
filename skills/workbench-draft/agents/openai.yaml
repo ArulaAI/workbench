@@ -1,0 +1,4 @@
+interface:
+  display_name: "Workbench Draft"
+  short_description: "Draft proportional PRD and Design specifications"
+  default_prompt: "Use $workbench-draft to create a proportional PRD or PRD-linked Design draft from confirmed product decisions."

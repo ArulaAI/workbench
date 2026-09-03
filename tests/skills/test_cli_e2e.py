@@ -204,7 +204,8 @@ def test_workbench_init_creates_only_selected_harness(
     selected = project / skills_root / "workbench-health" / "SKILL.md"
     assert selected.is_file()
     assert sorted(path.name for path in selected.parent.parent.iterdir()) == [
-        "workbench-health"
+        "workbench-draft",
+        "workbench-health",
     ]
     health = subprocess.run(
         [
@@ -223,7 +224,7 @@ def test_workbench_init_creates_only_selected_harness(
     assert health.returncode == 0, health.stderr
     health_result = json.loads(health.stdout)
     assert health_result["status"] == "healthy"
-    assert health_result["skills"] == ["workbench-health"]
+    assert health_result["skills"] == ["workbench-draft", "workbench-health"]
     assert f"Skills projected for {harness}" in initialized.stdout
     assert f'harnesses = ["{harness}"]' in (project / "speed.toml").read_text()
     # Without --commit, init commits none of the project's own files, but it
@@ -380,7 +381,7 @@ def test_a_leading_global_flag_is_not_taken_as_the_command(tmp_path):
 
     assert "Unknown command" not in leading.stderr
     rows = json.loads(leading.stdout)
-    assert [row["state"] for row in rows] == ["current"]
+    assert rows and all(row["state"] == "current" for row in rows)
 
     trailing = _workbench(project, "skills", "status", "--json")
     assert json.loads(trailing.stdout) == rows

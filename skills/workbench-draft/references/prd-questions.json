@@ -1,0 +1,93 @@
+{
+  "version": "prd-v2",
+  "questions": [
+    {
+      "id": "P-Q1",
+      "coverage": "problem_evidence",
+      "applicability": "always",
+      "prompt": "Who experiences the problem, in what situation, what happens today, and why does it matter now?",
+      "evidence": "Reviewed Discover handoff, research, defects, learnings, and current behavior",
+      "purpose": "Define the user problem and urgency without jumping to a solution.",
+      "completion_evidence": "Names an affected user, current situation or behavior, impact, and why action matters.",
+      "quality": {"min_chars": 40, "follow_up_prompt": "Please add the affected user, what happens today, its impact, or why solving it matters now."},
+      "sections": ["Problem & Evidence"]
+    },
+    {
+      "id": "P-Q2",
+      "coverage": "user_boundary",
+      "applicability": "always",
+      "prompt": "Who needs this outcome? If all users behave the same, say so; describe different access or constraints only when they genuinely exist.",
+      "evidence": "Discover personas, existing roles and permissions, and current journeys",
+      "purpose": "Define who receives the outcome and only the access boundaries that actually matter.",
+      "completion_evidence": "Identifies the affected user and states whether access or constraints differ; one undifferentiated user is a valid answer.",
+      "quality": {"min_chars": 30, "follow_up_prompt": "Please identify who needs the outcome and whether everyone has the same access or a meaningful boundary exists."},
+      "sections": ["User Stories"]
+    },
+    {
+      "id": "P-Q3",
+      "coverage": "hypothesis",
+      "applicability": "always",
+      "prompt": "What user and business outcomes should change, and which guardrails must not regress?",
+      "evidence": "Discover outcomes, product vision, baselines, analytics, and policy",
+      "purpose": "Separate desired outcomes from implementation and protect existing value.",
+      "completion_evidence": "States a user or business outcome plus at least one non-regression guardrail.",
+      "quality": {"min_chars": 40, "follow_up_prompt": "Please add the desired outcome and a guardrail that must not regress."},
+      "sections": ["Hypothesis"]
+    },
+    {
+      "id": "P-Q4",
+      "coverage": "product_behavior",
+      "applicability": "always",
+      "prompt": "What are the primary, alternate, failure, cancellation, and recovery flows from entry to completion?",
+      "evidence": "Current product behavior, related requirements, defects, and support evidence",
+      "purpose": "Cover the complete journey rather than only its happy path.",
+      "completion_evidence": "Describes entry, completion, and material alternate, failure, cancellation, or recovery behavior.",
+      "quality": {"min_chars": 50, "follow_up_prompt": "Please add the journey entry and completion plus the material failure, cancellation, or recovery path."},
+      "sections": ["Requirements & Acceptance"]
+    },
+    {
+      "id": "P-Q5",
+      "coverage": "acceptance",
+      "applicability": "always",
+      "prompt": "What must the product do, and what observable Given/When/Then behavior proves each stable requirement?",
+      "evidence": "Confirmed flows, business rules, policies, and existing contracts",
+      "purpose": "Turn product obligations into stable, observable requirements.",
+      "completion_evidence": "Provides product behavior and independently observable proof, preferably Given/When/Then.",
+      "quality": {"min_chars": 50, "follow_up_prompt": "Please add observable proof for the requirement, including the triggering condition and expected result."},
+      "sections": ["Requirements & Acceptance"]
+    },
+    {
+      "id": "P-Q6",
+      "coverage": "success",
+      "applicability": "always",
+      "prompt": "How will success be measured, what threshold or baseline is required, where does the measurement come from, and who owns it?",
+      "evidence": "Existing instrumentation, historical baselines, and desired outcomes",
+      "purpose": "Make success measurable and operationally owned.",
+      "completion_evidence": "Names a metric, threshold or baseline plan, measurement source, and owner.",
+      "quality": {"min_chars": 50, "follow_up_prompt": "Please add the metric, threshold or baseline plan, measurement source, and responsible owner."},
+      "sections": ["Success"]
+    },
+    {
+      "id": "P-Q7",
+      "coverage": "scope_dependencies",
+      "applicability": "scope_signal",
+      "prompt": "What is in scope, explicitly out of scope, dependent on other work, or constrained by sequencing?",
+      "evidence": "Related features, organizational constraints, and release dependencies",
+      "purpose": "Set an implementable boundary and expose sequencing dependencies.",
+      "completion_evidence": "States inclusions, exclusions with reasons, and relevant dependencies or sequencing constraints.",
+      "quality": {"min_chars": 50, "follow_up_prompt": "Please add explicit inclusions, exclusions with reasons, and any dependency or sequencing constraint."},
+      "sections": ["Scope"]
+    },
+    {
+      "id": "P-Q8",
+      "coverage": "delivery_controls",
+      "applicability": "risk_signal",
+      "prompt": "Which authorization, privacy, compliance, abuse, rollout, assumption, risk, or unresolved decision needs explicit ownership?",
+      "evidence": "Security policy, regulatory requirements, historical failures, and existing decisions",
+      "purpose": "Surface controls, risks, and unresolved decisions before approval.",
+      "completion_evidence": "Names applicable controls, risks, assumptions, or open decisions and assigns ownership where material.",
+      "quality": {"min_chars": 50, "follow_up_prompt": "Please identify the material control, risk, assumption, or open decision and who owns it."},
+      "sections": ["Guardrails / Must Not Regress", "Delivery, Risks & Open Questions"]
+    }
+  ]
+}

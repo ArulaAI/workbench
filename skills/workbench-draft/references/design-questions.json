@@ -1,0 +1,77 @@
+{
+  "version": "design-v1",
+  "questions": [
+    {
+      "id": "D-Q1",
+      "prompt": "What experience, hierarchy, tone, and explicit negative constraints should guide the design?",
+      "evidence": "Linked PRD outcomes and scope, product patterns, and approved references",
+      "purpose": "Translate Product outcomes into an experience direction with explicit anti-patterns.",
+      "completion_evidence": "States experience direction, hierarchy or tone, and at least one negative constraint linked to Product outcomes.",
+      "quality": {"min_chars": 50, "follow_up_prompt": "Please add the intended experience direction and explicit design constraints or anti-patterns."},
+      "sections": ["Design Intent"]
+    },
+    {
+      "id": "D-Q2",
+      "prompt": "Where does each journey begin and end, and which routes, surfaces, and navigation transitions cover every PRD flow?",
+      "evidence": "Linked PRD flows and stories, existing routes, and the navigation model",
+      "purpose": "Map every visual Product journey to resolvable routes and transitions.",
+      "completion_evidence": "Names journey entry and end points plus routes, surfaces, and transitions or a justified non-visual decision.",
+      "quality": {"min_chars": 60, "follow_up_prompt": "Please add the journey entry and end points and the routes, surfaces, or non-visual decision that covers them."},
+      "sections": ["Pages / Routes"]
+    },
+    {
+      "id": "D-Q3",
+      "prompt": "What layout regions, containment, information priority, scrolling, and responsive structure are required?",
+      "evidence": "Linked PRD journeys and users, existing shells, grids, breakpoints, and platform conventions",
+      "purpose": "Define structural hierarchy and responsive containment without implementation guesswork.",
+      "completion_evidence": "Names layout regions, containment and priority, scrolling behavior, and relevant responsive changes.",
+      "quality": {"min_chars": 60, "follow_up_prompt": "Please add the layout regions, information priority, scrolling behavior, and responsive structure."},
+      "sections": ["Layout Structure", "Responsive Behavior"]
+    },
+    {
+      "id": "D-Q4",
+      "prompt": "Which components are reused, modified, or new, and what inputs, states, and ownership does each require?",
+      "evidence": "Linked PRD stories and dependencies, component library, current implementation, and design system",
+      "purpose": "Produce a resolvable component and data-binding contract.",
+      "completion_evidence": "Distinguishes reused, modified, and new components and identifies inputs, states, and ownership.",
+      "quality": {"min_chars": 60, "follow_up_prompt": "Please distinguish reused, modified, and new components and add their inputs, states, or owners."},
+      "sections": ["Component Inventory", "Data Binding", "Implementation Notes"]
+    },
+    {
+      "id": "D-Q5",
+      "prompt": "What happens in default, loading, empty, partial, error, permission, disabled, success, offline, and overflow states?",
+      "evidence": "Linked PRD happy, boundary, failure, and recovery flows plus existing patterns and defects",
+      "purpose": "Prevent happy-path-only design by making boundary and recovery behavior explicit.",
+      "completion_evidence": "Covers applicable happy, loading, empty, partial, error, permission, disabled, success, offline, and overflow states.",
+      "quality": {"min_chars": 70, "follow_up_prompt": "Please add the missing boundary, failure, permission, offline, overflow, or recovery states that materially apply."},
+      "sections": ["States"]
+    },
+    {
+      "id": "D-Q6",
+      "prompt": "How do actions, validation feedback, recovery, focus, keyboard behavior, motion, and user-facing copy work?",
+      "evidence": "Linked PRD interaction and control obligations, content standards, accessibility rules, and interaction patterns",
+      "purpose": "Make interaction, recovery, accessibility, motion, and content behavior observable.",
+      "completion_evidence": "Defines actions, validation and recovery, focus or keyboard behavior, motion, and user-facing content constraints.",
+      "quality": {"min_chars": 70, "follow_up_prompt": "Please add the missing validation, recovery, focus, keyboard, motion, or user-facing copy behavior."},
+      "sections": ["Interactions & Motion", "Accessibility", "Content Constraints"]
+    },
+    {
+      "id": "D-Q7",
+      "prompt": "Which existing spacing, typography, color, depth, icon, and imagery tokens apply, and which primitives are genuinely new?",
+      "evidence": "Linked PRD scope and dependencies, closed token set, and design-system documentation",
+      "purpose": "Keep visual decisions inside the resolved design system and label genuine additions.",
+      "completion_evidence": "References applicable existing token families and explicitly labels any unresolved or new primitive.",
+      "quality": {"min_chars": 60, "follow_up_prompt": "Please identify the existing token families to reuse and any primitive that must be introduced or resolved."},
+      "sections": ["Spacing", "Typography", "Color Application", "Elevation & Depth"]
+    },
+    {
+      "id": "D-Q8",
+      "prompt": "How does the experience adapt across viewport, platform, localization, reduced motion, assistive technology, and accessibility targets?",
+      "evidence": "Linked PRD users, success and control obligations, breakpoints, supported platforms, localization rules, and WCAG target",
+      "purpose": "Make adaptation and accessibility requirements testable across supported contexts.",
+      "completion_evidence": "Defines viewport or platform adaptation, localization, reduced motion, assistive technology behavior, accessibility target, and verification evidence.",
+      "quality": {"min_chars": 70, "follow_up_prompt": "Please add the missing viewport, platform, localization, reduced-motion, assistive-technology, accessibility-target, or verification behavior."},
+      "sections": ["Responsive Behavior", "Accessibility", "Verification Criteria", "Figma / Visual Reference"]
+    }
+  ]
+}
