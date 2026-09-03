@@ -163,6 +163,29 @@ def start_generate_draft(
     )
 
 
+GUIDED_EDIT_REFUSAL = (
+    "This {spec_type} was generated from a guided interview, so its prose is "
+    "repaired through the answer that produced it. Open "
+    "/define/{feature}/authoring/{spec_type} and edit the responsible question "
+    "instead: a direct edit here would be discarded at the next regeneration."
+)
+
+
+def _guided_authoring_record(
+    project_root: Path, feature_name: str, spec_type: str
+) -> dict | None:
+    """Return the authoring block when this draft came from the interview."""
+    existing = load_spec_draft(project_root, feature_name, spec_type)
+    if existing is None:
+        return None
+    paths = get_paths(project_root)
+    raw = _read_json(paths.ceremony_draft(feature_name, spec_type))
+    if not isinstance(raw, dict):
+        return None
+    authoring = raw.get("authoring")
+    return authoring if isinstance(authoring, dict) else None
+
+
 def update_draft(
     project_root: Path,
     feature_name: str,
@@ -170,6 +193,11 @@ def update_draft(
     content: str,
 ) -> SpecDraft:
     """Save claimant edits, write spec file, run Tier 1 validation."""
+    guided = _guided_authoring_record(project_root, feature_name, spec_type)
+    if guided is not None:
+        raise PermissionError(
+            GUIDED_EDIT_REFUSAL.format(spec_type=spec_type, feature=feature_name)
+        )
     _authorize(project_root, feature_name, "edit", spec_type)
     refresh_claim_activity(project_root, feature_name, spec_type)
 

@@ -37,10 +37,12 @@ def create_app(project_root: str) -> FastAPI:
     observer = None
     spec_observer = None
     active_feature_observer = None
+    authoring_observer = None
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         nonlocal conn, observer, spec_observer, active_feature_observer
+        nonlocal authoring_observer
 
         # 1. Database
         log.info("Opening database for %s", project_root)
@@ -76,9 +78,17 @@ def create_app(project_root: str) -> FastAPI:
             project_root, sub_manager, loop
         )
 
+        # 9. Guided authoring checkpoint watcher (cross-surface resume)
+        authoring_observer = ingest.start_authoring_watcher(
+            project_root, sub_manager, loop
+        )
+
         yield
 
         # Shutdown
+        if authoring_observer:
+            authoring_observer.stop()
+            authoring_observer.join(timeout=5)
         if active_feature_observer:
             active_feature_observer.stop()
             active_feature_observer.join(timeout=5)

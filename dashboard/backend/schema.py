@@ -38,6 +38,13 @@ from .resolvers import ceremony_editor as ceremony_editor_resolver
 from .resolvers import ceremony_suggestions as suggestions_resolver
 from .resolvers import ceremony_commitment as commitment_resolver
 from .resolvers import ceremony_claims as claims_resolver
+from .resolvers import authoring as authoring_resolver
+from .resolvers.authoring_types import (
+    AuthoringAction,
+    AuthoringIntake,
+    AuthoringSession,
+    AuthoringSessionEvent,
+)
 from .resolvers.ceremony_types import CurrentActor, SpecClaimInfo, SpecProgressInfo
 from .resolvers.ceremony_types import get_current_actor as _get_current_actor
 from .resolvers import ceremony_bootstrap as bootstrap_resolver
@@ -773,6 +780,25 @@ class Query:
     # ── Ceremony queries ────────────────────────────────────────
 
     @strawberry.field
+    def authoring_intake(
+        self, info: strawberry.types.Info, artifact_type: Optional[str] = None,
+    ) -> AuthoringIntake:
+        """Branch-aware missing-input contract for guided authoring."""
+        return authoring_resolver.get_intake(
+            info.context["project_root"], artifact_type
+        )
+
+    @strawberry.field
+    def authoring_session(
+        self, info: strawberry.types.Info,
+        feature_name: str, artifact_type: str = "prd",
+    ) -> AuthoringSession:
+        """Read-only interview view. Never creates or advances a checkpoint."""
+        return authoring_resolver.get_session(
+            info.context["project_root"], feature_name, artifact_type
+        )
+
+    @strawberry.field
     def ceremony_info(
         self, info: strawberry.types.Info, feature_name: str
     ) -> Optional[CeremonyInfo]:
@@ -1217,6 +1243,21 @@ class Subscription:
             )
 
     @strawberry.subscription
+    async def authoring_session_changed(
+        self, info: strawberry.types.Info, feature: str,
+    ) -> AsyncGenerator[AuthoringSessionEvent, None]:
+        sub_manager: SubscriptionManager = info.context["sub_manager"]
+        async for event in sub_manager.listen(
+            EventType.AUTHORING_SESSION_CHANGED, feature
+        ):
+            yield AuthoringSessionEvent(
+                feature=event.feature or feature,
+                artifact_type=event.payload.get("artifact_type", ""),
+                revision=event.payload.get("revision"),
+                status=event.payload.get("status", ""),
+            )
+
+    @strawberry.subscription
     async def draft_generation_progress(
         self, info: strawberry.types.Info, feature: str,
     ) -> AsyncGenerator[DraftGenerationEvent, None]:
@@ -1484,6 +1525,77 @@ class Mutation:
         asyncio.create_task(_generate())
 
         return result
+
+    @strawberry.mutation
+    async def start_authoring(
+        self,
+        info: strawberry.types.Info,
+        feature_name: str,
+        feature_title: Optional[str] = None,
+        feature_description: Optional[str] = None,
+        artifact_type: str = "prd",
+    ) -> AuthoringSession:
+        project_root = info.context["project_root"]
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,
+            authoring_resolver.start,
+            project_root, feature_name, artifact_type,
+            feature_title, feature_description,
+        )
+
+    @strawberry.mutation
+    async def submit_authoring_answer(
+        self,
+        info: strawberry.types.Info,
+        feature_name: str,
+        answer: str,
+        expected_revision: int,
+        artifact_type: str = "prd",
+    ) -> AuthoringSession:
+        project_root = info.context["project_root"]
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,
+            authoring_resolver.submit_answer,
+            project_root, feature_name, artifact_type, answer, expected_revision,
+        )
+
+    @strawberry.mutation
+    async def select_authoring_action(
+        self,
+        info: strawberry.types.Info,
+        feature_name: str,
+        action: AuthoringAction,
+        expected_revision: int,
+        artifact_type: str = "prd",
+    ) -> AuthoringSession:
+        project_root = info.context["project_root"]
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,
+            authoring_resolver.select_action,
+            project_root, feature_name, artifact_type, action, expected_revision,
+        )
+
+    @strawberry.mutation
+    async def revise_authoring_coverage(
+        self,
+        info: strawberry.types.Info,
+        feature_name: str,
+        coverage_id: str,
+        answer: str,
+        expected_revision: int,
+        artifact_type: str = "prd",
+    ) -> AuthoringSession:
+        project_root = info.context["project_root"]
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,
+            authoring_resolver.revise_coverage,
+            project_root, feature_name, artifact_type,
+            coverage_id, answer, expected_revision,
+        )
 
     @strawberry.mutation
     async def update_draft(

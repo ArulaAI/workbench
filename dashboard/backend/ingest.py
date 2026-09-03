@@ -511,3 +511,67 @@ def start_active_feature_watcher(
     observer.start()
     log.info("Active feature watcher started on %s", speed_dir)
     return observer
+
+
+class _AuthoringCheckpointHandler(FileSystemEventHandler):
+    """Detect writes to authoring-<type>.json from any surface."""
+
+    def __init__(
+        self,
+        sub_manager: SubscriptionManager,
+        loop: asyncio.AbstractEventLoop,
+    ) -> None:
+        self._sub = sub_manager
+        self._loop = loop
+
+    def _handle(self, event: FileCreatedEvent | FileModifiedEvent) -> None:
+        path = Path(event.src_path)
+        name = path.name
+        if not name.startswith("authoring-") or not name.endswith(".json"):
+            return
+        artifact_type = name[len("authoring-"):-len(".json")]
+        revision = None
+        status = ""
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            revision = data.get("revision")
+            status = str(data.get("status") or "")
+        except (OSError, ValueError):
+            # A torn or partial read is not worth dropping the notification:
+            # the client refetches through the resolver anyway.
+            pass
+        event_obj = DashboardEvent(
+            type=EventType.AUTHORING_SESSION_CHANGED,
+            feature=path.parent.name,
+            payload={
+                "artifact_type": artifact_type,
+                "revision": revision,
+                "status": status,
+            },
+        )
+        asyncio.run_coroutine_threadsafe(self._sub.publish(event_obj), self._loop)
+
+    def on_created(self, event: FileCreatedEvent | FileModifiedEvent) -> None:
+        self._handle(event)
+
+    def on_modified(self, event: FileCreatedEvent | FileModifiedEvent) -> None:
+        self._handle(event)
+
+
+def start_authoring_watcher(
+    project_root: str,
+    sub_manager: SubscriptionManager,
+    loop: asyncio.AbstractEventLoop,
+) -> Observer:
+    """Watch every feature's interview checkpoint for cross-surface resume."""
+    from .paths import get_paths
+    paths = get_paths(project_root)
+    features_dir = paths.features_dir
+    features_dir.mkdir(parents=True, exist_ok=True)
+
+    handler = _AuthoringCheckpointHandler(sub_manager, loop)
+    observer = Observer()
+    observer.schedule(handler, str(features_dir), recursive=True)
+    observer.start()
+    log.info("Authoring checkpoint watcher started on %s", features_dir)
+    return observer

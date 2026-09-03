@@ -23,6 +23,7 @@ class EventType(Enum):
     CONTEXT_ASSEMBLY_PROGRESS = "context_assembly_progress"
     DRAFT_GENERATION_PROGRESS = "draft_generation_progress"
     DECOMPOSITION_PROGRESS = "decomposition_progress"
+    AUTHORING_SESSION_CHANGED = "authoring_session_changed"
 
 
 @dataclass
