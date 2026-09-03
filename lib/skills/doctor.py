@@ -125,7 +125,7 @@ def diagnose(project_root, skills_dir, catalog_version, *, only_surface=None):
         ]
     if rows and all(row.state == UNSUPPORTED for row in rows):
         # Having no harness is one fact about the project, not one per harness
-        # SPEED knows how to project into.
+        # Workbench knows how to project into.
         diagnosis, repair = _guidance_for(UNSUPPORTED, "-")
         return [
             Diagnostic(

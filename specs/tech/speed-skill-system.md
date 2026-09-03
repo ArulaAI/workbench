@@ -76,7 +76,9 @@ When `--harness` is present, selection is authoritative: sync creates the select
 
 ### Manifest (managed-file identity)
 
-`${PROJECT_ROOT}/.speed/skills/manifest.json`. Records, per `(surface, skill)`: `projected_at_version`, optional skill `version`, and a `files` map of relpath to SHA-256. The recomputed on-disk hash versus the recorded hash is the only authority for distinguishing SPEED-managed bytes from user edits. It also records `selected_surfaces` when a harness was chosen explicitly, so a later bare `sync` targets that choice instead of re-detecting and fanning out. The manifest is git-tracked alongside the projections it describes: a clone that carries the projected files without their recorded hashes has no way to tell them apart from a user edit and classifies every one as `conflicted`.
+`${PROJECT_ROOT}/.speed/skills/manifest.json`. Records, per `(surface, skill)`: `projected_at_version`, optional skill `version`, and a `files` map of relpath to SHA-256. The recomputed on-disk hash versus the recorded hash is the only authority for distinguishing Workbench-managed bytes from user edits. It also records `selected_surfaces` when a harness was chosen explicitly, so a later bare `sync` targets that choice instead of re-detecting and fanning out. The manifest is git-tracked alongside the projections it describes: a clone that carries the projected files without their recorded hashes has no way to tell them apart from a user edit and classifies every one as `conflicted`.
+
+The state layout is defined once, as `SkillPaths` in `skills/__init__.py`: `state_root` is `.speed/skills`, with `manifest.json` and `events.jsonl` derived from it. Every module that touches those files reads the path from there. The projected health helper is the one exception, because it runs as a copy with no package to import from, so it carries its own literals and a test asserts they still agree with the canonical layout. The gitignore policy is tested the same way, which is what keeps durable manifest state and disposable event history from drifting apart again.
 
 ### Project install-event log
 
@@ -133,6 +135,7 @@ Invoked as `PYTHONPATH="${SPEED_DIR}/lib" <python> -m skills <sub> …` (because
 | `project.py` | pure render to bytes with provenance injection |
 | `manifest.py` | hashing, manifest I/O, state classification |
 | `events.py` | append-only install-event log |
+| `__init__.py` | shared vocabulary: lifecycle states, the legal skill-name rule, and `SkillPaths` |
 | `sync.py` | orchestrate detect → classify → apply → manifest + events (sole writer) |
 | `doctor.py` | map non-current states to diagnoses and one deterministic repair path; no writes |
 | `__main__.py` | argparse CLI: `sync`, `status`, `doctor` |

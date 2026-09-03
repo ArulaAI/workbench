@@ -18,12 +18,13 @@ import sys
 from pathlib import Path
 
 import pytest
+from skills import PATHS
 
 REPO = Path(__file__).resolve().parents[2]
 PY = sys.executable
 
-MANIFEST_REL = ".speed/skills/manifest.json"
-EVENTS_REL = ".speed/skills/events.jsonl"
+MANIFEST_REL = PATHS.manifest.as_posix()
+EVENTS_REL = PATHS.events.as_posix()
 
 PROJECT_SH = REPO / "lib" / "cmd" / "project.sh"
 INSTALL_SH = REPO / "install.sh"

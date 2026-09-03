@@ -12,6 +12,7 @@ from skills.manifest import (
     save_manifest,
 )
 from skills import CURRENT, STALE, CONFLICTED, ORPHANED, ABSENT
+from skills import PATHS
 
 
 def _hashes(d):  # rendered dict -> hash map
@@ -61,7 +62,7 @@ def test_orphaned_edited_downgrades_to_conflicted():
 
 # ── Manifest schema (a committed file is untrusted input) ──────────────────
 
-MANIFEST_REL = ".speed/skills/manifest.json"
+MANIFEST_REL = PATHS.manifest
 
 
 def _write_manifest(project, payload):

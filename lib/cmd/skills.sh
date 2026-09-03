@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# skills.sh — project and inspect the SPEED canonical skill catalog.
+# skills.sh — project and inspect the Workbench canonical skill catalog.
 #
 # Thin wrapper: resolve the interpreter and the catalog version, then delegate
 # to the `skills` Python package. `lib/` is not a package, so `skills` is

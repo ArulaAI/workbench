@@ -1,6 +1,27 @@
-"""SPEED skill system: canonical catalog projection engine."""
+"""Workbench skill system: canonical catalog projection engine."""
 
 import re
+from dataclasses import dataclass
+from pathlib import Path
+
+# Where the skill system keeps its project state, relative to the project root.
+# Every module that touches these files derives its path from here, and the
+# gitignore policy and the standalone health helper are tested against it. The
+# alternative, which this replaced, was the same literal written out in five
+# places, and it had already let the engine require a tracked manifest while
+# initialization ignored the directory containing it.
+_STATE_ROOT = Path(".speed/skills")
+
+
+@dataclass(frozen=True)
+class SkillPaths:
+    state_root: Path = _STATE_ROOT
+    manifest: Path = _STATE_ROOT / "manifest.json"
+    events: Path = _STATE_ROOT / "events.jsonl"
+
+
+PATHS = SkillPaths()
+
 
 # Projection state vocabulary (single source of truth).
 ABSENT = "absent"

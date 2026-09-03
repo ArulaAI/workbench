@@ -1,11 +1,11 @@
 """Managed-file identity: hashing, manifest persistence, and state classification.
 
-The manifest records the hash of each file *as SPEED wrote it*. Comparing the
-recomputed on-disk hash against that record is the only reliable way to tell a
-SPEED-managed file from a user edit, which is what keeps sync from clobbering
-local changes.
+The manifest records the hash of each file as Workbench last projected it.
+Matching hashes are evidence that a projection is unchanged since then, which is
+the only reliable way to tell a managed file from a user edit and what keeps sync
+from clobbering local changes.
 
-Because that record is the sole authority for "SPEED may overwrite this", it is
+Because that record is the sole authority for "this may be overwritten", it is
 read and written defensively: the file is committed, so a bad merge or a hand
 edit reaches this module as untrusted input, and a half-written manifest would
 make every projection look hand-edited forever.
@@ -19,9 +19,8 @@ import tempfile
 from pathlib import Path
 
 from skills.frontmatter import MANAGED_PREFIX
-from skills import ABSENT, CURRENT, STALE, CONFLICTED, ORPHANED, is_junk
+from skills import PATHS, ABSENT, CURRENT, STALE, CONFLICTED, ORPHANED, is_junk
 
-_MANIFEST_REL = ".speed/skills/manifest.json"
 
 # Manifest presence, for callers that need to tell a first run apart from a
 # record that went missing under existing projections.
@@ -31,7 +30,7 @@ MANIFEST_LOST = "lost"
 
 
 class _WrongType:
-    """Marker for a projection path holding something SPEED could not have written.
+    """Marker for a projection path holding something Workbench could not have written.
 
     Returned instead of a hash map so that a regular file, a symlink, or a tree
     containing one is never confused with an empty directory, which is what
@@ -56,7 +55,7 @@ def hash_disk(dest: Path):
 
     Walks with ``followlinks=False`` and rejects every symlink it meets. A
     projection contains copied bytes only, so a link inside one was not written
-    by SPEED, and hashing through it would read a file outside the managed
+    by Workbench, and hashing through it would read a file outside the managed
     directory and then report the result as the skill's own state.
     """
     dest = Path(dest)
@@ -140,7 +139,7 @@ def validate_manifest(path: Path, data) -> dict:
 
 
 def load_manifest(project_root: Path) -> dict:
-    path = Path(project_root) / _MANIFEST_REL
+    path = Path(project_root) / PATHS.manifest
     if not path.exists():
         return {"catalog_version": None, "surfaces": {}}
     try:
@@ -178,7 +177,7 @@ def manifest_state(project_root: Path) -> str:
     hunt for the edit nobody made.
     """
     project_root = Path(project_root)
-    if (project_root / _MANIFEST_REL).exists():
+    if (project_root / PATHS.manifest).exists():
         return MANIFEST_PRESENT
     # Imported here rather than at module scope: targets pulls in the surface
     # table, and only this function needs it.
@@ -198,10 +197,10 @@ def save_manifest(project_root: Path, data: dict) -> None:
     """Write the manifest atomically, so an interrupted run cannot truncate it.
 
     A half-written manifest is worse than a stale one: the file is what proves a
-    projected byte came from SPEED, and losing it downgrades every managed skill
+    projected byte is unchanged, and losing it downgrades every managed skill
     to ``conflicted`` until someone forces a rewrite.
     """
-    path = Path(project_root) / _MANIFEST_REL
+    path = Path(project_root) / PATHS.manifest
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps(data, indent=2, sort_keys=True) + "\n"
     fd, tmp_name = tempfile.mkstemp(
@@ -236,7 +235,7 @@ def classify_skill(rendered, disk, entry) -> str:
     """
     if disk is WRONG_TYPE:
         # A file, a symlink, or a projection with a link inside it. Whatever it
-        # is, SPEED did not write it, so report the collision and let the user
+        # is, Workbench did not write it, so report the collision and let the user
         # decide instead of quietly writing over it.
         return CONFLICTED
     recorded = (entry or {}).get("files", {})

@@ -1,4 +1,4 @@
-"""Discover and load canonical skill packages from the SPEED catalog.
+"""Discover and load canonical skill packages from the Workbench catalog.
 
 Reading is deliberately paranoid about what it touches. A package is walked with
 ``followlinks=False`` and every symlink is refused on sight, so no byte outside

@@ -118,7 +118,7 @@ def _classify_all(project_root, skills_dir, catalog_version, surfaces):
             if name in seen:
                 continue
             if not is_valid_skill_name(name):
-                # Nothing SPEED wrote can carry this key, so there is no
+                # Nothing Workbench wrote can carry this key, so there is no
                 # projection to reconcile. Skipping keeps dest_dir out of it.
                 continue
             dest = dest_dir(surface, name, project_root)
@@ -135,7 +135,7 @@ def _classify_all(project_root, skills_dir, catalog_version, surfaces):
 def _prune_unsafe_names(manifest) -> None:
     """Drop manifest entries whose key is not a legal skill name.
 
-    Such an entry cannot describe a projection SPEED made, and leaving it in
+    Such an entry cannot describe a projection Workbench made, and leaving it in
     place would keep offering an unusable name to every later sync.
     """
     for surf in manifest.get("surfaces", {}).values():
@@ -272,7 +272,7 @@ def sync(project_root, skills_dir, catalog_version, *, force=False, only_surface
         if mutated:
             # Record the projecting install only when a projection actually
             # changed. Stamping it on every run would make a teammate on a
-            # different SPEED build rewrite the committed manifest each sync.
+            # different Workbench build rewrite the committed manifest each sync.
             manifest["catalog_version"] = catalog_version
     finally:
         _persist(project_root, manifest, before, events)

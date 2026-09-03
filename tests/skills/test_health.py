@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from skills import PATHS
 from skills.catalog import load_package
 from skills.project import render
 from skills.sync import sync
@@ -126,7 +127,7 @@ def test_projection_helper_is_byte_identical_to_canonical():
 
 def test_helper_rejects_empty_manifest(tmp_project):
     """`{}` records no skills, so it cannot prove anything is installed."""
-    manifest = tmp_project / ".speed" / "skills" / "manifest.json"
+    manifest = tmp_project / PATHS.manifest
     manifest.parent.mkdir(parents=True, exist_ok=True)
     manifest.write_text("{}\n")
 
@@ -409,3 +410,21 @@ def test_helper_names_an_in_project_symlink_as_a_symlink(tmp_project):
     assert result["status"] == "unhealthy"
     assert "workbench-health: symlink at SKILL.md" in result["issues"]
     assert not any("escapes" in issue for issue in result["issues"])
+
+
+def test_the_helper_agrees_with_the_canonical_layout():
+    """The projected helper carries its own literals and must not drift.
+
+    It runs as a copy inside a harness skills directory with no package around
+    it, so it cannot import the layout. Asserting the values match here is what
+    keeps the embedded copy honest.
+    """
+    helper = _load_helper()
+    assert helper.SKILLS_ROOTS == {
+        surface.id: surface.skills_root for surface in SURFACES
+    }
+
+    source = HELPER.read_text(encoding="utf-8")
+    for part in PATHS.manifest.parts:
+        assert f'"{part}"' in source, f"helper no longer names {part}"
+    assert PATHS.manifest.as_posix() in source, "the repair text names a stale path"

@@ -27,12 +27,13 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+from skills import PATHS
+
 try:  # POSIX only; Workbench ships for macOS and Linux.
     import fcntl
 except ImportError:  # pragma: no cover - Windows fallback
     fcntl = None
 
-_EVENTS_REL = ".speed/skills/events.jsonl"
 
 
 def new_transaction() -> str:
@@ -46,7 +47,7 @@ def now_iso() -> str:
 def append_events(project_root, events) -> None:
     if not events:
         return
-    path = Path(project_root) / _EVENTS_REL
+    path = Path(project_root) / PATHS.events
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = "".join(json.dumps(event, sort_keys=True) + "\n" for event in events)
     with path.open("a", encoding="utf-8") as handle:
@@ -63,7 +64,7 @@ def append_events(project_root, events) -> None:
 
 def read_events(project_root) -> list:
     """Stream the log into a list, tolerating only an interrupted final append."""
-    path = Path(project_root) / _EVENTS_REL
+    path = Path(project_root) / PATHS.events
     if not path.exists():
         return []
     events: list = []

@@ -21,7 +21,7 @@ _PROVENANCE_SOURCE = f"{MANAGED_PREFIX}source"
 def render(pkg: SkillPackage, surface: Surface, catalog_version: str) -> dict:
     """Project ``pkg`` onto ``surface``.
 
-    ``catalog_version`` identifies the SPEED install running the sync, not the
+    ``catalog_version`` identifies the Workbench install running the sync, not the
     catalog content, so it is deliberately kept out of the returned bytes:
     projections are committed, and stamping the local install into them would
     make every teammate's sync rewrite the files and flip them stale. The

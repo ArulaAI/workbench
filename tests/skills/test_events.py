@@ -7,6 +7,7 @@ import pytest
 
 from skills.sync import sync
 from skills.events import read_events
+from skills import PATHS
 
 LIB = Path(__file__).resolve().parents[2] / "lib"
 
@@ -54,7 +55,7 @@ def test_single_transaction_per_sync(tmp_catalog, tmp_project):
     assert len(txns) == 1  # both installs share one transaction id
 
 
-EVENTS_REL = ".speed/skills/events.jsonl"
+EVENTS_REL = PATHS.events
 
 
 def _log(project):
