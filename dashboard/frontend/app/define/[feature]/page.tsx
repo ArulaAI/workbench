@@ -21,6 +21,11 @@ import {
   CEREMONY_INFO_QUERY,
   type CeremonyInfoData,
 } from "@/lib/graphql/queries/ceremony";
+import { ResumeCard } from "@/components/ceremony/guided";
+import {
+  AUTHORING_SESSION_QUERY,
+  type AuthoringSessionData,
+} from "@/lib/graphql/queries/authoring";
 
 const FEATURE_RE = /^[a-z0-9][a-z0-9-]*$/;
 
@@ -65,6 +70,28 @@ export default function DefineFeaturePage() {
   const [, executeRefine] = useMutation<RefineIntentData, RefineIntentVars>(
     REFINE_INTENT_MUTATION
   );
+
+  // Guided authoring checkpoint, read-only: --peek never creates state.
+  const [{ data: authoringData }] = useQuery<AuthoringSessionData>({
+    query: AUTHORING_SESSION_QUERY,
+    variables: { featureName, artifactType: "prd" },
+    pause: !isValidFeatureName(featureName),
+    requestPolicy: "network-only",
+  });
+  const authoring = authoringData?.authoringSession;
+  const resumeCard =
+    authoring && authoring.revision !== null && authoring.status !== "not_started" ? (
+      <div style={{ padding: "0 24px 16px 24px" }}>
+        <ResumeCard
+          featureName={featureName}
+          title={authoring.featureTitle ?? featureName}
+          status={authoring.status}
+          confirmed={authoring.progress.confirmed}
+          total={authoring.progress.total}
+          href={`/define/${featureName}/authoring/prd`}
+        />
+      </div>
+    ) : null;
 
   const handleDismissBluf = useCallback(() => {
     setBlufDismissed(true);
@@ -240,6 +267,7 @@ export default function DefineFeaturePage() {
         }}
       >
         <Header />
+        {resumeCard && <div style={{ paddingTop: 16 }}>{resumeCard}</div>}
         <div style={{ flex: 1, display: "flex", overflow: "hidden", position: "relative" }}>
           <ErrorBoundary>
             <CeremonyLayout
