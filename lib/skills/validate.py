@@ -1,24 +1,34 @@
 """Canonical package contract validation.
 
-Run at catalog load time. Nothing in this release invokes it as a separate
-catalog-build step; it is written to be reusable by one when that exists. Every
+Every rule lives here, expressed over data rather than over the filesystem, so
+a package assembled in memory can be validated without touching a disk. Each
 rule maps to a fixture in tests/skills/test_validate.py.
 
-This module depends only on ``models``, never on the loader, so validation of
-a package built in memory needs no filesystem at all.
+Two entry points, for two different callers:
 
-Two of the rules are enforced twice on purpose. The loader refuses symlinks and
-records an unreadable SKILL.md while it walks the package, because catching
-those later would mean reading a linked file first; repeating them here keeps
-the contract stated in one place and testable against a package built in memory.
-Duplicates are collapsed before the list is returned.
+``validate_package``  every rule that applies to one already-loaded package.
+``validate_catalog``  the same, plus catalog-wide uniqueness.
+
+The loader does not use either. It walks the phases below in order so that a
+package is rejected before its bytes are read, and calls the individual rule
+functions at the phase where each one belongs:
+
+    validate_name           the directory name is a legal skill name
+    missing_skill_md        the one required member is present
+    validate_metadata       front matter carries the fields and types
+    validate_reserved_keys  the author declared none of Workbench's own keys
+    validate_relpaths       no member path escapes the package
+    validate_uniqueness     no two packages claim one name
+
+Keeping the rules separate from their ordering is what lets the loader enforce
+them early without the contract being stated twice.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 
 from skills import is_valid_skill_name
-from skills.models import NO_SYMLINKS, SkillPackage
+from skills.models import NO_SYMLINK_ROOT, NO_SYMLINKS, SkillPackage
 from skills.frontmatter import MANAGED_PREFIX
 
 
@@ -63,12 +73,33 @@ def _dedupe(violations: list) -> list:
 
 
 def _loader_code(reason: str) -> str:
-    """Code for a violation the loader recorded while walking the package.
+    """Code for a violation the loader recorded while walking the package."""
+    if reason in (NO_SYMLINKS, NO_SYMLINK_ROOT):
+        return SYMLINK
+    return UNREADABLE_PACKAGE
 
-    The symlink rule is enforced in both places, and the codes have to agree or
-    `_dedupe` stops recognising the two reports as the same fact.
-    """
-    return SYMLINK if reason == NO_SYMLINKS else UNREADABLE_PACKAGE
+
+def loader_violation(package: str, error) -> Violation:
+    """Turn one ``(path, reason)`` the loader recorded into a violation."""
+    path, reason = error
+    return Violation(package, path, reason, _loader_code(reason))
+
+
+# ── Rules ──────────────────────────────────────────────────────────────────
+# Each is callable on its own so the loader can run it at the phase where it
+# belongs, before the next phase reads anything.
+
+
+def validate_name(name: str) -> list:
+    """The package directory name, which is also its projection directory."""
+    if is_valid_skill_name(name):
+        return []
+    return [Violation(name, None, f"invalid skill name '{name}'", INVALID_SKILL_NAME)]
+
+
+def missing_skill_md(name: str) -> Violation:
+    """The one required member of every package."""
+    return Violation(name, "SKILL.md", "missing SKILL.md", MISSING_SKILL_MD)
 
 
 # The scalar metadata fields the engine reads, and the type each has to be.
@@ -78,20 +109,20 @@ def _loader_code(reason: str) -> str:
 _STRING_FIELDS = ("name", "description", "version")
 
 
-def _string_fields(pkg: SkillPackage) -> tuple:
+def _string_fields(name: str, meta: dict) -> tuple:
     """Return ``(violations, bad_keys)`` for metadata fields of the wrong type."""
     out: list = []
     bad: set = set()
     for field in _STRING_FIELDS:
-        if field not in pkg.meta:
+        if field not in meta:
             continue
-        value = pkg.meta[field]
+        value = meta[field]
         if isinstance(value, str):
             continue
         bad.add(field)
         out.append(
             Violation(
-                pkg.name,
+                name,
                 "SKILL.md",
                 f"front-matter '{field}' must be a string, got "
                 f"{type(value).__name__}; quote the value",
@@ -101,62 +132,110 @@ def _string_fields(pkg: SkillPackage) -> tuple:
     return out, bad
 
 
-def validate_package(pkg: SkillPackage) -> list:
-    out: list = [
-        Violation(pkg.name, path, reason, _loader_code(reason))
-        for path, reason in getattr(pkg, "errors", [])
-    ]
-    # Front matter that could not be read tells us nothing about name or
-    # description, so the syntax error above is the only honest thing to report.
-    unreadable = any(path == "SKILL.md" for path, _ in getattr(pkg, "errors", []))
-    if "SKILL.md" not in pkg.files:
-        out.append(Violation(pkg.name, "SKILL.md", "missing SKILL.md", MISSING_SKILL_MD))
-    if not is_valid_skill_name(pkg.name):
-        out.append(Violation(
-                pkg.name, None, f"invalid skill name '{pkg.name}'", INVALID_SKILL_NAME
-            ))
-    if not unreadable:
-        typed, mistyped = _string_fields(pkg)
-        out.extend(typed)
-        # A field of the wrong type is already reported. Comparing or stripping
-        # it as well would either crash or add a second, misleading violation
-        # about a name or description the author did spell out.
-        if "name" not in mistyped:
-            declared = pkg.meta.get("name", "")
-            if declared != pkg.name:
-                out.append(
-                    Violation(
-                        pkg.name,
-                        "SKILL.md",
-                        f"front-matter name '{declared}' != directory '{pkg.name}'",
-                        NAME_MISMATCH,
-                    )
-                )
-        if "description" not in mistyped:
-            if not pkg.meta.get("description", "").strip():
-                out.append(Violation(
-                        pkg.name,
-                        "SKILL.md",
-                        "empty or missing description",
-                        MISSING_DESCRIPTION,
-                    ))
-    for key in pkg.meta:
-        if key.startswith(MANAGED_PREFIX):
-            # Projection sets these. An author who declares one would see it
-            # rewritten in the projected copy and silently disagree with the
-            # canonical package.
+def validate_metadata(name: str, meta: dict) -> list:
+    """The front-matter schema: required fields, their types, reserved keys.
+
+    Call this only once the front matter has actually been parsed. Running it
+    against an empty mapping because SKILL.md was missing or unreadable would
+    report a missing description to an author whose real problem is the file.
+    """
+    out, mistyped = _string_fields(name, meta)
+    # A field of the wrong type is already reported. Comparing or stripping it
+    # as well would either crash or add a second, misleading violation about a
+    # name or description the author did spell out.
+    if "name" not in mistyped:
+        declared = meta.get("name", "")
+        if declared != name:
             out.append(
                 Violation(
-                    pkg.name,
+                    name,
                     "SKILL.md",
-                    f"reserved front-matter key '{key}' (the "
-                    f"'{MANAGED_PREFIX}' prefix belongs to Workbench)",
-                    RESERVED_KEY,
+                    f"front-matter name '{declared}' != directory '{name}'",
+                    NAME_MISMATCH,
                 )
             )
-    for rel in pkg.files:
-        if rel.startswith("/") or ".." in rel.split("/"):
-            out.append(Violation(pkg.name, rel, "unsafe path escapes package", UNSAFE_PATH))
+    if "description" not in mistyped:
+        if not meta.get("description", "").strip():
+            out.append(
+                Violation(
+                    name, "SKILL.md", "empty or missing description", MISSING_DESCRIPTION
+                )
+            )
+    return out + validate_reserved_keys(name, meta)
+
+
+def validate_reserved_keys(name: str, meta: dict) -> list:
+    """Keys an author may not declare, because projection writes them.
+
+    Separate from the rest of the schema because it stands on its own: a
+    declared key is a fact about what the author wrote, so it holds whatever
+    else is wrong with the file, and it needs no required field to be present.
+    """
+    return [
+        # An author who declares one of these would see it rewritten in the
+        # projected copy and silently disagree with the canonical package.
+        Violation(
+            name,
+            "SKILL.md",
+            f"reserved front-matter key '{key}' (the "
+            f"'{MANAGED_PREFIX}' prefix belongs to Workbench)",
+            RESERVED_KEY,
+        )
+        for key in meta
+        if key.startswith(MANAGED_PREFIX)
+    ]
+
+
+def validate_relpaths(name: str, relpaths) -> list:
+    """Member paths, which become projection paths and must stay inside it."""
+    return [
+        Violation(name, rel, "unsafe path escapes package", UNSAFE_PATH)
+        for rel in relpaths
+        if rel.startswith("/") or ".." in rel.split("/")
+    ]
+
+
+def validate_uniqueness(names) -> list:
+    """One name per catalog: two packages cannot project to one directory."""
+    seen: dict = {}
+    for name in names:
+        seen[name] = seen.get(name, 0) + 1
+    return [
+        Violation(name, None, f"duplicate skill name '{name}'", DUPLICATE_NAME)
+        for name, count in seen.items()
+        if count > 1
+    ]
+
+
+# ── Compositions ───────────────────────────────────────────────────────────
+
+
+def validate_package(pkg: SkillPackage) -> list:
+    """Every rule that applies to one loaded package, in no particular order.
+
+    Unlike the loader this cannot stop early, because the package is already
+    read. It still declines to judge metadata it never saw: front matter that
+    is absent or unparseable makes the name and description unknowable, and the
+    file itself is the only honest thing to report.
+    """
+    errors = getattr(pkg, "errors", [])
+    out: list = [loader_violation(pkg.name, error) for error in errors]
+    # A package-level failure means the walk never happened, so nothing can be
+    # said about members. Reporting a missing SKILL.md on top of "the root is a
+    # symlink" would send the author looking for the wrong file.
+    unread = any(path is None for path, _ in errors)
+    unreadable = any(path == "SKILL.md" for path, _ in errors)
+    absent = "SKILL.md" not in pkg.files
+    if absent and not unread:
+        out.append(missing_skill_md(pkg.name))
+    out.extend(validate_name(pkg.name))
+    if not (unread or unreadable or absent):
+        out.extend(validate_metadata(pkg.name, pkg.meta))
+    else:
+        # The required fields are unknowable, but a key the author declared is
+        # still a key the author declared.
+        out.extend(validate_reserved_keys(pkg.name, pkg.meta))
+    out.extend(validate_relpaths(pkg.name, pkg.files))
     if pkg.root.is_dir():
         for path in pkg.root.rglob("*"):
             if path.is_symlink():
@@ -172,14 +251,9 @@ def validate_package(pkg: SkillPackage) -> list:
 
 
 def validate_catalog(pkgs: list) -> list:
+    """``validate_package`` over every package, plus catalog-wide uniqueness."""
     out: list = []
-    seen: dict = {}
     for pkg in pkgs:
         out.extend(validate_package(pkg))
-        seen[pkg.name] = seen.get(pkg.name, 0) + 1
-    for name, count in seen.items():
-        if count > 1:
-            out.append(Violation(
-                    name, None, f"duplicate skill name '{name}'", DUPLICATE_NAME
-                ))
+    out.extend(validate_uniqueness([pkg.name for pkg in pkgs]))
     return out

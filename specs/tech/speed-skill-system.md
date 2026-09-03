@@ -160,8 +160,8 @@ Invoked as `PYTHONPATH="${SPEED_DIR}/lib" <python> -m skills <sub> …` (because
 | Module | Responsibility |
 |---|---|
 | `frontmatter.py` | load SKILL.md front matter as YAML (PyYAML) and inject provenance in place |
-| `catalog.py` | discover canonical packages and reject catalog validation failures at load |
-| `validate.py` | package + catalog contract (names, metadata, paths, symlinks, uniqueness) |
+| `catalog.py` | order the load phases so a package is validated before its bytes are read |
+| `validate.py` | package + catalog contract as separate rules (names, metadata, paths, symlinks, uniqueness) |
 | `targets.py` | marker detection, harness lookup, and bounded destinations |
 | `project.py` | pure render to bytes with provenance injection |
 | `manifest.py` | hashing, manifest I/O, and classification with evidence |
@@ -204,6 +204,16 @@ Only the destructive repair is scoped. `--harness` is the narrowest scope sync a
 ## Validation Rules
 
 Run whenever the canonical catalog is loaded; a future release build can reuse the same validator. Each rule maps to a fixture in `tests/skills/`.
+
+Loading runs as ordered phases, so validation is the boundary a package
+clears before its content is read rather than a check applied to bytes already
+in memory: discover candidates, refuse a linked root, require `SKILL.md`,
+refuse every member symlink, read and schema-validate `SKILL.md` alone, read the
+remaining members, then check catalog-wide uniqueness. A phase that finds a
+problem stops that package, so a linked root is never walked, a package holding
+a link is never opened, and a package whose front matter fails its schema never
+has its other files read. Each failure reports one cause: a missing `SKILL.md`
+is not also a missing description and a name mismatch for the same file.
 
 | Condition | Constraint | On violation |
 |---|---|---|

@@ -175,3 +175,127 @@ def test_unterminated_front_matter_does_not_masquerade_as_a_missing_description(
         load_catalog(skills_dir)
 
     assert "description" not in str(excinfo.value)
+
+
+# ── Validate before read ───────────────────────────────────────────────────
+# The loader runs its phases in order so that a package is refused before its
+# bytes are loaded. These assert on what was opened, not just on the verdict.
+
+
+@pytest.fixture
+def recorded_reads(monkeypatch):
+    """Every file the loader opens, in order."""
+    opened: list = []
+    original = Path.read_bytes
+
+    def spy(self):
+        opened.append(self.name)
+        return original(self)
+
+    monkeypatch.setattr(Path, "read_bytes", spy)
+    return opened
+
+
+def test_a_valid_package_reads_its_members(tmp_catalog, recorded_reads):
+    """The baseline: nothing above is proving anything if this does not hold."""
+    load_catalog(tmp_catalog())
+
+    assert "SKILL.md" in recorded_reads
+    assert "notes.md" in recorded_reads
+
+
+def test_a_linked_root_is_refused_before_anything_is_opened(
+    tmp_path, recorded_reads
+):
+    """A lone package, so an unread total says something about this one."""
+    real = tmp_path / "elsewhere"
+    (real / "nested").mkdir(parents=True)
+    (real / "SKILL.md").write_text("---\nname: linked\ndescription: d\n---\n\nB.\n")
+    (real / "nested" / "notes.md").write_text("unread\n")
+    catalog = tmp_path / "catalog"
+    catalog.mkdir()
+    (catalog / "linked").symlink_to(real, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="directory must not be a symlink"):
+        load_catalog(catalog)
+
+    assert recorded_reads == [], "a refused root was still read from"
+
+
+def test_a_missing_required_file_stops_before_the_member_phase(
+    tmp_path, recorded_reads
+):
+    catalog = tmp_path / "catalog"
+    (catalog / "no-skill-md").mkdir(parents=True)
+    (catalog / "no-skill-md" / "notes.md").write_text("unread\n")
+
+    with pytest.raises(ValueError, match="missing SKILL.md"):
+        load_catalog(catalog)
+
+    assert recorded_reads == [], "a package with no SKILL.md was still read"
+
+
+def test_a_member_symlink_stops_before_any_member_is_opened(
+    tmp_catalog, tmp_path, recorded_reads
+):
+    skills_dir = tmp_catalog()
+    secret = tmp_path / "secret.txt"
+    secret.write_bytes(b"SECRET")
+    (skills_dir / "example-skill" / "leak.txt").symlink_to(secret)
+
+    with pytest.raises(ValueError, match="symlink"):
+        load_catalog(skills_dir)
+
+    assert recorded_reads == [], "a package holding a link was still read"
+
+
+def test_a_valid_package_is_still_read_alongside_a_broken_one(tmp_catalog, tmp_path):
+    """Every package is gated on its own, so one bad package hides no others."""
+    skills_dir = tmp_catalog()
+    (skills_dir / "no-skill-md").mkdir()
+
+    with pytest.raises(ValueError) as excinfo:
+        load_catalog(skills_dir)
+
+    assert "no-skill-md" in str(excinfo.value)
+
+
+def test_a_schema_failure_stops_before_the_member_phase(tmp_catalog, recorded_reads):
+    """SKILL.md is read to validate it; the rest of the package is not."""
+    skills_dir = tmp_catalog()
+    (skills_dir / "example-skill" / "SKILL.md").write_text(
+        "---\nname: example-skill\ndescription: ''\n---\n\n# body\n", encoding="utf-8"
+    )
+
+    with pytest.raises(ValueError, match="description"):
+        load_catalog(skills_dir)
+
+    assert recorded_reads == ["SKILL.md"]
+
+
+def test_a_missing_required_file_reports_one_cause(tmp_catalog):
+    """Not also a missing description and a name mismatch for the same file."""
+    skills_dir = tmp_catalog()
+    (skills_dir / "no-skill-md").mkdir()
+
+    with pytest.raises(ValueError) as excinfo:
+        load_catalog(skills_dir)
+
+    message = str(excinfo.value)
+    assert "missing SKILL.md" in message
+    assert "description" not in message
+    assert "!=" not in message
+
+
+def test_a_linked_root_reports_one_cause(tmp_catalog, tmp_path):
+    skills_dir = tmp_catalog()
+    real = tmp_path / "elsewhere"
+    real.mkdir()
+    (skills_dir / "linked").symlink_to(real, target_is_directory=True)
+
+    with pytest.raises(ValueError) as excinfo:
+        load_catalog(skills_dir)
+
+    message = str(excinfo.value)
+    assert "directory must not be a symlink" in message
+    assert "missing SKILL.md" not in message

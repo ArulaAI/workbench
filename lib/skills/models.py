@@ -123,6 +123,7 @@ HARNESS_IDS = tuple(h.id for h in HARNESSES)
 # same rule against a package built in memory. The two have to word it
 # identically or deduplication stops recognising the two reports as one fact.
 NO_SYMLINKS = "package files must not be symlinks"
+NO_SYMLINK_ROOT = "package directory must not be a symlink"
 
 
 @dataclass

@@ -199,7 +199,7 @@ the real `workbench` entrypoint, which preflights its interpreter for
 the skill system, but the check runs first, so an interpreter missing them cannot
 reach any lifecycle code. The suite reports those tests as skips naming the fix
 rather than as failures, so a green run under a bare `python3` is not a complete
-run. Expect `283 passed` with the venv and `270 passed, 13 skipped` without it.
+run. Expect `291 passed` with the venv and `278 passed, 13 skipped` without it.
 
 `PyYAML` is different from those three: the skill engine reads SKILL.md front
 matter with it, so an interpreter without it cannot import `skills` at all and

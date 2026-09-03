@@ -3,8 +3,8 @@
 Module map, in the order a sync moves through them:
 
 ``models``      shared vocabulary: states, harnesses, packages, plans, findings
-``catalog``     discovers and reads canonical packages from the built-in catalog
-``validate``    enforces the package contract and reports violations with codes
+``catalog``     discovers, validates, then reads canonical packages, in that order
+``validate``    the package contract as individual rules, each with a stable code
 ``frontmatter`` loads SKILL.md front matter as YAML, injects provenance in place
 ``project``     renders one package for one harness, purely, as relpath -> bytes
 ``manifest``    hashes projections, persists the manifest, classifies each skill
