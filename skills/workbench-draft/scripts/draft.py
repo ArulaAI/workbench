@@ -67,6 +67,28 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _features_root(project_root: Path) -> Path:
+    """Mirror dashboard/backend/paths.py so every surface agrees on the layout."""
+    shared = project_root / ".speed" / "shared"
+    if shared.is_dir():
+        return shared / "features"
+    return project_root / ".speed" / "features"
+
+
+def _feature_dir(project_root: Path, feature: str) -> Path:
+    return _features_root(project_root) / feature
+
+
+def _feature_dir_display(project_root: Path, feature: str) -> str:
+    return _feature_dir(project_root, feature).relative_to(project_root).as_posix()
+
+
+def _slugify(title: str) -> str:
+    """Derive a candidate feature slug from a human title."""
+    lowered = re.sub(r"[^a-z0-9]+", "-", title.strip().lower())
+    return lowered.strip("-")[:50].strip("-")
+
+
 def _question_bank_path(artifact_type: str) -> Path:
     filename = ARTIFACTS[artifact_type]["question_bank"]
     return Path(__file__).resolve().parent.parent / "references" / filename
@@ -366,7 +388,7 @@ def _active_questions(state: dict[str, Any], bank: dict[str, Any]) -> list[dict[
 
 def _available_guided_prds(project_root: Path) -> list[dict[str, Any]]:
     """List only generated guided PRDs that are valid Design inputs."""
-    features_root = project_root / ".speed" / "features"
+    features_root = _features_root(project_root)
     if not features_root.is_dir():
         return []
     available: list[dict[str, Any]] = []
@@ -416,6 +438,15 @@ def _intake_result(
             "prompt": "Tell Workbench what this new PRD should define.",
             "fields": [
                 {
+                    "id": "feature_title",
+                    "input_type": "text",
+                    "prompt": "What should this feature be called?",
+                    "description": (
+                        "Use the name you would say out loud, such as Due dates for tasks."
+                    ),
+                    "required": True,
+                },
+                {
                     "id": "feature_slug",
                     "input_type": "text",
                     "prompt": "What is the feature slug?",
@@ -423,6 +454,7 @@ def _intake_result(
                         "Use a short lowercase name with hyphens, such as task-due-dates."
                     ),
                     "required": True,
+                    "derived_from": "feature_title",
                 },
                 {
                     "id": "feature_description",
@@ -438,7 +470,8 @@ def _intake_result(
             "allow_existing": False,
         }
         message = (
-            "Enter the new feature slug and short description together. The description "
+            "Enter the feature title, its slug, and a short description together. "
+            "The slug is derived from the title and stays editable. The description "
             "becomes direct evidence and the initial suggested response for P-Q1."
         )
     else:
@@ -489,6 +522,23 @@ def _validate_feature_description(description: str | None) -> str | None:
     if len(normalized) > 2000:
         raise DraftError("The feature description must be at most 2000 characters.")
     return normalized
+
+
+def _validate_feature_title(title: str | None) -> str | None:
+    if title is None:
+        return None
+    normalized = " ".join(title.split())
+    if not normalized:
+        raise DraftError("The feature title must not be empty.")
+    if len(normalized) > 80:
+        raise DraftError("The feature title must be at most 80 characters.")
+    return normalized
+
+
+def _display_name(feature: str, state: dict[str, Any]) -> str:
+    """Prefer the author's own title; fall back to the slug."""
+    title = (state.get("intake") or {}).get("feature_title")
+    return str(title) if title else feature.replace("-", " ").title()
 
 
 def _atomic_write(path: Path, content: str) -> None:
@@ -566,7 +616,7 @@ def _read_evidence_json(path: Path) -> tuple[dict[str, Any] | None, str | None]:
 
 def _prd_upstream(project_root: Path, feature: str) -> dict[str, Any]:
     """Resolve and verify the canonical Product draft consumed by Design."""
-    state_path = project_root / ".speed" / "features" / feature / "authoring-prd.json"
+    state_path = _feature_dir(project_root, feature) / "authoring-prd.json"
     prd_state = _read_json(state_path)
     expected_path = f"specs/{feature}/prd.md"
     if not prd_state or prd_state.get("status") != "drafted":
@@ -636,7 +686,7 @@ def _source(source_id: str, path: str, excerpt: str) -> dict[str, str]:
 def _evidence_sources(
     project_root: Path, feature: str, state: dict[str, Any], question_id: str
 ) -> tuple[list[dict[str, str]], list[str]]:
-    feature_dir = project_root / ".speed" / "features" / feature
+    feature_dir = _feature_dir(project_root, feature)
     sources: list[dict[str, str]] = []
     gaps: list[str] = []
 
@@ -644,7 +694,7 @@ def _evidence_sources(
     if state["artifact_type"] == "prd" and intake_description:
         sources.append(_source(
             "intake:feature-description",
-            f".speed/features/{feature}/authoring-prd.json",
+            f"{_feature_dir_display(project_root, feature)}/authoring-prd.json",
             intake_description,
         ))
 
@@ -762,7 +812,8 @@ def _evidence_sources(
         if record.get("state") == "confirmed" and record.get("answer"):
             sources.append(_source(
                 f"interview:{prior_id}",
-                f".speed/features/{feature}/authoring-{state['artifact_type']}.json",
+                f"{_feature_dir_display(project_root, feature)}"
+                f"/authoring-{state['artifact_type']}.json",
                 record["answer"],
             ))
 
@@ -783,7 +834,7 @@ def _build_suggestion(
     question: dict[str, Any],
 ) -> dict[str, Any]:
     sources, gaps = _evidence_sources(project_root, feature, state, question["id"])
-    context_path = project_root / ".speed" / "features" / feature / "context-package.json"
+    context_path = _feature_dir(project_root, feature) / "context-package.json"
     context, _ = _read_evidence_json(context_path)
     prepared = (context or {}).get("suggested_responses", {}).get(question["id"], {})
     prepared_answer = prepared.get("answer") if isinstance(prepared, dict) else None
@@ -829,8 +880,16 @@ def _new_state(
     bank: dict[str, Any],
     upstream: dict[str, Any] | None = None,
     feature_description: str | None = None,
+    feature_title: str | None = None,
 ) -> dict[str, Any]:
     now = _now()
+    intake: dict[str, Any] = {}
+    if feature_description:
+        intake["feature_description"] = feature_description
+    if feature_title:
+        intake["feature_title"] = feature_title
+    if intake:
+        intake["captured_at"] = now
     return {
         "schema_version": SCHEMA_VERSION,
         "feature_name": feature,
@@ -857,10 +916,7 @@ def _new_state(
         },
         "artifact": None,
         "upstream": {"prd": upstream} if upstream else {},
-        "intake": ({
-            "feature_description": feature_description,
-            "captured_at": now,
-        } if feature_description else {}),
+        "intake": intake,
     }
 
 
@@ -1032,7 +1088,7 @@ def _render_prd_artifact(
 ) -> str:
     """Render the compact PRD core without exposing the interview transcript."""
     confirmed = _confirmed_answers(state)
-    display_name = feature.replace("-", " ").title()
+    display_name = _display_name(feature, state)
     owner = next(
         (
             record.get("actor")
@@ -1145,6 +1201,64 @@ def _render_prd_artifact(
     return header + "\n\n" + "\n\n".join(sections) + "\n"
 
 
+PRD_SECTION_SOURCES: dict[str, tuple[str, ...]] = {
+    "Summary": ("P-Q1",),
+    "Problem & Evidence": ("P-Q1",),
+    "Hypothesis": ("P-Q3",),
+    "User Stories": ("P-Q2",),
+    "Requirements & Acceptance": ("P-Q4", "P-Q5"),
+    "Scope": ("P-Q7",),
+    "Guardrails / Must Not Regress": ("P-Q8",),
+    "Delivery, Risks & Open Questions": ("P-Q8",),
+    "Success": ("P-Q6",),
+    "References": (),
+}
+
+
+def _artifact_sections(
+    state: dict[str, Any], bank: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Machine-readable section to source-question map for clients."""
+    artifact_type = state["artifact_type"]
+    identity_feature = bool(IDENTITY_SIGNAL_RE.search(_planning_text(state)))
+    sections: list[dict[str, Any]] = []
+    for title in ARTIFACTS[artifact_type]["sections"]:
+        if artifact_type == "prd":
+            question_ids = list(PRD_SECTION_SOURCES.get(title, ()))
+            if identity_feature and title == "Requirements & Acceptance":
+                question_ids = ["P-Q2", *question_ids]
+        else:
+            question_ids = [
+                question["id"]
+                for question in bank["questions"]
+                if title in question["sections"]
+            ]
+        answers = state.get("answers", {})
+        coverage = state.get("coverage", {})
+        if question_ids and all(
+            answers.get(qid, {}).get("state") == "confirmed" for qid in question_ids
+        ):
+            section_state = "confirmed"
+        elif any(answers.get(qid, {}).get("state") == "deferred" for qid in question_ids):
+            section_state = "deferred"
+        elif any(
+            coverage.get(qid, {}).get("confidence_label") == "unresolved"
+            for qid in question_ids
+        ):
+            section_state = "unresolved"
+        elif question_ids:
+            section_state = "provisional"
+        else:
+            section_state = "generated"
+        sections.append({
+            "title": title,
+            "question_ids": question_ids,
+            "coverage_ids": question_ids,
+            "state": section_state,
+        })
+    return sections
+
+
 def _render_artifact(feature: str, state: dict[str, Any], bank: dict[str, Any]) -> str:
     if state["artifact_type"] == "prd":
         return _render_prd_artifact(feature, state, bank)
@@ -1189,7 +1303,7 @@ def _ensure_define_compatibility(
     dashboard_url: str,
 ) -> None:
     """Write only missing ceremony inputs plus the selected generated draft."""
-    feature_dir = project_root / ".speed" / "features" / feature
+    feature_dir = _feature_dir(project_root, feature)
     artifact_type = state["artifact_type"]
     name, email = _actor(project_root)
     now = _now()
@@ -1276,6 +1390,9 @@ def _ensure_define_compatibility(
     draft_record["authoring"] = {
         "revision": state["revision"],
         "self_review": state["self_review"],
+        "feature_title": _display_name(feature, state),
+        "sections": _artifact_sections(state, _load_question_bank(artifact_type)),
+        "authoring_url": f"{dashboard_url}/authoring/{artifact_type}",
     }
     _write_json(feature_dir / f"draft-{artifact_type}.json", draft_record)
 
@@ -1326,6 +1443,7 @@ def _generate(
     state["status"] = "clarifying" if pending else "drafted"
     state["artifact"] = {
         "path": artifact_path,
+        "authoring_url": f"{dashboard_url}/authoring/{artifact_type}",
         "sha256": hashlib.sha256(content.encode()).hexdigest(),
         "generated_at": _now(),
         "dashboard_url": dashboard_url,
@@ -1546,6 +1664,8 @@ def _result(state: dict[str, Any], bank: dict[str, Any]) -> dict[str, Any]:
         "resume_step": resume_step,
         "self_review": state.get("self_review"),
         "coverage": state.get("coverage", {}),
+        "sections": _artifact_sections(state, bank),
+        "feature_title": _display_name(state["feature_name"], state),
         "draft_available": bool(artifact.get("path")),
         "progress": {
             "confirmed": sum(
@@ -1571,6 +1691,7 @@ def _result(state: dict[str, Any], bank: dict[str, Any]) -> dict[str, Any]:
         } if current else None),
         "artifact_path": artifact.get("path"),
         "dashboard_url": artifact.get("dashboard_url"),
+        "authoring_url": artifact.get("authoring_url"),
         "message": (
             f"{ARTIFACTS[state['artifact_type']]['label']} draft generated from "
             "confirmed interview answers."
@@ -1939,15 +2060,29 @@ def run_once(args: argparse.Namespace) -> dict[str, Any]:
     feature = _validate_feature(args.feature_name)
     artifact_type = args.artifact_type
     feature_description = _validate_feature_description(args.feature_description)
+    feature_title = _validate_feature_title(getattr(args, "feature_title", None))
     if artifact_type != "prd" and feature_description:
         raise DraftError("--feature-description is supported only when starting a PRD.")
+    if artifact_type != "prd" and feature_title:
+        raise DraftError("--feature-title is supported only when starting a PRD.")
     bank = _load_question_bank(artifact_type)
-    feature_dir = project_root / ".speed" / "features" / feature
+    feature_dir = _feature_dir(project_root, feature)
     state_path = feature_dir / f"authoring-{artifact_type}.json"
 
     with _feature_lock(feature_dir):
         upstream = _prd_upstream(project_root, feature) if artifact_type == "design" else None
         persisted = _read_json(state_path)
+        if persisted and feature_title:
+            persisted = _migrate_state(persisted)
+            existing_title = (persisted.get("intake") or {}).get("feature_title")
+            if not existing_title:
+                intake = persisted.setdefault("intake", {})
+                intake["feature_title"] = feature_title
+                intake.setdefault("captured_at", _now())
+            elif existing_title != feature_title:
+                raise DraftError(
+                    "--feature-title cannot rename an interview that already has a title."
+                )
         if persisted and feature_description:
             persisted = _migrate_state(persisted)
             existing_description = (persisted.get("intake") or {}).get(
@@ -1999,6 +2134,7 @@ def run_once(args: argparse.Namespace) -> dict[str, Any]:
                 bank,
                 upstream,
                 feature_description,
+                feature_title,
             )
         )
         _validate_state(state, feature, artifact_type, bank)
@@ -2050,6 +2186,48 @@ def run_once(args: argparse.Namespace) -> dict[str, Any]:
             _self_review(project_root, feature, state, bank)
         _write_json(state_path, state)
         return _result(state, bank)
+
+
+def peek_once(args: argparse.Namespace) -> dict[str, Any]:
+    """Return the current interview view without writing anything."""
+    project_root = Path(args.project_root).resolve()
+    feature = _validate_feature(args.feature_name)
+    artifact_type = args.artifact_type
+    bank = _load_question_bank(artifact_type)
+    state_path = _feature_dir(project_root, feature) / f"authoring-{artifact_type}.json"
+    persisted = _read_json(state_path)
+    if persisted is None:
+        return {
+            "skill": SKILL,
+            "implementation": _implementation(artifact_type),
+            "status": "not_started",
+            "feature_name": feature,
+            "feature_title": None,
+            "artifact_type": artifact_type,
+            "question_bank_version": bank["version"],
+            "revision": None,
+            "resume_step": None,
+            "coverage": {},
+            "sections": [],
+            "progress": {"confirmed": 0, "total": 0, "deferred": []},
+            "current_question": None,
+            "draft_available": False,
+            "artifact_path": None,
+            "dashboard_url": None,
+            "authoring_url": None,
+            "self_review": None,
+            "upstream": {},
+            "message": (
+                f"No {ARTIFACTS[artifact_type]['label']} interview exists for "
+                f"'{feature}' yet."
+            ),
+        }
+    state = _migrate_state(persisted)
+    _validate_state(state, feature, artifact_type, bank)
+    # In-memory only: peek never persists, so the client sees the same control
+    # the next write would produce without creating or advancing state.
+    _ensure_current_suggestion(project_root, feature, state, bank)
+    return _result(state, bank)
 
 
 def _interactive(args: argparse.Namespace) -> dict[str, Any]:
@@ -2130,6 +2308,15 @@ def _parser() -> argparse.ArgumentParser:
         help="Stable PRD coverage ID or section name to revise during draft review",
     )
     parser.add_argument(
+        "--feature-title",
+        help="Human title for a new PRD; becomes the document heading",
+    )
+    parser.add_argument(
+        "--peek",
+        action="store_true",
+        help="Return the persisted interview view without writing or generating",
+    )
+    parser.add_argument(
         "--feature-description",
         help="Direct user context used as initial problem evidence",
     )
@@ -2147,6 +2334,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.artifact_type is None or args.feature_name is None:
             result = _intake_result(Path(args.project_root).resolve(), args.artifact_type)
             print(json.dumps(result, indent=2) if args.json else _format_intake(result))
+            return 0
+        if args.peek:
+            result = peek_once(args)
+            print(json.dumps(result, indent=2) if args.json else _format_text(result))
             return 0
         should_interview = (
             sys.stdin.isatty()

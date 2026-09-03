@@ -70,6 +70,56 @@ def _run_design(project: Path, *args: str):
     return result, json.loads(result.stdout)
 
 
+DESCRIPTION = (
+    "Team leads cannot see which tasks are overdue; due dates live in ticket "
+    "titles today, so nothing can be sorted or alerted on."
+)
+
+
+def _start_prd(
+    project: Path,
+    feature: str,
+    *,
+    description: str,
+    title: str | None = None,
+):
+    args = [
+        sys.executable,
+        str(HELPER),
+        "prd",
+        feature,
+        "--project-root",
+        str(project),
+        "--feature-description",
+        description,
+        "--json",
+    ]
+    if title:
+        args.extend(["--feature-title", title])
+    result = subprocess.run(args, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr or result.stdout
+    return json.loads(result.stdout)
+
+
+def _peek(project: Path, feature: str, artifact_type: str = "prd"):
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(HELPER),
+            artifact_type,
+            feature,
+            "--project-root",
+            str(project),
+            "--peek",
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+    return json.loads(result.stdout)
+
+
 def _run_intake(project: Path, *args: str):
     result = subprocess.run(
         [
@@ -171,9 +221,12 @@ def test_prd_intake_asks_for_new_feature_without_existing_options(tmp_path):
     assert next_input["id"] == "new_prd_basics"
     assert next_input["input_type"] == "form"
     assert [field["id"] for field in next_input["fields"]] == [
+        "feature_title",
         "feature_slug",
         "feature_description",
     ]
+    slug_field = next_input["fields"][1]
+    assert slug_field["derived_from"] == "feature_title"
     assert all(field["required"] for field in next_input["fields"])
     assert next_input["allow_existing"] is False
     assert "archive-a-task" not in result.stdout
@@ -1172,3 +1225,111 @@ def test_existing_context_package_is_preserved(tmp_path):
     payload = _complete_prd(tmp_path)
     assert payload["status"] == "drafted"
     assert json.loads(context.read_text()) == {"existing": True}
+
+
+def test_peek_reports_not_started_without_creating_state(tmp_path):
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(HELPER),
+            "prd",
+            "task-due-dates",
+            "--project-root",
+            str(tmp_path),
+            "--peek",
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "not_started"
+    assert payload["revision"] is None
+    assert payload["sections"] == []
+    assert not (tmp_path / ".speed").exists()
+    assert not (tmp_path / "specs").exists()
+
+
+def test_peek_resumes_without_advancing_or_writing(tmp_path):
+    _start_prd(tmp_path, "task-due-dates", description=DESCRIPTION)
+    state_path = (
+        tmp_path / ".speed/features/task-due-dates/authoring-prd.json"
+    )
+    before = state_path.read_text()
+    artifact_before = (tmp_path / "specs/task-due-dates/prd.md").read_text()
+
+    payload = _peek(tmp_path, "task-due-dates")
+
+    assert payload["status"] == "question"
+    assert payload["current_question"]["response_control"]["id"]
+    assert state_path.read_text() == before
+    assert (tmp_path / "specs/task-due-dates/prd.md").read_text() == artifact_before
+
+
+def test_feature_title_becomes_document_heading(tmp_path):
+    payload = _start_prd(
+        tmp_path,
+        "task-due-dates",
+        description=DESCRIPTION,
+        title="Due dates for tasks",
+    )
+
+    assert payload["feature_title"] == "Due dates for tasks"
+    content = (tmp_path / "specs/task-due-dates/prd.md").read_text()
+    assert content.startswith("# PRD: Due dates for tasks")
+
+
+def test_feature_title_cannot_rename_an_existing_interview(tmp_path):
+    _start_prd(
+        tmp_path, "task-due-dates", description=DESCRIPTION, title="Due dates for tasks"
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(HELPER),
+            "prd",
+            "task-due-dates",
+            "--project-root",
+            str(tmp_path),
+            "--feature-title",
+            "Something else",
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert json.loads(result.stdout)["status"] == "error"
+
+
+def test_sections_expose_source_questions_for_every_prd_section(tmp_path):
+    payload = _start_prd(tmp_path, "task-due-dates", description=DESCRIPTION)
+
+    titles = [section["title"] for section in payload["sections"]]
+    assert titles[0] == "Summary"
+    assert "Requirements & Acceptance" in titles
+    by_title = {section["title"]: section for section in payload["sections"]}
+    assert by_title["Problem & Evidence"]["question_ids"] == ["P-Q1"]
+    assert by_title["Requirements & Acceptance"]["question_ids"] == ["P-Q4", "P-Q5"]
+    assert by_title["References"]["state"] == "generated"
+    content = (tmp_path / "specs/task-due-dates/prd.md").read_text()
+    for title in titles:
+        assert f"## {title}" in content
+
+
+def test_multiplayer_layout_writes_where_the_dashboard_reads(tmp_path):
+    (tmp_path / ".speed" / "shared").mkdir(parents=True)
+
+    _start_prd(tmp_path, "task-due-dates", description=DESCRIPTION)
+
+    assert (
+        tmp_path / ".speed/shared/features/task-due-dates/authoring-prd.json"
+    ).is_file()
+    assert (
+        tmp_path / ".speed/shared/features/task-due-dates/draft-prd.json"
+    ).is_file()
+    assert not (tmp_path / ".speed/features").exists()
