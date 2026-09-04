@@ -118,20 +118,20 @@ Rules for the adapter:
 ## Helper Contract Additions
 
 Implemented in `draft.py` so the CLI and the agent inherit all of them. All five
-landed on `codex/guided-prd-dashboard-ui`, including path resolution, so the
-multiplayer refusal below now guards only a layout that changes under a live
-session.
+landed on `codex/guided-prd-dashboard-ui`, including path resolution, so
+multiplayer projects are supported rather than refused.
 
 | # | Addition | Why the dashboard needs it | Blocking |
 |---|---|---|---|
 | 1 | `--peek`: return the current result from persisted state only, with `status: not_started` when no checkpoint exists | A page load or poll must not write. A plain `run_once` creates the checkpoint, plans clarifications, refreshes suggestions, and generates the provisional PRD, so the read path currently mutates state. | Yes |
 | 2 | `sections` array in the result and in `draft-prd.json`: `{title, question_ids, coverage_ids, state}` | Section-level Edit needs the source question. `PRD_SECTION_MAP` lives only in code and `_render_prd_section` emits no per-question headings, so the UI would otherwise regex generated Markdown. | Yes |
 | 3 | `feature_title` on the intake form, persisted with the intake evidence and used as the PRD H1 and display name | Keeps the author's own name for the feature instead of a title-cased slug. | Yes |
-| 4 | Resolve `.speed` paths through the same single-player/multiplayer rule as `dashboard/backend/paths.py` | `draft.py` writes `.speed/features/<f>/` unconditionally; in a multiplayer project the dashboard reads `.speed/shared/features/<f>/draft-prd.json`, so guided drafts are invisible there. | Multiplayer only |
+| 4 | Resolve `.speed` paths through the same single-player/multiplayer rule as `dashboard/backend/paths.py` | `draft.py` wrote `.speed/features/<f>/` unconditionally; in a multiplayer project the dashboard reads `.speed/shared/features/<f>/draft-prd.json`, so guided drafts were invisible there. | Yes |
 | 5 | `authoring_url` beside `dashboard_url` on the artifact record | The helper returns the feature page; the interview is a deeper route. Without it, every client hardcodes the route shape. | No, route fallback documented |
 
-Until addition 4 lands, the dashboard refuses guided PRD drafting in a
-multiplayer project with an explicit reason instead of showing an empty session.
+The dashboard's CORS origin list reads `DASHBOARD_ALLOWED_ORIGINS` (comma
+separated, defaulting to port 3000) so a worktree can serve its own dashboard on
+a spare port without the browser blocking every mutation at preflight.
 
 ## GraphQL Surface
 
@@ -302,8 +302,6 @@ the 4px grid at 24px page padding, 16px region gaps, 20px card padding.
   guided PRD.
 - A slug collision asks for a different name or an explicit resume; it never
   attaches new intake evidence to existing progress.
-- Multiplayer projects are refused with a stated reason until helper path
-  resolution is shared.
 
 ## Verification
 

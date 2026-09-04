@@ -53,7 +53,6 @@ class AuthoringSession:
     artifact_content: Optional[str]
     dashboard_url: Optional[str]
     authoring_url: Optional[str]
-    multiplayer_blocked: bool
     helper_path: Optional[str]
     interpreter: Optional[str]
     current_question: Optional[strawberry.scalars.JSON]

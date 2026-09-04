@@ -74,11 +74,7 @@ export default function DefineNewPage() {
           setServerError(result.error?.message ?? "The interview could not be started.");
           return;
         }
-        if (
-          session.status === "error" ||
-          session.status === "helper_unavailable" ||
-          session.status === "multiplayer_unsupported"
-        ) {
+        if (session.status === "error" || session.status === "helper_unavailable") {
           setServerError(session.message);
           return;
         }

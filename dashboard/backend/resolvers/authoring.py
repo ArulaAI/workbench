@@ -25,12 +25,6 @@ ACTION_FLAG = {
     AuthoringAction.DEFER: "--defer",
 }
 
-MULTIPLAYER_MESSAGE = (
-    "Guided authoring runs in single-player layouts for now. Continue this "
-    "interview with `workbench draft prd <feature>` from the project root."
-)
-
-
 def _read_artifact(project_root: Path, artifact_path: Optional[str]) -> Optional[str]:
     if not artifact_path:
         return None
@@ -62,7 +56,6 @@ def _session(project_root: Path, payload: dict[str, Any]) -> AuthoringSession:
         artifact_content=_read_artifact(project_root, artifact_path),
         dashboard_url=payload.get("dashboard_url"),
         authoring_url=payload.get("authoring_url"),
-        multiplayer_blocked=False,
         helper_path=payload.get("helper_path"),
         interpreter=payload.get("interpreter"),
         current_question=payload.get("current_question"),
@@ -72,36 +65,6 @@ def _session(project_root: Path, payload: dict[str, Any]) -> AuthoringSession:
         resume_step=payload.get("resume_step"),
         upstream=payload.get("upstream"),
         implementation=payload.get("implementation"),
-    )
-
-
-def _multiplayer_session(
-    feature_name: str, artifact_type: str
-) -> AuthoringSession:
-    return AuthoringSession(
-        status="multiplayer_unsupported",
-        feature_name=feature_name,
-        feature_title=None,
-        artifact_type=artifact_type,
-        question_bank_version=None,
-        revision=None,
-        message=MULTIPLAYER_MESSAGE,
-        progress=AuthoringProgress(confirmed=0, total=0, deferred=[]),
-        draft_available=False,
-        artifact_path=None,
-        artifact_content=None,
-        dashboard_url=None,
-        authoring_url=None,
-        multiplayer_blocked=True,
-        helper_path=None,
-        interpreter=None,
-        current_question=None,
-        coverage=None,
-        sections=None,
-        self_review=None,
-        resume_step=None,
-        upstream=None,
-        implementation=None,
     )
 
 
@@ -120,10 +83,12 @@ def get_intake(project_root: str | Path, artifact_type: Optional[str]) -> Author
 def get_session(
     project_root: str | Path, feature_name: str, artifact_type: str
 ) -> AuthoringSession:
-    """Read-only. Uses --peek so opening or polling never creates state."""
+    """Read-only. Uses --peek so opening or polling never creates state.
+
+    Single-player and multiplayer layouts both work: the helper resolves
+    .speed paths through the same rule as dashboard/backend/paths.py.
+    """
     root = Path(project_root)
-    if authoring_helper.is_multiplayer(root):
-        return _multiplayer_session(feature_name, artifact_type)
     payload = authoring_helper.run(root, artifact_type, feature_name, "--peek")
     return _session(root, payload)
 
@@ -136,8 +101,6 @@ def start(
     feature_description: Optional[str],
 ) -> AuthoringSession:
     root = Path(project_root)
-    if authoring_helper.is_multiplayer(root):
-        return _multiplayer_session(feature_name, artifact_type)
     args = [artifact_type, feature_name]
     if feature_title:
         args.extend(["--feature-title", feature_title])

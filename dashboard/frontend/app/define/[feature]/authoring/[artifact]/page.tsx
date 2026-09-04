@@ -215,7 +215,7 @@ export default function AuthoringPage() {
     );
   }
 
-  if (session.status === "helper_unavailable" || session.status === "multiplayer_unsupported") {
+  if (session.status === "helper_unavailable") {
     return (
       <Shell>
         <div style={{ padding: 24, maxWidth: 640 }}>

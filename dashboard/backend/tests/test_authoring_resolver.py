@@ -91,14 +91,21 @@ def test_defer_keeps_the_provisional_draft_available(tmp_path: Path):
     assert deferred.draft_available is True
 
 
-def test_multiplayer_project_is_refused_with_a_reason(tmp_path: Path):
+def test_multiplayer_layout_is_supported_end_to_end(tmp_path: Path):
     (tmp_path / ".speed" / "shared").mkdir(parents=True)
 
-    session = resolver.get_session(tmp_path, "task-due-dates", "prd")
+    started = resolver.start(
+        tmp_path, "task-due-dates", "prd", "Due dates for tasks", DESCRIPTION
+    )
 
-    assert session.status == "multiplayer_unsupported"
-    assert session.multiplayer_blocked is True
-    assert "workbench draft prd" in session.message
+    assert started.status == "question"
+    assert started.artifact_content.startswith("# PRD: Due dates for tasks")
+    assert (
+        tmp_path / ".speed/shared/features/task-due-dates/draft-prd.json"
+    ).is_file()
+
+    resumed = resolver.get_session(tmp_path, "task-due-dates", "prd")
+    assert resumed.revision == started.revision
 
 
 def test_helper_failure_surfaces_the_resolved_paths(tmp_path: Path, monkeypatch):

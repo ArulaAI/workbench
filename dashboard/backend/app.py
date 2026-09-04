@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator
@@ -108,13 +109,19 @@ def create_app(project_root: str) -> FastAPI:
         lifespan=lifespan,
     )
 
-    # CORS for Next.js dev server
+    # CORS for the Next.js dev server. Worktrees run their own dashboard on a
+    # spare port, so the origin list is configurable instead of pinned to 3000.
+    configured_origins = os.environ.get("DASHBOARD_ALLOWED_ORIGINS", "")
+    allowed_origins = [
+        origin.strip() for origin in configured_origins.split(",") if origin.strip()
+    ] or [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ]
+    log.info("CORS origins: %s", ", ".join(allowed_origins))
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            "http://localhost:3000",
-            "http://127.0.0.1:3000",
-        ],
+        allow_origins=allowed_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

@@ -20,7 +20,6 @@ const SESSION_FIELDS = `
   artifactContent
   dashboardUrl
   authoringUrl
-  multiplayerBlocked
   helperPath
   interpreter
   currentQuestion
@@ -231,7 +230,6 @@ export interface AuthoringSession {
   artifactContent: string | null;
   dashboardUrl: string | null;
   authoringUrl: string | null;
-  multiplayerBlocked: boolean;
   helperPath: string | null;
   interpreter: string | null;
   currentQuestion: CurrentQuestion | null;

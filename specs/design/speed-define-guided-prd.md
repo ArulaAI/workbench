@@ -507,10 +507,6 @@ ConflictBanner in flow, save chip red, control disabled but not cleared. Any tex
 
 Question column replaced by HelperUnavailable: what failed, the resolved helper path and interpreter in mono, and a retry action. The preview still renders the last known artifact if one was loaded. The UI never substitutes a question of its own.
 
-#### Interview, multiplayer project
-
-Question column shows a single notice that guided authoring runs in single-player layouts until path resolution is shared, with the CLI command as the alternative. No partial interview is offered.
-
 ### Interactive Element States
 
 | Component | Enabled | Hover | Focus | Pressed | Disabled | Loading |
