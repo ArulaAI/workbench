@@ -17,40 +17,27 @@ _init_require_skill_catalog() {
     return 3
 }
 
-# Reconcile the current Git policy even when an older SPEED runtime block is
-# already present. Historical projects may have no skill rules at all, or may
-# ignore `.speed/skills/` wholesale. The versioned block is deliberately
-# appended after either form so its later rules make the durable manifest
-# trackable while keeping the per-machine event log ignored.
+# Apply the Git policy through the versioned managed block in
+# `skills.bootstrap`, which rewrites the delimited region and preserves every
+# line around it. Testing for a header comment and appending behind it, which
+# this replaced, could neither retire a rule nor deliver a new one: a project
+# initialized before a rule existed already carried the header, so nothing was
+# ever added to it again.
+#
+# Returns 0 when the file changed, 1 when the block was already current, and 3
+# when the policy could not be applied at all.
 _init_reconcile_gitignore() {
-    local gitignore="${PROJECT_ROOT}/.gitignore"
-    local changed=false
-    if ! grep -q '# SPEED runtime state' "$gitignore" 2>/dev/null; then
-        cat >> "$gitignore" << 'EOF'
-
-# SPEED runtime state
-.speed/logs/
-.speed/features/*/logs/
-.speed/features/*/state.json
-.speed/features/*/failure_history.jsonl
-.speed/active_feature
-.speed/state.json
-.speed/running/
-.speed/worktrees/
-EOF
-        changed=true
+    local outcome ignore_error
+    ignore_error=$(mktemp)
+    if ! outcome=$(PYTHONPATH="${SPEED_DIR}/lib" "$(_context_python)" \
+        -m skills.bootstrap ignore \
+        --project-root "$PROJECT_ROOT" --scope project 2>"$ignore_error"); then
+        log_error "Could not apply the Git ignore policy: $(tr '\n' ' ' < "$ignore_error")"
+        rm -f "$ignore_error"
+        return 3
     fi
-    if ! grep -q '# Workbench skill state policy v2' "$gitignore" 2>/dev/null; then
-        cat >> "$gitignore" << 'EOF'
-
-# Workbench skill state policy v2
-!.speed/skills/
-!.speed/skills/manifest.json
-.speed/skills/events.jsonl
-EOF
-        changed=true
-    fi
-    [[ "$changed" == "true" ]]
+    rm -f "$ignore_error"
+    [[ "$outcome" == "changed" ]]
 }
 
 cmd_init() {
@@ -248,9 +235,13 @@ cmd_init() {
 
     # Phase 6: apply the explicit Git policy only after convergence. Durable
     # projections and manifest are trackable; local runtime events are ignored.
-    if _init_reconcile_gitignore; then
-        log_success "Updated .gitignore"
-    fi
+    local ignore_status=0
+    _init_reconcile_gitignore || ignore_status=$?
+    case "$ignore_status" in
+        0) log_success "Updated .gitignore" ;;
+        1) log_info "Git ignore policy already current" ;;
+        *) return 3 ;;
+    esac
 
     # Phase 7: committing is explicit. Stage only files this initializer owns;
     # never `git add -A`, which can capture unrelated work in an existing repo.

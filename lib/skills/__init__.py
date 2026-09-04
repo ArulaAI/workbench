@@ -9,7 +9,8 @@ Module map, in the order a sync moves through them:
 ``project``     renders one package for one harness, purely, as relpath -> bytes
 ``manifest``    hashes projections, persists the manifest, classifies each skill
 ``targets``     the harness registry, marker detection, and bounded destinations
-``bootstrap``   init policy resolution, persistence, migration, and verification
+``bootstrap``   init policy: resolution, persistence, migration, verification,
+                and the managed Git ignore regions
 ``inspect``     read-only: assembles the whole picture as an ``Inspection``
 ``sync``        the only writer: plans from an inspection, then applies
 ``doctor``      read-only: turns inspection findings into coded diagnostics

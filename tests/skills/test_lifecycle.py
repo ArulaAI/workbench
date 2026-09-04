@@ -15,10 +15,18 @@ import os
 import re
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 from skills import PATHS
+from skills.bootstrap import (
+    IGNORE_POLICIES,
+    MANAGED_BEGIN,
+    MANAGED_END,
+    reconcile_ignore,
+    render_ignore_block,
+)
 from skills.models import SkillState
 
 REPO = Path(__file__).resolve().parents[2]
@@ -32,11 +40,16 @@ INSTALL_SH = REPO / "install.sh"
 MP_INIT_SH = REPO / "lib" / "cmd" / "mp_init.sh"
 OWN_SPEED_IGNORE = REPO / ".speed" / ".gitignore"
 
-_SINGLE_PLAYER_SENTINEL = "# Workbench skill state policy v2"
-_MULTIPLAYER_SENTINEL = (
-    "# Multi-player mode: only shared/ and the skill manifest are committed, everything else is local"
-)
-_HEREDOC_TERMINATORS = {"EOF", "INNER_GITIGNORE"}
+# Two ignore files, one mechanism: a managed block rendered from the canonical
+# state layout. The tests read the policy rather than restating its rules, and
+# they run the shell functions that apply it for real, because what matters is
+# the file a project ends up with and not that some heredoc holds the right
+# lines.
+SCOPES = ("project", "state")
+_RECONCILE = {
+    "project": (PROJECT_SH, "_init_reconcile_gitignore"),
+    "state": (MP_INIT_SH, "_mp_reconcile_state_ignore"),
+}
 
 _GIT_ENV = dict(
     os.environ,
@@ -49,128 +62,428 @@ _GIT_ENV = dict(
 )
 
 
-def _ignore_blocks(source: Path, sentinel: str) -> list:
-    """Return every shell heredoc ignore block introduced by `sentinel`."""
-    lines = source.read_text().splitlines()
-    blocks = []
-    for index, line in enumerate(lines):
-        if line.strip() != sentinel:
-            continue
-        body = []
-        for candidate in lines[index:]:
-            if candidate.strip() in _HEREDOC_TERMINATORS:
-                blocks.append("\n".join(body) + "\n")
-                break
-            body.append(candidate)
-        else:
-            raise AssertionError(f"unterminated ignore block at {source}:{index + 1}")
-    assert blocks, f"no ignore block for {sentinel!r} in {source}"
-    return blocks
-
-
 def _git(cwd, *args):
     return subprocess.run(
         ["git", *args], cwd=str(cwd), capture_output=True, text=True, env=_GIT_ENV
     )
 
 
-def _repo_with_ignore(tmp_path, name, ignore_rel, body):
+def _ignored(repo, rel) -> bool:
+    return _git(repo, "check-ignore", "-q", rel).returncode == 0
+
+
+def _project(tmp_path, name) -> Path:
+    """A git repo carrying the skill state files and no ignore policy yet."""
     repo = tmp_path / name
-    (repo / ".speed" / "skills").mkdir(parents=True)
+    (repo / PATHS.state_root).mkdir(parents=True)
     _git(tmp_path, "init", "-q", "-b", "main", str(repo))
-    target = repo / ignore_rel
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(body)
     (repo / MANIFEST_REL).write_text("{}\n")
     (repo / EVENTS_REL).write_text("")
     return repo
 
 
-def _ignored(repo, rel) -> bool:
-    return _git(repo, "check-ignore", "-q", rel).returncode == 0
+def _ignore_path(project, scope) -> Path:
+    return project / IGNORE_POLICIES[scope].relpath
 
 
-def _block_ids(blocks) -> list:
-    return [f"block{index}" for index in range(len(blocks))]
+def _ignore_text(project, scope) -> str:
+    return _ignore_path(project, scope).read_text()
 
 
-SINGLE_PLAYER_BLOCKS = _ignore_blocks(PROJECT_SH, _SINGLE_PLAYER_SENTINEL)
-MULTIPLAYER_BLOCKS = _ignore_blocks(MP_INIT_SH, _MULTIPLAYER_SENTINEL)
+def _managed_text(scope) -> str:
+    return "\n".join(render_ignore_block(IGNORE_POLICIES[scope])) + "\n"
 
 
-@pytest.mark.parametrize("body", SINGLE_PLAYER_BLOCKS, ids=_block_ids(SINGLE_PLAYER_BLOCKS))
-def test_single_player_init_commits_manifest_and_ignores_events(tmp_path, body):
-    repo = _repo_with_ignore(tmp_path, "single", ".gitignore", body)
-    assert not _ignored(repo, MANIFEST_REL)
-    assert _ignored(repo, EVENTS_REL)
+def _tracking_policy_holds(project) -> bool:
+    """Git carries the manifest and not the event log: the point of the rules."""
+    return not _ignored(project, MANIFEST_REL) and _ignored(project, EVENTS_REL)
 
 
-@pytest.mark.parametrize("body", MULTIPLAYER_BLOCKS, ids=_block_ids(MULTIPLAYER_BLOCKS))
-def test_multiplayer_init_commits_manifest_and_ignores_events(tmp_path, body):
-    repo = _repo_with_ignore(tmp_path, "mp", ".speed/.gitignore", body)
-    assert not _ignored(repo, MANIFEST_REL)
-    assert _ignored(repo, EVENTS_REL)
+# The same two state files, addressed from the project root and from `.speed/`.
+_MANIFEST_RULE = {
+    "project": MANIFEST_REL,
+    "state": PATHS.manifest.relative_to(PATHS.state_root.parent).as_posix(),
+}
+_EVENTS_RULE = {
+    "project": EVENTS_REL,
+    "state": PATHS.events.relative_to(PATHS.state_root.parent).as_posix(),
+}
+
+# One rule per file whose deletion is observable through `git check-ignore`.
+# Only the project region names the event log, because `.speed/` itself is not
+# ignored there; inside `.speed/.gitignore` everything starts ignored and the
+# manifest carve-out is what git tracking hangs on.
+_LOAD_BEARING_RULE = {
+    "project": _EVENTS_RULE["project"],
+    "state": f"!{_MANIFEST_RULE['state']}",
+}
+
+# A rule no released version ever wrote, standing in for one a later version
+# introduces and a version after that retires. The two files ignore by
+# opposite defaults, so each needs its own probe and expected verdict.
+_INVENTED = {
+    "project": ("invented-later/", "invented-later/file", True),
+    "state": ("!invented-later", ".speed/invented-later", False),
+}
+
+_USER_PREFIX = "# mine, above the block\nnode_modules/\n*.tmp\n"
+_USER_SUFFIX = "# mine, below the block\n!keep.tmp\nbuild/\n"
 
 
-@pytest.mark.parametrize("body", MULTIPLAYER_BLOCKS, ids=_block_ids(MULTIPLAYER_BLOCKS))
-def test_multiplayer_zone_split_survives(tmp_path, body):
-    """The manifest carve-out must not leak the local/ zone into git."""
-    repo = _repo_with_ignore(tmp_path, "zones", ".speed/.gitignore", body)
-    (repo / ".speed" / "shared").mkdir(parents=True, exist_ok=True)
-    (repo / ".speed" / "shared" / "active_feature").write_text("demo\n")
-    (repo / ".speed" / "local").mkdir(parents=True, exist_ok=True)
-    (repo / ".speed" / "local" / "dashboard.db").write_text("")
-    assert not _ignored(repo, ".speed/shared/active_feature")
-    assert _ignored(repo, ".speed/local/dashboard.db")
+def _reconcile(project, scope):
+    """Run the real shell function that applies one managed ignore policy.
 
-
-def test_workbench_own_state_ignore_commits_manifest(tmp_path):
-    """The ignore file checked into this repo follows the same rule."""
-    repo = _repo_with_ignore(
-        tmp_path, "own", ".speed/.gitignore", OWN_SPEED_IGNORE.read_text()
-    )
-    assert not _ignored(repo, MANIFEST_REL)
-    assert _ignored(repo, EVENTS_REL)
-
-
-def _reconcile_single_player_ignore(project: Path):
+    Init and mp-init reach the renderer through `_context_python`, so the
+    script sources that resolver instead of calling an interpreter the test
+    picked: a rename on either side then fails here rather than diverging
+    quietly.
+    """
+    source, function = _RECONCILE[scope]
     script = f"""
 set -euo pipefail
+{_LOG_STUBS}
+SPEED_DIR={_q(REPO)}
 PROJECT_ROOT={_q(project)}
-source {_q(PROJECT_SH)}
-_init_reconcile_gitignore || true
+SPEED_PYTHON={_q(PY)}
+source {_q(CONTEXT_BRIDGE_SH)}
+source {_q(source)}
+status=0
+{function} || status=$?
+echo "STATUS=${{status}}"
 """
     return _bash(script)
 
 
+def _status(result) -> int:
+    """0 changed the file, 1 found it current, 3 could not apply the policy."""
+    assert result.returncode == 0, result.stdout + result.stderr
+    match = re.search(r"^STATUS=(\d+)$", result.stdout, re.MULTILINE)
+    assert match, result.stdout + result.stderr
+    return int(match.group(1))
+
+
+@pytest.mark.parametrize("scope", SCOPES)
+def test_init_tracks_the_manifest_and_ignores_the_event_log(tmp_path, scope):
+    project = _project(tmp_path, f"policy-{scope}")
+
+    assert _status(_reconcile(project, scope)) == 0
+
+    assert not _ignored(project, MANIFEST_REL)
+    assert _ignored(project, EVENTS_REL)
+
+
+def test_multiplayer_zone_split_survives(tmp_path):
+    """The manifest carve-out must not leak the local/ zone into git."""
+    project = _project(tmp_path, "zones")
+    assert _status(_reconcile(project, "state")) == 0
+    (project / ".speed" / "shared").mkdir(parents=True, exist_ok=True)
+    (project / ".speed" / "shared" / "active_feature").write_text("demo\n")
+    (project / ".speed" / "local").mkdir(parents=True, exist_ok=True)
+    (project / ".speed" / "local" / "dashboard.db").write_text("")
+
+    assert not _ignored(project, ".speed/shared/active_feature")
+    assert _ignored(project, ".speed/local/dashboard.db")
+
+
+def test_workbench_own_state_ignore_commits_manifest(tmp_path):
+    """The ignore file checked into this repo follows the same rule."""
+    project = _project(tmp_path, "own")
+    _ignore_path(project, "state").write_text(OWN_SPEED_IGNORE.read_text())
+
+    assert not _ignored(project, MANIFEST_REL)
+    assert _ignored(project, EVENTS_REL)
+
+
+@pytest.mark.parametrize("scope", SCOPES)
+def test_reinit_restores_a_managed_rule_that_went_missing(tmp_path, scope):
+    """The defect this block closes.
+
+    The rules used to be appended behind a test for their own header comment,
+    which made the header stand in for the rules under it. Deleting one rule
+    reproduces the state of a project initialized before that rule existed:
+    header present, rule missing, and no run of init able to notice.
+    """
+    project = _project(tmp_path, f"dropped-{scope}")
+    assert _status(_reconcile(project, scope)) == 0
+    rule = _LOAD_BEARING_RULE[scope]
+    assert rule in IGNORE_POLICIES[scope].rules
+    path = _ignore_path(project, scope)
+    path.write_text(path.read_text().replace(f"{rule}\n", "", 1))
+    assert not _tracking_policy_holds(project)
+
+    assert _status(_reconcile(project, scope)) == 0
+
+    assert rule in _ignore_text(project, scope)
+    assert _tracking_policy_holds(project)
+
+
+@pytest.mark.parametrize("scope", SCOPES)
 @pytest.mark.parametrize(
-    "historical",
+    ("above", "below"),
     [
-        """# SPEED runtime state
-.speed/logs/
-.speed/features/*/logs/
-.speed/state.json
-""",
-        """# SPEED runtime state
-.speed/logs/
-.speed/skills/
-""",
+        (_USER_PREFIX, _USER_SUFFIX),
+        # Blank lines the user left on either side of the region, which a
+        # rewrite is most likely to eat or multiply.
+        (f"{_USER_PREFIX}\n\n", f"\n{_USER_SUFFIX}\n"),
+        # A last line with no newline after it, the one case where the file
+        # cannot come back byte-identical.
+        (_USER_PREFIX, _USER_SUFFIX.rstrip("\n")),
     ],
-    ids=("released-block-without-skill-rules", "early-block-ignoring-all-skills"),
+    ids=("plain", "blank-lines-adjacent", "no-trailing-newline"),
 )
-def test_repeated_init_reconciles_historical_gitignore_blocks(tmp_path, historical):
-    repo = _repo_with_ignore(tmp_path, "historical", ".gitignore", historical)
+def test_rules_outside_the_block_survive_a_rewrite(tmp_path, scope, above, below):
+    """The property the whole mechanism rests on."""
+    project = _project(tmp_path, f"user-{scope}")
+    path = _ignore_path(project, scope)
+    path.write_text(above)
+    assert _status(_reconcile(project, scope)) == 0
+    assert path.read_text().startswith(above)
+    path.write_text(path.read_text() + below)
+    intended = path.read_text()
 
-    result = _reconcile_single_player_ignore(repo)
+    # A missing rule forces the next init to rewrite a region that now has
+    # user rules on both sides of it.
+    path.write_text(intended.replace(f"{_LOAD_BEARING_RULE[scope]}\n", "", 1))
+    assert _status(_reconcile(project, scope)) == 0
 
-    assert result.returncode == 0, result.stderr
-    assert not _ignored(repo, MANIFEST_REL)
-    assert _ignored(repo, EVENTS_REL)
-    text = (repo / ".gitignore").read_text()
-    assert text.count("# Workbench skill state policy v2") == 1
+    # Every byte returns, except that a file not ending in a newline gains one.
+    expected = intended if intended.endswith("\n") else f"{intended}\n"
+    assert path.read_text() == expected
+    assert path.read_text().startswith(above)
+    assert path.read_text().rstrip("\n").endswith(below.rstrip("\n"))
+    assert _status(_reconcile(project, scope)) == 1
 
-    _reconcile_single_player_ignore(repo)
-    assert (repo / ".gitignore").read_text() == text
+
+@pytest.mark.parametrize("scope", SCOPES)
+def test_a_current_region_is_left_byte_identical(tmp_path, scope):
+    project = _project(tmp_path, f"noop-{scope}")
+    path = _ignore_path(project, scope)
+    path.write_text(_USER_PREFIX)
+    assert _status(_reconcile(project, scope)) == 0
+    text = path.read_text()
+
+    assert _status(_reconcile(project, scope)) == 1
+
+    assert path.read_text() == text
+
+
+@pytest.mark.parametrize("scope", SCOPES)
+def test_repeated_init_does_not_dirty_a_committed_ignore_file(tmp_path, scope):
+    project = _project(tmp_path, f"clean-{scope}")
+    assert _status(_reconcile(project, scope)) == 0
+    _git(project, "add", "-A")
+    committed = _git(project, "commit", "-qm", "workbench git policy")
+    assert committed.returncode == 0, committed.stderr
+
+    assert _status(_reconcile(project, scope)) == 1
+
+    assert _git(project, "status", "--porcelain").stdout == ""
+
+
+_HISTORICAL_IGNORES = (
+    (
+        "project",
+        "released-block-without-skill-rules",
+        "# SPEED runtime state\n"
+        ".speed/logs/\n.speed/features/*/logs/\n.speed/state.json\n",
+    ),
+    (
+        "project",
+        "early-block-ignoring-all-skills",
+        "# SPEED runtime state\n.speed/logs/\n.speed/skills/\n",
+    ),
+    (
+        "project",
+        "two-loose-blocks",
+        "# SPEED runtime state\n.speed/logs/\n.speed/state.json\n"
+        "\n"
+        "# Workbench skill state policy v2\n"
+        "!.speed/skills/\n!.speed/skills/manifest.json\n.speed/skills/events.jsonl\n",
+    ),
+    (
+        "state",
+        "released-allowlist",
+        "# Multi-player mode: only shared/ and the skill manifest are committed,"
+        " everything else is local\n"
+        "*\n!shared/\n!shared/**\n!.gitignore\n"
+        "!skills/\n!skills/manifest.json\nskills/events.jsonl\n",
+    ),
+    (
+        "state",
+        "allowlist-before-the-manifest-carve-out",
+        "# Multi-player mode: only shared/ is committed, everything else is local\n"
+        "*\n!shared/\n!shared/**\n!.gitignore\n",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    ("scope", "historical"),
+    [(scope, body) for scope, _, body in _HISTORICAL_IGNORES],
+    ids=[f"{scope}-{name}" for scope, name, _ in _HISTORICAL_IGNORES],
+)
+def test_loose_historical_rules_migrate_to_one_managed_block(
+    tmp_path, scope, historical
+):
+    project = _project(tmp_path, "historical")
+    _ignore_path(project, scope).write_text(f"{_USER_PREFIX}\n{historical}")
+
+    assert _status(_reconcile(project, scope)) == 0
+
+    text = _ignore_text(project, scope)
+    assert text.count(MANAGED_BEGIN) == 1
+    assert text.count(MANAGED_END) == 1
+    assert text.startswith(_USER_PREFIX)
+    rules = [
+        line
+        for line in text.splitlines()
+        if line.strip() and not line.startswith("#")
+    ]
+    assert len(rules) == len(set(rules)), text
+    assert not _ignored(project, MANIFEST_REL)
+    assert _ignored(project, EVENTS_REL)
+    assert _status(_reconcile(project, scope)) == 1
+
+
+def _repolicy(monkeypatch, scope, **changes):
+    """Stand in a policy a later Workbench version could ship."""
+    monkeypatch.setitem(
+        IGNORE_POLICIES, scope, replace(IGNORE_POLICIES[scope], **changes)
+    )
+
+
+@pytest.mark.parametrize("scope", SCOPES)
+def test_a_policy_change_both_delivers_and_retires_a_rule(tmp_path, scope, monkeypatch):
+    """The property the whole change exists for, driven by two rule sets.
+
+    Reconciliation runs in-process here so the policy can differ between the
+    two calls, which is the real upgrade: one Workbench version writes a rule
+    into an initialized project and a later one takes it away again. The shell
+    route to the same function is covered by the tests above.
+    """
+    project = _project(tmp_path, f"policy-change-{scope}")
+    _ignore_path(project, scope).write_text(_USER_PREFIX)
+    released = IGNORE_POLICIES[scope]
+    rule, probe, ignored_with_rule = _INVENTED[scope]
+    assert reconcile_ignore(project, scope) is True
+    assert _ignored(project, probe) is not ignored_with_rule
+
+    _repolicy(monkeypatch, scope, rules=(*released.rules, rule))
+    assert reconcile_ignore(project, scope) is True
+    assert rule in _ignore_text(project, scope)
+    assert _ignored(project, probe) is ignored_with_rule
+
+    monkeypatch.setitem(IGNORE_POLICIES, scope, released)
+    assert reconcile_ignore(project, scope) is True
+
+    assert rule not in _ignore_text(project, scope)
+    assert _ignored(project, probe) is not ignored_with_rule
+    assert _ignore_text(project, scope).count(MANAGED_BEGIN) == 1
+    assert _ignore_text(project, scope).startswith(_USER_PREFIX)
+    assert _tracking_policy_holds(project)
+    assert reconcile_ignore(project, scope) is False
+
+
+@pytest.mark.parametrize("scope", SCOPES)
+def test_the_managed_set_could_carry_a_state_directory_rename(
+    tmp_path, scope, monkeypatch
+):
+    """The concrete future case: `.speed/skills` moving somewhere else.
+
+    Nothing is renamed here. What is proved is that repointing the rules at a
+    new directory rewrites an initialized project onto the new paths and takes
+    the old ones with it, instead of leaving both generations in the file.
+    """
+    project = _project(tmp_path, f"rename-{scope}")
+    path = _ignore_path(project, scope)
+    path.write_text(_USER_PREFIX)
+    assert reconcile_ignore(project, scope) is True
+    assert _EVENTS_RULE[scope] in path.read_text()
+
+    old, new = PATHS.state_root.name, "packs"
+    _repolicy(
+        monkeypatch,
+        scope,
+        rules=tuple(rule.replace(old, new) for rule in IGNORE_POLICIES[scope].rules),
+    )
+
+    assert reconcile_ignore(project, scope) is True
+
+    text = path.read_text()
+    assert _EVENTS_RULE[scope] not in text
+    assert _EVENTS_RULE[scope].replace(old, new) in text
+    assert _MANIFEST_RULE[scope] not in text
+    assert text.count(MANAGED_BEGIN) == 1
+    assert text.startswith(_USER_PREFIX)
+    assert reconcile_ignore(project, scope) is False
+
+
+@pytest.mark.parametrize("scope", SCOPES)
+@pytest.mark.parametrize(
+    "begin",
+    [MANAGED_BEGIN, "# >>> workbench managed (v0) >>>"],
+    ids=("same-version-marker", "older-version-marker"),
+)
+def test_a_retired_rule_is_dropped_from_the_block_where_it_sits(
+    tmp_path, scope, begin
+):
+    """A later Workbench has to be able to retire a rule, not only add one.
+
+    Detection compares the rendered block to the file, so a rule leaving the
+    policy converges whether or not the version was bumped with it. The marker
+    matters for a different reason: without matching an earlier version, a
+    bumped block would be appended next to the one it replaces.
+    """
+    project = _project(tmp_path, f"retired-{scope}")
+    path = _ignore_path(project, scope)
+    path.write_text(_USER_PREFIX)
+    assert _status(_reconcile(project, scope)) == 0
+    intended = path.read_text() + _USER_SUFFIX
+    path.write_text(intended)
+    assert _status(_reconcile(project, scope)) == 1
+
+    path.write_text(
+        intended.replace(MANAGED_BEGIN, begin).replace(
+            MANAGED_END, f"retired/\n{MANAGED_END}"
+        )
+    )
+
+    assert _status(_reconcile(project, scope)) == 0
+
+    assert path.read_text() == intended
+
+
+@pytest.mark.parametrize("scope", SCOPES)
+def test_a_second_block_is_collapsed_into_the_first(tmp_path, scope):
+    """One generation of rules survives a version change, not two."""
+    project = _project(tmp_path, f"duplicate-{scope}")
+    path = _ignore_path(project, scope)
+    path.write_text(_USER_PREFIX)
+    assert _status(_reconcile(project, scope)) == 0
+    intended = path.read_text()
+    path.write_text(
+        f"{intended}# >>> workbench managed (v0) >>>\nretired/\n{MANAGED_END}\n"
+    )
+
+    assert _status(_reconcile(project, scope)) == 0
+
+    assert path.read_text() == intended
+
+
+@pytest.mark.parametrize("scope", SCOPES)
+def test_a_block_without_its_end_marker_fails_instead_of_guessing(tmp_path, scope):
+    """Where the block ends is unknowable once the marker is gone, and the
+    lines below it may well be the user's. Report it and change nothing."""
+    project = _project(tmp_path, f"broken-{scope}")
+    path = _ignore_path(project, scope)
+    broken = f"{MANAGED_BEGIN}\n{_LOAD_BEARING_RULE[scope]}\n{_USER_SUFFIX}"
+    path.write_text(broken)
+
+    result = _reconcile(project, scope)
+
+    assert _status(result) == 3
+    assert _ignore_text(project, scope) == broken
+    assert "marker" in result.stderr
 
 
 def test_fresh_clone_of_committed_project_is_current(tmp_path):
@@ -192,7 +505,7 @@ def test_fresh_clone_of_committed_project_is_current(tmp_path):
     )
     assert synced.returncode == 0, synced.stderr
 
-    (origin / ".gitignore").write_text(SINGLE_PLAYER_BLOCKS[0])
+    (origin / ".gitignore").write_text(_managed_text("project"))
     _git(origin, "add", "-A")
     committed = _git(origin, "commit", "-qm", "add workbench skills")
     assert committed.returncode == 0, committed.stderr
@@ -239,7 +552,7 @@ def test_fresh_clone_reports_healthy(tmp_path):
         env=dict(os.environ, PYTHONPATH=str(REPO / "lib")),
         check=True,
     )
-    (origin / ".gitignore").write_text(SINGLE_PLAYER_BLOCKS[0])
+    (origin / ".gitignore").write_text(_managed_text("project"))
     _git(origin, "add", "-A")
     _git(origin, "commit", "-qm", "add workbench skills")
 

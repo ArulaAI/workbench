@@ -3,8 +3,9 @@
 This module owns the decisions that used to be spread across project.sh,
 skills.sh, the manifest, and marker detection.  It is intentionally small: the
 project initializer still owns the general SPEED scaffold, while this module
-inspects skill state, resolves one harness policy, persists that policy, and
-verifies the resulting projections.
+inspects skill state, resolves one harness policy, persists that policy,
+verifies the resulting projections, and reconciles the Git ignore policy that
+decides which of those files git carries.
 
 Policy precedence during initialization is:
 
@@ -31,6 +32,7 @@ try:  # Python 3.11+; managed installs also carry the backport for older hosts.
 except ImportError:  # pragma: no cover - exercised only by older interpreters
     import tomli as tomllib
 
+from skills import PATHS
 from skills.catalog import load_catalog
 from skills.inspect import inspect
 from skills.manifest import SELECTED_KEY, load_manifest, save_manifest
@@ -188,6 +190,22 @@ def _replace_policy(text: str, harnesses) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _atomic_write(path: Path, text: str) -> None:
+    """Replace a file in one step, so no reader ever sees a partial write."""
+    fd, temp_name = tempfile.mkstemp(
+        dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_name, path)
+    finally:
+        if os.path.exists(temp_name):
+            os.unlink(temp_name)
+
+
 def persist_policy(config_path, harnesses, *, template_path=None, project_root=None) -> None:
     """Atomically persist the resolved policy and retire manifest-era intent."""
     config_path = Path(config_path)
@@ -206,18 +224,7 @@ def persist_policy(config_path, harnesses, *, template_path=None, project_root=N
     tomllib.loads(updated)
     if updated != text:
         config_path.parent.mkdir(parents=True, exist_ok=True)
-        fd, temp_name = tempfile.mkstemp(
-            dir=str(config_path.parent), prefix=f".{config_path.name}.", suffix=".tmp"
-        )
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                handle.write(updated)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(temp_name, config_path)
-        finally:
-            if os.path.exists(temp_name):
-                os.unlink(temp_name)
+        _atomic_write(config_path, updated)
 
     if project_root is not None:
         manifest = load_manifest(Path(project_root))
@@ -240,6 +247,222 @@ def verify_installation(project_root, skills_dir, catalog_version, harnesses) ->
     ]
     healthy = bool(rows) and all(item.state is SkillState.CURRENT for item in inspection.skills)
     return {"status": "healthy" if healthy else "unhealthy", "rows": rows}
+
+
+# ── Git ignore policy ────────────────────────────────────────────
+#
+# Each ignore file Workbench maintains holds exactly one delimited block that
+# Workbench rewrites whole. Appending rules one at a time cannot retire one,
+# and a header comment is no evidence that the rules beneath it are current: a
+# project initialized before a rule existed already carries the header, so the
+# rule would never reach it. That was the bug. Rewriting the block converges on
+# additions, edits, and removals alike.
+#
+# The version in the begin marker is what lets a later Workbench recognize a
+# block an earlier one wrote: the finder matches any version, the renderer
+# always emits the current one. Detecting a change needs nothing cleverer than
+# comparing the rendered file to the file on disk.
+
+MANAGED_VERSION = 1
+MANAGED_BEGIN = f"# >>> workbench managed (v{MANAGED_VERSION}) >>>"
+MANAGED_END = "# <<< workbench managed <<<"
+_BEGIN_RE = re.compile(r"^#\s*>>>\s*workbench managed \(v\d+\)\s*>>>$")
+_END_RE = re.compile(r"^#\s*<<<\s*workbench managed\s*<<<$")
+
+_HANDS_OFF = (
+    "# Workbench rewrites every line between these markers.",
+    "# Rules outside the block are yours and are left untouched.",
+)
+
+# Both ignore files describe one state layout from two directories, so the
+# paths come from SkillPaths instead of being restated per file.
+_STATE_DIR = PATHS.state_root.parent
+_SPEED = _STATE_DIR.as_posix()
+
+
+def _under_state_dir(path) -> str:
+    """A canonical path rewritten relative to `.speed/`, for `.speed/.gitignore`."""
+    return Path(path).relative_to(_STATE_DIR).as_posix()
+
+
+_PROJECT_RULES = (
+    *_HANDS_OFF,
+    f"{_SPEED}/logs/",
+    f"{_SPEED}/features/*/logs/",
+    f"{_SPEED}/features/*/state.json",
+    f"{_SPEED}/features/*/failure_history.jsonl",
+    f"{_SPEED}/active_feature",
+    f"{_SPEED}/state.json",
+    f"{_SPEED}/running/",
+    f"{_SPEED}/worktrees/",
+    "",
+    "# The manifest is the only record of which bytes Workbench wrote, so git",
+    "# carries it alongside the projections it describes. The event log is",
+    "# per-machine history that no classification reads.",
+    f"!{PATHS.state_root.as_posix()}/",
+    f"!{PATHS.manifest.as_posix()}",
+    PATHS.events.as_posix(),
+)
+
+_STATE_RULES = (
+    *_HANDS_OFF,
+    "# Multi-player mode: shared/ and the skill manifest are committed;",
+    f"# everything else under {_SPEED}/ belongs to this machine.",
+    "*",
+    "!shared/",
+    "!shared/**",
+    "!.gitignore",
+    f"!{_under_state_dir(PATHS.state_root)}/",
+    f"!{_under_state_dir(PATHS.manifest)}",
+    _under_state_dir(PATHS.events),
+)
+
+
+def _rules_only(rules) -> frozenset:
+    return frozenset(rule for rule in rules if rule and not rule.startswith("#"))
+
+
+@dataclass(frozen=True)
+class IgnorePolicy:
+    """One ignore file, maintained as a single delimited block.
+
+    `legacy_headers` and `legacy_rules` describe the loose blocks earlier
+    Workbench versions appended. Migration removes a run of `legacy_rules` only
+    when it starts at a `legacy_headers` comment Workbench itself wrote and
+    stops at the first line it did not, which is why a user's rules can never
+    become candidates for removal. Every legacy rule is either still in `rules`
+    or deliberately retired, so nothing is dropped that the block does not
+    restore.
+    """
+
+    relpath: str
+    rules: tuple
+    legacy_headers: frozenset
+    legacy_rules: frozenset
+
+
+IGNORE_POLICIES = {
+    "project": IgnorePolicy(
+        relpath=".gitignore",
+        rules=_PROJECT_RULES,
+        legacy_headers=frozenset(
+            {"# SPEED runtime state", "# Workbench skill state policy v2"}
+        ),
+        # `.speed/skills/` is the retired one: ignoring the directory wholesale
+        # took the manifest with it, which is what left fresh clones reporting
+        # every projected skill as conflicted.
+        legacy_rules=_rules_only(_PROJECT_RULES)
+        | {f"{PATHS.state_root.as_posix()}/"},
+    ),
+    "state": IgnorePolicy(
+        relpath=f"{_SPEED}/.gitignore",
+        rules=_STATE_RULES,
+        legacy_headers=frozenset(
+            {
+                "# Multi-player mode: only shared/ is committed, "
+                "everything else is local",
+                "# Multi-player mode: only shared/ and the skill manifest are "
+                "committed, everything else is local",
+            }
+        ),
+        legacy_rules=_rules_only(_STATE_RULES),
+    ),
+}
+
+
+def render_ignore_block(policy) -> tuple:
+    """The complete managed block, markers included, as lines."""
+    return (MANAGED_BEGIN, *policy.rules, MANAGED_END)
+
+
+def _managed_spans(lines) -> list:
+    """Locate every managed block as an inclusive (begin, end) line pair."""
+    spans = []
+    index = 0
+    while index < len(lines):
+        if _BEGIN_RE.match(lines[index].strip()):
+            for end in range(index + 1, len(lines)):
+                if _END_RE.match(lines[end].strip()):
+                    spans.append((index, end))
+                    index = end
+                    break
+            else:
+                raise ValueError(
+                    f"the managed block opened on line {index + 1} has no "
+                    f"closing '{MANAGED_END}' marker, so Workbench cannot tell "
+                    "where its own rules end; restore the marker or delete the "
+                    "whole block"
+                )
+        index += 1
+    return spans
+
+
+def _without_managed(lines) -> list:
+    kept = []
+    cursor = 0
+    for start, end in _managed_spans(lines):
+        kept.extend(lines[cursor:start])
+        cursor = end + 1
+    kept.extend(lines[cursor:])
+    return kept
+
+
+def _without_legacy(lines, policy) -> list:
+    kept = []
+    index = 0
+    while index < len(lines):
+        if lines[index].strip() not in policy.legacy_headers:
+            kept.append(lines[index])
+            index += 1
+            continue
+        index += 1
+        while index < len(lines) and lines[index].strip() in policy.legacy_rules:
+            index += 1
+        # Those blocks were appended after a blank separator line of their own.
+        if kept and not kept[-1].strip():
+            kept.pop()
+    return kept
+
+
+def reconcile_ignore(project_root, scope) -> bool:
+    """Bring one ignore file's managed block up to date.
+
+    Returns True when the file changed. An already-current block is left
+    byte-identical rather than rewritten, so a repeated init does not dirty a
+    clean working tree.
+    """
+    if scope not in IGNORE_POLICIES:
+        expected = ", ".join(sorted(IGNORE_POLICIES))
+        raise ValueError(f"unknown ignore scope '{scope}' (expected: {expected})")
+    policy = IGNORE_POLICIES[scope]
+    path = Path(project_root) / policy.relpath
+    original = path.read_text(encoding="utf-8") if path.is_file() else ""
+    body = original[:-1] if original.endswith("\n") else original
+    lines = body.split("\n") if body else []
+    block = list(render_ignore_block(policy))
+
+    spans = _managed_spans(lines)
+    if spans:
+        # Replace the first block where it sits and drop any later duplicate,
+        # so a version bump cannot leave two generations of rules behind.
+        start, end = spans[0]
+        prefix = _without_legacy(lines[:start], policy)
+        suffix = _without_legacy(_without_managed(lines[end + 1:]), policy)
+        result = [*prefix, *block, *suffix]
+    else:
+        prefix = _without_legacy(lines, policy)
+        if prefix and prefix[-1].strip():
+            # Separate the region from the last rule, but only when the file
+            # does not already end in blank lines the user put there.
+            prefix.append("")
+        result = [*prefix, *block]
+
+    updated = "\n".join(result) + "\n"
+    if updated == original:
+        return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _atomic_write(path, updated)
+    return True
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -267,6 +490,10 @@ def _parser() -> argparse.ArgumentParser:
     verified.add_argument("--skills-dir", required=True)
     verified.add_argument("--catalog-version", required=True)
     verified.add_argument("--harness", action="append", required=True)
+
+    ignored = sub.add_parser("ignore")
+    ignored.add_argument("--project-root", required=True)
+    ignored.add_argument("--scope", required=True, choices=sorted(IGNORE_POLICIES))
     return parser
 
 
@@ -293,6 +520,13 @@ def main(argv=None) -> int:
                 template_path=args.template,
                 project_root=args.project_root,
             )
+            return 0
+        if args.command == "ignore":
+            # The caller logs the outcome, so say which one it was on stdout
+            # rather than through the exit status, which is reserved for
+            # reporting that the policy could not be applied at all.
+            changed = reconcile_ignore(args.project_root, args.scope)
+            print("changed" if changed else "unchanged")
             return 0
         result = verify_installation(
             args.project_root,

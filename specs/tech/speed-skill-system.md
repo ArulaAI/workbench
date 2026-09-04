@@ -88,7 +88,7 @@ Execution provider and skill harness are independent. `[agent].provider` selects
 
 `${PROJECT_ROOT}/.speed/skills/manifest.json`. Records, under `harnesses.<harness>.skills.<skill>`: `projected_at_version`, optional skill `version`, and a `files` map of relpath to SHA-256. The recomputed on-disk hash versus the recorded hash is the only authority for distinguishing Workbench-managed bytes from user edits. The manifest records observed installation state, not desired harness policy. It is git-tracked alongside the projections it describes: a clone that carries the projected files without their recorded hashes has no way to tell them apart from a user edit and classifies every one as `conflicted`.
 
-The state layout is defined once, as `SkillPaths` in `skills/__init__.py`: `state_root` is `.speed/skills`, with `manifest.json` and `events.jsonl` derived from it. Every module that touches those files reads the path from there. The projected health helper is the one exception, because it runs as a copy with no package to import from, so it carries its own literals and a test asserts they still agree with the canonical layout. Init reconciles a versioned Git-policy block on every run rather than treating the historical `# SPEED runtime state` header as proof that current rules exist. The later policy explicitly re-includes `.speed/skills/manifest.json` and ignores `.speed/skills/events.jsonl`, migrating both released projects with no skill rules and early projects that ignored `.speed/skills/` wholesale.
+The state layout is defined once, as `SkillPaths` in `skills/__init__.py`: `state_root` is `.speed/skills`, with `manifest.json` and `events.jsonl` derived from it. Every module that touches those files reads the path from there. The projected health helper is the one exception, because it runs as a copy with no package to import from, so it carries its own literals and a test asserts they still agree with the canonical layout. The Git policy is rendered from the same layout, so `.gitignore` re-includes `.speed/skills/manifest.json` and ignores `.speed/skills/events.jsonl` without either path being written out a second time in Bash.
 
 ### Project install-event log
 
@@ -136,7 +136,7 @@ Catalog version resolution distinguishes the three cases that once all reported 
 
 ### Initialization ownership and ordering
 
-`lib/skills/bootstrap.py` owns skill-bootstrap inspection, policy resolution, policy persistence, legacy migration, and post-sync verification. `cmd_init` is the single project-level coordinator and invokes the phases in this order:
+`lib/skills/bootstrap.py` owns skill-bootstrap inspection, policy resolution, policy persistence, legacy migration, post-sync verification, and the Git ignore policy. `cmd_init` is the single project-level coordinator and invokes the phases in this order:
 
 1. Inspect existing configuration, manifest state, and harness markers; validate the canonical catalog.
 2. Resolve the harness policy without writing.
@@ -153,6 +153,36 @@ The bootstrap plan exposes only values the coordinator consumes: resolved harnes
 
 The alias policy: a `speed` command is retained only with an explicit `workbench` target, identical implementation/state/gates/provenance, and a temporary-alias label. New lifecycle behavior is authored under `workbench`; no independent `speed` workflow is added.
 
+### Git ignore policy
+
+Workbench maintains two ignore files: `.gitignore` for a normal project and `.speed/.gitignore` for the multi-player allowlist. Each holds one delimited region, and `reconcile_ignore` in `skills/bootstrap.py` rewrites that region whole:
+
+```
+# >>> workbench managed (v1) >>>
+.speed/logs/
+…
+!.speed/skills/manifest.json
+.speed/skills/events.jsonl
+# <<< workbench managed <<<
+```
+
+An append guarded by a header comment came first, and it could not carry a policy change to an existing project. The header was the guard, so a project initialized before a rule existed already satisfied the test and never received the rule. Bumping the header to announce a new policy did not help: the old header stayed where it was, and the file ended up carrying two generations of rules, every shared rule duplicated, with no way to drop the ones the new policy had retired. Nothing recorded where a region ended, which is what a removal needs.
+
+Rewriting a delimited region converges on additions, edits, and removals alike. Detecting a change needs nothing beyond comparing the rendered region to the file on disk, so an already-current region is left byte-identical rather than rewritten into a dirty working tree. The version in the begin marker does the one job a content comparison cannot: it lets a later Workbench recognize a region an earlier one wrote, which is why a bumped policy replaces its predecessor instead of landing beside it.
+
+| Property | Behavior |
+|---|---|
+| Rules the user wrote outside the region | preserved, byte for byte, above and below |
+| Region already current | no write, no git churn |
+| Rule added, changed, or removed upstream | region rewritten in place on the next init |
+| Loose rules from an earlier version | removed and replaced by one region, no duplicated lines |
+| A second or older-versioned region | collapsed into the first |
+| Begin marker with no end marker | exit 3 and no write, because the region's extent is unknowable and the lines below it may be the user's |
+| Rules repointed at a different state directory | existing projects move onto the new paths and the old ones leave with the region |
+| A file whose last line has no newline | the content is preserved and the file gains a trailing newline, once |
+
+Migration removes a run of lines only when it starts at a header comment Workbench itself wrote and stops at the first line it did not, so a user's rules are never candidates for removal. Every legacy rule is either still in the current region or deliberately retired: `.speed/skills/` is the retired one, because ignoring that directory wholesale took the manifest with it. Both files run through the same mechanism, so the manifest carve-out is stated once and `mp-init` no longer overwrites `.speed/.gitignore` wholesale, which used to discard anything a team had added to it.
+
 ### Python engine (`lib/skills/`)
 
 Invoked as `PYTHONPATH="${SPEED_DIR}/lib" <python> -m skills <sub> …` (because `lib/` is not a package; `lib/skills/` is).
@@ -166,7 +196,7 @@ Invoked as `PYTHONPATH="${SPEED_DIR}/lib" <python> -m skills <sub> …` (because
 | `project.py` | pure render to bytes with provenance injection |
 | `manifest.py` | hashing, manifest I/O, and classification with evidence |
 | `events.py` | append-only install-event log |
-| `bootstrap.py` | initialization inspection, harness-policy precedence and persistence, legacy migration, and verification |
+| `bootstrap.py` | initialization inspection, harness-policy precedence and persistence, legacy migration, verification, and the managed Git ignore regions |
 | `models.py` | shared vocabulary: `SkillState`, `Harness`, `SkillPackage`, `Finding`, `Inspection`, `SkillPlan`, `SyncOutcome`, and the harness registry |
 | `__init__.py` | `SkillPaths`, the legal skill-name rule, junk exclusions, and re-exported vocabulary |
 | `inspect.py` | read-only: assemble the whole picture as an `Inspection` (no writes) |
@@ -239,6 +269,7 @@ is not also a missing description and a name mismatch for the same file.
 - `[agent].provider` and `[skills].harnesses` may name different products without either overriding the other.
 - Repeated and post-clone init use the persisted project policy and do not fan out when a new harness marker appears.
 - Init commits only with `--commit`, only after verification, and never stages unrelated project files.
+- Init and mp-init leave their managed ignore region current: a rule that went missing comes back, a rule the policy drops is retired from an initialized project, loose rules and bumped regions from earlier versions collapse into one region with no duplicated lines, rules the user wrote around the region survive byte for byte, an already-current region is not rewritten, and a region whose end marker is gone exits 3 without writing.
 - A manifest that records no skills, including an empty `{}` document, is reported `unhealthy`.
 - Direct `workbench-health` skill invocation reports `healthy` and the readiness message only when the manifest exists, at least one skill is recorded for the selected harness, and every recorded projected file exists with its expected hash.
 - Removing or modifying a projected file makes direct `workbench-health` invocation report `unhealthy`, list the affected skill/file, and exit nonzero.
@@ -264,12 +295,15 @@ is not also a missing description and a name mismatch for the same file.
 | Event log leaks sensitive data | Medium | events contain only names/versions/hashes/actions |
 | Doctor recommends an unsafe or ambiguous repair | High | state-to-guidance unit matrix; conflict guidance requires review/backup before `--force`; read-only assertion |
 | Explicit init leaks skills into unselected harnesses | High | parameterized shell E2E for all harnesses plus multi-target absence assertions |
+| Rewriting an ignore file discards a user's own rules | High | reconcile with user rules above and below the region, asserting the file is byte-identical to intent |
+| A policy change never reaches an already-initialized project | High | delete a managed rule, reconcile, assert the tracking policy holds again |
 
 ### Test Plan
 
 - **Unit:** `frontmatter`, `catalog`, `validate` (rule table), `project` determinism + provenance, `manifest.classify` (six states), `doctor` state-to-repair mapping, harness target resolution/detection, `events` append shape, and `health.py` healthy/missing/modified projection results.
 - **Integration:** drive `lib.skills.__main__` end to end: init→sync→status→doctor; edit→conflict diagnosis→force; version-bump→stale diagnosis→update; remove→orphan diagnosis→delete; unsupported-harness diagnosis; events.jsonl content.
 - **Projection conformance:** canonical and projected `scripts/health.py` are byte-identical; mutating the canonical helper and syncing changes direct skill behavior.
+- **Ignore policy:** both files, driven through the real shell functions rather than a copy of their rules: migration from every released form, idempotence, restoration of a deleted rule, replacement of an older-versioned region, collapse of a duplicate region, and refusal on a missing end marker. Two rule-set changes are driven in process, because an upgrade is two Workbench versions and not two runs of one: a rule arriving and then being retired, and the managed set repointed at another state directory.
 - **End-to-end:** `workbench init --harness` against fresh fixture projects for Claude, Codex, and Copilot, asserting root creation, the health-only projection, and absence of unselected projections; `workbench`/`speed` status and doctor routes plus direct projected health-skill execution run against fixtures.
 
 ### Out of Scope
@@ -328,12 +362,12 @@ New:
 
 Modified:
 - `speed`: `skills)` case as a temporary alias with a notice.
-- `lib/cmd/project.sh`: ordered init phases, repeatable `--harness`, verification gate, explicit Git policy, and scoped `--commit` behavior.
+- `lib/cmd/project.sh`: ordered init phases, repeatable `--harness`, verification gate, the managed Git ignore region, and scoped `--commit` behavior.
 - `install.sh`: links `workbench` into `~/.speed/bin` alongside the `speed` alias.
 - `lib/cmd/skills.sh`: applies CLI, environment, and project-config harness precedence and forwards multiple resolved harnesses.
 - `lib/toml.py` + `templates/speed-toml.toml`: `[skills].harnesses` project configuration.
 - `requirements-dev.txt` + README `## Tests`: declared pytest dependency and the canonical `PYTHONPATH=lib python3 -m pytest tests/skills/` command.
-- `lib/cmd/mp_init.sh`: the multi-player allowlist un-ignores `skills/manifest.json` and keeps `skills/events.jsonl` local.
+- `lib/cmd/mp_init.sh`: the multi-player allowlist un-ignores `skills/manifest.json` and keeps `skills/events.jsonl` local, applied as the same managed region rather than a full-file overwrite.
 
 Not touched: harness settings, existing agent definitions, `[agent].provider`, user-authored skills, and unselected harness skill roots.
 
