@@ -88,15 +88,58 @@ You can inspect the same managed installation from the terminal:
 # Show the state of every imported skill
 workbench skills status
 
-# Diagnose missing, stale, modified, or obsolete projections
+# Explain every skill that is not current, with one repair each
 workbench skills doctor
 
 # Import catalog updates or repair an unmodified projection
 workbench skills sync
 ```
 
+### Reading `doctor` output
+
+On a healthy project there is nothing to say:
+
+```text
+skills doctor: healthy · 0 issue(s)
+All imported Workbench skills are current and ready to use.
+```
+
+A finding names the file that changed and shows the comparison it was made
+from, so you can tell a deliberate edit from an unexpected one without
+inspecting the projection yourself:
+
+```text
+skills doctor: issues · 1 issue(s)
+  claude / workbench-health [conflicted] error: projected_file_modified
+    path: SKILL.md
+    expected: sha256:b5c93d95c0b8a7dc…
+    actual:   sha256:2c4614f7bf1535d5…
+    message: 'SKILL.md' changed after Workbench projected it.
+    repair: `workbench skills sync --harness claude --force`  (destructive)
+```
+
+Four parts of that line are worth knowing:
+
+| Field | Why it matters |
+|---|---|
+| `code` | stable identifier such as `projected_file_modified`. Script against this, not the message wording |
+| `state` | the lifecycle state, one of six. Several codes can share one state, which is why the code carries the detail |
+| `repair` | scoped to the harness that has the problem, so it will not overwrite conflicts on another harness |
+| `(destructive)` | present only when running the repair can discard local work. Absent repairs are safe to run unattended |
+
+`--json` emits the same fields for tooling, with `repair_command` and
+`destructive` as separate keys:
+
+```bash
+workbench skills doctor --json
+```
+
+Exit status is 0 when there are no findings and 1 when there are, so `doctor`
+works as a check in a script or a pre-commit hook.
+
 Workbench preserves local edits to projected skills as conflicts. Review or
-back up an intentional edit before using `workbench skills sync --force`.
+back up an intentional edit before running the repair, because a repair marked
+`(destructive)` replaces the projected file with the catalog version.
 
 ## 2. Write a Spec
 
