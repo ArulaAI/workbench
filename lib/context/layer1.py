@@ -153,6 +153,12 @@ def build_layer1(
     result["timing"]["treesitter"] = round(time.time() - t0, 3)
     result["extraction_stats"] = {
         "files_parsed": len(extractions),
+        # Already computed above (source_files) — recorded here too so
+        # Repository Digest's coverage stats have a true denominator
+        # (parseable source files) rather than project_map_summary's
+        # total_files, which also counts config/doc/asset files no
+        # extractor ever attempts to parse.
+        "source_files_total": len(source_files),
         "total_definitions": sum(len(e.definitions) for e in extractions.values()),
         "total_references": sum(len(e.references) for e in extractions.values()),
     }

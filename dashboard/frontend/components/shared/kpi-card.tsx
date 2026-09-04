@@ -8,14 +8,16 @@ interface KpiCardProps {
   sublabel?: string;
   accent?: string;
   className?: string;
+  /** Overrides the default (mono) value typography — e.g. "digest-kpi-value". */
+  valueClassName?: string;
 }
 
-export function KpiCard({ label, value, sublabel, accent, className }: KpiCardProps) {
+export function KpiCard({ label, value, sublabel, accent, className, valueClassName }: KpiCardProps) {
   return (
     <div className={cn("surface p-5", className)}>
       <div className="type-kpi-label">{label}</div>
       <div
-        className="type-kpi-value mt-1"
+        className={cn(valueClassName ?? "type-kpi-value", "mt-1")}
         style={{ color: accent ?? "var(--color-text)" }}
       >
         {value}

@@ -109,6 +109,9 @@ print(f"ast-grep CLI: {'available' if has_sg else 'not installed'}")
 print("\n=== 1: Rule File Structural Validation ===")
 
 REQUIRED_RULE_FIELDS = {"id", "language", "rule"}
+# "constraints" is a real, optional ast-grep field (meta-variable regex
+# constraints) — anything else is not part of the rule schema at all.
+ALLOWED_RULE_FIELDS = {"id", "language", "metadata", "rule", "constraints"}
 VALID_PRODUCES = {"node", "edge", "reference"}
 
 rule_files_checked = 0
@@ -141,6 +144,25 @@ for lang_dir in sorted(_RULES_DIR.iterdir()):
                     broken_details.append(
                         f"{rule_file.relative_to(_RULES_DIR)}:{rule_id} "
                         f"missing: {missing}"
+                    )
+                    continue
+
+                # Unexpected top-level fields — this is what let a stray
+                # prose sentence appended after the last rule in a file
+                # (no leading "---", so YAML attaches it as an extra key
+                # on the last document instead of a parse error) sit
+                # undetected in committed rule files for multiple
+                # languages. ast-grep may accept or silently reject a
+                # document with a field it doesn't recognize depending on
+                # version/schema strictness — either way this repo's own
+                # rule files should never have one.
+                unexpected = set(doc.keys()) - ALLOWED_RULE_FIELDS
+                if unexpected:
+                    rule_files_broken += 1
+                    broken_details.append(
+                        f"{rule_file.relative_to(_RULES_DIR)}:{rule_id} "
+                        f"unexpected top-level field(s) (stray text appended "
+                        f"after the rule?): {unexpected}"
                     )
                     continue
 
@@ -713,6 +735,45 @@ if has_sg:
             break
     else:
         check("all references have required fields", True)
+
+# Java extraction: qualified (dotted) method calls specifically — the
+# manager-reported bug where a Java repo's cross-domain relationship
+# count collapsed to almost nothing. Java's method_invocation node has
+# separate object/name fields (unlike Python's call or TS's
+# call_expression, a single generic callee slot), so a
+# $FUNC($$$ARGS)-only rule structurally never matches a qualified call
+# like `this.helper()` or `repository.findById()` — only a bare,
+# unqualified call. That's the overwhelming minority of real method
+# calls in typical Java code, so cross-class relationships were nearly
+# invisible until java-method-call-qualified
+# (lib/context/rules/java/references.yml) was added.
+if has_sg and extractor.can_parse("java"):
+    with tempfile.TemporaryDirectory() as tmp_java_dir:
+        java_file = os.path.join(tmp_java_dir, "Service.java")
+        with open(java_file, "w") as f:
+            f.write(
+                "package example;\n"
+                "public class Service {\n"
+                "    private final Repository repository;\n"
+                "    public void doWork() {\n"
+                "        this.helper();\n"
+                "        repository.findById(1);\n"
+                "    }\n"
+                "    private void helper() {}\n"
+                "}\n"
+            )
+        java_result = extractor.extract_file(java_file, "java", "Service.java")
+        call_ref_names = {r.name for r in java_result.references if r.kind == "call"}
+        check(
+            "Java: qualified call (this.helper()) produces a 'call' reference",
+            "helper" in call_ref_names,
+            f"got call refs: {call_ref_names}",
+        )
+        check(
+            "Java: qualified call (repository.findById()) produces a 'call' reference",
+            "findById" in call_ref_names,
+            f"got call refs: {call_ref_names}",
+        )
 
 # TypeScript extraction (if parseable)
 ts_file = None

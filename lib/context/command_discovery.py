@@ -16,7 +16,7 @@ import re
 from pathlib import Path
 from typing import Any, Iterator
 
-from .repository_digest_schema import load_toml_file, make_evidence
+from .repository_digest_schema import is_within, line_number, load_toml_file, make_evidence, manifest_paths, safe_read_text
 
 try:
     import yaml  # type: ignore
@@ -73,12 +73,8 @@ def discover_from_project_instructions(project_root: Path) -> list[dict[str, Any
     """CLAUDE.md / AGENTS.md: commands under a recognized heading."""
     results: list[dict[str, Any]] = []
     for filename in ("CLAUDE.md", "AGENTS.md"):
-        path = project_root / filename
-        if not path.is_file():
-            continue
-        try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
+        text = safe_read_text(project_root / filename, project_root)
+        if text is None:
             continue
 
         headings = list(_HEADING_RE.finditer(text))
@@ -88,7 +84,7 @@ def discover_from_project_instructions(project_root: Path) -> list[dict[str, Any
                 continue
             section_end = headings[idx + 1].start() if idx + 1 < len(headings) else len(text)
             section = text[match.end():section_end]
-            line_no = text.count("\n", 0, match.start()) + 1
+            line_no = line_number(text, match.start())
             for fence in _FENCE_RE.finditer(section):
                 for cmd in _commands_from_fence(fence.group(1)):
                     results.append({
@@ -112,10 +108,13 @@ def _npm_script_purpose(name: str) -> str:
     return "other"
 
 
-def _scripts_from_package_json(path: Path, working_directory: str) -> list[dict[str, Any]]:
+def _scripts_from_package_json(path: Path, working_directory: str, project_root: Path) -> list[dict[str, Any]]:
+    text = safe_read_text(path, project_root)
+    if text is None:
+        return []
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        data = json.loads(text)
+    except json.JSONDecodeError:
         return []
     scripts = data.get("scripts") if isinstance(data, dict) else None
     if not isinstance(scripts, dict):
@@ -148,50 +147,67 @@ def _workspace_patterns(data: dict[str, Any]) -> list[str]:
     return []
 
 
-def discover_from_package_json(project_root: Path) -> list[dict[str, Any]]:
+def discover_from_package_json(
+    project_root: Path, project_map: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     """Root package.json scripts, plus each npm/yarn workspace member's own
     scripts with that member's own working_directory retained (RFC >
-    Builder Design > Commands: "workspace working directory retained").
+    Builder Design > Commands: "workspace working directory retained") —
+    plus, when project_map is available, every *other* package.json it
+    already knows about (a nested manifest that isn't part of a declared
+    workspace still has its own real scripts worth surfacing, e.g. a
+    dashboard frontend or docs site living alongside a Python root that has
+    no root package.json at all).
     """
-    path = project_root / "package.json"
-    if not path.is_file():
-        return []
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return []
-    if not isinstance(data, dict):
-        return []
+    results: list[dict[str, Any]] = []
+    seen_dirs: set[Path] = set()
 
-    results = _scripts_from_package_json(path, ".")
-
-    seen_dirs: set[Path] = {project_root.resolve()}
-    for pattern in _workspace_patterns(data):
+    root_manifest = project_root / "package.json"
+    root_text = safe_read_text(root_manifest, project_root)
+    if root_text is not None:
         try:
-            matches = sorted(project_root.glob(pattern))
-        except (OSError, ValueError):
+            data = json.loads(root_text)
+        except json.JSONDecodeError:
+            data = None
+        if isinstance(data, dict):
+            results.extend(_scripts_from_package_json(root_manifest, ".", project_root))
+            seen_dirs.add(project_root.resolve())
+            for pattern in _workspace_patterns(data):
+                try:
+                    matches = sorted(project_root.glob(pattern))
+                except (OSError, ValueError):
+                    continue
+                for match in matches:
+                    if not match.is_dir():
+                        continue
+                    resolved = match.resolve()
+                    if resolved in seen_dirs:
+                        continue
+                    seen_dirs.add(resolved)
+                    member_manifest = match / "package.json"
+                    try:
+                        working_directory = str(resolved.relative_to(project_root.resolve())).replace(os.sep, "/")
+                    except ValueError:
+                        continue
+                    results.extend(_scripts_from_package_json(member_manifest, working_directory, project_root))
+
+    for rel_path in manifest_paths(project_map, "package.json"):
+        manifest_path = project_root / rel_path
+        resolved_dir = manifest_path.parent.resolve()
+        if resolved_dir in seen_dirs:
             continue
-        for match in matches:
-            if not match.is_dir():
-                continue
-            resolved = match.resolve()
-            if resolved in seen_dirs:
-                continue
-            seen_dirs.add(resolved)
-            member_manifest = match / "package.json"
-            if not member_manifest.is_file():
-                continue
-            try:
-                working_directory = str(resolved.relative_to(project_root.resolve())).replace(os.sep, "/")
-            except ValueError:
-                continue
-            results.extend(_scripts_from_package_json(member_manifest, working_directory))
+        seen_dirs.add(resolved_dir)
+        working_directory = "." if resolved_dir == project_root.resolve() else rel_path.rsplit("/", 1)[0]
+        results.extend(_scripts_from_package_json(manifest_path, working_directory, project_root))
 
     return results
 
 
 def discover_from_pyproject_toml(project_root: Path) -> list[dict[str, Any]]:
-    data = load_toml_file(project_root / "pyproject.toml")
+    pyproject_path = project_root / "pyproject.toml"
+    if not is_within(pyproject_path, project_root):
+        return []
+    data = load_toml_file(pyproject_path)
     if not data:
         return []
 
@@ -223,12 +239,8 @@ _MAKE_PURPOSE_HINTS: list[tuple[str, str]] = [
 
 
 def discover_from_makefile(project_root: Path) -> list[dict[str, Any]]:
-    path = project_root / "Makefile"
-    if not path.is_file():
-        return []
-    try:
-        text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+    text = safe_read_text(project_root / "Makefile", project_root)
+    if text is None:
         return []
 
     results: list[dict[str, Any]] = []
@@ -242,7 +254,7 @@ def discover_from_makefile(project_root: Path) -> list[dict[str, Any]]:
             if needle in lowered:
                 purpose = mapped
                 break
-        line_no = text.count("\n", 0, match.start()) + 1
+        line_no = line_number(text, match.start())
         results.append({
             "purpose": purpose,
             "command": f"make {target}",
@@ -258,12 +270,8 @@ def discover_from_makefile(project_root: Path) -> list[dict[str, Any]]:
 def discover_from_procfile(project_root: Path) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
     for name in ("Procfile", "Procfile.dev"):
-        path = project_root / name
-        if not path.is_file():
-            continue
-        try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
+        text = safe_read_text(project_root / name, project_root)
+        if text is None:
             continue
         for i, raw in enumerate(text.splitlines(), start=1):
             line = raw.strip()
@@ -315,10 +323,11 @@ def discover_from_ci_workflows(project_root: Path) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
     for pattern in _CI_WORKFLOW_GLOBS:
         for path in sorted(project_root.glob(pattern)):
-            if not path.is_file():
+            text = safe_read_text(path, project_root)
+            if text is None:
                 continue
             try:
-                doc = yaml.safe_load(path.read_text(encoding="utf-8", errors="replace"))
+                doc = yaml.safe_load(text)
             except Exception:
                 continue
             rel_path = str(path.relative_to(project_root)).replace(os.sep, "/")
@@ -348,11 +357,18 @@ def _iter_run_lines(doc: Any) -> Iterator[tuple[str, str]]:
                     yield job_name, line
 
 
-def discover_commands(project_root: Path) -> list[dict[str, Any]]:
+def discover_commands(
+    project_root: Path, project_map: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     """Run every source, merge same normalized (command, working_directory)
     pairs by unioning evidence, and keep conflicting same-purpose commands
     as separate records — the digest builder turns those into a
     'conflicting_commands' gap, this function only discovers and merges.
+
+    project_map (already-loaded project-map.json) is optional so every
+    other caller of this module keeps working unchanged — passing it lets
+    discover_from_package_json() also pick up nested package.json manifests
+    it already knows about, not just the repository root's.
 
     CI workflow commands are folded in separately, as corroborating
     evidence on an already-discovered command only — see
@@ -360,7 +376,7 @@ def discover_commands(project_root: Path) -> list[dict[str, Any]]:
     """
     raw: list[dict[str, Any]] = [
         *discover_from_project_instructions(project_root),
-        *discover_from_package_json(project_root),
+        *discover_from_package_json(project_root, project_map),
         *discover_from_pyproject_toml(project_root),
         *discover_from_makefile(project_root),
         *discover_from_procfile(project_root),

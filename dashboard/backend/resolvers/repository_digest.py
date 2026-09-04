@@ -46,14 +46,24 @@ def get_repository_digest(project_root: str) -> Optional[dict[str, Any]]:
     """Load the stored digest and attach freshness. Returns None only when
     no valid stored artifact exists.
     """
-    from lib.context.repository_digest import attach_effective_state, load_repository_digest
+    from lib.context.repository_digest import attach_changes_history, attach_effective_state, load_repository_digest
 
     digest = load_repository_digest(project_root)
     if digest is None:
         return None
 
     config = _load_config(project_root)
-    return attach_effective_state(project_root, digest, config=config)
+    digest = attach_effective_state(project_root, digest, config=config)
+    return attach_changes_history(project_root, digest)
+
+
+# A GENERATING status this old, with nobody actually holding the repo
+# lock (or on a platform where the lock can't be checked at all), can
+# only mean the process that wrote it died before writing a terminal
+# status — never a build that's still legitimately running. 15 minutes
+# is generous relative to a real digest build (seconds to low tens of
+# seconds even on a large repo).
+_STALE_GENERATING_SECONDS = 15 * 60
 
 
 def get_repository_digest_status(project_root: str) -> dict[str, Any]:
@@ -65,15 +75,34 @@ def get_repository_digest_status(project_root: str) -> dict[str, Any]:
     per Validation Rules > schema_version: "unsupported versions return no
     digest plus an invalid status reason," and Dashboard Design's distinct
     Missing vs. Malformed artifact page states.
+
+    GENERATING is cross-process, not just "this process started a build":
+    the persisted status file is the source of truth for *that* another
+    process's build is in flight, and the repo-scoped flock
+    (_acquire_repo_lock's lock file, peeked non-destructively here) is
+    what actually confirms that process is still alive rather than dead
+    with an abandoned "GENERATING" status left behind — flock is released
+    by the OS the instant its holder's process exits, for any reason,
+    so "lock not held" is a reliable dead-process signal, not a guess.
     """
-    from lib.context.repository_digest import load_repository_digest_with_status
+    from lib.context.repository_digest import load_repository_digest_with_status, repository_digest_input_paths
     from lib.context.repository_digest_freshness import compute_digest_freshness
 
     key = _project_key(project_root)
     with _running_lock:
-        started_at = _running_builds.get(key)
+        local_started_at = _running_builds.get(key)
+
+    # Missing-state primary action (dashboard UI): "Build digest" only
+    # makes sense once a project-map.json already exists — otherwise the
+    # repository has never been indexed at all, and the correct first
+    # action is "Index repository and build digest." Exposed here so the
+    # frontend doesn't have to reach past this resolver to know.
+    has_project_map = repository_digest_input_paths(project_root)["project_map"].is_file()
 
     persisted = _read_status_file(project_root)
+    persisted_state = (persisted or {}).get("state")
+    persisted_started_at = (persisted or {}).get("started_at")
+
     load_status, digest, malformed_reason = load_repository_digest_with_status(project_root)
     has_readable = load_status == "ok"
 
@@ -82,8 +111,33 @@ def get_repository_digest_status(project_root: str) -> dict[str, Any]:
         config = _load_config(project_root)
         freshness = compute_digest_freshness(project_root, digest, config=config)
 
-    if started_at is not None:
+    started_at = local_started_at
+    recovered_stale_build = False
+
+    if local_started_at is not None:
+        # This process itself knows it's building — the strongest signal,
+        # no need to consult the lock or the persisted file at all.
         state = "GENERATING"
+    elif persisted_state == "GENERATING":
+        if _is_repo_lock_held(project_root):
+            # Confirmed: some other live process actually holds the
+            # build lock right now.
+            state = "GENERATING"
+            started_at = persisted_started_at
+        elif _is_generating_timestamp_stale(persisted_started_at):
+            # Lock not held (or unknown — e.g. non-POSIX, no fcntl) AND
+            # past the stale threshold: the builder that wrote this
+            # status is gone. Recover rather than report GENERATING
+            # forever — a poller waiting for a terminal state would
+            # otherwise never see one.
+            state = "ERROR"
+            recovered_stale_build = True
+        else:
+            # Can't confirm the lock is held (no fcntl / lock file
+            # briefly absent) but not yet past the stale threshold —
+            # trust the persisted state rather than assume dead.
+            state = "GENERATING"
+            started_at = persisted_started_at
     elif load_status == "malformed":
         state = "ERROR"
     elif not has_readable:
@@ -94,7 +148,12 @@ def get_repository_digest_status(project_root: str) -> dict[str, Any]:
         state = "CURRENT"
 
     last_error = (persisted or {}).get("last_error")
-    if load_status == "malformed" and not last_error:
+    if recovered_stale_build:
+        last_error = (
+            "The previous digest build did not finish — its process appears to have "
+            "stopped unexpectedly. Refresh to try again."
+        )
+    elif load_status == "malformed" and not last_error:
         last_error = _sanitize_error(malformed_reason or "stored repository-digest.json is malformed")
 
     return {
@@ -103,10 +162,54 @@ def get_repository_digest_status(project_root: str) -> dict[str, Any]:
         "completed_at": (persisted or {}).get("completed_at"),
         "last_error": last_error,
         "has_readable_digest": has_readable,
+        "has_project_map": has_project_map,
         "indexed_git_head": freshness["indexed_git_head"] if freshness else None,
         "current_git_head": freshness["current_git_head"] if freshness else None,
         "stale_reasons": freshness["stale_reasons"] if freshness else [],
     }
+
+
+def _is_generating_timestamp_stale(started_at: Optional[str]) -> bool:
+    if not started_at:
+        return True  # no timestamp to trust at all — treat as stale
+    try:
+        started = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return True
+    age = (datetime.now(timezone.utc) - started).total_seconds()
+    return age > _STALE_GENERATING_SECONDS
+
+
+def _is_repo_lock_held(project_root: str) -> bool:
+    """Non-destructive peek at the repo-scoped build lock: True if some
+    process (this one or another) currently holds it. Never used to gate
+    starting a new build — _acquire_repo_lock actually holds the lock for
+    that; this only answers "is a build active right now" for status
+    reporting. Returns False (unknown/can't verify) when fcntl isn't
+    available or the lock file doesn't exist yet — callers fall back to
+    the time-based staleness check in that case, same as before this
+    existed.
+    """
+    if fcntl is None:
+        return False
+    from ..paths import get_paths
+    lock_path = get_paths(project_root).context_dir / ".repository-digest.lock"
+    if not lock_path.exists():
+        return False
+    try:
+        fh = open(lock_path, "r")
+    except OSError:
+        return False
+    try:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+        return False  # acquired it ourselves → nobody else holds it
+    except OSError:
+        return True  # someone else holds it
+    finally:
+        fh.close()
 
 
 # ── Refresh (the only path that builds anything) ──────────────────

@@ -5,11 +5,11 @@ import { EvidenceAffordance } from "./EvidencePanel";
 export function DomainList({ domains }: { domains: DigestDomain[] }) {
   return (
     <div className="surface" style={{ padding: 20 }}>
-      <div className="type-section-title" style={{ marginBottom: 12 }}>
-        Major domains
+      <div className="digest-section-title" style={{ marginBottom: 12 }}>
+        Major areas
       </div>
       {domains.length === 0 ? (
-        <p className="type-body">No domains available — semantic graph not yet built.</p>
+        <p className="type-body">No areas available — semantic graph not yet built.</p>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           {domains.map((d) => (

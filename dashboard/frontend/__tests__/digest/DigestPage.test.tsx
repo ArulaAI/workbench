@@ -1,9 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import type {
-  RepositoryDigestData,
-  RepositoryDigestBuildStatus,
-} from "@/lib/graphql/queries/repository-digest";
+import { screen, fireEvent, waitFor } from "@testing-library/react";
+import { baseDigest, partialDigest, staleDigest, baseStatus } from "./fixtures";
+import { setupUrqlHooks as sharedSetupUrqlHooks, renderDigestPage, type UrqlHookOverrides } from "./testUtils";
 
 vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
@@ -18,152 +16,47 @@ vi.mock("urql", () => ({
 }));
 
 import { useQuery, useMutation, useSubscription } from "urql";
-import DigestPage from "@/app/digest/page";
+import DigestOverviewPage from "@/app/digest/page";
 
 const mockedUseQuery = vi.mocked(useQuery);
 const mockedUseMutation = vi.mocked(useMutation);
 const mockedUseSubscription = vi.mocked(useSubscription);
 
-// --- Fixtures ---
-
-const baseDigest: RepositoryDigestData = {
-  schemaVersion: 1,
-  status: "COMPLETE",
-  effectiveState: "CURRENT",
-  generatedAt: "2026-03-15T10:00:00Z",
-  freshness: {
-    state: "CURRENT",
-    indexedGitHead: "abc1234567",
-    currentGitHead: "abc1234567",
-    generatedAt: "2026-03-15T10:00:00Z",
-    staleReasons: [],
-  },
-  identity: { name: "speed", summary: "An orchestration framework.", confidence: "DERIVED", evidence: [] },
-  footprint: {
-    fileCount: 120,
-    lineCount: 34000,
-    symbolCount: 500,
-    domainCount: 3,
-    languages: [{ name: "python", files: 80, lines: 20000, percent: 60 }],
-  },
-  domains: [
-    {
-      id: "cluster-core",
-      label: "Core",
-      summary: "Core orchestration logic.",
-      confidence: "DERIVED",
-      fileCount: 40,
-      symbolCount: 200,
-      representativeFiles: ["lib/context/repository_digest.py"],
-      representativeSymbols: [],
-      dependsOn: [],
-      usedBy: [],
-      evidence: [{ source: "semantic_graph", path: "lib/context/repository_digest.py", line: null, symbol: null, artifactKey: null, description: "evidence" }],
-    },
-  ],
-  commands: [
-    { purpose: "test", command: "npm run test", workingDirectory: ".", confidence: "CONFIRMED", evidence: [] },
-  ],
-  hotspots: [],
-  conventions: [
-    { text: "Use snake_case for Python modules.", scope: ["lib"], confidence: "DERIVED", evidence: [] },
-  ],
-  risks: [],
-  gaps: [],
-  readiness: [
-    { capability: "semantic_graph", status: "AVAILABLE", reason: null, remediation: null },
-  ],
-  warnings: [],
-};
-
-const partialDigest: RepositoryDigestData = {
-  ...baseDigest,
-  status: "PARTIAL",
-  footprint: { ...baseDigest.footprint, symbolCount: null, domainCount: null },
-  domains: [],
-  commands: [],
-  conventions: [],
-  readiness: [
-    { capability: "semantic_graph", status: "UNAVAILABLE", reason: "semantic-graph.json does not exist", remediation: "Run the Layer 1 context build" },
-  ],
-};
-
-const staleDigest: RepositoryDigestData = {
-  ...baseDigest,
-  effectiveState: "STALE",
-  freshness: { ...baseDigest.freshness, state: "STALE", currentGitHead: "def7654321", staleReasons: ["git_head"] },
-};
-
-const baseStatus: RepositoryDigestBuildStatus = {
-  state: "CURRENT",
-  startedAt: null,
-  completedAt: "2026-03-15T10:00:00Z",
-  lastError: null,
-  hasReadableDigest: true,
-  indexedGitHead: "abc1234567",
-  currentGitHead: "abc1234567",
-  staleReasons: [],
-};
-
-function setupUrqlHooks(overrides: {
-  digest?: RepositoryDigestData | null;
-  fetching?: boolean;
-  error?: Error | null;
-  status?: RepositoryDigestBuildStatus | null;
-  executeRefresh?: ReturnType<typeof vi.fn>;
-} = {}) {
-  const {
-    digest = baseDigest,
-    fetching = false,
-    error = null,
-    status = baseStatus,
-    executeRefresh = vi.fn().mockResolvedValue({ data: { refreshRepositoryDigest: { accepted: true } } }),
-  } = overrides;
-
-  mockedUseQuery.mockImplementation((opts: any) => {
-    const query = String(opts.query);
-    if (query.includes("RepositoryDigestStatus")) {
-      return [
-        { data: status ? { repositoryDigestStatus: status } : undefined, fetching: false, error: null, stale: false, extensions: undefined },
-        vi.fn(),
-      ] as unknown as ReturnType<typeof useQuery>;
-    }
-    return [
-      { data: { repositoryDigest: digest }, fetching, error, stale: false, extensions: undefined },
-      vi.fn(),
-    ] as unknown as ReturnType<typeof useQuery>;
-  });
-
-  mockedUseMutation.mockReturnValue([
-    { fetching: false, stale: false, error: undefined, extensions: undefined, data: undefined },
-    executeRefresh,
-  ] as unknown as ReturnType<typeof useMutation>);
-
-  mockedUseSubscription.mockReturnValue([
-    { data: undefined, error: null, fetching: false, stale: false, extensions: undefined },
-    vi.fn(),
-  ] as unknown as ReturnType<typeof useSubscription>);
-
-  return { executeRefresh };
+function setupUrqlHooks(overrides: UrqlHookOverrides = {}) {
+  return sharedSetupUrqlHooks(mockedUseQuery, mockedUseMutation, mockedUseSubscription, overrides);
 }
 
-describe("DigestPage", () => {
+describe("DigestOverviewPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
   it("shows a loading skeleton while fetching with no digest yet", () => {
     setupUrqlHooks({ digest: null, fetching: true, status: null });
-    const { container } = render(<DigestPage />);
+    const { container } = renderDigestPage(<DigestOverviewPage />);
     expect(container.querySelector(".digest-kpi-grid")).toBeTruthy();
     expect(screen.queryByText("No repository digest yet")).not.toBeInTheDocument();
   });
 
   it("shows the missing-digest call to action when no digest has ever been built", () => {
     setupUrqlHooks({ digest: null, status: { ...baseStatus, state: "MISSING", hasReadableDigest: false, indexedGitHead: null, currentGitHead: null } });
-    render(<DigestPage />);
+    renderDigestPage(<DigestOverviewPage />);
     expect(screen.getByText("No repository digest yet")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Build digest" })).toBeInTheDocument();
+  });
+
+  it("makes 'Index repository and build digest' the primary action when the repository has never been indexed", () => {
+    setupUrqlHooks({
+      digest: null,
+      status: {
+        ...baseStatus, state: "MISSING", hasReadableDigest: false, hasProjectMap: false,
+        indexedGitHead: null, currentGitHead: null,
+      },
+    });
+    renderDigestPage(<DigestOverviewPage />);
+    expect(screen.getByText("No repository digest yet")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Index repository and build digest" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Build digest" })).not.toBeInTheDocument();
   });
 
   it("shows the malformed-artifact state distinctly from missing", () => {
@@ -171,39 +64,68 @@ describe("DigestPage", () => {
       digest: null,
       status: { ...baseStatus, state: "ERROR", hasReadableDigest: false, lastError: "repository-digest.json is not valid JSON" },
     });
-    render(<DigestPage />);
+    renderDigestPage(<DigestOverviewPage />);
     expect(screen.getByText("Repository digest is malformed")).toBeInTheDocument();
     expect(screen.getByText("repository-digest.json is not valid JSON")).toBeInTheDocument();
     expect(screen.queryByText("No repository digest yet")).not.toBeInTheDocument();
   });
 
-  it("renders identity, footprint, domains, commands, and conventions for a complete digest", () => {
-    setupUrqlHooks({ digest: baseDigest });
-    render(<DigestPage />);
-    expect(screen.getByText("speed")).toBeInTheDocument();
-    expect(screen.getByText("Major domains")).toBeInTheDocument();
-    expect(screen.getAllByText("Core").length).toBeGreaterThan(0);
-    expect(screen.getByText("Entrypoints and commands")).toBeInTheDocument();
-    expect(screen.getByText("Conventions")).toBeInTheDocument();
+  it("surfaces a GraphQL error state with a retry action", () => {
+    setupUrqlHooks({ digest: null, error: new Error("network unreachable") });
+    renderDigestPage(<DigestOverviewPage />);
+    expect(screen.getByText("Digest could not be read")).toBeInTheDocument();
+    expect(screen.getByText("network unreachable")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Rebuild digest" })).toBeInTheDocument();
   });
 
-  it("shows each section's own empty state for a partial digest instead of hiding the page", () => {
+  it("renders identity, footprint, language composition, and major domains for a complete digest", () => {
+    setupUrqlHooks({ digest: baseDigest });
+    renderDigestPage(<DigestOverviewPage />);
+    expect(screen.getByText("speed")).toBeInTheDocument();
+    expect(screen.getByText("Files")).toBeInTheDocument();
+    expect(screen.getByText("Language composition")).toBeInTheDocument();
+    expect(screen.getByText(/python/)).toBeInTheDocument();
+    expect(screen.getByText("Major areas")).toBeInTheDocument();
+    expect(screen.getAllByText("Core").length).toBeGreaterThan(0);
+  });
+
+  it("shows an em dash instead of a doubled middot when there is no git history", () => {
+    // Max-effort code review finding: an unconditional `${shortHead}`
+    // interpolation with no fallback for a null currentGitHead rendered
+    // a visibly broken "CURRENT ·  · <date>" (empty segment, doubled
+    // middot) instead of gracefully showing something in its place.
+    const digestWithNoGitHead = {
+      ...baseDigest,
+      freshness: { ...baseDigest.freshness, currentGitHead: null },
+    };
+    setupUrqlHooks({ digest: digestWithNoGitHead });
+    renderDigestPage(<DigestOverviewPage />);
+    expect(screen.getByText(/CURRENT · — ·/)).toBeInTheDocument();
+    expect(screen.queryByText(/CURRENT ·  ·/)).not.toBeInTheDocument();
+  });
+
+  it("does not render commands or conventions inline (moved to their own screens)", () => {
+    setupUrqlHooks({ digest: baseDigest });
+    renderDigestPage(<DigestOverviewPage />);
+    expect(screen.queryByText("Entrypoints and commands")).not.toBeInTheDocument();
+    expect(screen.queryByText("Conventions")).not.toBeInTheDocument();
+  });
+
+  it("shows the domains empty state for a partial digest instead of hiding the page", () => {
     setupUrqlHooks({ digest: partialDigest });
-    render(<DigestPage />);
-    expect(screen.getByText("No domains available — semantic graph not yet built.")).toBeInTheDocument();
-    expect(screen.getByText("No commands discovered in CLAUDE.md, AGENTS.md, or project manifests.")).toBeInTheDocument();
-    expect(screen.getByText("No approved conventions available.")).toBeInTheDocument();
+    renderDigestPage(<DigestOverviewPage />);
+    expect(screen.getByText("No areas available — semantic graph not yet built.")).toBeInTheDocument();
   });
 
   it("shows a stale banner with the indexed-versus-current commit when the digest is out of date", () => {
     setupUrqlHooks({ digest: staleDigest });
-    render(<DigestPage />);
+    renderDigestPage(<DigestOverviewPage />);
     expect(screen.getByText(/Changed content may make domains and hotspots inaccurate/)).toBeInTheDocument();
   });
 
   it("starts a refresh when the header refresh button is clicked", async () => {
     const { executeRefresh } = setupUrqlHooks({ digest: baseDigest });
-    render(<DigestPage />);
+    renderDigestPage(<DigestOverviewPage />);
     fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
     await waitFor(() => {
       expect(executeRefresh).toHaveBeenCalledWith({ rebuildDiscovery: false, narrative: false });
@@ -213,7 +135,7 @@ describe("DigestPage", () => {
   it("shows a dismissible error banner when a refresh request fails", async () => {
     const executeRefresh = vi.fn().mockResolvedValue({ error: { message: "Digest build failed: no project map found" } });
     setupUrqlHooks({ digest: baseDigest, executeRefresh });
-    render(<DigestPage />);
+    renderDigestPage(<DigestOverviewPage />);
 
     fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
     await waitFor(() => {
@@ -222,5 +144,44 @@ describe("DigestPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
     expect(screen.queryByText("Digest build failed: no project map found")).not.toBeInTheDocument();
+  });
+
+  it("polls repositoryDigestStatus while generating, so a dead/unavailable subscription isn't the only way to end a refresh", () => {
+    vi.useFakeTimers();
+    try {
+      const reexecuteStatusQuery = vi.fn();
+      mockedUseQuery.mockImplementation((opts: any) => {
+        const query = String(opts.query);
+        if (query.includes("RepositoryDigestStatus")) {
+          return [
+            { data: { repositoryDigestStatus: { ...baseStatus, state: "GENERATING", startedAt: "2026-03-15T10:00:00Z" } }, fetching: false, error: null, stale: false, extensions: undefined },
+            reexecuteStatusQuery,
+          ] as unknown as ReturnType<typeof useQuery>;
+        }
+        return [
+          { data: { repositoryDigest: baseDigest }, fetching: false, error: null, stale: false, extensions: undefined },
+          vi.fn(),
+        ] as unknown as ReturnType<typeof useQuery>;
+      });
+      mockedUseMutation.mockReturnValue([
+        { fetching: false, stale: false, error: undefined, extensions: undefined, data: undefined },
+        vi.fn(),
+      ] as unknown as ReturnType<typeof useMutation>);
+      mockedUseSubscription.mockReturnValue([
+        { data: undefined, error: null, fetching: false, stale: false, extensions: undefined },
+        vi.fn(),
+      ] as unknown as ReturnType<typeof useSubscription>);
+
+      renderDigestPage(<DigestOverviewPage />);
+      // A GENERATING status observed on load (no local refresh click at
+      // all — this simulates another owner's build already in flight,
+      // or a subscription that never delivered a first event) must
+      // still trigger polling.
+      reexecuteStatusQuery.mockClear();
+      vi.advanceTimersByTime(2500);
+      expect(reexecuteStatusQuery).toHaveBeenCalledWith({ requestPolicy: "network-only" });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

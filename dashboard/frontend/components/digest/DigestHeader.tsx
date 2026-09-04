@@ -13,7 +13,11 @@ export function DigestHeader({
   refreshing: boolean;
   returnToDefineHref: string | null;
 }) {
-  const shortHead = digest.freshness.currentGitHead?.slice(0, 7) ?? "";
+  // "—" for a repository with no git history — an empty string here
+  // rendered a visibly broken "CURRENT ·  · <date>" doubled middot,
+  // unlike quality/page.tsx's FreshnessStrip, which already falls back
+  // to "—" for the same nullable field.
+  const shortHead = digest.freshness.currentGitHead?.slice(0, 7) ?? "—";
   const stateColor =
     digest.effectiveState === "CURRENT"
       ? "var(--color-emerald)"
@@ -25,14 +29,14 @@ export function DigestHeader({
     <div className="surface" style={{ padding: 20, display: "flex", flexDirection: "column", gap: 8 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16 }}>
         <div>
-          <div className="type-section-header" style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div className="digest-eyebrow" style={{ display: "flex", alignItems: "center", gap: 10 }}>
             Repository Digest
             <span className="type-caption" style={{ color: stateColor }}>
               {digest.effectiveState} · {shortHead} ·{" "}
               {new Date(digest.generatedAt).toLocaleString()}
             </span>
           </div>
-          <div className="type-page-title" style={{ marginTop: 4 }}>
+          <div className="digest-title" style={{ marginTop: 4 }}>
             {digest.identity.name}
           </div>
         </div>

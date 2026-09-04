@@ -904,7 +904,7 @@ context_build_repository_digest() {
     local rebuild_discovery="${2:-false}"
 
     if [[ "$rebuild_discovery" == "true" ]]; then
-        context_build_layer1 false >/dev/null
+        context_build_layer1 true >/dev/null
     fi
 
     $(_context_python) - "$narrative" <<'PYTHON_EOF'

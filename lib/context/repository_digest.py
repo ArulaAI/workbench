@@ -22,6 +22,12 @@ from pathlib import Path
 from typing import Any
 
 from . import command_discovery
+from . import repository_digest_api_data as api_data_mod
+from . import repository_digest_architecture as arch
+from . import repository_digest_cicd as cicd_mod
+from . import repository_digest_extras as extras
+from . import repository_digest_runtime as runtime_mod
+from . import repository_digest_security as security_mod
 from .repository_digest_freshness import compute_fingerprint
 from .repository_digest_schema import (
     MAX_DOMAINS,
@@ -30,8 +36,11 @@ from .repository_digest_schema import (
     SCHEMA_VERSION,
     InputResult,
     empty_digest_body,
+    is_credential_path,
+    is_within,
     load_toml_file,
     make_evidence,
+    manifest_paths,
     normalize_loaded_confidence,
     truncate,
     validate_digest,
@@ -41,12 +50,6 @@ from .utils import ensure_dir, git_head_hash, load_speed_toml, now_iso, read_jso
 log = logging.getLogger("speed.context.repository_digest")
 
 DIGEST_FILENAME = "repository-digest.json"
-
-# Filesystem boundaries: supplemental documentation/manifest loaders never
-# read these, regardless of what a scan pattern might otherwise match.
-_CREDENTIAL_DENYLIST_SUFFIXES = (".key", ".pem")
-_CREDENTIAL_DENYLIST_NAMES = {".env", ".env.local"}
-_CREDENTIAL_DENYLIST_PREFIXES = ("credentials.",)
 
 _SUPPLEMENTAL_MAX_BYTES = 256 * 1024
 _SUPPLEMENTAL_TOTAL_MAX_BYTES = 2 * 1024 * 1024
@@ -106,27 +109,11 @@ def repository_digest_input_paths(project_root: str) -> dict[str, Path]:
         "project_knowledge_drafts": memory_dir / "project-knowledge-drafts.json",
         "observations_dir": memory_dir / "observations",
         "digest": context_dir / DIGEST_FILENAME,
+        "digest_previous": context_dir / "repository-digest-previous.json",
         "digest_status": context_dir / "repository-digest-status.json",
+        "build_summary": context_dir / "build-summary.json",
+        "env_keys": context_dir / "env-keys.json",
     }
-
-
-def _is_within(path: Path, root: Path) -> bool:
-    try:
-        path.resolve().relative_to(root.resolve())
-        return True
-    except ValueError:
-        return False
-
-
-def _is_credential_path(path: Path) -> bool:
-    name = path.name
-    if name in _CREDENTIAL_DENYLIST_NAMES:
-        return True
-    if any(name.endswith(suf) for suf in _CREDENTIAL_DENYLIST_SUFFIXES):
-        return True
-    if any(name.startswith(pre) for pre in _CREDENTIAL_DENYLIST_PREFIXES):
-        return True
-    return False
 
 
 def _safe_read_supplemental(path: Path, project_root: Path, budget: "_SupplementalBudget | None" = None) -> str | None:
@@ -135,13 +122,13 @@ def _safe_read_supplemental(path: Path, project_root: Path, budget: "_Supplement
     per-source size cap, and (when a budget is supplied) the 2 MiB
     total-across-sources cap.
     """
-    if _is_credential_path(path):
+    if is_credential_path(path):
         return None
     try:
         resolved = path.resolve()
     except OSError:
         return None
-    if not _is_within(resolved, project_root):
+    if not is_within(resolved, project_root):
         return None
     if not resolved.is_file():
         return None
@@ -186,6 +173,160 @@ def load_optional_json_list(path: Path, key: str | None = None) -> list[dict[str
     return data if isinstance(data, list) else []
 
 
+def _sanitize_project_map_files(project_map: dict[str, Any], warnings: list[str]) -> None:
+    """Filters project_map['files'] and summary.by_language to object
+    entries only, in place. A member that isn't an object (e.g. a bare
+    string smuggled into a hand-edited or corrupted project-map.json)
+    would crash every downstream '.get()' call with an AttributeError,
+    defeating the whole point of treating a malformed optional artifact
+    as degraded rather than fatal — the container-level check
+    (files is a list, summary is a dict) doesn't protect against that.
+    """
+    files = project_map.get("files")
+    if isinstance(files, list):
+        valid_files = [f for f in files if isinstance(f, dict)]
+        dropped = len(files) - len(valid_files)
+        if dropped:
+            warnings.append(
+                f"project-map.json: {dropped} file entr{'y is' if dropped == 1 else 'ies are'} "
+                "not an object and were skipped"
+            )
+            project_map["files"] = valid_files
+
+    summary = project_map.get("summary")
+    if isinstance(summary, dict):
+        by_language = summary.get("by_language")
+        if isinstance(by_language, dict):
+            bad_langs = [k for k, v in by_language.items() if not isinstance(v, dict)]
+            if bad_langs:
+                for k in bad_langs:
+                    del by_language[k]
+                warnings.append(
+                    f"project-map.json: summary.by_language has {len(bad_langs)} non-object "
+                    "entries — they were skipped"
+                )
+        elif by_language is not None:
+            summary["by_language"] = {}
+
+
+def _sanitize_csg(csg: dict[str, Any], project_root: Path, warnings: list[str]) -> None:
+    """Sanitizes semantic-graph.json in place, in one pass, before any
+    derivation function ever reads it — every domain/hotspot/relationship
+    deriver below reads csg['nodes']/['clusters']/['cluster_edges']
+    directly, so this is the single choke point rather than a change at
+    every one of those call sites (and the only way to be sure none of
+    them is missed).
+
+    Two independent problems, one fix:
+      1. A malformed node (not an object, or missing the 'id' every
+         downstream `nodes_by_id[n["id"]]` lookup assumes) would crash
+         generation outright rather than degrade gracefully.
+      2. csg['nodes'][*]['file'] and csg['clusters'][*]['files'] are
+         copied into representative_files / evidence paths verbatim
+         elsewhere in this module — an absolute path or a '../' escape
+         in a semantic-graph.json built (or tampered with) outside this
+         builder's control would leak arbitrary filesystem paths (e.g.
+         /Users/x/.ssh/id_rsa) into the digest. Routing every file field
+         through _relative() here means every downstream consumer gets a
+         safe, in-root-relative path with no further change required.
+
+    Invalid nodes/cluster-file-entries are dropped rather than nulled,
+    per Builder Design > Input isolation: a dangling reference to a
+    dropped node is exactly what every existing 'sid in nodes_by_id' /
+    '.get(sid)' guard downstream already treats as "not found."
+
+    'clusters'/'cluster_edges'/'edges' are also normalized to [] when
+    present with the wrong type (most concretely, an explicit JSON
+    null) — `csg.get("clusters", [])` elsewhere in this module only
+    substitutes the default when the *key* is absent, not when its
+    value is present-but-null, so a structurally-plausible but
+    tampered/malformed semantic-graph.json (nodes still a valid list,
+    satisfying csg_available) with "clusters": null previously reached
+    len(csg.get("clusters", [])) as len(None), crashing generation.
+    """
+    nodes = csg.get("nodes")
+    if isinstance(nodes, list):
+        valid_nodes = []
+        dropped_malformed = 0
+        dropped_path = 0
+        for n in nodes:
+            if not isinstance(n, dict) or not n.get("id"):
+                dropped_malformed += 1
+                continue
+            if n.get("file"):
+                rel = _relative(str(n["file"]), project_root)
+                if rel is None:
+                    dropped_path += 1
+                    continue
+                n["file"] = rel
+            valid_nodes.append(n)
+        if dropped_malformed:
+            warnings.append(
+                f"semantic-graph.json: {dropped_malformed} node(s) are not valid objects "
+                "(or have no id) and were skipped"
+            )
+        if dropped_path:
+            warnings.append(
+                f"semantic-graph.json: {dropped_path} node(s) reference a file outside the "
+                "repository root and were skipped"
+            )
+        csg["nodes"] = valid_nodes
+
+    clusters = csg.get("clusters")
+    if "clusters" in csg:
+        if not isinstance(clusters, list):
+            csg["clusters"] = []
+        else:
+            valid_clusters = []
+            seen_cluster_ids: set[Any] = set()
+            for c in clusters:
+                if not isinstance(c, dict) or not c.get("id"):
+                    continue
+                # A well-formed CSG never repeats a cluster id (Layer 1
+                # assigns them from a single enumeration), but a
+                # tampered/hand-edited/multiplayer-shared file could —
+                # every downstream consumer (annotate_domain_lanes,
+                # _build_symbol_to_domain, the GraphQL domain-by-id
+                # lookup) keys strictly by id and would otherwise let one
+                # of the two silently shadow the other. Keep the first.
+                if c["id"] in seen_cluster_ids:
+                    continue
+                seen_cluster_ids.add(c["id"])
+                files = c.get("files")
+                if isinstance(files, list):
+                    c["files"] = [
+                        rel for f in files
+                        if isinstance(f, str) and (rel := _relative(f, project_root)) is not None
+                    ]
+                valid_clusters.append(c)
+            csg["clusters"] = valid_clusters
+
+    if "cluster_edges" in csg:
+        cluster_edges = csg.get("cluster_edges")
+        if isinstance(cluster_edges, list):
+            valid_edges = []
+            seen_edge_pairs: set[tuple[Any, Any]] = set()
+            for e in cluster_edges:
+                if not isinstance(e, dict):
+                    continue
+                # Same rationale as cluster-id dedup above: a tampered
+                # file repeating a (from, to) pair would otherwise render
+                # as a visibly duplicated relationship on the
+                # Architecture screen.
+                key = (e.get("from"), e.get("to"))
+                if key in seen_edge_pairs:
+                    continue
+                seen_edge_pairs.add(key)
+                valid_edges.append(e)
+            csg["cluster_edges"] = valid_edges
+        else:
+            csg["cluster_edges"] = []
+
+    if "edges" in csg:
+        edges = csg.get("edges")
+        csg["edges"] = [e for e in edges if isinstance(e, dict)] if isinstance(edges, list) else []
+
+
 def _relative(path: str, project_root: Path) -> str | None:
     """Normalize to a repository-relative path. Never returns an absolute
     path or one containing '..' — per Validation Rules, out-of-root paths
@@ -218,6 +359,25 @@ def _atomic_write_json(path: Path, data: dict[str, Any]) -> None:
     os.replace(tmp_path, path)
 
 
+def _rotate_digest_snapshot(digest_path: Path, previous_path: Path) -> None:
+    """Copy the current (about-to-be-replaced) digest into the previous-
+    snapshot slot, if it exists and is structurally valid JSON. A first-
+    ever build (no existing digest) or a corrupted on-disk file is left
+    alone — never promoted into history — so Changes History degrades to
+    its documented "no previous snapshot" state rather than comparing
+    against garbage.
+    """
+    if not digest_path.is_file():
+        return
+    try:
+        existing = read_json_or_none(str(digest_path))
+    except Exception:
+        return
+    if not isinstance(existing, dict):
+        return
+    _atomic_write_json(previous_path, existing)
+
+
 # ── Public API ─────────────────────────────────────────────────────
 
 
@@ -247,6 +407,42 @@ def attach_effective_state(
     digest = dict(digest)
     digest["_freshness"] = freshness
     digest["_effective_state"] = freshness["state"]
+    return digest
+
+
+def attach_changes_history(project_root: str, digest: dict[str, Any]) -> dict[str, Any]:
+    """Compute Changes History and return a shallow copy of digest with
+    `_changes_history` set. Same pattern as attach_effective_state:
+    read-only, never rebuilds, never persisted back into
+    repository-digest.json — this is what keeps the previous-snapshot
+    file a plain digest rather than a digest containing its own history.
+
+    The previous snapshot (if any) is read fresh from
+    repository-digest-previous.json on every call — never cached beyond
+    the current request — so this always reflects the on-disk state.
+    """
+    from .repository_digest_changes import derive_changes_history
+
+    paths = repository_digest_input_paths(project_root)
+    try:
+        previous_raw = read_json_or_none(str(paths["digest_previous"]))
+    except Exception:
+        # A corrupted previous-snapshot file must degrade to "no previous
+        # snapshot available", never take down the whole digest read path.
+        previous_raw = None
+    previous = previous_raw if isinstance(previous_raw, dict) else None
+
+    digest = dict(digest)
+    try:
+        digest["_changes_history"] = derive_changes_history(digest, previous)
+    except Exception:
+        # Same "never take down the read path" guarantee as the JSON-parse
+        # try/except above, one level out: derive_changes_history has its
+        # own member-type guards, but this is the read path (repositoryDigest
+        # query), not a rebuild — a still-unhandled shape in a malformed or
+        # older-schema previous snapshot must degrade to "no history for
+        # this view" rather than take down viewing the digest at all.
+        digest["_changes_history"] = None
     return digest
 
 
@@ -326,7 +522,11 @@ def build_repository_digest(
     config = config if config is not None else load_speed_toml(project_root)
 
     project_map = load_optional_json(paths["project_map"])
-    if not isinstance(project_map, dict) or "files" not in project_map or "summary" not in project_map:
+    if (
+        not isinstance(project_map, dict)
+        or not isinstance(project_map.get("files"), list)
+        or not isinstance(project_map.get("summary"), dict)
+    ):
         _emit_generation_event(
             project_root=project_root, identity_name=None, git_head=git_head_hash(project_root) or None,
             fingerprint=None, status="failed", duration_seconds=time.time() - start_time,
@@ -334,7 +534,7 @@ def build_repository_digest(
         )
         raise DigestInputError(
             f"{paths['project_map']} is missing or not a structurally valid project map "
-            "(expected 'files' array and 'summary' object)"
+            "(expected 'files' to be an array and 'summary' to be an object)"
         )
 
     csg_result = _load_optional_input("semantic_graph", paths["semantic_graph"])
@@ -342,6 +542,17 @@ def build_repository_digest(
     project_knowledge_result = _load_optional_input("project_knowledge", paths["project_knowledge"])
     spec_alignment_result = _load_optional_input("spec_alignment", paths["spec_alignment"])
     project_knowledge_drafts_raw = load_optional_json(paths["project_knowledge_drafts"])
+    # Coverage stats: build-summary.json is written by every Layer 1 build
+    # (lib/context/layer1.py) whether or not it's ever read back — reusing
+    # it here is not a new discovery pass, just consuming an artifact that
+    # already exists. Absent (never built, or predates this field) means
+    # coverage_stats stays None rather than a fabricated number.
+    build_summary_raw = load_optional_json(paths["build_summary"])
+    # Phase 4: env-keys.json is written by every Layer 1 build whenever a
+    # .env* file exists (lib/context/layer1.py + env_extract.py) — names
+    # only, values already stripped before this ever runs. Reusing it here
+    # is not a new discovery pass.
+    env_keys_raw = load_optional_json(paths["env_keys"])
 
     warnings: list[str] = []
     readiness: list[dict[str, Any]] = []
@@ -361,9 +572,12 @@ def build_repository_digest(
               Path(result.source_path) if result.source_path else None)
 
     _mark("project_map", "available", source_path=paths["project_map"])
+    _sanitize_project_map_files(project_map, warnings)
 
     csg = csg_result.value
-    csg_available = csg_result.status == "available" and isinstance(csg, dict) and "nodes" in csg
+    csg_available = (
+        csg_result.status == "available" and isinstance(csg, dict) and isinstance(csg.get("nodes"), list)
+    )
     if csg_result.status == "available" and not csg_available:
         # Structurally present but not a usable semantic graph.
         csg_result = InputResult(
@@ -372,6 +586,8 @@ def build_repository_digest(
         )
         warnings.append("semantic_graph present but structurally invalid — treated as unavailable")
         csg = None
+    elif csg_available:
+        _sanitize_csg(csg, root, warnings)
     _mark_result(
         csg_result,
         remediation="Run the Layer 1 context build" if csg_result.status == "unavailable"
@@ -434,19 +650,68 @@ def build_repository_digest(
     identity = _derive_identity(root, project_map, config, gaps, warnings, supplemental_budget)
     footprint = _derive_footprint(project_map, csg)
     domains = _derive_domains(csg, gaps, warnings) if csg_available else []
+    arch.annotate_domain_lanes(domains, csg)
     relationships = _derive_relationships(csg) if csg_available else []
     symbol_to_domain = _build_symbol_to_domain(csg) if csg_available else {}
     hotspots = _derive_hotspots(csg, domains, symbol_to_domain) if csg_available else []
-    commands, command_gaps = _derive_commands(root)
+    commands, command_gaps = _derive_commands(root, project_map)
     gaps.extend(command_gaps)
     conventions = _derive_conventions(conventions_list)
     risks = _derive_risks(csg, domains, commands, observations, project_knowledge_entries, symbol_to_domain)
 
+    # ── Phase 2: coverage, entrypoints, reading path, team knowledge ──
+    coverage_stats = extras.derive_coverage_stats(build_summary_raw)
+    entrypoints = extras.derive_entrypoints(commands, project_map)
+    annotated_tree = extras.derive_annotated_tree(project_map, csg, domains)
+    reading_path = extras.derive_reading_path(root, identity, entrypoints, domains)
+    approved_knowledge = extras.project_knowledge_to_digest_entries(project_knowledge_entries)
+    pending_knowledge = extras.load_pending_knowledge(project_knowledge_drafts_raw)
+
+    # ── Phase 4: API & Data, CI/CD, Runtime & Configuration ──────
+    routes, route_warnings = api_data_mod.derive_routes(root, project_map)
+    entities = api_data_mod.derive_entities(csg, project_map)
+    persistence_summary = api_data_mod.derive_persistence_summary(entities)
+    warnings.extend(route_warnings)
+    api_data = {
+        "routes": routes,
+        "entities": entities,
+        "persistence_summary": persistence_summary,
+    }
+
+    ci_workflows, ci_warnings = cicd_mod.derive_github_actions_workflows(root)
+    other_ci = cicd_mod.derive_other_ci_providers(root)
+    warnings.extend(ci_warnings)
+    cicd = {
+        "workflows": ci_workflows,
+        "other_providers_detected": other_ci,
+    }
+
+    environment_variables, env_var_warnings = runtime_mod.derive_environment_variables(root, env_keys_raw)
+    warnings.extend(env_var_warnings)
+    runtime_config = {
+        "runtimes": runtime_mod.derive_runtimes(root, project_map),
+        "frameworks": runtime_mod.derive_frameworks(root, project_map),
+        "config_sources": runtime_mod.derive_config_sources(root, project_map),
+        "environment_variables": environment_variables,
+    }
+
+    # ── Phase 5A: Security ───────────────────────────────────────
+    secret_indicators, secret_warnings = security_mod.derive_secret_indicators(
+        root, project_map, runtime_config["environment_variables"],
+    )
+    warnings.extend(secret_warnings)
+    security = {
+        "secret_indicators": secret_indicators,
+        "sensitive_configuration": security_mod.derive_sensitive_configuration(root, project_map),
+        "authentication_indicators": security_mod.derive_authentication_indicators(root, project_map),
+        "security_tooling_detected": security_mod.derive_security_tooling(root),
+    }
+
     _mark("documentation", "available" if (root / "README.md").is_file() else "unavailable",
           source_path=root / "README.md")
-    manifests_present = _any_manifest_present(root)
+    manifests_present = _any_manifest_present(project_map)
     _mark("manifests", "available" if manifests_present else "unavailable",
-          None if manifests_present else "No package.json, pyproject.toml, or Cargo.toml found")
+          None if manifests_present else "No package.json, pyproject.toml, Cargo.toml, pom.xml, or build.gradle(.kts) found")
     _mark("project_instructions", "available" if (root / "CLAUDE.md").is_file() or (root / "AGENTS.md").is_file() else "unavailable")
 
     # ── Optional bounded narrative synthesis ────────────────────
@@ -515,6 +780,16 @@ def build_repository_digest(
     digest["gaps"] = gaps
     digest["readiness"] = readiness
     digest["warnings"] = warnings
+    digest["entrypoints"] = entrypoints
+    digest["annotated_tree"] = annotated_tree
+    digest["reading_path"] = reading_path
+    digest["approved_knowledge"] = approved_knowledge
+    digest["pending_knowledge"] = pending_knowledge
+    digest["coverage_stats"] = coverage_stats
+    digest["api_data"] = api_data
+    digest["cicd"] = cicd
+    digest["runtime_config"] = runtime_config
+    digest["security"] = security
 
     issues = validate_digest(digest)
     if issues:
@@ -527,6 +802,15 @@ def build_repository_digest(
             readiness=readiness, warning_count=len(warnings), narrative_requested=narrative,
         )
         raise DigestInputError("built digest failed self-validation: " + "; ".join(issues))
+
+    # Phase 5B: rotate the about-to-be-replaced digest into the previous-
+    # snapshot slot before overwriting it. Only reached once the new
+    # digest has already passed validate_digest() above, so a failed
+    # build never displaces a good "previous" snapshot with nothing, and
+    # a malformed on-disk file is never promoted into history either.
+    # Exactly one snapshot is kept (bounded, no unbounded growth) —
+    # "changes since last digest" only needs the immediately prior build.
+    _rotate_digest_snapshot(paths["digest"], paths["digest_previous"])
 
     _atomic_write_json(paths["digest"], digest)
     _emit_generation_event(
@@ -554,8 +838,11 @@ def _load_optional_input(capability: str, path: Path) -> InputResult:
     return InputResult(capability=capability, status="available", value=value, reason=None, source_path=str(path))
 
 
-def _any_manifest_present(root: Path) -> bool:
-    return any((root / name).is_file() for name in ("package.json", "pyproject.toml", "Cargo.toml"))
+def _any_manifest_present(project_map: dict[str, Any]) -> bool:
+    return any(
+        manifest_paths(project_map, name)
+        for name in ("package.json", "pyproject.toml", "Cargo.toml", "pom.xml", "build.gradle", "build.gradle.kts")
+    )
 
 
 def _emit_generation_event(
@@ -857,8 +1144,8 @@ def _derive_domains(csg: dict[str, Any], gaps: list[dict[str, Any]], warnings: l
         ranked_symbols = sorted(
             symbol_nodes,
             key=lambda n: (
-                -(n.get("impact", {}).get("centrality") or 0.0),
-                -(n.get("impact", {}).get("blast_radius") or 0),
+                -((n.get("impact") or {}).get("centrality") or 0.0),
+                -((n.get("impact") or {}).get("blast_radius") or 0),
                 n["id"],
             ),
         )
@@ -876,7 +1163,7 @@ def _derive_domains(csg: dict[str, Any], gaps: list[dict[str, Any]], warnings: l
         )[:5]
 
         avg_blast = (
-            sum((n.get("impact", {}).get("blast_radius") or 0) for n in symbol_nodes) / len(symbol_nodes)
+            sum(((n.get("impact") or {}).get("blast_radius") or 0) for n in symbol_nodes) / len(symbol_nodes)
             if symbol_nodes else 0.0
         )
 
@@ -958,10 +1245,17 @@ def _derive_domains(csg: dict[str, Any], gaps: list[dict[str, Any]], warnings: l
 def _derive_relationships(csg: dict[str, Any]) -> list[dict[str, Any]]:
     out = []
     for edge in csg.get("cluster_edges") or []:
+        # edge.get("edge_count", fallback) only uses the fallback when
+        # the key is *absent* — an edge_count present but explicitly
+        # null must fall back to "weight" too, not become a null weight.
+        edge_count = edge.get("edge_count")
+        weight = edge_count if edge_count is not None else edge.get("weight", 0)
         out.append({
             "from": edge.get("from"),
             "to": edge.get("to"),
-            "weight": edge.get("edge_count", edge.get("weight", 0)),
+            "weight": weight,
+            "evidence_type": arch.RELATIONSHIP_EVIDENCE_TYPE,
+            "sample_references": arch.sample_references(edge),
         })
     return out
 
@@ -984,9 +1278,9 @@ def _derive_hotspots(
     ranked = sorted(
         nodes,
         key=lambda n: (
-            -(n.get("impact", {}).get("blast_radius") or 0),
-            -(n.get("impact", {}).get("dependents") or 0),
-            -(n.get("impact", {}).get("centrality") or 0.0),
+            -((n.get("impact") or {}).get("blast_radius") or 0),
+            -((n.get("impact") or {}).get("dependents") or 0),
+            -((n.get("impact") or {}).get("centrality") or 0.0),
             n["id"],
         ),
     )
@@ -1021,8 +1315,8 @@ def _derive_hotspots(
 # ── Commands ────────────────────────────────────────────────────
 
 
-def _derive_commands(root: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    commands = command_discovery.discover_commands(root)
+def _derive_commands(root: Path, project_map: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    commands = command_discovery.discover_commands(root, project_map)
     gaps: list[dict[str, Any]] = []
 
     by_purpose_root: dict[str, list[dict[str, Any]]] = {}
@@ -1051,7 +1345,14 @@ def _extract_conventions(raw: Any) -> list[dict[str, Any]] | None:
     if not isinstance(raw, dict):
         return None
     entries = raw.get("conventions")
-    return entries if isinstance(entries, list) else []
+    if not isinstance(entries, list):
+        return []
+    # Member-type safety: _derive_conventions and every other downstream
+    # consumer calls .get()/[...] on each entry assuming it's an object —
+    # a non-object entry (a malformed conventions.json isn't required to
+    # respect that) would crash generation instead of degrading, same as
+    # an unavailable conventions.json already does.
+    return [e for e in entries if isinstance(e, dict)]
 
 
 def _extract_list(raw: Any, key: str | None) -> list[dict[str, Any]]:
@@ -1059,8 +1360,12 @@ def _extract_list(raw: Any, key: str | None) -> list[dict[str, Any]]:
         return []
     if key is not None and isinstance(raw, dict):
         value = raw.get(key, [])
-        return value if isinstance(value, list) else []
-    return raw if isinstance(raw, list) else []
+        items = value if isinstance(value, list) else []
+    else:
+        items = raw if isinstance(raw, list) else []
+    # Same member-type safety as _extract_conventions: every caller
+    # treats each item as an object.
+    return [e for e in items if isinstance(e, dict)]
 
 
 def _derive_conventions(conventions_list: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1102,7 +1407,8 @@ def _derive_risks(
 
     if csg:
         nodes = csg.get("nodes") or []
-        blast_radii = sorted((n.get("impact", {}).get("blast_radius") or 0) for n in nodes)
+        symbol_to_domain = symbol_to_domain if symbol_to_domain is not None else _build_symbol_to_domain(csg)
+        blast_radii = sorted(((n.get("impact") or {}).get("blast_radius") or 0) for n in nodes)
         if blast_radii:
             p99_index = max(0, int(len(blast_radii) * 0.99) - 1)
             p99_threshold = blast_radii[p99_index]
@@ -1113,9 +1419,14 @@ def _derive_risks(
                         "type": "high_blast_radius",
                         "description": f"{n.get('name', n['id'])} is in the top 1% by blast radius ({impact['blast_radius']}) with {impact['dependents']} dependents.",
                         "evidence": [make_evidence("semantic_graph", "High blast-radius symbol", path=n.get("file"), symbol=n["id"])],
+                        # Same full-cluster symbol_to_domain lookup hotspots
+                        # already use — never the domain's capped
+                        # representative_files list (see the Architecture
+                        # risk-association accuracy fix): "" when the
+                        # symbol isn't in any cluster, never a guess.
+                        "domain_id": symbol_to_domain.get(n["id"], ""),
                     })
 
-        symbol_to_domain = symbol_to_domain if symbol_to_domain is not None else _build_symbol_to_domain(csg)
         edge_domains: dict[str, set[str]] = {}
         for edge in csg.get("edges") or []:
             src_dom = symbol_to_domain.get(edge.get("from"))
@@ -1131,6 +1442,7 @@ def _derive_risks(
                     "type": "cross_domain_hub",
                     "description": f"{symbol_id} has edges touching {len(doms)} distinct domains.",
                     "evidence": [make_evidence("semantic_graph", "Cross-domain hub symbol", symbol=symbol_id, path=n.get("file") if n else None)],
+                    "domain_id": symbol_to_domain.get(symbol_id, ""),
                 })
 
     failure_groups: dict[tuple[str, str], int] = {}

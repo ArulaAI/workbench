@@ -16,14 +16,25 @@ const STATUS_COLOR: Record<string, string> = {
   STALE: "var(--color-amber)",
 };
 
+// Project Knowledge has no backing pipeline yet (no
+// .speed/shared/knowledge/project-knowledge.json is ever written without
+// running `speed learn` plus human curation), so it always renders as a
+// permanently-unchecked item with no path to ever becoming checked.
+// Hidden here rather than dropped from the backend's readiness
+// computation, so the underlying data/schema is unchanged for anyone
+// querying it directly.
+const HIDDEN_CAPABILITIES = new Set(["project_knowledge"]);
+
 export function ReadinessPanel({ readiness }: { readiness: DigestReadiness[] }) {
+  const visible = readiness.filter((r) => !HIDDEN_CAPABILITIES.has(r.capability));
+
   return (
     <div className="surface" style={{ padding: 20 }}>
       <div className="type-section-title" style={{ marginBottom: 12 }}>
         Discovery readiness
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 16px" }}>
-        {readiness.map((r) => (
+        {visible.map((r) => (
           <div
             key={r.capability}
             title={r.reason ?? undefined}

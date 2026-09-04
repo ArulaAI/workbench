@@ -50,9 +50,13 @@ _dashboard_start() {
     mkdir -p "$DASHBOARD_DIR"
 
     # Check if already running
-    if _dashboard_api_alive; then
+    if _dashboard_api_alive "$port"; then
         log_warn "Dashboard API already running (PID $(cat "$DASHBOARD_DIR/api.pid"))"
         return 0
+    fi
+
+    if _dashboard_pid_alive_on_a_different_port "$port"; then
+        exit "$EXIT_CONFIG_ERROR"
     fi
 
     local py_bin
@@ -186,7 +190,7 @@ _dashboard_status() {
         name=$(basename "$pidfile" .pid)
 
         if kill -0 "$pid" 2>/dev/null; then
-            echo -e "  ${COLOR_DONE}●${RESET} ${name}: running (PID ${pid})"
+            echo -e "  ${COLOR_SUCCESS}●${RESET} ${name}: running (PID ${pid})"
             any_running=true
         else
             echo -e "  ${COLOR_ERROR}●${RESET} ${name}: dead (stale PID ${pid})"
@@ -218,7 +222,62 @@ conn.close()
 "
 }
 
-_dashboard_api_alive() {
+_dashboard_pid_alive_on_a_different_port() {
+    # Code-review regression: _dashboard_api_alive correctly answers "is
+    # the API alive on *this* port" — but a false answer there is
+    # ambiguous between "nothing is running" and "something IS running,
+    # tracked by api.pid, just not on this port" (e.g. a previous
+    # `dashboard start --port 5000` still running, and this invocation
+    # didn't pass --port). _dashboard_start used to treat both cases the
+    # same way and start a second instance, overwriting api.pid — which
+    # orphans the first process: `dashboard stop`/`status` can no longer
+    # see or stop it, since they only ever look at the current PID file.
+    # This distinguishes the second case and refuses to proceed, rather
+    # than silently leaking the original process.
+    local port="${1:-$DASHBOARD_API_PORT}"
     local pidfile="$DASHBOARD_DIR/api.pid"
-    [[ -f "$pidfile" ]] && kill -0 "$(cat "$pidfile")" 2>/dev/null
+
+    [[ -f "$pidfile" ]] || return 1
+
+    local pid
+    pid=$(cat "$pidfile" 2>/dev/null)
+    [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null || return 1
+
+    log_error "A dashboard API process (PID ${pid}) is already running, but isn't responding on port ${port}."
+    log_error "It may be bound to a different port. Run 'speed dashboard stop' first, or pass --port to match it."
+    return 0
+}
+
+_dashboard_api_alive() {
+    # Authoritative check for "is the Workbench dashboard API already
+    # running on this port" — a live PID alone doesn't prove that:
+    # the PID file can be stale (process long dead), reused by an
+    # unrelated process, or point at a real dashboard API instance
+    # that's bound to a *different* port than the one being checked.
+    # The health check on the target port is what actually decides.
+    local port="${1:-$DASHBOARD_API_PORT}"
+    local pidfile="$DASHBOARD_DIR/api.pid"
+
+    [[ -f "$pidfile" ]] || return 1
+
+    local pid
+    pid=$(cat "$pidfile" 2>/dev/null)
+
+    if [[ -z "$pid" ]] || ! kill -0 "$pid" 2>/dev/null; then
+        # Stale PID file: no PID recorded, or the recorded process is
+        # dead. Clean it up so it doesn't linger.
+        rm -f "$pidfile"
+        return 1
+    fi
+
+    if ! curl -sf "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then
+        # A process is alive at that PID, but nothing is actually
+        # serving the expected API on this port — don't report it as
+        # running, and don't touch the PID file: the live process may
+        # be an unrelated one (or this repo's own API on a different
+        # port), and killing it isn't this check's job.
+        return 1
+    fi
+
+    return 0
 }

@@ -110,6 +110,7 @@ query {
     completedAt
     lastError
     hasReadableDigest
+    hasProjectMap
   }
 }
 """
@@ -385,6 +386,21 @@ class TestMalformedVsMissingStatus:
         assert status["state"] == "MISSING"
         assert status["lastError"] is None
 
+    def test_has_project_map_false_when_never_indexed(self, tmp_path: Path):
+        """Missing-state primary action: the frontend needs to tell 'never
+        indexed at all' apart from 'indexed but no digest built yet' to
+        pick the right button."""
+        (tmp_path / ".speed" / "context").mkdir(parents=True)
+        status_result = schema.execute_sync(STATUS_QUERY, context_value=_make_context(tmp_path))
+        assert status_result.data["repositoryDigestStatus"]["hasProjectMap"] is False
+
+    def test_has_project_map_true_when_indexed_but_no_digest(self, tmp_path: Path):
+        _write_project_map(tmp_path, [{"path": "a.py", "language": "python", "lines": 5, "category": "source"}])
+        status_result = schema.execute_sync(STATUS_QUERY, context_value=_make_context(tmp_path))
+        status = status_result.data["repositoryDigestStatus"]
+        assert status["hasProjectMap"] is True
+        assert status["state"] == "MISSING"
+
     def test_malformed_json_reports_error_with_reason(self, tmp_path: Path):
         ctx = tmp_path / ".speed" / "context"
         ctx.mkdir(parents=True)
@@ -440,6 +456,73 @@ class TestCrossProcessLock:
         finally:
             _fcntl.flock(holder.fileno(), _fcntl.LOCK_UN)
             holder.close()
+
+    def test_status_reports_generating_for_another_processs_build(self, tmp_path: Path):
+        """The bug the review reproduced: persisted state GENERATING,
+        returned state CURRENT — because the status resolver only ever
+        consulted this process's in-memory _running_builds, never the
+        persisted file or the lock. Simulates a second process mid-build:
+        it wrote status=GENERATING and holds the flock; this process's
+        _running_builds is empty (it didn't start the build).
+        """
+        pytest.importorskip("fcntl")
+        import fcntl as _fcntl
+        from datetime import datetime, timezone
+
+        _build_golden_digest(tmp_path)  # a real, readable, non-stale digest already exists
+        ctx = tmp_path / ".speed" / "context"
+        started_at = datetime.now(timezone.utc).isoformat()
+        (ctx / "repository-digest-status.json").write_text(json.dumps({
+            "state": "GENERATING", "started_at": started_at, "completed_at": None, "last_error": None,
+        }))
+        lock_path = ctx / ".repository-digest.lock"
+        holder = open(lock_path, "w")
+        _fcntl.flock(holder.fileno(), _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+        try:
+            status_result = schema.execute_sync(STATUS_QUERY, context_value=_make_context(tmp_path))
+            status = status_result.data["repositoryDigestStatus"]
+            assert status["state"] == "GENERATING"
+        finally:
+            _fcntl.flock(holder.fileno(), _fcntl.LOCK_UN)
+            holder.close()
+
+    def test_status_recovers_from_abandoned_generating_state(self, tmp_path: Path):
+        """Dead-process recovery: status file says GENERATING from a long
+        time ago, and nobody holds the lock (the builder crashed/was
+        killed after writing GENERATING but before writing a terminal
+        status) — must not report GENERATING forever.
+        """
+        _build_golden_digest(tmp_path)
+        ctx = tmp_path / ".speed" / "context"
+        old_started_at = "2020-01-01T00:00:00+00:00"
+        (ctx / "repository-digest-status.json").write_text(json.dumps({
+            "state": "GENERATING", "started_at": old_started_at, "completed_at": None, "last_error": None,
+        }))
+        # No lock file held by anyone — simulates the builder process
+        # having died without releasing/cleaning up.
+
+        status_result = schema.execute_sync(STATUS_QUERY, context_value=_make_context(tmp_path))
+        status = status_result.data["repositoryDigestStatus"]
+        assert status["state"] == "ERROR"
+        assert status["lastError"]
+        assert "did not finish" in status["lastError"] or "unexpectedly" in status["lastError"]
+
+    def test_status_recent_generating_without_confirmed_lock_still_reports_generating(self, tmp_path: Path):
+        """Grace period: a very recent GENERATING status with no way to
+        confirm the lock (e.g. fcntl unavailable, or a benign timing gap)
+        must not be immediately declared dead — only past the stale
+        threshold.
+        """
+        _build_golden_digest(tmp_path)
+        ctx = tmp_path / ".speed" / "context"
+        from datetime import datetime, timezone
+        recent_started_at = datetime.now(timezone.utc).isoformat()
+        (ctx / "repository-digest-status.json").write_text(json.dumps({
+            "state": "GENERATING", "started_at": recent_started_at, "completed_at": None, "last_error": None,
+        }))
+        status_result = schema.execute_sync(STATUS_QUERY, context_value=_make_context(tmp_path))
+        status = status_result.data["repositoryDigestStatus"]
+        assert status["state"] == "GENERATING"
 
 
 # ═════════════════════════════════════════════════════════════════
