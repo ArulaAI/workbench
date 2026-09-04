@@ -218,6 +218,9 @@ from lib.context.csg import (
     get_bridge_symbols,
     get_high_impact_symbols,
     _classify_stability,
+    _build_symbol_index,
+    _resolve_reference,
+    _same_language,
 )
 
 # symbol_id
@@ -235,6 +238,59 @@ check("classify: hub", _classify_stability(
 # stable: few dependents, no cross-cluster connections
 check("classify: stable", _classify_stability(
     "a.py::foo", 1, {}) == "stable")
+
+# _resolve_reference — cross-language false-positive edge regression.
+# Mirrors the actual PetClinic bug: a React component *references*
+# `isNew` (e.g. `owner.isNew`) with no local definition and no import,
+# while a Java entity happens to define an unrelated `isNew()` method —
+# the only `isNew` symbol in the index. Strategy 3's "globally
+# unambiguous name" fallback previously matched them purely because the
+# name was unique repo-wide, with no import connecting them and no
+# possible call path between a browser and a JVM process.
+_cross_lang_nodes = [
+    {"id": "BaseEntity.java::isNew", "name": "isNew", "kind": "method", "file": "src/main/java/model/BaseEntity.java"},
+]
+_cross_lang_index = _build_symbol_index(_cross_lang_nodes)
+check(
+    "cross-language globally-unique name does NOT resolve (was the spurious edge)",
+    _resolve_reference("isNew", "client/src/OwnerEditor.tsx", _cross_lang_index, {}) is None,
+)
+
+# Same scenario, same language on both sides — the legitimate case this
+# fallback exists for must still work; the fix only narrows candidates
+# by language, it doesn't disable the fallback. No node defined in
+# a/caller.py itself, so this can only resolve via strategy 3.
+_same_lang_nodes = [
+    {"id": "defs.py::helper", "name": "helper", "kind": "function", "file": "b/defs.py"},
+]
+_same_lang_index = _build_symbol_index(_same_lang_nodes)
+check(
+    "same-language globally-unique name still resolves",
+    _resolve_reference("helper", "a/caller.py", _same_lang_index, {}) == "defs.py::helper",
+)
+
+# _same_language — code-review regression: the "other"-bucket
+# (C/C++/Rust/Kotlin/... all collapse into one _classify_language
+# result) extension-equality guard required an exact match even within
+# "other," which broke the single most common "other"-language
+# same-language reference shape: a function declared in a .h header and
+# defined in a matching .c/.cpp file. Fixed with an explicit C-family
+# extension group; genuinely different "other" languages (no shared
+# extension family) must still be rejected.
+check("C declaration (.h) resolves against its C definition (.c)",
+      _same_language("other", "foo.h", "foo.c") is True)
+check("C++ declaration (.hpp) resolves against its C++ definition (.cpp)",
+      _same_language("other", "widget.hpp", "widget.cpp") is True)
+check("C++ (.hh/.cc) header/impl pair resolves",
+      _same_language("other", "widget.hh", "widget.cc") is True)
+check("Objective-C (.h/.m) header/impl pair resolves",
+      _same_language("other", "Widget.h", "Widget.m") is True)
+check("same \"other\" language, same extension, still resolves (baseline unaffected)",
+      _same_language("other", "a.rs", "b.rs") is True)
+check("two genuinely different \"other\" languages (Rust vs Kotlin) still rejected",
+      _same_language("other", "a.rs", "b.kt") is False)
+check("C-family extension does not falsely match an unrelated \"other\" language",
+      _same_language("other", "a.c", "b.rs") is False)
 
 # Build layers with real extraction data
 extractions = {}

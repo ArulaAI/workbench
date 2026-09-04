@@ -137,6 +137,7 @@ speed_help() {
     echo -e "    ${COLOR_STEP}dashboard${RESET} stop                              Stop the dashboard"
     echo -e "    ${COLOR_STEP}dashboard${RESET} status                            Show dashboard process status"
     echo -e "    ${COLOR_STEP}dashboard${RESET} ingest                            Run data backfill without starting server"
+    echo -e "    ${COLOR_STEP}digest${RESET} [--refresh] [--rebuild-discovery]     Generate/refresh the Repository Digest"
     echo ""
     echo -e "${BOLD}MANAGEMENT${RESET}"
     echo -e "    ${COLOR_STEP}self-update${RESET}                  Update SPEED to the latest version"
@@ -250,6 +251,13 @@ main() {
     local command="${1:-help}"
     shift || true
 
+    # Dependency validation is scoped to the digest command only — see
+    # lib/deps.sh's profile table. Must run before dispatch, after the
+    # command is known.
+    if [[ "$command" == "digest" ]]; then
+        speed_check_deps "$command"
+    fi
+
     # ── Extract global flags before dispatching ─────────────────
     GLOBAL_FEATURE=""
     local args=()
@@ -287,6 +295,7 @@ main() {
         new)       cmd_new "$@" ;;
         guardian)   cmd_guardian "$@" ;;
         audit)     cmd_audit "$@" ;;
+        digest)    cmd_digest "$@" ;;
         verify-spec) cmd_verify_spec "$@" ;;
         gates)     cmd_gates "$@" ;;
         clean)     cmd_clean "$@" ;;

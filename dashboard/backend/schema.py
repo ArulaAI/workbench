@@ -10,6 +10,15 @@ from typing import Any, AsyncGenerator, Optional
 import strawberry
 
 from .resolvers import token_burn, mission_control, topology, budget
+from .resolvers import repository_digest as repository_digest_resolver
+from .resolvers.repository_digest_types import (
+    RepositoryDigest,
+    RepositoryDigestBuildStatus,
+    RepositoryDigestRefreshResult,
+    to_build_status,
+    to_refresh_result,
+    to_repository_digest,
+)
 from .resolvers import landing as landing_resolver
 from .resolvers import define
 from .resolvers import spec_editor
@@ -752,6 +761,22 @@ class Query:
         )
 
     @strawberry.field
+    def repository_digest(self, info: strawberry.types.Info) -> Optional[RepositoryDigest]:
+        """Reads the stored artifact and computes freshness only — never
+        rebuilds, walks the repository, or invokes an agent provider.
+        """
+        project_root = info.context["project_root"]
+        data = repository_digest_resolver.get_repository_digest(project_root)
+        if data is None:
+            return None
+        return to_repository_digest(data)
+
+    @strawberry.field
+    def repository_digest_status(self, info: strawberry.types.Info) -> RepositoryDigestBuildStatus:
+        project_root = info.context["project_root"]
+        return to_build_status(repository_digest_resolver.get_repository_digest_status(project_root))
+
+    @strawberry.field
     def spec_alignment(
         self, info: strawberry.types.Info, spec_file: Optional[str] = None
     ) -> Optional[SpecAlignmentView]:
@@ -1272,6 +1297,14 @@ class Subscription:
                 total_cost_usd=row["total"] if row else 0,
                 run_count=row["cnt"] if row else 0,
             )
+
+    @strawberry.subscription
+    async def repository_digest_updated(
+        self, info: strawberry.types.Info,
+    ) -> AsyncGenerator[RepositoryDigestBuildStatus, None]:
+        sub_manager: SubscriptionManager = info.context["sub_manager"]
+        async for event in sub_manager.listen(EventType.REPOSITORY_DIGEST_STATUS_CHANGED):
+            yield to_build_status(event.payload)
 
 
 # ── Mutation ─────────────────────────────────────────────────────
@@ -1797,6 +1830,25 @@ class Mutation:
         return await loop.run_in_executor(
             None, lambda: bootstrap_resolver.complete_bootstrap(project_root),
         )
+
+    @strawberry.mutation
+    async def refresh_repository_digest(
+        self,
+        info: strawberry.types.Info,
+        rebuild_discovery: bool = False,
+        narrative: bool = False,
+    ) -> RepositoryDigestRefreshResult:
+        project_root = info.context["project_root"]
+        sub_manager = info.context.get("sub_manager")
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None,
+            lambda: repository_digest_resolver.refresh_repository_digest(
+                project_root, rebuild_discovery=rebuild_discovery, narrative=narrative,
+                sub_manager=sub_manager,
+            ),
+        )
+        return to_refresh_result(result)
 
 
 # ── Schema ───────────────────────────────────────────────────────

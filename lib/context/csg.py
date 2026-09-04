@@ -34,6 +34,7 @@ try:
 except ImportError:
     HAS_LOUVAIN = False
 
+from .layer1_domain_clustering import _classify_language
 from .treesitter_extract import ExtractionResult, SymbolDef, Reference
 from .utils import git_head_hash, now_iso, write_json, read_json
 
@@ -233,12 +234,73 @@ def _resolve_reference(
             if source_module in node["file"]:
                 return sid
 
-    # 3. Global name match (only if unambiguous)
+    # 3. Global name match (only if unambiguous within the same language).
+    # A same-named symbol in an unrelated language can never actually be
+    # this reference's target — there's no import or call mechanism that
+    # crosses that boundary. Without this guard, an unresolved name that
+    # happens to be globally unique (e.g. a React component's own
+    # `isNew` property matching a Java entity's `isNew()` method, and
+    # nothing else in the repo sharing that name) resolves as if it were
+    # a real call, producing a spurious cross-language relationship.
+    #
+    # NOTE: this strategy is NOT a reliable proxy for "less certain"
+    # evidence, even though it's the most permissive of the three — Java
+    # (and similarly-scoped languages) never emits an import statement
+    # for a same-package sibling class, so the overwhelming majority of
+    # legitimate intra-package references resolve here, not via strategy
+    # 2. An earlier attempt to tag this strategy's matches "weak" and
+    # downgrade the resulting relationship to an INFERRED tier was
+    # reverted after validating against real PetClinic/Workbench builds:
+    # it mislabeled ~100% of relationships as INFERRED, because it
+    # conflated "no explicit import" with "uncertain," when for
+    # same-package access the former is simply how the language works,
+    # not a weaker claim. See RELATIONSHIP_EVIDENCE_TYPE.
+    ref_lang = _classify_language(ref_file)
     candidates = index["by_name"].get(clean_name, [])
-    if len(candidates) == 1:
-        return candidates[0]
+    same_lang_candidates = [
+        sid for sid in candidates
+        if _same_language(ref_lang, ref_file, index["by_id"][sid]["file"])
+    ]
+    if len(same_lang_candidates) == 1:
+        return same_lang_candidates[0]
 
     return None
+
+
+# Header/impl-split "other"-bucket languages (C, C++, Objective-C/C++)
+# where a declaration and its definition routinely live in files with
+# different extensions — the single most common "other"-language
+# same-language reference shape there is. .h is deliberately shared
+# across all of them rather than assigned to just one: a header's own
+# extension alone never says which of these it belongs to.
+_C_FAMILY_EXTENSIONS = frozenset({".c", ".h", ".cpp", ".cc", ".cxx", ".hpp", ".hh", ".hxx", ".m", ".mm"})
+
+
+def _same_language(ref_lang: str, ref_file: str, candidate_file: str) -> bool:
+    """True if candidate_file is plausibly the same language as ref_file.
+
+    _classify_language only distinguishes python/typescript/java/ruby/go;
+    everything else (C, Rust, Kotlin, ...) collapses into "other". For
+    that bucket, fall back to comparing raw extensions so two genuinely
+    different "other" languages don't get treated as a match either —
+    except within the C-family group above, where different extensions
+    on both sides is the normal, expected pattern (a function declared
+    in foo.h and defined in foo.c), not a cross-language collision. A
+    prior version of this guard required exact extension equality even
+    within "other," which made that ordinary case indistinguishable from
+    a real cross-language false positive and silently dropped every
+    header/impl-split C/C++ reference.
+    """
+    candidate_lang = _classify_language(candidate_file)
+    if ref_lang != candidate_lang:
+        return False
+    if ref_lang != "other":
+        return True
+    ref_ext = os.path.splitext(ref_file)[1].lower()
+    candidate_ext = os.path.splitext(candidate_file)[1].lower()
+    if ref_ext in _C_FAMILY_EXTENSIONS and candidate_ext in _C_FAMILY_EXTENSIONS:
+        return True
+    return ref_ext == candidate_ext
 
 
 def _build_import_map(

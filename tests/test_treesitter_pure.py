@@ -102,6 +102,40 @@ class TestExtractNameFromMatch:
         result = _extract_name_from_match(match, "class")
         assert result == ""  # dict exists, .get("text","") returns ""
 
+    # -- Java (ast-grep metavariable capture) --
+    #
+    # Java method/constructor/constant declarations have no leading keyword
+    # (unlike Python's `def`, Go's `func`, Rust's `fn`) — a bare interface
+    # method or a modifier-first method (`public void save(...)`) has
+    # nothing for the text-fallback regexes below to anchor on, so the
+    # java-method/java-constructor/java-constant ast-grep rules
+    # (lib/context/rules/java/definitions.yml) capture the real name via a
+    # $NAME metavariable instead. These tests lock in that the
+    # metavariable path — not the text fallback — is what actually
+    # resolves these matches, so a modifier or return type (public, void,
+    # Collection, List, String) can never surface as the symbol name.
+
+    def test_java_method_with_modifier(self):
+        match = _make_match_with_name(
+            "save", kind="method",
+            text="public void save(Owner owner) throws DataAccessException;",
+        )
+        assert _extract_name_from_match(match, "method") == "save"
+
+    def test_java_interface_method_no_modifier_generic_return_type(self):
+        match = _make_match_with_name(
+            "findAll", kind="method",
+            text="Collection<Owner> findAll() throws DataAccessException;",
+        )
+        assert _extract_name_from_match(match, "method") == "findAll"
+
+    def test_java_constant_with_modifiers_and_type(self):
+        match = _make_match_with_name(
+            "API_BASE_URL", kind="constant",
+            text='public static final String API_BASE_URL = "https://api.example.com";',
+        )
+        assert _extract_name_from_match(match, "constant") == "API_BASE_URL"
+
     # -- Text-based extraction: class / type --
 
     def test_class_from_text_python(self):

@@ -38,5 +38,3 @@ metadata:
 rule:
   kind: call_expression
   pattern: $FUNC($$$ARGS)
-
-Changes compared to the existing `definitions.yml`:

@@ -27,10 +27,3 @@ metadata:
 rule:
   kind: call_expression
   pattern: $FUNC($$$ARGS)
-
-Changes from the existing `definitions.yml`:
-- Added `rust-method` (function_item inside impl_item, mirroring go-method)
-- Added `rust-static` (static_item, same semantic kind as const)
-- Added `rust-macro` (macro_definition, produces a callable so kind=function)
-
-The `references.yml` covers all three required categories:

@@ -7,6 +7,46 @@ rule:
   kind: field_access
 
 ---
+id: java-field-type
+language: java
+metadata:
+  # Fully wired downstream already (csg.py's ref.kind == "type_ref"
+  # branch has produced "references_type" edges since Layer 1 shipped)
+  # — no language ever had a rule to feed it. Spring-style constructor
+  # injection (private final ClinicService clinicService;) is a real
+  # structural dependency with no accompanying `new`/call/import at the
+  # declaration site, so it was invisible to every existing reference
+  # rule (java-method-call*, java-field-access) despite being one of the
+  # most common ways one Java class depends on another.
+  produces: reference
+  ref_kind: type_ref
+  name_var: TYPE
+rule:
+  kind: field_declaration
+  has:
+    field: type
+    kind: type_identifier
+    pattern: $TYPE
+
+---
+id: java-parameter-type
+language: java
+metadata:
+  # Same rationale as java-field-type, for the more idiomatic modern
+  # Spring pattern: injecting via a constructor parameter rather than a
+  # field declaration (field injection is widely discouraged; PetClinic
+  # itself and most current Spring code use constructor injection).
+  produces: reference
+  ref_kind: type_ref
+  name_var: TYPE
+rule:
+  kind: formal_parameter
+  has:
+    field: type
+    kind: type_identifier
+    pattern: $TYPE
+
+---
 id: java-import
 language: java
 metadata:
@@ -39,4 +79,23 @@ rule:
   kind: method_invocation
   pattern: $FUNC($$$ARGS)
 
-The definitions file covers 10 rules across three categories:
+---
+id: java-method-call-qualified
+language: java
+metadata:
+  produces: reference
+  ref_kind: call
+  name_var: FUNC
+rule:
+  # Java's method_invocation node has separate object/name/arguments
+  # fields (unlike Python's call or TS's call_expression, where the
+  # callee is one generic expression slot) — $FUNC($$$ARGS) only
+  # structurally matches a method_invocation with no object field, i.e.
+  # a bare call. It silently never matches a qualified call
+  # (this.helper(), repository.findById(), service.doSomething()),
+  # which is the overwhelming majority of real method calls in
+  # Spring-style code and the main way one class references another.
+  # Without this rule, cross-class references collapse to almost
+  # nothing.
+  kind: method_invocation
+  pattern: $OBJ.$FUNC($$$ARGS)

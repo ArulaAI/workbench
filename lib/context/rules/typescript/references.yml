@@ -73,5 +73,3 @@ metadata:
 rule:
   kind: call_expression
   pattern: $FUNC($$$ARGS)
-
-Summary of what each file covers:

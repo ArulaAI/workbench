@@ -382,3 +382,131 @@ body {
     transition: none;
   }
 }
+
+/* Repository Digest — typography.
+   The manager's reference for this specific feature uses a modern
+   sans-serif dashboard hierarchy rather than the dashboard-wide
+   mono-for-numbers convention above — scoped to Digest only so the rest
+   of the app (Mission Control, Topology, etc.) keeps the standard type
+   ladder unchanged. */
+.digest-eyebrow {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-cyan);
+  line-height: 1.4;
+}
+.digest-title {
+  font-family: var(--font-sans);
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  color: var(--color-text);
+  line-height: 1.2;
+}
+.digest-page-title {
+  font-family: var(--font-sans);
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  color: var(--color-text);
+  line-height: 1.3;
+}
+.digest-kpi-value {
+  font-family: var(--font-sans);
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+}
+.digest-section-title {
+  font-family: var(--font-sans);
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--color-text);
+  line-height: 1.35;
+}
+.digest-breadcrumb {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--color-text-tertiary);
+  line-height: 1.4;
+}
+.digest-breadcrumb-current {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+  line-height: 1.4;
+}
+
+
+/* Repository Digest — responsive layout.
+   See specs/tech/speed-repository-digest-dashboard.md > Dashboard Design >
+   Responsive behavior: two-column dense layout at 1280px+ (the base rules
+   below), 768-1279px keeps KPI cards in columns but stacks detail panels,
+   below 768px everything is one column, tables scroll horizontally, and
+   evidence opens as a full-height sheet instead of an inline panel. */
+.digest-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+}
+.digest-kpi-grid-5 {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 16px;
+}
+.digest-two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.digest-table-scroll {
+  overflow-x: auto;
+}
+.digest-subcard {
+  padding: 14px;
+  border-radius: 8px;
+}
+.digest-evidence-scrim {
+  display: none;
+}
+.digest-evidence-panel {
+  margin-top: 6px;
+}
+
+@media (max-width: 1279px) {
+  .digest-two-col {
+    grid-template-columns: 1fr;
+  }
+  .digest-kpi-grid,
+  .digest-kpi-grid-5 {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 767px) {
+  .digest-evidence-scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 40;
+  }
+  .digest-evidence-panel {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    top: 10%;
+    margin-top: 0;
+    z-index: 41;
+    border-radius: 16px 16px 0 0;
+    overflow-y: auto;
+  }
+}
