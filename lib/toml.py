@@ -11,7 +11,10 @@ Output (stdout):
     TOML_SUBSYSTEMS='frontend:src/frontend/** backend:src/backend/**'
     TOML_SPECS_VISION_FILE='specs/product/overview.md'
 
-If the file cannot be parsed, emits nothing (exit 0). All defaults apply.
+A missing file emits nothing and exits 0, so every default applies. A file
+that exists but cannot be parsed is a configuration error instead: the parser
+detail goes to stderr and the exit status is 3, which lib/config.sh turns into
+an aborted command rather than a silent fall back to defaults.
 """
 
 import sys

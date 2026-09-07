@@ -66,8 +66,7 @@ Only Workbench-owned initialization paths are staged; unrelated working-tree
 changes are not included.
 
 On repeated initialization, Workbench also reconciles the current Git tracking
-policy. Projects created by older releases are updated so
-`.speed/skills/manifest.json` is trackable and the machine-local
+policy, so `.speed/skills/manifest.json` is trackable and the machine-local
 `.speed/skills/events.jsonl` remains ignored.
 
 ### Verify the Imported Skills
