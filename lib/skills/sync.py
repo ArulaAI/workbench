@@ -27,6 +27,7 @@ from skills.manifest import (
     HARNESSES_KEY,
     hash_bytes,
     save_manifest,
+    sync_lock,
 )
 from skills.models import (
     CONFLICT,
@@ -255,19 +256,25 @@ def apply(inspection, plans) -> list:
 
 
 def sync(project_root, skills_dir, catalog_version, *, force=False, only_harness=None) -> list:
-    """Converge this project's projections, and report where each skill ended."""
-    inspection = inspect(
-        project_root, skills_dir, catalog_version, only_harness=only_harness
-    )
-    if not inspection.supported:
-        return [
-            SyncOutcome(
-                harness=item.harness,
-                skill=item.skill,
-                previous_state=item.state,
-                action="",
-                final_state=item.state,
-            )
-            for item in inspection.skills
-        ]
-    return apply(inspection, plan(inspection, force=force))
+    """Converge this project's projections, and report where each skill ended.
+
+    The lock covers inspect as well as apply: what apply writes is derived from
+    the manifest inspect read, so releasing between them would leave the same
+    lost update the lock exists to prevent.
+    """
+    with sync_lock(project_root):
+        inspection = inspect(
+            project_root, skills_dir, catalog_version, only_harness=only_harness
+        )
+        if not inspection.supported:
+            return [
+                SyncOutcome(
+                    harness=item.harness,
+                    skill=item.skill,
+                    previous_state=item.state,
+                    action="",
+                    final_state=item.state,
+                )
+                for item in inspection.skills
+            ]
+        return apply(inspection, plan(inspection, force=force))

@@ -247,3 +247,30 @@ def test_a_junk_symlink_is_not_a_package_violation(tmp_path):
     pkg.root = root
 
     assert validate_package(pkg) == []
+
+
+def test_a_missing_name_is_reported_as_missing_not_as_a_mismatch():
+    """`name '' != directory 'x'` sent authors looking for a name they never wrote."""
+    codes = {item.code for item in validate_package(_pkg(meta={"description": "ok"}))}
+
+    assert codes == {validate.MISSING_NAME}
+
+
+def test_a_blank_name_reads_the_same_as_an_absent_one():
+    """Declared-but-empty is the author's same mistake, so it gets the same code."""
+    for value in ("", "   "):
+        codes = {
+            item.code
+            for item in validate_package(_pkg(meta={"name": value, "description": "ok"}))
+        }
+        assert codes == {validate.MISSING_NAME}, value
+
+
+def test_a_name_that_disagrees_with_its_directory_is_still_a_mismatch():
+    """The rename case keeps its own code: something was declared, just wrongly."""
+    codes = {
+        item.code
+        for item in validate_package(_pkg(meta={"name": "other", "description": "ok"}))
+    }
+
+    assert codes == {validate.NAME_MISMATCH}

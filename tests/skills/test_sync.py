@@ -1,5 +1,8 @@
 import json
+import os
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -7,7 +10,7 @@ import pytest
 from skills.inspect import inspect
 from skills.sync import sync
 from skills import PATHS
-from skills.manifest import hash_bytes, load_manifest
+from skills.manifest import hash_bytes, load_manifest, sync_lock
 from skills.models import SkillState
 
 
@@ -581,3 +584,78 @@ def test_a_harness_record_without_a_skills_key_syncs_instead_of_crashing(
     record = load_manifest(tmp_project)["harnesses"]["claude"]
     assert "example-skill" in record["skills"]
     assert record["root"] == ".claude/skills"
+
+
+# ── Concurrency ────────────────────────────────────────────────────────────
+# A sync reads the manifest, decides from it, and writes it back. Two syncs
+# that both read before either writes each hold a copy predating the other's
+# work, and the second write replaces the first wholesale.
+
+_REPO = Path(__file__).resolve().parents[2]
+
+
+def _sync_process(project, skills_dir, harness=None):
+    return subprocess.Popen(
+        [
+            sys.executable, "-m", "skills", "sync",
+            *(("--harness", harness) if harness else ()),
+            "--project-root", str(project),
+            "--skills-dir", str(skills_dir),
+            "--catalog-version", "1.0",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=dict(os.environ, PYTHONPATH=str(_REPO / "lib")),
+    )
+
+
+def test_a_second_sync_waits_instead_of_racing_the_manifest(tmp_catalog, tmp_project):
+    """Held from outside, the lock must stop a real `python -m skills sync` dead."""
+    skills_dir = tmp_catalog()
+
+    with sync_lock(tmp_project):
+        blocked = _sync_process(tmp_project, skills_dir)
+        try:
+            with pytest.raises(subprocess.TimeoutExpired):
+                blocked.wait(timeout=3)
+            assert not (tmp_project / PATHS.manifest).exists(), (
+                "the second sync wrote the manifest while the lock was held"
+            )
+        except BaseException:
+            blocked.kill()
+            raise
+
+    assert blocked.wait(timeout=30) == 0
+    assert (tmp_project / PATHS.manifest).exists()
+
+
+@pytest.mark.parametrize("attempt", range(6))
+def test_concurrent_syncs_of_two_harnesses_keep_both_records(
+    tmp_catalog, tmp_path, attempt
+):
+    """Parallel CI steps, one harness each: correct files, and both records kept.
+
+    Unlocked, the writer that finishes second saves a manifest it loaded before
+    the first had written, so the first harness's records vanish and its skills
+    classify `conflicted` even though the bytes on disk are right. Repeated,
+    because the window it needs is the gap between one load and one save.
+    """
+    skills_dir = tmp_catalog()
+    project = tmp_path / f"proj-{attempt}"
+    project.mkdir()
+
+    racers = [
+        _sync_process(project, skills_dir, harness="claude"),
+        _sync_process(project, skills_dir, harness="codex"),
+    ]
+    for racer in racers:
+        assert racer.wait(timeout=60) == 0, racer.stderr.read()
+
+    recorded = load_manifest(project)["harnesses"]
+    assert sorted(recorded) == ["claude", "codex"]
+    for harness, record in recorded.items():
+        assert sorted(record["skills"]) == ["example-skill"], harness
+
+    states = [item.state for item in inspect(project, skills_dir, "1.0").skills]
+    assert set(states) == {SkillState.CURRENT}, states

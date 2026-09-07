@@ -16,12 +16,18 @@ the user which file differs and how instead of restating the state in prose.
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+
+try:  # POSIX only; Workbench ships for macOS and Linux.
+    import fcntl
+except ImportError:  # pragma: no cover - Windows fallback
+    fcntl = None
 
 from skills import PATHS, is_junk
 from skills.frontmatter import MANAGED_PREFIX
@@ -230,6 +236,42 @@ def manifest_state(project_root: Path) -> str:
             if child.is_dir() and _carries_provenance(child):
                 return MANIFEST_LOST
     return MANIFEST_NEW
+
+
+@contextlib.contextmanager
+def sync_lock(project_root):
+    """Serialize one project's manifest read-modify-write across processes.
+
+    A sync loads the manifest, decides what to write from it, and saves it back.
+    Two syncs that both load before either saves each hold a copy that predates
+    the other's work, and the second save replaces the first wholesale: the
+    projections land on disk correctly, but one harness's records vanish from
+    the record that licenses overwriting them. Every skill it described then
+    classifies ``conflicted``, and clearing that needs ``--force`` on files
+    nobody touched.
+
+    The window spans the whole sync, so the lock is taken before the load and
+    dropped after the save rather than wrapped around the write. Read-only
+    commands do not take it: ``save_manifest`` swaps the file atomically, so a
+    reader sees one version or the other and never a blend.
+
+    Locking here rather than in the shell wrapper covers every entrance,
+    including ``python -m skills``, and avoids contending with the SPEED
+    project lock that ``init`` already holds while it calls sync.
+    """
+    path = Path(project_root) / PATHS.lock
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # "a" so the descriptor exists to be locked without truncating a rival's
+    # file; nothing is ever written to it. Closing would release the lock on
+    # its own, and it is dropped explicitly to keep the pairing visible.
+    with path.open("a", encoding="utf-8") as handle:
+        if fcntl is not None:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            if fcntl is not None:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def save_manifest(project_root: Path, data: dict) -> None:

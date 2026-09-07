@@ -44,6 +44,10 @@ class SkillPaths:
     state_root: Path = _STATE_ROOT
     manifest: Path = _STATE_ROOT / "manifest.json"
     events: Path = _STATE_ROOT / "events.jsonl"
+    # Held for a whole sync, not for the manifest write alone. The manifest is
+    # replaced rather than appended to, so a lock on the manifest file itself
+    # would cover the old inode and not the swap; a sibling gets its own.
+    lock: Path = _STATE_ROOT / "sync.lock"
 
 
 PATHS = SkillPaths()

@@ -37,6 +37,7 @@ from skills.frontmatter import MANAGED_PREFIX
 MISSING_SKILL_MD = "missing_skill_md"
 UNREADABLE_PACKAGE = "unreadable_package"
 INVALID_SKILL_NAME = "invalid_skill_name"
+MISSING_NAME = "missing_name"
 NAME_MISMATCH = "name_mismatch"
 MISSING_DESCRIPTION = "missing_description"
 RESERVED_KEY = "reserved_front_matter_key"
@@ -145,7 +146,20 @@ def validate_metadata(name: str, meta: dict) -> list:
     # name or description the author did spell out.
     if "name" not in mistyped:
         declared = meta.get("name", "")
-        if declared != name:
+        # Absence is its own mistake, reported the way a missing description
+        # is. Folding it into the mismatch produced "name '' != directory
+        # 'foo'", which reads as an empty name the author typed rather than a
+        # `name:` line they never wrote.
+        if not declared.strip():
+            out.append(
+                Violation(
+                    name,
+                    "SKILL.md",
+                    f"empty or missing front-matter name (expected '{name}')",
+                    MISSING_NAME,
+                )
+            )
+        elif declared != name:
             out.append(
                 Violation(
                     name,
