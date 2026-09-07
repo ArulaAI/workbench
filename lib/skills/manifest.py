@@ -81,6 +81,12 @@ def hash_disk(dest: Path):
     projection contains copied bytes only, so a link inside one was not written
     by Workbench, and hashing through it would read a file outside the managed
     directory and then report the result as the skill's own state.
+
+    Junk is discarded before anything is tested for link-ness, matching the
+    catalog reader entry for entry. Excluding it only from the hash was not
+    enough: a Finder-synced ``.DS_Store`` alias landing beside a projection
+    would condemn the skill as ``conflicted`` and demand ``--force``, even
+    though the same file as a regular file is ignored outright.
     """
     dest = Path(dest)
     if dest.is_symlink():
@@ -92,17 +98,22 @@ def hash_disk(dest: Path):
     out: dict = {}
     for dirpath, dirnames, filenames in os.walk(dest, followlinks=False):
         here = Path(dirpath)
-        for name in list(dirnames) + list(filenames):
-            path = here / name
-            if path.is_symlink():
-                return WrongType("symlink", path.relative_to(dest).as_posix())
-        for name in filenames:
-            path = here / name
-            rel = path.relative_to(dest).as_posix()
-            # Same exclusions the catalog reader applies, so a Finder visit or a
-            # stray __pycache__ cannot be mistaken for a hand edit.
+        kept: list = []
+        for name in sorted(dirnames):
+            rel = (here / name).relative_to(dest).as_posix()
             if is_junk(rel):
                 continue
+            if (here / name).is_symlink():
+                return WrongType("symlink", rel)
+            kept.append(name)
+        dirnames[:] = kept
+        for name in sorted(filenames):
+            path = here / name
+            rel = path.relative_to(dest).as_posix()
+            if is_junk(rel):
+                continue
+            if path.is_symlink():
+                return WrongType("symlink", rel)
             out[rel] = hash_bytes(path.read_bytes())
     return dict(sorted(out.items()))
 

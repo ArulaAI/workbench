@@ -245,3 +245,52 @@ def test_a_wrong_type_projection_path_is_a_conflict_not_an_absent_skill():
 def test_a_manifest_entry_with_nothing_on_disk_is_orphaned_so_it_can_converge():
     """The skill left the catalog and its projection is gone: drop the record."""
     assert classify_skill(None, {}, {"files": _hashes(R)}) == SkillState.ORPHANED
+
+
+def test_hash_disk_ignores_a_junk_symlink_instead_of_condemning_the_skill(tmp_path):
+    """A Finder-synced `.DS_Store` alias is junk, whatever kind of file it is.
+
+    Excluding junk only from the hash while still testing it for link-ness made
+    a stray alias classify the whole projection `conflicted`, so converging it
+    needed `--force` and a rewrite nobody asked for.
+    """
+    outside = tmp_path / "elsewhere.txt"
+    outside.write_text("not ours\n", encoding="utf-8")
+    dest = tmp_path / "example-skill"
+    dest.mkdir()
+    (dest / "SKILL.md").write_text("body\n", encoding="utf-8")
+    (dest / ".DS_Store").symlink_to(outside)
+
+    assert hash_disk(dest) == {"SKILL.md": hash_bytes(b"body\n")}
+
+
+def test_hash_disk_ignores_a_symlinked_junk_directory(tmp_path):
+    """`__pycache__` is excluded as a name, so it is never descended or judged."""
+    elsewhere = tmp_path / "cache"
+    elsewhere.mkdir()
+    (elsewhere / "mod.pyc").write_bytes(b"compiled")
+    dest = tmp_path / "example-skill"
+    (dest / "scripts").mkdir(parents=True)
+    (dest / "SKILL.md").write_text("body\n", encoding="utf-8")
+    (dest / "scripts" / "run.py").write_text("print()\n", encoding="utf-8")
+    (dest / "scripts" / "__pycache__").symlink_to(elsewhere, target_is_directory=True)
+
+    assert hash_disk(dest) == {
+        "SKILL.md": hash_bytes(b"body\n"),
+        "scripts/run.py": hash_bytes(b"print()\n"),
+    }
+
+
+def test_hash_disk_still_refuses_a_symlink_that_could_have_been_projected(tmp_path):
+    """Junk exclusion must not widen into "ignore links": render() emits bytes."""
+    outside = tmp_path / "secret.txt"
+    outside.write_text("secret\n", encoding="utf-8")
+    dest = tmp_path / "example-skill"
+    dest.mkdir()
+    (dest / "SKILL.md").write_text("body\n", encoding="utf-8")
+    (dest / "reference.md").symlink_to(outside)
+
+    disk = hash_disk(dest)
+
+    assert isinstance(disk, WrongType)
+    assert disk.path == "reference.md"

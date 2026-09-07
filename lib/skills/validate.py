@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from skills import is_valid_skill_name
+from skills import is_junk, is_valid_skill_name
 from skills.models import NO_SYMLINK_ROOT, NO_SYMLINKS, SkillPackage
 from skills.frontmatter import MANAGED_PREFIX
 
@@ -238,15 +238,14 @@ def validate_package(pkg: SkillPackage) -> list:
     out.extend(validate_relpaths(pkg.name, pkg.files))
     if pkg.root.is_dir():
         for path in pkg.root.rglob("*"):
+            rel = path.relative_to(pkg.root).as_posix()
+            # Junk first, as in the loader and in hash_disk: a violation an
+            # author cannot act on, because the file is excluded from the
+            # package either way, is noise rather than a finding.
+            if is_junk(rel):
+                continue
             if path.is_symlink():
-                out.append(
-                    Violation(
-                        pkg.name,
-                        path.relative_to(pkg.root).as_posix(),
-                        NO_SYMLINKS,
-                        SYMLINK,
-                    )
-                )
+                out.append(Violation(pkg.name, rel, NO_SYMLINKS, SYMLINK))
     return _dedupe(out)
 
 

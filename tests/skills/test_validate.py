@@ -234,3 +234,16 @@ def test_a_trailing_newline_is_not_a_legal_skill_name(name):
 @pytest.mark.parametrize("name", ["a", "foo", "a-b-9", "example-skill"])
 def test_ordinary_names_stay_legal(name):
     assert is_valid_skill_name(name)
+
+
+def test_a_junk_symlink_is_not_a_package_violation(tmp_path):
+    """Junk never enters the package, so a link where junk sits is not the author's problem."""
+    root = tmp_path / "example-skill"
+    root.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("outside\n")
+    (root / ".DS_Store").symlink_to(outside)
+    pkg = _pkg()
+    pkg.root = root
+
+    assert validate_package(pkg) == []
