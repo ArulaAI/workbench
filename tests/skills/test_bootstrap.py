@@ -131,3 +131,27 @@ def test_verification_requires_every_selected_projection_to_be_current(tmp_path)
         tmp_path, CATALOG, "test", ("claude", "codex")
     )
     assert unhealthy["status"] == "unhealthy"
+
+
+def test_the_policy_line_lands_below_the_section_explanation(tmp_path):
+    """The live setting must not be written above the comments describing it.
+
+    Inserting at ``[skills]`` + 1 put ``harnesses = [...]`` ahead of the
+    template's own explanation, so the commented example appeared underneath
+    the active value. Read top down, that invites someone to edit the comment
+    and see nothing happen.
+    """
+    config = tmp_path / "speed.toml"
+    persist_policy(config, ("claude",), template_path=TEMPLATE)
+
+    lines = config.read_text(encoding="utf-8").splitlines()
+    header = lines.index("[skills]")
+    active = next(i for i, line in enumerate(lines) if line.startswith("harnesses ="))
+    example = next(i for i, line in enumerate(lines) if line.startswith("# harnesses ="))
+
+    assert example < active, "the live setting belongs after the commented example"
+    assert lines[header + 1].lstrip().startswith("#"), "explanation stays under the header"
+    next_section = next(
+        i for i, line in enumerate(lines) if i > header and line.startswith("[")
+    )
+    assert active < next_section, "the policy must stay inside [skills]"

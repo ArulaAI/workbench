@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from skills import PATHS
+
 REPO = Path(__file__).resolve().parents[2]
 PY = sys.executable  # the interpreter running the tests (works in a worktree too)
 
@@ -201,8 +203,15 @@ def test_workbench_init_creates_only_selected_harness(
     assert health_result["skills"] == ["workbench-health"]
     assert f"Skills projected for {harness}" in initialized.stdout
     assert f'harnesses = ["{harness}"]' in (project / "speed.toml").read_text()
-    assert _git(project, "log", "--oneline").returncode != 0
+    # Without --commit, init commits none of the project's own files, but it
+    # does leave a usable repository: an unborn HEAD cannot host a worktree and
+    # `run` creates one per task, so the root commit is established and empty.
+    log = _git(project, "log", "--pretty=%s")
+    assert log.returncode == 0, log.stderr
+    assert log.stdout.strip().splitlines() == ["Initial commit"]
     assert "speed.toml" in _git(project, "status", "--short").stdout
+    worktree = _git(project, "worktree", "add", str(tmp_path / "wt"), "-b", "probe")
+    assert worktree.returncode == 0, worktree.stderr
     roots = {
         ".claude/skills": project / ".claude" / "skills",
         ".agents/skills": project / ".agents" / "skills",
@@ -340,3 +349,81 @@ def test_a_leading_global_flag_is_not_taken_as_the_command(tmp_path):
 
     trailing = _workbench(project, "skills", "status", "--json")
     assert json.loads(trailing.stdout) == rows
+
+
+def test_init_commit_survives_a_gitignored_harness_root(tmp_path):
+    """`git add` refuses the whole invocation on an ignored pathspec.
+
+    Ignoring `.claude/` is ordinary, and it used to stage every acceptable
+    path, refuse the projection, and return 3 with a fully staged index and no
+    commit, after projection and verification had both succeeded.
+    """
+    project = tmp_path / "ignored-root"
+    project.mkdir()
+    _git(project, "init", "-q", "-b", "main")
+    (project / ".gitignore").write_text(".claude/\n")
+    _git(project, "add", ".gitignore")
+    _git(project, "commit", "-qm", "base")
+
+    initialized = _workbench(project, "init", "--harness", "claude", "--commit")
+
+    assert initialized.returncode == 0, initialized.stdout + initialized.stderr
+    # log_warn writes to stderr.
+    assert "ignored path" in initialized.stderr
+    committed = _git(project, "show", "--name-only", "--pretty=", "HEAD").stdout
+    assert ".speed/skills/manifest.json" in committed
+    assert "speed.toml" in committed
+    # Nothing may be left staged behind the error path that used to run here.
+    assert _git(project, "status", "--short").stdout.strip() == ""
+
+
+def test_init_commit_survives_a_manifest_entry_whose_projection_is_gone(tmp_path):
+    """A removed skill leaves a path that never entered the index.
+
+    Sync reports the removal, so the path reached `git add`, which failed with
+    `did not match any files` and took the whole commit with it.
+    """
+    project = tmp_path / "converge"
+    project.mkdir()
+    _git(project, "init", "-q", "-b", "main")
+    (project / ".claude").mkdir()
+    assert _workbench(project, "init", "--harness", "claude", "--commit").returncode == 0
+
+    manifest_path = project / PATHS.manifest
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["harnesses"]["claude"]["skills"]["gone-skill"] = {
+        "files": {"SKILL.md": "sha256:dead"},
+        "projected_at_version": "old",
+        "version": "1.0.0",
+    }
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+
+    again = _workbench(project, "init", "--harness", "claude", "--commit")
+
+    assert again.returncode == 0, again.stdout + again.stderr
+    converged = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert "gone-skill" not in converged["harnesses"]["claude"]["skills"]
+
+
+def test_init_warns_when_an_outside_rule_excludes_the_manifest(tmp_path):
+    """A blanket `.speed/` outside the managed block wins.
+
+    Git cannot re-include a path whose parent directory is excluded, so the
+    block's own `!.speed/skills/manifest.json` is inert. The rule belongs to
+    the user, so init reports it instead of rewriting it; staying silent ships
+    a repo whose teammates classify every projected skill as conflicted.
+    """
+    project = tmp_path / "shadowed"
+    project.mkdir()
+    _git(project, "init", "-q", "-b", "main")
+    (project / ".gitignore").write_text(".speed/\n")
+    (project / ".claude").mkdir()
+
+    initialized = _workbench(project, "init", "--harness", "claude")
+
+    assert initialized.returncode == 0, initialized.stderr
+    # log_warn writes to stderr.
+    assert ".speed/skills/manifest.json is excluded by" in initialized.stderr
+    assert ".gitignore:1:.speed/" in initialized.stderr
+    ignored = _git(project, "check-ignore", "-q", "--", ".speed/skills/manifest.json")
+    assert ignored.returncode == 0, "repro no longer reproduces the shadowing"

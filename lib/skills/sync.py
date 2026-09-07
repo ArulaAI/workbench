@@ -196,6 +196,11 @@ def apply(inspection, plans) -> list:
             record = manifest[HARNESSES_KEY].setdefault(
                 harness.id, {"root": harness.skills_root, "skills": {}}
             )
+            # setdefault leaves an existing record untouched, and validation
+            # accepts a harness record carrying only `root` as "nothing
+            # installed here yet". A merged or hand-edited manifest produces
+            # exactly that, so the key is ensured rather than assumed.
+            record.setdefault("skills", {})
             version = step.version
             if step.operation == REMOVE:
                 if step.dest.is_symlink() or step.dest.exists():

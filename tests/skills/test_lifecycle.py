@@ -993,3 +993,46 @@ cmd_skills status
 
     assert result.returncode == 0, result.stderr
     assert "DEBUG=1" in result.stdout
+
+
+def test_init_guards_its_optional_harness_array_expansion():
+    """``"${arr[@]}"`` on an empty array is unbound before bash 4.4.
+
+    ``lib/deps.sh`` declares 4.3 as the supported floor and commands run under
+    ``set -u``, so a bare ``workbench init``, which leaves
+    ``requested_harnesses`` empty, would die before reaching its own preflight
+    on a host at that floor. CI runs bash 5, where the expansion is legal, so
+    this reads the source instead of trying to reproduce the abort.
+    """
+    text = PROJECT_SH.read_text(encoding="utf-8")
+    unguarded = [
+        line.strip()
+        for line in text.splitlines()
+        if '"${requested_harnesses[@]}"' in line
+        and "requested_harnesses[@]+" not in line
+    ]
+    assert not unguarded, unguarded
+    assert 'requested_harnesses[@]+"${requested_harnesses[@]}"' in text
+
+
+def test_init_refuses_an_empty_harness_policy_before_expanding_it():
+    """The emptiness check must precede every ``selected_harnesses`` expansion.
+
+    An empty array is an unbound-variable abort under ``set -u`` on bash before
+    4.4 and a silent no-op init on newer shells, so guarding the five
+    expansions individually would still leave the real problem, an unreadable
+    plan, unreported. One check up front makes them correct by construction,
+    which only holds while it stays above them.
+    """
+    lines = PROJECT_SH.read_text(encoding="utf-8").splitlines()
+    check = next(
+        i for i, line in enumerate(lines) if "#selected_harnesses[@]} == 0" in line
+    )
+    expansions = [
+        i
+        for i, line in enumerate(lines)
+        if "${selected_harnesses[@]}" in line or "${selected_harnesses[*]}" in line
+    ]
+
+    assert expansions, "no expansion left to protect; drop or rewrite this test"
+    assert check < min(expansions), (check, expansions)

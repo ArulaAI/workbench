@@ -6,6 +6,7 @@ import pytest
 
 from skills.inspect import inspect
 from skills.sync import sync
+from skills import PATHS
 from skills.manifest import hash_bytes, load_manifest
 from skills.models import SkillState
 
@@ -542,3 +543,29 @@ def test_the_converged_manifest_stays_quiet_on_the_next_sync(
 
     assert _run(tmp_project, empty) == {}
     assert status(tmp_project, empty, "0.3.0") == []
+
+
+def test_a_harness_record_without_a_skills_key_syncs_instead_of_crashing(
+    tmp_catalog, tmp_project
+):
+    """`validate_manifest` accepts a harness record carrying only `root`.
+
+    A merged or hand-edited manifest produces exactly that shape, and `apply`
+    used to index `record["skills"]` on it, raising `KeyError` from inside the
+    write loop. That is the failure validation exists to prevent, arriving
+    through a file that is committed and therefore reachable by a bad merge.
+    """
+    skills_dir = tmp_catalog()
+    manifest_path = tmp_project / PATHS.manifest
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(
+        json.dumps({"catalog_version": None, "harnesses": {"claude": {"root": ".claude/skills"}}}),
+        encoding="utf-8",
+    )
+
+    outcomes = _run(tmp_project, skills_dir)
+
+    assert outcomes["example-skill@claude"].final_state == SkillState.CURRENT
+    record = load_manifest(tmp_project)["harnesses"]["claude"]
+    assert "example-skill" in record["skills"]
+    assert record["root"] == ".claude/skills"

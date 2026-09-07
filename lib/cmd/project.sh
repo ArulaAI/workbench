@@ -40,6 +40,23 @@ _init_reconcile_gitignore() {
     [[ "$outcome" == "changed" ]]
 }
 
+# A rule outside the managed block can still exclude the manifest, and git
+# cannot re-include a path whose parent directory is excluded, so the block's
+# `!.speed/skills/manifest.json` is inert under a blanket `.speed/`. That rule
+# belongs to the user, so it is reported rather than rewritten: leaving it
+# silent ships a project whose teammates clone projections with no recorded
+# hashes and see every skill as conflicted.
+_init_warn_untracked_manifest() {
+    local manifest_rel=".speed/skills/manifest.json"
+    local culprit
+    (cd "$PROJECT_ROOT" && git rev-parse --git-dir &>/dev/null) || return 0
+    (cd "$PROJECT_ROOT" && git check-ignore -q -- "$manifest_rel" 2>/dev/null) || return 0
+    culprit=$(cd "$PROJECT_ROOT" && git check-ignore -v -- "$manifest_rel" 2>/dev/null | cut -f1)
+    log_warn "${manifest_rel} is excluded by ${culprit:-an ignore rule} and will not be committed"
+    log_warn "Teammates cloning this repo will see every projected skill as conflicted"
+    log_warn "Narrow that rule (for example to .speed/local/) so the manifest can be tracked"
+}
+
 cmd_init() {
     local requested_harnesses=()
     local commit_requested=false
@@ -79,7 +96,7 @@ cmd_init() {
         --config "${PROJECT_ROOT}/speed.toml"
     )
     local harness
-    for harness in "${requested_harnesses[@]}"; do
+    for harness in ${requested_harnesses[@]+"${requested_harnesses[@]}"}; do
         plan_args+=(--harness "$harness")
     done
     if [[ -n "${WORKBENCH_HARNESSES:-}" ]]; then
@@ -99,6 +116,17 @@ cmd_init() {
     while IFS= read -r harness; do
         [[ -n "$harness" ]] && selected_harnesses+=("$harness")
     done < <(printf '%s' "$init_plan" | jq -r '.harnesses[]')
+    # Fail here rather than downstream. Every use below expands the array, and
+    # an empty one is an unbound-variable abort under `set -u` on bash before
+    # 4.4 (the floor lib/deps.sh declares) and a silent no-op init on newer
+    # shells. Neither says that the plan's harness list could not be read,
+    # which is what actually went wrong: no jq, or output of another shape.
+    # Checking once keeps the expansions below correct by construction.
+    if (( ${#selected_harnesses[@]} == 0 )); then
+        log_error "Could not read the skill harness policy from the initialization plan"
+        log_error "Check that jq is installed, or pass --harness explicitly (one of: $(workbench_harness_list))"
+        return 3
+    fi
     local policy_source
     policy_source=$(printf '%s' "$init_plan" | jq -r '.source')
     local persist_required
@@ -114,9 +142,11 @@ cmd_init() {
 
     # Phase 2: apply the general project scaffold. Repeated init does not
     # overwrite runtime state or user-owned files.
-    if ! _git rev-parse --git-dir &>/dev/null; then
-        _git init
-        log_info "Initialized git repository"
+    # Inlining this once dropped its second half, leaving fresh projects with
+    # an unborn HEAD that `git worktree add` refuses, so the shared helper is
+    # the single implementation again.
+    if ! git_ensure_repo; then
+        return 3
     fi
     log_success "Git repository ready"
 
@@ -242,6 +272,7 @@ cmd_init() {
         1) log_info "Git ignore policy already current" ;;
         *) return 3 ;;
     esac
+    _init_warn_untracked_manifest
 
     # Phase 7: committing is explicit. Stage only files this initializer owns;
     # never `git add -A`, which can capture unrelated work in an existing repo.
@@ -264,7 +295,40 @@ cmd_init() {
             fi
             commit_paths+=("${projected_root}/${skill}")
         done < <(printf '%s' "$sync_out" | jq -r '.[] | select(.skill != "*") | [.harness, .skill] | @tsv')
-        if ! (cd "$PROJECT_ROOT" && git add -A -- "${commit_paths[@]}"); then
+        # `git add` refuses the entire invocation on an ignored pathspec, or on
+        # a path that is neither in the worktree nor the index, and it stages
+        # the acceptable paths before refusing. So one gitignored harness root
+        # used to leave a fully staged index, no commit, and exit 3 after every
+        # other phase had succeeded.
+        #
+        # Ignored projections are dropped rather than forced in: the rule is the
+        # user's, and a clone carrying the manifest without its projections
+        # classifies them `absent`, which the next sync re-projects without
+        # --force. The reverse, projections with no manifest, is the damaging
+        # one, and the manifest is warned about separately above.
+        local -a stageable=()
+        local -a ignored=()
+        local path
+        for path in "${commit_paths[@]}"; do
+            if (cd "$PROJECT_ROOT" && git check-ignore -q -- "$path" 2>/dev/null); then
+                ignored+=("$path")
+                continue
+            fi
+            # A removed skill leaves a path that never entered the index. Its
+            # deletion is already recorded in the manifest, so there is nothing
+            # for git to stage and nothing to report.
+            if [[ ! -e "${PROJECT_ROOT}/${path}" ]] \
+                && ! (cd "$PROJECT_ROOT" && git ls-files --error-unmatch -- "$path" &>/dev/null); then
+                continue
+            fi
+            stageable+=("$path")
+        done
+        if (( ${#ignored[@]} > 0 )); then
+            log_warn "Not committing ${#ignored[@]} ignored path(s): ${ignored[*]}"
+            log_warn "Teammates can restore them with: workbench skills sync"
+        fi
+        if (( ${#stageable[@]} > 0 )) \
+            && ! (cd "$PROJECT_ROOT" && git add -A -- "${stageable[@]}"); then
             log_error "Could not stage the Workbench initialization files"
             return 3
         fi

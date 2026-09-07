@@ -186,7 +186,20 @@ def _replace_policy(text: str, harnesses) -> str:
         if re.match(r"^\s*harnesses\s*=", lines[index]):
             lines[index] = policy
             return "\n".join(lines) + "\n"
-    lines.insert(section_start + 1, policy)
+    # Land below the section's own explanation rather than above it. Inserting
+    # at section_start + 1 put the active line ahead of the template comments,
+    # so the commented `# harnesses = [...]` example read as the live setting
+    # and editing it had no effect.
+    insert_at = section_start + 1
+    while insert_at < section_end and (
+        not lines[insert_at].strip() or lines[insert_at].lstrip().startswith("#")
+    ):
+        insert_at += 1
+    # Back off the blank line that separates this section from the next, or the
+    # policy drifts out of [skills] and lands against the following header.
+    while insert_at > section_start + 1 and not lines[insert_at - 1].strip():
+        insert_at -= 1
+    lines.insert(insert_at, policy)
     return "\n".join(lines) + "\n"
 
 
