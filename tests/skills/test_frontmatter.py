@@ -196,3 +196,21 @@ def test_a_duplicate_key_is_reported_not_silently_overwritten():
 
     with pytest.raises(ValueError, match="duplicate key 'name'"):
         parse(text)
+
+
+def test_inject_without_front_matter_drops_one_blank_line_not_all_of_them():
+    """`opening` already ends with a blank line, so one leading break is
+    redundant and gets removed. `lstrip("\\r\\n")` removed the whole run,
+    silently rewriting a body the function promises to copy verbatim."""
+    out = inject("\n\n\n# Title\n", {"x-workbench-managed": True})
+
+    assert out.endswith("---\n\n\n\n# Title\n")
+    meta, body = parse(out)
+    assert meta == {"x-workbench-managed": True}
+    assert body == "\n\n# Title\n"
+
+
+def test_inject_counts_crlf_as_a_single_break():
+    out = inject("\r\n\r\n# Title\n", {"x-workbench-managed": True})
+
+    assert out.endswith("---\r\n\r\n\r\n# Title\n")

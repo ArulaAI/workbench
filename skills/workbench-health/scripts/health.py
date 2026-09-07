@@ -34,7 +34,10 @@ SKILLS_ROOTS = {
 # Same rule as `is_valid_skill_name` in lib/skills/__init__.py, restated here
 # because a projected helper has no library to import it from. A skill name is
 # also the only legal path segment for its projection directory.
-SKILL_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+# `\Z`, not `$`: `$` also matches immediately before a trailing newline, so
+# "foo\n" satisfied the whitelist that dest_dir builds paths from and that
+# _prune_unsafe_names uses to decide an entry is legal.
+SKILL_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*\Z")
 
 # Repairs, worded to match `workbench skills doctor` so the CLI and the skill
 # never send a user two different ways.

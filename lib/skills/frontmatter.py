@@ -176,6 +176,14 @@ def _without_managed(block: list) -> list:
     return out
 
 
+def _drop_one_break(text: str) -> str:
+    """Remove at most one leading line break, CRLF counted as one."""
+    for prefix in ("\r\n", "\n", "\r"):
+        if text.startswith(prefix):
+            return text[len(prefix):]
+    return text
+
+
 def inject(text: str, extra: dict) -> str:
     """Return ``text`` with ``extra`` set in its front matter. Deterministic.
 
@@ -192,6 +200,10 @@ def inject(text: str, extra: dict) -> str:
         opening = "".join(
             [_FENCE + newline, *added, _FENCE + newline, newline]
         )
-        return opening + text.lstrip("\r\n")
+        # One separator, not a run. `opening` already ends with a blank line,
+        # so a body that starts with one would double it up, but `lstrip`
+        # deleted every leading blank line the author wrote rather than the
+        # single one this is compensating for.
+        return opening + _drop_one_break(text)
     kept = _without_managed(lines[1:end])
     return "".join([lines[0], *kept, *added, *lines[end:]])

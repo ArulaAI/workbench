@@ -3,7 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from skills import validate
+from skills import is_valid_skill_name, validate
+from skills.targets import dest_dir, get_harness
 from skills.catalog import SkillPackage
 from skills.validate import validate_package, validate_catalog
 
@@ -209,3 +210,27 @@ def test_a_quoted_version_is_accepted():
     assert validate_package(
         _pkg(meta={"name": "example-skill", "description": "ok", "version": "1.0"})
     ) == []
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["foo\n", "foo\r", "example-skill\n", "a\n"],
+)
+def test_a_trailing_newline_is_not_a_legal_skill_name(name):
+    """`$` also matches immediately before a final newline, `\\Z` does not.
+
+    The pattern is the single definition of a legal name, and `dest_dir` builds
+    a projection path from whatever it accepts while `_prune_unsafe_names`
+    declines to clean up anything it calls legal. A manifest reaches both as
+    untrusted input, and POSIX permits a newline in a filename, so the one
+    trailing `\\n` that slipped through was a real hole in the whitelist.
+    """
+    assert not is_valid_skill_name(name)
+    harness = get_harness("claude")
+    with pytest.raises(ValueError):
+        dest_dir(harness, name, Path("/tmp/does-not-matter"))
+
+
+@pytest.mark.parametrize("name", ["a", "foo", "a-b-9", "example-skill"])
+def test_ordinary_names_stay_legal(name):
+    assert is_valid_skill_name(name)

@@ -52,7 +52,10 @@ PATHS = SkillPaths()
 # A legal skill name is also the only legal path segment for a projection
 # directory. Keeping the pattern here lets both the package contract and the
 # path builder enforce the same rule without importing each other.
-SKILL_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+# `\Z`, not `$`: `$` also matches immediately before a trailing newline, so
+# "foo\n" satisfied the whitelist that dest_dir builds paths from and that
+# _prune_unsafe_names uses to decide an entry is legal.
+SKILL_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*\Z")
 
 
 def is_valid_skill_name(name) -> bool:

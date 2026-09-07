@@ -428,3 +428,15 @@ def test_the_helper_agrees_with_the_canonical_layout():
     for part in PATHS.manifest.parts:
         assert f'"{part}"' in source, f"helper no longer names {part}"
     assert PATHS.manifest.as_posix() in source, "the repair text names a stale path"
+
+
+def test_the_helper_copy_of_the_name_whitelist_rejects_a_trailing_newline():
+    """The helper carries its own regex because it runs standalone.
+
+    Two definitions of the same rule drift, and this one had the same `$`
+    instead of `\\Z`, so both needed the fix and both need the test.
+    """
+    helper = _load_helper()
+    assert helper._is_valid_skill_name("workbench-health")
+    assert not helper._is_valid_skill_name("workbench-health\n")
+    assert not helper._is_valid_skill_name("foo\r")
