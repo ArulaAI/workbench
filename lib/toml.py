@@ -11,7 +11,9 @@ Output (stdout):
     TOML_SUBSYSTEMS='frontend:src/frontend/** backend:src/backend/**'
     TOML_SPECS_VISION_FILE='specs/product/overview.md'
 
-If the file cannot be parsed, emits nothing (exit 0). All defaults apply.
+A missing file emits nothing and exits 0, so every default applies. A file
+that exists but cannot be parsed reports the parser detail and exits 3;
+lib/config.sh catches that status, warns once, and continues with defaults.
 """
 
 import sys
@@ -207,9 +209,10 @@ def main() -> None:
         data = parse_toml(path)
         emit(data)
     except Exception as e:
-        # Parse failure — emit nothing, all defaults apply
-        print(f"Warning: could not parse {path}: {e}", file=sys.stderr)
-        sys.exit(0)
+        # The shell owns user-facing context and severity. Emit only the parser
+        # detail so it can produce one message rather than nesting prefixes.
+        print(str(e), file=sys.stderr)
+        sys.exit(3)
 
 
 if __name__ == "__main__":

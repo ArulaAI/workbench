@@ -310,7 +310,7 @@ download_speed() {
         rm -rf "${STAGING_DIR:?}/repo/${dir}"
     done
 
-    chmod +x "${STAGING_DIR}/repo/speed"
+    chmod +x "${STAGING_DIR}/repo/speed" "${STAGING_DIR}/repo/workbench"
 
     INSTALLED_VERSION_HASH="$version_hash"
 
@@ -411,6 +411,8 @@ finalize_install() {
     # Atomic symlinks
     ln -sfn "$version_dir" "${SPEED_HOME}/current"
     ln -sf "../current/speed" "${SPEED_HOME}/bin/speed"
+    # `workbench` is the canonical command; `speed` remains a temporary alias.
+    ln -sf "../current/workbench" "${SPEED_HOME}/bin/workbench"
 
     INSTALLED_VERSION_DIR="$version_dir"
 
@@ -548,7 +550,7 @@ main() {
         echo "  │  SPEED installed successfully!         │"
         echo "  │                                        │"
         echo "  │  Restart your shell, then run:         │"
-        echo "  │    speed help                          │"
+        echo "  │    workbench help                      │"
         echo "  │                                        │"
         echo "  │  To update later:  speed self-update   │"
         echo "  │  To remove:        speed self-uninstall│"

@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+#
+# workbench — canonical Workbench command namespace.
+#
+# The skill system establishes `workbench <command>` as the platform namespace.
+# This is a thin forwarder to the shared implementation currently hosted by the
+# `speed` entrypoint; `speed <command>` is retained only as a temporary,
+# behaviorally identical alias. Setting WORKBENCH_NS=1 tells the shared commands
+# they are running under their canonical name, so no temporary-alias notice is
+# printed.
+#
+# Usage: workbench <init|skills|dashboard|...> [args]
+
+set -euo pipefail
+
+_wb_source="${BASH_SOURCE[0]}"
+while [[ -L "$_wb_source" ]]; do
+    _wb_dir="$(cd "$(dirname "$_wb_source")" && pwd)"
+    _wb_source="$(readlink "$_wb_source")"
+    [[ "$_wb_source" != /* ]] && _wb_source="${_wb_dir}/${_wb_source}"
+done
+_WB_DIR="$(cd "$(dirname "$_wb_source")" && pwd)"
+
+export WORKBENCH_NS=1
+exec "${_WB_DIR}/speed" "$@"
