@@ -94,6 +94,29 @@ def _workbench(project, *args):
     )
 
 
+def _speed(project, *args):
+    missing = _missing_preflight_modules()
+    if missing:
+        pytest.skip(
+            f"{PY} cannot import {', '.join(missing)}, which the entrypoint "
+            "preflight requires. Build a venv from requirements.txt and run "
+            "PYTHONPATH=lib .venv/bin/python3 -m pytest tests/skills/"
+        )
+    env = dict(
+        os.environ,
+        SPEED_PROJECT_ROOT=str(project),
+        SPEED_PYTHON=PY,
+        **_GIT_ENV,
+    )
+    return subprocess.run(
+        [str(REPO / "speed"), *args],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=project,
+    )
+
+
 def test_end_to_end_projects_and_verifies_workbench_health(tmp_path):
     project = tmp_path / "proj"
     (project / ".claude").mkdir(parents=True)
@@ -315,19 +338,31 @@ def test_init_commit_migrates_an_ignore_all_skills_policy(tmp_path):
     assert ignored.returncode == 0
 
 
-def test_malformed_speed_toml_is_reported_once(tmp_path):
+def test_malformed_speed_toml_warns_once_and_unrelated_command_continues(tmp_path):
     project = tmp_path / "bad-config"
     project.mkdir()
     (project / "speed.toml").write_text("[skills\nharnesses = [\"claude\"]\n")
 
-    result = _workbench(project, "skills", "status")
+    result = _workbench(project, "help")
 
-    assert result.returncode == 3
+    assert result.returncode == 0
     messages = [line for line in result.stderr.splitlines() if line.strip()]
     assert len(messages) == 1, result.stderr
-    assert messages[0].startswith("Error: could not parse ")
+    assert messages[0].startswith("Warning: could not parse ")
+    assert "using defaults" in messages[0]
     assert "Warning: Warning:" not in result.stderr
     assert "ValueError:" not in result.stderr
+
+
+def test_speed_init_labels_the_init_alias_not_its_internal_sync(tmp_path):
+    project = tmp_path / "speed-init-alias"
+    project.mkdir()
+
+    result = _speed(project, "init", "--harness", "claude")
+
+    assert result.returncode == 0, result.stderr
+    assert "'speed init' is a temporary alias" in result.stderr
+    assert "'speed skills' is a temporary alias" not in result.stderr
 
 
 def test_a_leading_global_flag_is_not_taken_as_the_command(tmp_path):

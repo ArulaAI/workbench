@@ -68,8 +68,7 @@ if [[ -f "$SPEED_TOML" ]]; then
         rm -f "$_toml_err_file"
 
         if [[ $_toml_rc -ne 0 ]]; then
-            echo "Error: could not parse ${SPEED_TOML}${_toml_err:+: ${_toml_err}}" >&2
-            exit "${EXIT_CONFIG_ERROR:-3}"
+            echo "Warning: could not parse ${SPEED_TOML}; using defaults${_toml_err:+: ${_toml_err}}" >&2
         elif [[ -n "$_toml_err" ]]; then
             echo "Warning: ${_toml_err}" >&2
             eval "$_toml_out"

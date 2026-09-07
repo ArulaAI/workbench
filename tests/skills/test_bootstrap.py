@@ -20,12 +20,12 @@ CATALOG = REPO / "skills"
 TEMPLATE = REPO / "templates" / "speed-toml.toml"
 
 
-def test_shell_config_loader_exports_skill_harnesses():
+def test_shell_config_loader_does_not_duplicate_the_skill_policy_parser():
     output = io.StringIO()
     with redirect_stdout(output):
         emit({"skills": {"harnesses": ["claude", "codex"]}})
 
-    assert "TOML_SKILLS_HARNESSES='claude codex'" in output.getvalue()
+    assert "TOML_SKILLS_HARNESSES" not in output.getvalue()
 
 
 def test_provider_and_skill_harness_are_independent(tmp_path):

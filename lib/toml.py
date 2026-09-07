@@ -12,9 +12,8 @@ Output (stdout):
     TOML_SPECS_VISION_FILE='specs/product/overview.md'
 
 A missing file emits nothing and exits 0, so every default applies. A file
-that exists but cannot be parsed is a configuration error instead: the parser
-detail goes to stderr and the exit status is 3, which lib/config.sh turns into
-an aborted command rather than a silent fall back to defaults.
+that exists but cannot be parsed reports the parser detail and exits 3;
+lib/config.sh catches that status, warns once, and continues with defaults.
 """
 
 import sys
@@ -124,18 +123,6 @@ def emit(data: dict) -> None:
         val = project.get("agents_file")
         if val is not None:
             print(f"TOML_PROJECT_AGENT_FILE='{shell_escape(str(val))}'")
-
-    # [skills] section — independent from [agent].provider. The provider
-    # selects the execution backend; harnesses select skill projection roots.
-    skills = data.get("skills", {})
-    if isinstance(skills, dict):
-        val = skills.get("harnesses")
-        if val is not None:
-            if isinstance(val, list):
-                joined = " ".join(str(item) for item in val)
-            else:
-                joined = str(val)
-            print(f"TOML_SKILLS_HARNESSES='{shell_escape(joined)}'")
 
     # [worktree.symlinks] section — emit as space-separated key:value pairs
     worktree = data.get("worktree", {})

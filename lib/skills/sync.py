@@ -168,7 +168,6 @@ def apply(inspection, plans) -> list:
     catalog_version = inspection.catalog_version
     manifest = inspection.manifest
     before = json.dumps(manifest, sort_keys=True)
-    manifest.setdefault(HARNESSES_KEY, {})
     _prune_unsafe_names(manifest)
 
     by_key = {(p.harness, p.skill): p for p in plans}
@@ -193,25 +192,26 @@ def apply(inspection, plans) -> list:
                 continue
 
             harness = get_harness(item.harness)
-            record = manifest[HARNESSES_KEY].setdefault(
-                harness.id, {"root": harness.skills_root, "skills": {}}
-            )
-            # setdefault leaves an existing record untouched, and validation
-            # accepts a harness record carrying only `root` as "nothing
-            # installed here yet". A merged or hand-edited manifest produces
-            # exactly that, so the key is ensured rather than assumed.
-            record.setdefault("skills", {})
             version = step.version
             if step.operation == REMOVE:
                 if step.dest.is_symlink() or step.dest.exists():
                     _remove_path(step.dest)
-                record["skills"].pop(item.skill, None)
+                record = manifest.get(HARNESSES_KEY, {}).get(harness.id)
+                if record is not None:
+                    record.setdefault("skills", {}).pop(item.skill, None)
                 outcome.action = REMOVED
                 outcome.final_state = SkillState.ABSENT
                 version = None
                 mutated = True
             elif step.operation == WRITE:
                 _write_projection(step.dest, step.rendered)
+                record = manifest.setdefault(HARNESSES_KEY, {}).setdefault(
+                    harness.id, {"root": harness.skills_root, "skills": {}}
+                )
+                # Validation accepts a harness record carrying only `root` as
+                # "nothing installed here yet", so ensure the mapping on the
+                # first operation that actually needs to update it.
+                record.setdefault("skills", {})
                 record["skills"][item.skill] = {
                     "files": {
                         rel: hash_bytes(content)

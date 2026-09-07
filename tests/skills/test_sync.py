@@ -56,6 +56,18 @@ def test_sync_preserves_user_edit_as_conflict(tmp_catalog, tmp_project):
     assert "HAND EDITED" not in edited.read_text()
 
 
+def test_conflict_only_sync_does_not_create_a_manifest(tmp_catalog, tmp_project):
+    skills_dir = tmp_catalog()
+    projected = tmp_project / ".claude" / "skills" / "example-skill"
+    projected.mkdir(parents=True)
+    (projected / "SKILL.md").write_text("USER OWNED\n")
+
+    rows = _run(tmp_project, skills_dir)
+
+    assert rows["example-skill@claude"].final_state == SkillState.CONFLICTED
+    assert not (tmp_project / PATHS.manifest).exists()
+
+
 def _edit_catalog(skills_dir, name="example-skill", body="Do a different thing."):
     (skills_dir / name / "SKILL.md").write_text(
         f"---\nname: {name}\ndescription: A test skill\n---\n\n# {name}\n{body}\n"

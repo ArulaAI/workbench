@@ -5,8 +5,10 @@ description: Reference for speed.toml and environment variables.
 
 SPEED is configured via a project-level `speed.toml` file. All configuration values can also be overridden by environment variables.
 
-A malformed `speed.toml` is a configuration error. Workbench reports it once
-and exits with status 3 instead of silently continuing with defaults.
+A malformed `speed.toml` produces one warning during command startup. Workbench
+then continues with built-in defaults so an unrelated command is not blocked by
+a broken optional setting. Commands that must edit or interpret the malformed
+file can still reject it at their own validation boundary.
 
 ## Precedence
 

@@ -65,6 +65,29 @@ def test_load_package_excludes_junk_files(tmp_catalog):
     assert ".DS_Store" not in pkg.files
 
 
+@pytest.mark.parametrize("junk", [".DS_Store", "__pycache__"])
+def test_load_catalog_ignores_junk_even_when_it_is_a_symlink(
+    tmp_catalog, tmp_path, junk
+):
+    skills_dir = tmp_catalog()
+    outside = tmp_path / "outside-junk"
+    outside.mkdir()
+    target = outside / "target"
+    if junk == "__pycache__":
+        target.mkdir()
+        (target / "secret.pyc").write_bytes(b"SECRET")
+    else:
+        target.write_bytes(b"SECRET")
+    (skills_dir / "example-skill" / junk).symlink_to(
+        target, target_is_directory=target.is_dir()
+    )
+
+    pkg = load_catalog(skills_dir)[0]
+
+    assert not any(junk in rel for rel in pkg.files)
+    assert b"SECRET" not in b"".join(pkg.files.values())
+
+
 # ── Symlinks: refused before anything they point at is read ────────────────
 
 

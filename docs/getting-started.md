@@ -42,11 +42,11 @@ Initialization records the resolved choice in project configuration:
 harnesses = ["claude"]
 ```
 
-This is separate from `[agent].provider`: the provider runs agents, while the
-harness hosts projected skills. They may intentionally name different products.
-Later `init`, `status`, `doctor`, and `sync` commands use the persisted skill
-policy instead of re-detecting directories. `speed init` remains available as a
-temporary alias for `workbench init`.
+Harness selection is separate from `[agent].provider`: the provider runs agents,
+while the harness hosts projected skills. They may intentionally name different
+products. Later `init`, `status`, `doctor`, and `sync` commands use the persisted
+skill policy instead of re-detecting directories. `speed init` remains available
+as a temporary alias for `workbench init`.
 
 Initialization creates the `.speed/` runtime directory, scaffolds `speed.toml`,
 adds agent instructions and the product vision template at

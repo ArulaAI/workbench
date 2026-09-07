@@ -58,6 +58,11 @@ _init_warn_untracked_manifest() {
 }
 
 cmd_init() {
+    # The dispatcher has loaded skills.sh by call time. Keep project.sh
+    # sourceable on its own for lifecycle preflight tests and embedders.
+    if declare -F _speed_alias_notice >/dev/null; then
+        _speed_alias_notice init
+    fi
     local requested_harnesses=()
     local commit_requested=false
     while [[ $# -gt 0 ]]; do
@@ -220,7 +225,7 @@ cmd_init() {
     local sync_out sync_err
     local sync_status=0
     sync_err=$(mktemp)
-    sync_out=$(cmd_skills "${sync_args[@]}" --json 2>"$sync_err") || sync_status=$?
+    sync_out=$(WORKBENCH_NS=1 cmd_skills "${sync_args[@]}" --json 2>"$sync_err") || sync_status=$?
 
     case "$sync_status" in
         0)

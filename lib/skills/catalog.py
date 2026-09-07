@@ -7,7 +7,7 @@ already in memory:
     1. discover   candidate directories, without requiring anything of them
     2. root       the package directory is a real directory, not a link
     3. required   SKILL.md is present
-    4. symlinks   every member is refused if it is a link of any kind
+    4. symlinks   every non-junk member is refused if it is a link of any kind
     5. metadata   SKILL.md alone is read, parsed, and schema-validated
     6. members    the remaining files are read
     7. uniqueness no two packages in the catalog claim one name
@@ -84,9 +84,10 @@ def _member_scan(pkg_dir: Path) -> tuple:
     """Phase 4: the member paths to read, or the links standing in their way.
 
     ``os.walk`` with ``followlinks=False`` refuses to descend a linked
-    directory, and each entry is checked with ``is_symlink`` before it is
-    recorded, so a link pointing at ``~/.ssh`` is reported rather than opened.
-    Nothing here reads a single byte.
+    directory. Generated junk is discarded before each remaining entry is
+    checked with ``is_symlink``, so a package cannot be rejected by an
+    incidental ``.DS_Store`` alias while a link that could be projected is
+    still reported rather than opened. Nothing here reads a single byte.
     """
     relpaths: list = []
     errors: list = []
@@ -95,19 +96,19 @@ def _member_scan(pkg_dir: Path) -> tuple:
         kept: list = []
         for name in sorted(dirnames):
             rel = (here / name).relative_to(pkg_dir).as_posix()
+            if is_junk(rel):
+                continue
             if (here / name).is_symlink():
                 errors.append((rel, NO_SYMLINKS))
-                continue
-            if is_junk(rel):
                 continue
             kept.append(name)
         dirnames[:] = kept
         for name in sorted(filenames):
             rel = (here / name).relative_to(pkg_dir).as_posix()
+            if is_junk(rel):
+                continue
             if (here / name).is_symlink():
                 errors.append((rel, NO_SYMLINKS))
-                continue
-            if is_junk(rel):
                 continue
             relpaths.append(rel)
     return sorted(relpaths), errors

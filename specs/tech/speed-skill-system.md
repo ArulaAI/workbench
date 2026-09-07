@@ -1,12 +1,12 @@
 # RFC: Workbench Skill System
 
-This RFC specifies the technical design for the Workbench Skill System: a canonical skill catalog, a lean Python projection engine, managed-file identity, the `workbench` command namespace with temporary `speed` aliases, and `workbench-health` as the sole platform proof skill.
+The RFC specifies the technical design for the Workbench Skill System: a canonical skill catalog, a lean Python projection engine, managed-file identity, the `workbench` command namespace with temporary `speed` aliases, and `workbench-health` as the sole platform proof skill.
 
 Scope here is packaging, validation, harness projection, routing, health verification, diagnostics, and lifecycle. Module workflow skills are intentionally excluded and belong on separate feature branches after this platform foundation is accepted.
 
 ## Scope Boundary
 
-This branch proves only the reusable skill-system architecture and its installation contract:
+The branch proves only the reusable skill-system architecture and its installation contract:
 
 - `workbench-health` is the only canonical package shipped by this RFC.
 - `workbench` is the canonical command namespace; retained `speed` commands are labeled temporary aliases.
@@ -82,7 +82,9 @@ the only place the list exists: the Bash commands query it through
 
 Execution provider and skill harness are independent. `[agent].provider` selects the backend that runs Workbench agents; `[skills].harnesses` selects the project roots that host skills. A Claude provider with a Codex skill harness is therefore valid, as is a project that hosts skills in several harnesses.
 
-`[skills].harnesses` in `speed.toml` is the durable source of project intent. Initialization resolves policy in this order: repeated `--harness` flags, `WORKBENCH_HARNESSES`, `[skills].harnesses`, the legacy manifest selection for migration, then existing harness markers. The resolved initialization policy is persisted to `speed.toml`; the legacy manifest field is removed. A later bare `sync` therefore cannot forget the init choice or fan out because a new marker appeared. If no level yields a harness, init exits 3 before writing and asks for `workbench init --harness <name>`. Copilot detection requires `.github/skills/`; a generic `.github/` directory alone does not imply Copilot usage.
+`[skills].harnesses` in `speed.toml` is the durable source of project intent. Initialization resolves policy in this order: repeated `--harness` flags, `WORKBENCH_HARNESSES`, `[skills].harnesses`, the legacy manifest selection for migration, then existing harness markers. The resolved initialization policy is persisted to `speed.toml`; the legacy manifest field is removed.
+
+A later bare `sync` therefore cannot forget the init choice or fan out because a new marker appeared. If no level yields a harness, init exits 3 before writing and asks for `workbench init --harness <name>`. Copilot detection requires `.github/skills/`; a generic `.github/` directory alone does not imply Copilot usage.
 
 ### Manifest (managed-file identity)
 
@@ -149,7 +151,7 @@ Catalog version resolution distinguishes the three cases that once all reported 
 
 Fresh init, repeated init, post-clone setup, and upgrades use the same reconciliation path. Repeated init preserves runtime and user-owned files. Post-clone init reads the committed policy and manifest. Catalog upgrades flow through `skills sync` under that same policy. `--harness` on a lifecycle command is an operational scope; only initialization persists a changed project policy.
 
-The bootstrap plan exposes only values the coordinator consumes: resolved harnesses, their source, and whether persistence or legacy migration is required. Malformed `speed.toml` is a configuration error at process startup and produces one error message; commands do not continue with defaults or run a second parser that reports the same failure again.
+The bootstrap plan exposes only values the coordinator consumes: resolved harnesses, their source, and whether persistence or legacy migration is required. A malformed `speed.toml` produces one startup warning while the general configuration loader continues with defaults, so unrelated commands remain usable. Skill bootstrap operations that must interpret or update the file reject it during their own preflight. Their dedicated parser is the only reader of `[skills].harnesses`; the general TOML loader emits no unused duplicate variable.
 
 The alias policy: a `speed` command is retained only with an explicit `workbench` target, identical implementation/state/gates/provenance, and a temporary-alias label. New lifecycle behavior is authored under `workbench`; no independent `speed` workflow is added.
 
@@ -229,7 +231,9 @@ The projected `workbench-health` skill executes its packaged `scripts/health.py`
 
 `conflicted` alone covers six of those, which is why one prose line per state was not enough to act on. Each diagnostic carries `path`, `expected`, and `actual` taken from the inspection, so the output shows the hash comparison the classification was made from instead of asserting its conclusion, and one skill can report several findings at once. Every code the engine can emit is checked against the catalog at import, so a missing definition is a startup failure the author sees rather than a bare code the user reads. `destructive` is explicit for callers that need to confirm before running a repair.
 
-Only the destructive repair is scoped. `--harness` is the narrowest scope sync accepts, so a harness carrying two conflicts still repairs both; per-skill scoping would require a new flag. The non-destructive repairs stay project-wide because nothing they do can lose work. One case is reported for the project rather than per skill: when projections exist but `.speed/skills/manifest.json` does not, every skill would otherwise classify as `conflicted` and be blamed on a local edit, when the files are untouched and the record of them is what went missing. A healthy result contains no diagnostics. Text and JSON outputs carry the same fields.
+Only the destructive repair is scoped. `--harness` is the narrowest scope sync accepts, so a harness carrying two conflicts still repairs both; per-skill scoping would require a new flag. The non-destructive repairs stay project-wide because nothing they do can lose work.
+
+One case is reported for the project rather than per skill: when projections exist but `.speed/skills/manifest.json` does not, every skill would otherwise classify as `conflicted` and be blamed on a local edit, when the files are untouched and the record of them is what went missing. A healthy result contains no diagnostics. Text and JSON outputs carry the same fields.
 
 ## Validation Rules
 
@@ -238,12 +242,13 @@ Run whenever the canonical catalog is loaded; a future release build can reuse t
 Loading runs as ordered phases, so validation is the boundary a package
 clears before its content is read rather than a check applied to bytes already
 in memory: discover candidates, refuse a linked root, require `SKILL.md`,
-refuse every member symlink, read and schema-validate `SKILL.md` alone, read the
-remaining members, then check catalog-wide uniqueness. A phase that finds a
-problem stops that package, so a linked root is never walked, a package holding
-a link is never opened, and a package whose front matter fails its schema never
-has its other files read. Each failure reports one cause: a missing `SKILL.md`
-is not also a missing description and a name mismatch for the same file.
+discard generated junk, refuse every remaining member symlink, read and
+schema-validate `SKILL.md` alone, read the remaining members, then check
+catalog-wide uniqueness. A phase that finds a problem stops that package, so a
+linked root is never walked, a package holding a link is never opened, and a
+package whose front matter fails its schema never has its other files read. Each
+failure reports one cause: a missing `SKILL.md` is not also a missing description
+and a name mismatch for the same file.
 
 | Condition | Constraint | On violation |
 |---|---|---|
@@ -317,7 +322,7 @@ is not also a missing description and a name mismatch for the same file.
 ## Security & Controls
 
 - No new permissions: a skill inherits the invoking harness's model, permissions, and approval controls. Installing grants nothing.
-- No path escape: validation rejects absolute paths and `..`. Packages prohibit symlinks outright rather than only escaping ones, because projection copies bytes and never preserves a link, so no supported use case needs them. Refusal happens at read time, before any linked target is opened, which makes validation the actual boundary instead of a check run after unsafe content is already in memory.
+- No path escape: validation rejects absolute paths and `..`. After generated and OS junk is excluded, packages prohibit symlinks outright rather than only escaping ones, because projection copies bytes and never preserves a link, so no supported package member needs one. Refusal happens at read time, before any linked target is opened, which makes validation the actual boundary instead of a check run after unsafe content is already in memory.
 - No read-through: harness markers, projection roots, and projected files are all walked without following links. A symlink where a managed file belongs is reported as `conflicted`, never hashed through.
 - Durable state: the manifest is written to a staging file in the same directory and swapped in with `os.replace`, so an interrupted run cannot truncate the one record that distinguishes a managed byte from a user edit. A projection is staged in full and swapped into place, so a failed write leaves the previous projection intact rather than a half-installed skill.
 - Fail closed on catalog load: a missing or unreadable catalog directory is an installation error (exit 3), never an empty catalog. Sync plans no removals when the catalog cannot be read.
@@ -347,7 +352,7 @@ is not also a missing description and a name mismatch for the same file.
 
 ## Delivery and Cleanup
 
-This branch delivers the catalog format, engine, Claude/Codex/Copilot harness targets, selective `workbench init --harness`, `workbench skills sync|status|doctor`, and agent-only `workbench-health`. Downstream workflow skills must be introduced on separate branches with their own contracts and tests.
+The branch delivers the catalog format, engine, Claude/Codex/Copilot harness targets, selective `workbench init --harness`, `workbench skills sync|status|doctor`, and agent-only `workbench-health`. Downstream workflow skills must be introduced on separate branches with their own contracts and tests.
 
 If a project manifest contains a managed skill that is no longer in this health-only catalog, normal orphan handling applies: sync removes an unmodified projection and preserves a modified projection as a conflict. Downgrading and syncing re-projects the prior catalog; conflicts are never overwritten silently. Init succeeds only after the selected projections verify as current; a conflict exits 2 and an operational or verification failure exits 3 without creating an initialization commit.
 
@@ -365,7 +370,7 @@ Modified:
 - `lib/cmd/project.sh`: ordered init phases, repeatable `--harness`, verification gate, the managed Git ignore region, and scoped `--commit` behavior.
 - `install.sh`: links `workbench` into `~/.speed/bin` alongside the `speed` alias.
 - `lib/cmd/skills.sh`: applies CLI, environment, and project-config harness precedence and forwards multiple resolved harnesses.
-- `lib/toml.py` + `templates/speed-toml.toml`: `[skills].harnesses` project configuration.
+- `lib/skills/bootstrap.py` + `templates/speed-toml.toml`: `[skills].harnesses` project configuration.
 - `requirements-dev.txt` + README `## Tests`: declared pytest dependency and the canonical `PYTHONPATH=lib python3 -m pytest tests/skills/` command.
 - `lib/cmd/mp_init.sh`: the multi-player allowlist un-ignores `skills/manifest.json` and keeps `skills/events.jsonl` local, applied as the same managed region rather than a full-file overwrite.
 
