@@ -39,6 +39,8 @@ def create_app(project_root: str) -> FastAPI:
     spec_observer = None
     active_feature_observer = None
     authoring_observer = None
+    from .studio import StudioAPI
+    studio_api = StudioAPI(project_root_path)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
@@ -84,7 +86,9 @@ def create_app(project_root: str) -> FastAPI:
             project_root, sub_manager, loop, observer
         )
 
+        studio_api.recover()
         yield
+        studio_api.close()
 
         # Shutdown
         if authoring_observer and authoring_observer is not observer:
@@ -141,6 +145,7 @@ def create_app(project_root: str) -> FastAPI:
     )
 
     app.include_router(graphql_app, prefix="/graphql")
+    app.include_router(studio_api.router)
 
     @app.get("/health")
     async def healthcheck() -> dict:

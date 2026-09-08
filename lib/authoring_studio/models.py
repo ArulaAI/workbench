@@ -1,0 +1,95 @@
+"""Small, provider-independent document contracts."""
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field
+
+Kind = Literal["prd", "design", "rfc"]
+
+TEMPLATES = {
+    "prd": [
+        ("metadata", "Metadata"), ("summary", "Summary"),
+        ("problem", "Problem and evidence"), ("hypothesis", "Hypothesis"),
+        ("stories", "User stories"), ("requirements", "Requirements and acceptance"),
+        ("scope", "Scope"), ("guardrails", "Guardrails"),
+        ("risks", "Delivery risks and open questions"), ("success", "Success"),
+        ("references", "References"),
+    ],
+    "design": [
+        ("intent", "Experience intent"), ("users", "Users and entry points"),
+        ("journeys", "User journeys"), ("states", "Interactions and states"),
+        ("accessibility", "Accessibility and content"),
+        ("coverage", "Requirement coverage"), ("validation", "Validation"),
+        ("decisions", "Open decisions"),
+    ],
+    "rfc": [
+        ("metadata", "Metadata"), ("decision", "Decision summary and approval ask"),
+        ("context", "Context and constraints"), ("design", "Proposed design"),
+        ("contracts", "Contracts and impact"), ("alternatives", "Alternatives and tradeoffs"),
+        ("delivery", "Delivery and verification"), ("decisions", "Open decisions and ownership"),
+    ],
+}
+PREFIXES = {"stories": "US", "requirements": "REQ", "guardrails": "GR", "success": "SM"}
+RFC_MODULES = ["api", "persistence", "compatibility", "migration", "security", "privacy",
+               "reliability", "rollout", "performance", "ai_evaluation"]
+
+
+class StrictModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class Item(StrictModel):
+    id: str = Field(description="Existing ID unchanged, or a unique new-* placeholder for a new entity.")
+    statement: str = Field(min_length=1, max_length=6000)
+    verification: str = Field(description="Acceptance check, regression check, or success signal; outcome for a user story.", min_length=1, max_length=6000)
+    references: list[str] = Field(default_factory=list)
+
+
+class Section(StrictModel):
+    id: str
+    body: str = Field(max_length=18000)
+    items: list[Item] = Field(default_factory=list, max_length=50)
+    source_ids: list[str] = Field(default_factory=list, description="Use ONLY exact source IDs from available_source_ids. Do not use document titles, requirement IDs or snapshot IDs as source IDs.")
+
+
+class Question(StrictModel):
+    id: str = Field(description="Stable short identifier; retain the same ID across revisions.")
+    question: str = Field(min_length=1, max_length=2000)
+    why: str = Field(max_length=2000)
+    blocking: bool
+    section_id: str = Field(default="", description="Core section this question concerns, or empty for document-wide decisions.")
+
+
+class Coverage(StrictModel):
+    module: str
+    status: Literal["material", "not_material", "unresolved"]
+    rationale: str = Field(min_length=1, max_length=3000)
+
+
+class Generation(StrictModel):
+    summary: str = Field(min_length=1, max_length=2500)
+    sections: list[Section] = Field(min_length=1, max_length=15)
+    questions: list[Question] = Field(default_factory=list, max_length=3)
+    assumptions: list[str] = Field(default_factory=list, max_length=15)
+    coverage: list[Coverage] = Field(default_factory=list, max_length=10)
+
+
+class Command(StrictModel):
+    action: Literal["generate", "revise", "reconcile", "edit", "comment", "resolve", "dismiss",
+                    "reopen", "publish", "cancel", "retry", "restore", "review_section"]
+    expected_revision: int = Field(ge=0)
+    request_id: str = Field(min_length=8, max_length=100)
+    kind: Kind = "prd"
+    text: str = Field(default="", max_length=20000)
+    section_id: str | None = None
+    version_id: str | None = None
+    comment_id: str | None = None
+    quote: str = Field(default="", max_length=4000)
+    blocking: bool = False
+    items: list[Item] | None = None
+
+
+class CreateFeature(StrictModel):
+    title: str = Field(min_length=1, max_length=160)
+    brief: str = Field(min_length=12, max_length=20000)
+    context: str = Field(default="", max_length=20000)
+    request_id: str = Field(min_length=8, max_length=100)

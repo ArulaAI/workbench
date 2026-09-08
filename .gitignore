@@ -26,6 +26,7 @@ site/.astro/
 # Next.js build output
 .next/
 .next-*/
+/dashboard/frontend/next-env.d.ts
 
 # TypeScript build cache
 tsconfig.tsbuildinfo
@@ -35,7 +36,9 @@ tsconfig.tsbuildinfo
 node_modules/
 
 # Virtual environment
-.venv/
+.venv
+node_modules
+.speed/studio/
 
 # Compiled grammar libraries (platform-specific, built by scripts/build-grammars.sh)
 lib/context/data/grammars/*.dylib
