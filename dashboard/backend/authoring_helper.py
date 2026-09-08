@@ -19,6 +19,7 @@ import logging
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -78,10 +79,22 @@ def run(project_root: str | Path, *args: str) -> dict[str, Any]:
     if not helper.is_file():
         return _unavailable(root, f"Helper not found at {helper}.")
 
+    helper_args = list(args)
+    answer_file: str | None = None
+    if "--answer" in helper_args:
+        answer_index = helper_args.index("--answer")
+        if answer_index + 1 < len(helper_args):
+            with tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", prefix="speed-answer-", delete=False
+            ) as handle:
+                handle.write(helper_args[answer_index + 1])
+                answer_file = handle.name
+            helper_args[answer_index:answer_index + 2] = ["--answer-file", answer_file]
+
     command = [
         interpreter(root),
         str(helper),
-        *args,
+        *helper_args,
         "--project-root",
         str(root),
         "--dashboard-url",
@@ -89,17 +102,24 @@ def run(project_root: str | Path, *args: str) -> dict[str, Any]:
         "--json",
     ]
     try:
-        completed = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            timeout=TIMEOUT_S,
-            stdin=subprocess.DEVNULL,
-        )
-    except subprocess.TimeoutExpired:
-        return _unavailable(root, f"Helper did not respond within {TIMEOUT_S}s.")
-    except OSError as exc:
-        return _unavailable(root, f"Helper could not be executed: {exc}")
+        try:
+            completed = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=TIMEOUT_S,
+                stdin=subprocess.DEVNULL,
+            )
+        except subprocess.TimeoutExpired:
+            return _unavailable(root, f"Helper did not respond within {TIMEOUT_S}s.")
+        except OSError as exc:
+            return _unavailable(root, f"Helper could not be executed: {exc}")
+    finally:
+        if answer_file:
+            try:
+                Path(answer_file).unlink()
+            except OSError:
+                pass
 
     if not completed.stdout.strip():
         log.warning("draft helper returned no payload: %s", completed.stderr[:400])

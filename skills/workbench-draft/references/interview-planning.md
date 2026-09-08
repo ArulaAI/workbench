@@ -4,29 +4,32 @@ Treat the PRD structure as fixed coverage, not as a fixed questionnaire. Build
 the next question from the requirement, repository evidence, confirmed answers,
 and the material decision still missing.
 
-## Planning loop
+## Planning and interview loop
 
 1. Extract known facts, supported inferences, and unresolved decisions.
 2. Check which PRD coverage areas already have enough evidence.
 3. Score each area using evidence confidence and decision impact. Activate only
    unresolved areas that can materially change user impact, behavior, scope,
    acceptance, safety, success, or delivery.
-4. Generate the provisional PRD immediately, marking inferred and unresolved
-   content honestly.
-5. Ask one plain-language question about the highest-value gap.
-6. Re-plan after every confirmed answer because it may resolve or reveal other
-   coverage areas.
-7. Stop when remaining uncertainty can safely be reviewed in the draft or
-   recorded under Open Questions.
+4. Produce one complete ordered plan containing every material question needed
+   by the PRD template. Do not cap the count.
+5. Ask that prepared plan one plain-language question at a time. Persist every
+   answer before moving forward and do not run the model planner again between
+   answers.
+6. After the final planned answer, reassess persisted coverage locally and
+   generate V1 only when every material interview decision is resolved, then
+   expose the draft for review and editing.
 
 Stable coverage IDs support persistence and traceability. They do not require a
 question to be asked, and they must not appear as an eight-question promise to
-the user. The active plan may grow or shrink as confirmed evidence changes.
+the user. Only a targeted self-review repair may add another question after the
+initial model plan.
 
-Surface no more than three clarifications. Rank candidates using uncertainty,
-decision impact, and downstream leverage. Confidence alone must not block a
+Surface every material clarification needed by the applicable PRD template;
+there is no fixed question limit. Order candidates using uncertainty, decision
+impact, and downstream leverage. Confidence alone must not block a
 draft: low-confidence, low-impact content becomes an inference or open question;
-low-confidence, high-impact content becomes a clarification.
+low-confidence, high-impact content becomes a clarification that blocks V1.
 
 ## Question-writing rules
 

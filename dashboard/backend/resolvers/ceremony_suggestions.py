@@ -6,7 +6,9 @@ Suggestions are persisted per-feature in suggestions.json.
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -46,6 +48,29 @@ def _save_suggestions(
 ) -> None:
     paths = get_paths(project_root)
     _write_json(paths.ceremony_suggestions(feature_name), suggestions)
+
+
+def _current_anchor(
+    project_root: Path,
+    feature_name: str,
+    spec_type: str,
+    section_title: str,
+) -> tuple[str, str]:
+    """Bind a suggestion to the exact ceremony revision and section bytes."""
+    paths = get_paths(project_root)
+    state = _read_json(paths.ceremony_state(feature_name)) or {}
+    revision_id = str(state.get("current_revision") or "")
+    draft = _read_json(paths.ceremony_draft(feature_name, spec_type)) or {}
+    content = str(draft.get("content") or "")
+    if not content:
+        return revision_id, ""
+    match = re.search(
+        rf"^##\s+{re.escape(section_title)}\s*$\n(.*?)(?=^##\s+|\Z)",
+        content,
+        re.MULTILINE | re.DOTALL,
+    )
+    anchored = match.group(0).strip() if match else content
+    return revision_id, hashlib.sha256(anchored.encode("utf-8")).hexdigest()
 
 
 def _dict_to_suggestion(d: dict) -> Suggestion:
@@ -187,14 +212,17 @@ def create_suggestion(
     ability.authorize("suggest", spec_type)
 
     name, email = get_current_actor()
+    revision_id, section_content_hash = _current_anchor(
+        project_root, feature_name, spec_type, section_title
+    )
     suggestion = Suggestion(
         id=str(uuid.uuid4()),
         author=name,
         author_email=email,
-        revision_id="",
+        revision_id=revision_id,
         section_id=section_id,
         section_title=section_title,
-        section_content_hash="",
+        section_content_hash=section_content_hash,
         text=text,
         status="unresolved",
         outdated=False,

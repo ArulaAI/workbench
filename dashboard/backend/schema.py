@@ -44,6 +44,7 @@ from .resolvers.authoring_types import (
     AuthoringIntake,
     AuthoringSession,
     AuthoringSessionEvent,
+    AuthoringSessionList,
 )
 from .resolvers.ceremony_types import CurrentActor, SpecClaimInfo, SpecProgressInfo
 from .resolvers.ceremony_types import get_current_actor as _get_current_actor
@@ -113,6 +114,19 @@ from .resolvers.landing_types import (
     LandingView,
 )
 from .subscriptions import SubscriptionManager, EventType
+
+
+def _camelize_json(value: Any) -> Any:
+    """Expose resolver dictionaries with the same camelCase shape as GraphQL fields."""
+    if isinstance(value, list):
+        return [_camelize_json(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    return {
+        parts[0] + "".join(part[:1].upper() + part[1:] for part in parts[1:]): _camelize_json(item)
+        for key, item in value.items()
+        for parts in [str(key).split("_")]
+    }
 
 
 # ── Enums ────────────────────────────────────────────────────────
@@ -780,22 +794,45 @@ class Query:
     # ── Ceremony queries ────────────────────────────────────────
 
     @strawberry.field
-    def authoring_intake(
+    async def authoring_intake(
         self, info: strawberry.types.Info, artifact_type: Optional[str] = None,
     ) -> AuthoringIntake:
         """Branch-aware missing-input contract for guided authoring."""
-        return authoring_resolver.get_intake(
-            info.context["project_root"], artifact_type
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None,
+            authoring_resolver.get_intake,
+            info.context["project_root"],
+            artifact_type,
         )
 
     @strawberry.field
-    def authoring_session(
+    async def authoring_session(
         self, info: strawberry.types.Info,
         feature_name: str, artifact_type: str = "prd",
     ) -> AuthoringSession:
         """Read-only interview view. Never creates or advances a checkpoint."""
-        return authoring_resolver.get_session(
-            info.context["project_root"], feature_name, artifact_type
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None,
+            authoring_resolver.get_session,
+            info.context["project_root"],
+            feature_name,
+            artifact_type,
+        )
+
+    @strawberry.field
+    async def authoring_sessions(
+        self, info: strawberry.types.Info,
+        artifact_type: Optional[str] = "prd",
+    ) -> AuthoringSessionList:
+        """Every persisted interview, most recently updated first."""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None,
+            authoring_resolver.list_sessions,
+            info.context["project_root"],
+            artifact_type,
         )
 
     @strawberry.field
@@ -927,21 +964,21 @@ class Query:
         self, info: strawberry.types.Info
     ) -> strawberry.scalars.JSON:
         project_root = info.context["project_root"]
-        return bootstrap_resolver.get_bootstrap_status(project_root)
+        return _camelize_json(bootstrap_resolver.get_bootstrap_status(project_root))
 
     @strawberry.field
     def vision_draft(
         self, info: strawberry.types.Info
     ) -> strawberry.scalars.JSON:
         project_root = info.context["project_root"]
-        return bootstrap_resolver.get_vision_draft(project_root)
+        return _camelize_json(bootstrap_resolver.get_vision_draft(project_root))
 
     @strawberry.field
     def derived_conventions(
         self, info: strawberry.types.Info
     ) -> strawberry.scalars.JSON:
         project_root = info.context["project_root"]
-        return bootstrap_resolver.get_derived_conventions(project_root)
+        return _camelize_json(bootstrap_resolver.get_derived_conventions(project_root))
 
     # ── Decomposition queries ─────────────────────────────────────
 
@@ -1549,6 +1586,7 @@ class Mutation:
         self,
         info: strawberry.types.Info,
         feature_name: str,
+        question_id: str,
         answer: str,
         expected_revision: int,
         artifact_type: str = "prd",
@@ -1559,6 +1597,44 @@ class Mutation:
             None,
             authoring_resolver.submit_answer,
             project_root, feature_name, artifact_type, answer, expected_revision,
+            question_id,
+        )
+
+    @strawberry.mutation
+    async def submit_authoring_answers(
+        self,
+        info: strawberry.types.Info,
+        feature_name: str,
+        answers: strawberry.scalars.JSON,
+        expected_revision: int,
+        artifact_type: str = "prd",
+    ) -> AuthoringSession:
+        """Save the complete planned interview and synthesize the PRD once."""
+        project_root = info.context["project_root"]
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,
+            authoring_resolver.submit_answers,
+            project_root, feature_name, artifact_type, answers, expected_revision,
+            info.context["conn"],
+        )
+
+    @strawberry.mutation
+    async def replan_authoring(
+        self,
+        info: strawberry.types.Info,
+        feature_name: str,
+        expected_revision: int,
+        artifact_type: str = "prd",
+    ) -> AuthoringSession:
+        """Run semantic coverage analysis for a new or resumed interview."""
+        project_root = info.context["project_root"]
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,
+            authoring_resolver.replan,
+            project_root, feature_name, artifact_type, expected_revision,
+            info.context["conn"],
         )
 
     @strawberry.mutation
@@ -1595,6 +1671,113 @@ class Mutation:
             authoring_resolver.revise_coverage,
             project_root, feature_name, artifact_type,
             coverage_id, answer, expected_revision,
+        )
+
+    @strawberry.mutation
+    async def revise_authoring_section(
+        self,
+        info: strawberry.types.Info,
+        feature_name: str,
+        section_title: str,
+        body: str,
+        expected_revision: int,
+        artifact_type: str = "prd",
+    ) -> AuthoringSession:
+        project_root = info.context["project_root"]
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,
+            authoring_resolver.revise_section,
+            project_root, feature_name, artifact_type,
+            section_title, body, expected_revision,
+        )
+
+    @strawberry.mutation
+    async def revise_authoring_document(
+        self,
+        info: strawberry.types.Info,
+        feature_name: str,
+        content: str,
+        expected_revision: int,
+        artifact_type: str = "prd",
+    ) -> AuthoringSession:
+        project_root = info.context["project_root"]
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,
+            authoring_resolver.revise_document,
+            project_root, feature_name, artifact_type,
+            content, expected_revision,
+        )
+
+    @strawberry.mutation
+    async def submit_authoring_review_comments(
+        self,
+        info: strawberry.types.Info,
+        feature_name: str,
+        comments: strawberry.scalars.JSON,
+        expected_revision: int,
+        artifact_type: str = "prd",
+    ) -> AuthoringSession:
+        project_root = info.context["project_root"]
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,
+            authoring_resolver.submit_review_comments,
+            project_root, feature_name, artifact_type, comments, expected_revision,
+            info.context["conn"],
+        )
+
+    @strawberry.mutation
+    async def add_authoring_review_comment(
+        self,
+        info: strawberry.types.Info,
+        feature_name: str,
+        comment: strawberry.scalars.JSON,
+        expected_revision: int,
+        artifact_type: str = "prd",
+    ) -> AuthoringSession:
+        project_root = info.context["project_root"]
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,
+            authoring_resolver.add_review_comment,
+            project_root,
+            feature_name,
+            artifact_type,
+            comment,
+            expected_revision,
+        )
+
+    @strawberry.mutation
+    async def prepare_authoring_commit(
+        self,
+        info: strawberry.types.Info,
+        feature_name: str,
+        artifact_type: str = "prd",
+    ) -> AuthoringSession:
+        project_root = info.context["project_root"]
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,
+            authoring_resolver.prepare_commit,
+            project_root, feature_name, artifact_type,
+        )
+
+    @strawberry.mutation
+    async def publish_authoring_draft(
+        self,
+        info: strawberry.types.Info,
+        feature_name: str,
+        expected_revision: int,
+        artifact_type: str = "prd",
+    ) -> AuthoringSession:
+        project_root = info.context["project_root"]
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,
+            authoring_resolver.publish,
+            project_root, feature_name, artifact_type, expected_revision,
         )
 
     @strawberry.mutation
@@ -1838,9 +2021,10 @@ class Mutation:
     ) -> strawberry.scalars.JSON:
         project_root = info.context["project_root"]
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
+        result = await loop.run_in_executor(
             None, lambda: bootstrap_resolver.start_graph_build(project_root),
         )
+        return _camelize_json(result)
 
     @strawberry.mutation
     async def generate_vision(
@@ -1848,9 +2032,10 @@ class Mutation:
     ) -> strawberry.scalars.JSON:
         project_root = info.context["project_root"]
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
+        result = await loop.run_in_executor(
             None, lambda: bootstrap_resolver.generate_vision(project_root),
         )
+        return _camelize_json(result)
 
     @strawberry.mutation
     async def commit_vision(
@@ -1858,9 +2043,10 @@ class Mutation:
     ) -> strawberry.scalars.JSON:
         project_root = info.context["project_root"]
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
+        result = await loop.run_in_executor(
             None, lambda: bootstrap_resolver.commit_vision(project_root, content),
         )
+        return _camelize_json(result)
 
     @strawberry.mutation
     async def extract_conventions(
@@ -1868,9 +2054,10 @@ class Mutation:
     ) -> strawberry.scalars.JSON:
         project_root = info.context["project_root"]
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
+        result = await loop.run_in_executor(
             None, lambda: bootstrap_resolver.extract_conventions(project_root),
         )
+        return _camelize_json(result)
 
     @strawberry.mutation
     async def resolve_convention(
@@ -1879,12 +2066,13 @@ class Mutation:
     ) -> strawberry.scalars.JSON:
         project_root = info.context["project_root"]
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
+        result = await loop.run_in_executor(
             None,
             lambda: bootstrap_resolver.resolve_convention(
                 project_root, convention_id, action,
             ),
         )
+        return _camelize_json(result)
 
     @strawberry.mutation
     async def commit_conventions(
@@ -1893,12 +2081,13 @@ class Mutation:
     ) -> strawberry.scalars.JSON:
         project_root = info.context["project_root"]
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
+        result = await loop.run_in_executor(
             None,
             lambda: bootstrap_resolver.commit_conventions(
                 project_root, persona_input,
             ),
         )
+        return _camelize_json(result)
 
     @strawberry.mutation
     async def complete_bootstrap(
@@ -1906,9 +2095,10 @@ class Mutation:
     ) -> strawberry.scalars.JSON:
         project_root = info.context["project_root"]
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
+        result = await loop.run_in_executor(
             None, lambda: bootstrap_resolver.complete_bootstrap(project_root),
         )
+        return _camelize_json(result)
 
 
 # ── Schema ───────────────────────────────────────────────────────

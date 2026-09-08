@@ -368,6 +368,58 @@ class TestTemplateDimension:
         missing_msgs = [i.message for i in dim.issues if i.severity == "error"]
         assert any("Problem" in m for m in missing_msgs)
 
+    def test_guided_prd_headings_without_table_contract_fail(self, tmp_project):
+        draft = SpecDraft(
+            feature_name="x", spec_type="prd",
+            content=(
+                "<!-- Interview: prd-v2; revision: 2 -->\n"
+                "## Summary\nSupport engineers need faster triage.\n\n"
+                "## Problem & Evidence\nUrgent cases are mixed with routine work.\n\n"
+                "## User Stories\nAs a support engineer, I want severity labels.\n\n"
+                "## Scope\nSeverity labels and queue filtering.\n"
+            ),
+            file_path="specs/x/prd.md", template_name="prd.md",
+            generated_at=None, child_specs=[],
+        )
+
+        dim = _validate_template(draft, tmp_project)
+
+        assert dim.status == "fail"
+        errors = [issue.message for issue in dim.issues if issue.severity == "error"]
+        assert any("User Stories" in message and "template table" in message for message in errors)
+        assert any("Requirements & Acceptance" in message for message in errors)
+
+    def test_current_guided_prd_uses_its_own_composition_contract(self, tmp_project):
+        content = (
+            "<!-- Interview: prd-v4; revision: 6 -->\n"
+            "## Summary\nDue dates make urgent work visible.\n\n"
+            "## Problem & Evidence\nTasks have no due date.\n\n"
+            "## Hypothesis\nUsers will miss fewer time-sensitive tasks.\n\n"
+            "## User Stories\n"
+            "| ID | Story | Priority |\n|---|---|---|\n"
+            "| US-1 | As a task user, I want due dates. | Must |\n\n"
+            "## Requirements & Acceptance\n"
+            "| ID | Story | Product behavior | Done when |\n|---|---|---|---|\n"
+            "| REQ-1 | US-1 | Saving displays the due state. | The due state is visible. |\n\n"
+            "## Scope\n"
+            "| Included | Not included |\n|---|---|\n"
+            "| Date entry and display | Reminders |\n\n"
+            "## Guardrails / Must Not Regress\n"
+            "| ID | What must remain true | How it will be verified |\n|---|---|---|\n"
+            "| GR-1 | Existing undated tasks work. | Regression check |\n\n"
+            "## Success\n"
+            "| ID | Outcome or signal | Target | Window | Owner |\n|---|---|---|---|---|\n"
+            "| SM-1 | Fewer missed tasks | Provisional | Post-launch | Unassigned |\n"
+        )
+        draft = SpecDraft(
+            feature_name="x", spec_type="prd", content=content,
+            file_path="specs/x/prd.md", template_name="prd.md",
+            generated_at=None, child_specs=[],
+        )
+
+        assert _validate_template(draft, tmp_project).status == "pass"
+        assert _validate_structure(draft, tmp_project).status == "pass"
+
     def test_placeholder_table_warning(self, tmp_project):
         draft = SpecDraft(
             feature_name="x", spec_type="prd",

@@ -44,4 +44,24 @@ if [[ "${1:-}" == "draft" ]]; then
         "$@" --project-root "$_wb_project_root"
 fi
 
+if [[ "${1:-}" == "define" ]]; then
+    shift
+    _wb_project_root="${SPEED_PROJECT_ROOT:-$PWD}"
+    _wb_python="${SPEED_PYTHON:-${_WB_DIR}/.venv/bin/python3}"
+    [[ -x "$_wb_python" ]] || _wb_python="python3"
+    exec "$_wb_python" "${_WB_DIR}/skills/workbench-define/scripts/define.py" \
+        "$@" --project-root "$_wb_project_root"
+fi
+
+# A canonical feature name selects the connected package audit. Paths retain
+# the existing focused, model-backed spec audit for repair work.
+if [[ "${1:-}" == "audit" && -n "${2:-}" && "${2:-}" != */* && "${2:-}" != *.md ]]; then
+    shift
+    _wb_project_root="${SPEED_PROJECT_ROOT:-$PWD}"
+    _wb_python="${SPEED_PYTHON:-${_WB_DIR}/.venv/bin/python3}"
+    [[ -x "$_wb_python" ]] || _wb_python="python3"
+    exec "$_wb_python" "${_WB_DIR}/skills/workbench-define/scripts/define.py" \
+        "$@" --audit --project-root "$_wb_project_root"
+fi
+
 exec "${_WB_DIR}/speed" "$@"

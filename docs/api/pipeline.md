@@ -372,7 +372,7 @@ Manages the monitoring dashboard. Subcommands:
 
 | Subcommand | Behavior |
 |------------|----------|
-| `start [--port PORT] [--api-only]` | Launches FastAPI backend (default port 4440) and Next.js frontend (port 3000). `--api-only` skips the frontend. |
+| `start [--port PORT] [--frontend-port PORT] [--api-only]` | Launches FastAPI backend (default port 4440) and Next.js frontend (default port 3000). Concurrent frontends use isolated build caches. `--api-only` skips the frontend. |
 | `stop` | Graceful shutdown with 5-second timeout, then force-kills. |
 | `status` | Shows running/dead state of dashboard processes. |
 | `ingest` | Backfills the dashboard database from state files without starting the server. |

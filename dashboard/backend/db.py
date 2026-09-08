@@ -7,6 +7,7 @@ WAL mode for concurrent reads during live ingestion.
 from __future__ import annotations
 
 import sqlite3
+import threading
 from pathlib import Path
 from contextlib import contextmanager
 from typing import Generator
@@ -20,8 +21,8 @@ CREATE TABLE IF NOT EXISTS project (
     root_path       TEXT NOT NULL,
     git_remote      TEXT,
     git_head        TEXT,
-    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%%H:%%M:%%SZ','now')),
-    updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%%H:%%M:%%SZ','now'))
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 );
 
 CREATE TABLE IF NOT EXISTS features (
@@ -89,7 +90,7 @@ CREATE TABLE IF NOT EXISTS ingested_files (
     path          TEXT PRIMARY KEY,
     mtime         REAL NOT NULL,
     size          INTEGER NOT NULL,
-    ingested_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%%H:%%M:%%SZ','now'))
+    ingested_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 );
 
 CREATE TABLE IF NOT EXISTS spec_index (
@@ -100,7 +101,7 @@ CREATE TABLE IF NOT EXISTS spec_index (
     content_hash    TEXT NOT NULL,
     section_count   INTEGER NOT NULL DEFAULT 0,
     completeness    REAL,
-    updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%%H:%%M:%%SZ','now'))
+    updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 );
 
 CREATE TABLE IF NOT EXISTS feature_specs (
@@ -155,6 +156,39 @@ CREATE INDEX IF NOT EXISTS idx_spec_sections_path     ON spec_sections(spec_path
 """
 
 
+class LockedConnection(sqlite3.Connection):
+    """Serialize all operations that share one SQLite connection.
+
+    Watchdog callbacks and executor-backed resolvers use the dashboard connection
+    from different threads. Holding the same re-entrant lock for a full explicit
+    transaction prevents another thread from committing a partial write.
+    """
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.operation_lock = threading.RLock()
+
+    def execute(self, *args, **kwargs):
+        with self.operation_lock:
+            return super().execute(*args, **kwargs)
+
+    def executemany(self, *args, **kwargs):
+        with self.operation_lock:
+            return super().executemany(*args, **kwargs)
+
+    def executescript(self, *args, **kwargs):
+        with self.operation_lock:
+            return super().executescript(*args, **kwargs)
+
+    def commit(self) -> None:
+        with self.operation_lock:
+            super().commit()
+
+    def rollback(self) -> None:
+        with self.operation_lock:
+            super().rollback()
+
+
 def db_path(project_root: str | Path) -> Path:
     """Return the path to the dashboard SQLite DB for a target project."""
     from .paths import get_paths
@@ -166,7 +200,9 @@ def connect(project_root: str | Path) -> sqlite3.Connection:
     path = db_path(project_root)
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    conn = sqlite3.connect(str(path), check_same_thread=False)
+    conn = sqlite3.connect(
+        str(path), check_same_thread=False, factory=LockedConnection
+    )
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
@@ -196,9 +232,11 @@ def migrate(conn: sqlite3.Connection) -> None:
 @contextmanager
 def transaction(conn: sqlite3.Connection) -> Generator[sqlite3.Connection, None, None]:
     """Context manager for explicit transactions with rollback on error."""
-    try:
-        yield conn
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
+    lock = getattr(conn, "operation_lock", threading.RLock())
+    with lock:
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise

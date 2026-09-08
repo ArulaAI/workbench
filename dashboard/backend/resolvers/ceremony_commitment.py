@@ -195,6 +195,19 @@ def _compute_spec_hash(project_root: Path, feature_name: str, spec_type: str) ->
     return hashlib.sha256(draft.content.encode()).hexdigest()[:12]
 
 
+def _context_package_reference(project_root: Path, feature_name: str) -> str:
+    """Return a reproducible path-and-hash reference for the consumed context."""
+    path = get_paths(project_root).ceremony_context_package(feature_name)
+    if not path.is_file():
+        return ""
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    try:
+        display = path.relative_to(project_root).as_posix()
+    except ValueError:
+        display = str(path)
+    return f"{display}#sha256={digest}"
+
+
 def commit_spec(
     project_root: Path, feature_name: str, spec_type: str
 ) -> CommitRecord:
@@ -273,7 +286,7 @@ def commit_spec(
         "claimant_email": ability.actor.email,
         "committed_at": committed_at,
         "validation_state_ref": content_hash,
-        "context_package_ref": "",
+        "context_package_ref": _context_package_reference(project_root, feature_name),
         "suggestion_history": {
             "received": sug_history.received,
             "accepted": sug_history.accepted,

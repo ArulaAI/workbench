@@ -9,6 +9,23 @@
 > `dashboard/frontend/components/ceremony/guided/`, grouped into one file per
 > region rather than one file per component.
 
+## Embedded-editor revision (2026-09-07)
+
+This revision supersedes the earlier title/slug form and three-region review
+details below. `/define/new` now opens one conversation-style description field
+without a character counter or hard cap. The server first uses an opaque route;
+the initial AI planner derives the concise display title and canonical slug;
+the author is not asked to name either one. After the helper asks only the
+missing material questions, the completed route becomes a 40/60 split: chat and
+review feedback on the left, a lightweight Markdown editor on the right.
+
+The right panel owns a real revision dropdown, Save, undo/redo, normal/heading
+style, bold, italic, bulleted and numbered lists, link and table insertion, plus
+live word and character counts. It replaces the separate “Open in editor”
+action. Selecting text opens a comment composer that preserves section, quote,
+character offsets, and anchor revision; the left chat composer remains available
+for broad feedback that may update multiple sections.
+
 <!--
   WHO READS THIS SPEC
   AI coding agents use this as their primary implementation reference.
@@ -27,29 +44,34 @@
 
 ## Scope
 
-Three surfaces:
+Five surfaces:
 
-- **Guided PRD intake** (`/define/new`, guided branch) where the author gives the feature a title, confirms its slug, and describes the problem
-- **Interview page** (`/define/:feature/authoring/prd`) where the author answers the clarifications the helper selected and watches the PRD fill in
-- **Resume card** on `/define/:feature`, the single entry point back into an interview in progress
+- **Guided PRD intake** (`/define/new`, guided branch) where the author provides only a natural-language feature description; planning derives the display title and the system owns the routing slug
+- **Downstream artifact intake** for Design and Technical RFC on the canonical feature route, with strict published PRD and, for RFC, published Design prerequisites
+- **Interview page** (`/define/:feature/authoring/:artifact`) where the author answers branch-specific clarifications and watches the artifact fill in
+- **Drafts list** on `/define` and `/define/new`, every persisted interview in the project with one action each
+- **Resume card** on `/define/:feature`, the entry back into the interview for the feature already being viewed
+- **Review and commit handoff** from a completed interview into the existing Define commitment flow
 
-Out of scope: the Design and Technical branches on any surface (both stay on the CLI), the intent-first ceremony flow and its context panel, the suggestion sidebar, validation gutter, decomposition, commitment, and ratification. Those belong to the sibling ceremony specs.
+Out of scope: the intent-first ceremony flow and its context panel, the suggestion sidebar, validation gutter, decomposition, and ratification. Commitment remains owned by the sibling ceremony specs; guided authoring publishes versioned drafts and hands completed PRDs to the existing commit flow rather than implementing a second commit engine.
 
 
 ## Design Intent
 
-**Direction:** The author is reviewing, not filling in a form. A usable PRD exists before the first question is answered, so the page opens with a real document on the right and exactly one decision in the middle. The interview is a short conversation about the few things the evidence cannot settle, and the document visibly improves after each answer. Calm and dense, consistent with the rest of the dashboard: no ceremony around progress, no celebration at the end.
+**Direction:** The author is having a short decision conversation, not filling in a fixed form. The first V1 is withheld until the applicable product decisions are meaningful; then it appears as a complete reviewable document. A strong answer may satisfy several sections and remove questions that have not yet been shown. Calm and dense, consistent with the rest of the dashboard: no ceremony around progress, no celebration at the end.
 
-**Do not:** Render a fixed-length stepper, wizard breadcrumbs, or "step 2 of 8" (the plan is recomputed after every answer and the count legitimately changes). Show unavailable actions as disabled controls (the helper omits them; render only what it returns). Put the question in a modal or drawer (the draft must stay visible). Add a streaming shimmer, typing indicator, or "generating" animation (generation is deterministic and immediate). Make generated prose editable: no `contenteditable` preview, no Save button on the document, no inline Markdown editor. Handle a revision conflict with a toast. Apply accent to coverage rows, evidence text, or source paths. Use pulsing skeleton loaders (opacity fade only). Add illustrations, confetti, or a success screen on completion. Auto-advance to the next question without an explicit submit.
+**Do not:** Render a fixed-length stepper, wizard breadcrumbs, or "step 2 of 8" (the plan is recomputed after every answer and the count legitimately changes). Show unavailable actions as disabled controls (the helper omits them; render only what it returns). Put the question in a modal or drawer (the draft must stay visible). Add a streaming shimmer, typing indicator, or "generating" animation (generation is deterministic and immediate). Use `contenteditable` for generated prose; direct edits use an explicit section editor and Save action so ownership is recorded. Handle a revision conflict with a toast. Apply accent to coverage rows, evidence text, or source paths. Use pulsing skeleton loaders (opacity fade only). Add illustrations, confetti, or a success screen on completion. Auto-advance to the next question without an explicit submit.
 
 
 ## Pages / Routes
 
 | Route | User Flow | Description |
 |-------|-----------|-------------|
-| `/define/new` (guided branch) | AUTH-S1 start a PRD | Artifact choice, then one form: title, derived slug, description. Submitting calls `startAuthoring` and routes to the interview page. The intent-first ceremony branch shares this route and is unchanged. |
-| `/define/:feature/authoring/prd` | AUTH-P1 interview, AUTH-S6 repair, AUTH-S9 section edit | Three regions: coverage, current question, draft preview. Every state of the interview lives here, including completion. |
+| `/define/new` (guided branch) | AUTH-S1 start a PRD | Artifact choice and one description. Submitting calls `startAuthoring` with an opaque draft identity and routes immediately; planning later replaces the route with the canonical model-derived slug. |
+| `/define/:feature/authoring/prd` | AUTH-P1 interview, AUTH-S6 repair, AUTH-S9 section edit | Defaults to Draft readiness, current question, and a wider draft preview. `?view=coverage` restores the original full coverage rail for comparison. Every state of the interview lives here, including completion. |
 | `/define/:feature` | AUTH-S4 resume | Existing ceremony page. Gains one ResumeCard above the fold when an authoring checkpoint exists for the feature. |
+| `/define` | AUTH-S4 resume | Existing coverage grid. Gains a DraftsInProgress section above the grid listing every interview in the project. Renders nothing when there are none. |
+| `/define/new` | AUTH-S4 resume | The same list under the intake card, headed "Resume a draft", so starting and resuming sit on one screen. |
 
 
 ## Layout Structure
@@ -68,9 +90,10 @@ Interview page (`/define/:feature/authoring/prd`):
 |-----------|----------|-------|-----------------|--------|
 | `authoring-bar` | top of main, sticky | full | flex, space-between, 40px tall | no |
 | `conflict-banner` | below `authoring-bar`, sticky | full | flex, space-between | no |
-| `coverage-rail` | left | 280px fixed | flex-col, gap 12px | yes |
+| `draft-readiness` | left, default | 240px fixed | V1 status, confirmed inputs, next material gap | yes |
+| `coverage-rail` | left, comparison view | 280px fixed | flex-col, gap 12px | yes |
 | `question-column` | centre, right of rail | fluid, content max 640px | stack, gap 16px | yes |
-| `draft-preview` | right | 420px fixed | stack, header + document | yes |
+| `draft-preview` | right | up to 760px focused; 420px coverage | stack, header + document | yes |
 
 Intake page (`/define/new`, guided branch):
 
@@ -109,7 +132,8 @@ Intake page (`/define/new`, guided branch):
 └────────────────────────────────────────────────────────────────┘
 ```
 
-Field order is title, slug, description, matching how an author thinks: name the thing, accept the identifier, explain the problem. The slug sits between them because it is derived from the title and confirmed, not composed.
+The PRD intake has one description field. It does not show or ask the author to
+confirm an interim title or slug.
 
 ### Interview Layout
 
@@ -125,8 +149,8 @@ Field order is title, slug, description, matching how an author thinks: name the
 │ ○ P-Q7  not material  │ │ behaviour proves each  │ │ ## Summary            │
 │                       │ │ essential requirement? │ │ …                     │
 │ 1/2 confirmed         │ │                        │ │ ─ P-Q1 · Edit         │
-│ Plan adapts after     │ │ Evidence to consider   │ │ ## Problem & Evidence │
-│ each answer           │ │ Confirmed flows, …     │ │ …                     │
+│ Questions planned     │ │ Evidence to consider   │ │ ## Problem & Evidence │
+│ together              │ │ Confirmed flows, …     │ │ …                     │
 │                       │ │                        │ │ ─ P-Q1 · Edit         │
 │                       │ │ SUGGESTION   partial   │ │ ## Requirements       │
 │                       │ │ (no grounded response) │ │ …                     │
@@ -140,7 +164,7 @@ Field order is title, slug, description, matching how an author thinks: name the
 └───────────────────────┴────────────────────────────┴───────────────────────┘
 ```
 
-Reading order is deliberately left to right in importance: what is still open, what is being asked, what has been produced. The coverage rail is reference material and never competes with the question card, which is the only place in the layout that carries an accent action.
+Reading order is deliberately left to right in importance: what is still open, what is being asked, what has been produced. The coverage rail is reference material and never competes with the question batch, whose single final submit is the only accent action in the layout.
 
 ### Question Card Anatomy
 
@@ -157,23 +181,23 @@ Six stacked slots, all optional except the identifier, prompt, and control. Rend
 
 ### Draft Preview Layout
 
-Header strip (32px) with `PRD · rev N`, the artifact path in mono, and an external-open affordance. Below it the rendered document with a provenance footer under each managed section. Sections come from `sections[]` in the result, in the helper's order, never from parsing the Markdown.
+Header strip with `{artifact label} · vN`, word/character counts, an Edit/View toggle, and the PRD-only `Review & commit` action. The toolbar keeps the version dropdown, Save/Publish actions, and edit-only formatting controls. View mode renders the complete Markdown file. In Edit mode, metadata and the editable body share one document scroller, so metadata is not sticky. The current version is editable in place; historical versions are read-only. Sections and provenance come from `sections[]` in helper order.
 
 
 ## Component Inventory
 
 | Component ID | Type | Location | Parent Region | Role |
 |--------------|------|----------|---------------|------|
-| ArtifactChoice | new | `guided/IntakeForm.tsx` | `intake-card` | Renders the helper's `artifact_type` options. PRD continues into the form; Design shows the CLI command and does not open a UI interview. |
-| GuidedPrdIntakeForm | new | `guided/IntakeForm.tsx` | `intake-card` | Title, SlugField, description. Renders from `next_input.fields`; submits `startAuthoring`. |
-| SlugField | new | `guided/IntakeForm.tsx` | GuidedPrdIntakeForm | Derived-but-editable identifier with inline validation and the resulting artifact path. |
+| ArtifactTabs | new | `guided/IntakeForm.tsx` | `intake-card` | Switches among PRD, Design, and Technical RFC without changing the shell. |
+| ArtifactSourceIntake | new | `guided/IntakeForm.tsx` | `intake-card` | Routes Design and RFC to canonical features; strict published-upstream validation remains server-owned. |
+| GuidedPrdIntakeForm | new | `guided/IntakeForm.tsx` | `intake-card` | One description field rendered from `next_input.fields`; title and routing identity are system-owned. |
 | AuthoringBar | new | `guided/AuthoringBar.tsx` | `authoring-bar` | Feature title, artifact chip, revision, SaveStateChip, progress count. |
 | SaveStateChip | new | `guided/AuthoringBar.tsx` | AuthoringBar | Saved / Saving / Conflict. Never optimistic. |
 | ConflictBanner | new | `guided/AuthoringBar.tsx` | `conflict-banner` | Held revision, current revision, reload action, assurance that typed text is kept. |
 | CoverageRail | new | `guided/CoverageRail.tsx` | `coverage-rail` | CoverageProgress plus one CoverageRow per `coverage` entry. |
 | CoverageProgress | new | `guided/CoverageRail.tsx` | CoverageRail | `confirmed/total` and the adaptive-plan caption. No bar segments for unplanned questions. |
 | CoverageRow | new | `guided/CoverageRail.tsx` | CoverageRail | State dot, question ID, confidence label, impact. Read-only for unanswered rows; confirmed rows link to their section. |
-| QuestionCard | new | `guided/QuestionCard.tsx` | `question-column` | The six-slot card above. Owns no interview text of its own. |
+| QuestionCard | new | `guided/QuestionCard.tsx` | `question-column` | Renders one question from the complete initial plan. Continue persists that answer before the helper returns the next question. Owns no interview text of its own. |
 | EvidenceNote | new | `guided/QuestionCard.tsx` | QuestionCard | "Evidence to consider" block, clamped with expand. |
 | SuggestionPanel | new | `guided/QuestionCard.tsx` | QuestionCard | Confidence chip, suggestion body or the explicit no-suggestion line, SourcePathRef list, GapList. |
 | GapList | new | `guided/QuestionCard.tsx` | SuggestionPanel | Helper gap strings. Secondary text, never tertiary: these are read to make a decision. |
@@ -184,10 +208,12 @@ Header strip (32px) with `PRD · rev N`, the artifact path in mono, and an exter
 | FollowUpNotice | new | `guided/Notices.tsx` | QuestionCard | The single declared follow-up prompt, framed as a targeted addition rather than a rejection. |
 | FindingsNotice | new | `guided/Notices.tsx` | QuestionCard | Self-review findings for the current question, each with its message. |
 | BlockingNotice | new | `guided/Notices.tsx` | `question-column` | Deferred required questions and what unblocks generation. |
-| DraftPreview | new | `guided/DraftPreview.tsx` | `draft-preview` | Existing Markdown renderer, wrapped to add the header strip and per-section provenance footers. Read-only. |
-| SectionProvenance | new | `guided/DraftPreview.tsx` | DraftPreview | Source question IDs plus Edit for one section. |
+| DraftPreview | new | `guided/DraftPreview.tsx` | `draft-preview` | Existing Markdown renderer, wrapped to add the header strip, direct section editing, comments, and per-section provenance footers. |
+| SectionProvenance | new | `guided/DraftPreview.tsx` | DraftPreview | Source question IDs plus Edit draft and Comment actions. |
 | SelfReviewSummary | new | `guided/Notices.tsx` | `question-column` | Terminal state: passed, or open questions with their source IDs. |
 | ResumeCard | new | `guided/ResumeCard.tsx` | `/define/:feature` page body | Artifact, status, `confirmed/total`, resume link. |
+| DraftsInProgress | new | `guided/DraftsInProgress.tsx` | `/define` and `/define/new` page bodies | Counted section header plus one DraftRow per listed interview, in the helper's order. Returns null on an empty list. |
+| DraftRow | new | `guided/DraftsInProgress.tsx` | DraftsInProgress | Title, slug, revision, relative time, status dot and label, `confirmed/total`, and one action. The whole row is the link. |
 | HelperUnavailable | new | `guided/Notices.tsx` | `question-column`, `intake-card` | Adapter failure with the resolved helper path and interpreter. |
 
 ### Component Props
@@ -197,18 +223,7 @@ Header strip (32px) with `PRD · rev N`, the artifact path in mono, and an exter
 |------|------|---------|-------------|
 | `fields` | `IntakeField[]` | required | From `next_input.fields`; labels and descriptions render verbatim |
 | `submitting` | `boolean` | `false` | Locks the form and swaps the button label |
-| `existingSession` | `AuthoringSession \| null` | `null` | Non-null after a slug check finds a checkpoint; switches the button to Resume |
-| `onSubmit` | `(title: string, slug: string, description: string) => void` | required | |
-| `onSlugCheck` | `(slug: string) => void` | required | Debounced 300ms, fires on change and blur |
-
-#### SlugField
-| Prop | Type | Default | Description |
-|------|------|---------|-------------|
-| `value` | `string` | required | Current slug |
-| `derivedFrom` | `string` | required | Title the slug was derived from; a manual edit stops derivation |
-| `error` | `string \| null` | `null` | Validation or collision message |
-| `artifactPath` | `string` | required | `specs/<slug>/prd.md`, shown as caption |
-| `onChange` | `(value: string) => void` | required | |
+| `onSubmit` | `(description: string) => void` | required | Server creates an opaque identity; planning supplies title and canonical slug later |
 
 #### CoverageRow
 | Prop | Type | Default | Description |
@@ -250,7 +265,8 @@ Header strip (32px) with `PRD · rev N`, the artifact path in mono, and an exter
 | `artifactPath` | `string` | required | |
 | `revision` | `number` | required | |
 | `highlightQuestionId` | `string \| null` | `null` | Sections sourced from this question get the regenerate highlight |
-| `onEditSection` | `(coverageId: string) => void` | required | |
+| `onEditDraftSection` | `(sectionTitle: string, body: string) => Promise<boolean>` | optional | Persists an explicit manual section edit |
+| `onAddComment` | `(sectionTitle: string, comment: string) => void` | optional | Adds a section note to the pending review batch |
 
 #### ConflictBanner
 | Prop | Type | Default | Description |
@@ -279,7 +295,7 @@ All values on the 4px grid.
 | Page padding | 24px | Around the three interview regions |
 | Region gap | 16px | Between coverage rail, question column, preview |
 | Intake card padding | 32px 24px | Generous, matches IntentInput |
-| Intake field gap | 20px | Between title, slug, description groups |
+| Intake field gap | 20px | Between description and action |
 | Intake label margin-bottom | 8px | Label to field |
 | Intake caption margin-top | 8px | Field to helper text |
 | Intake field min height | 40px | Single-line inputs |
@@ -439,21 +455,29 @@ Nothing on this surface goes above level 2. There are no modals, dropdowns, or o
 
 ### Page-Level States
 
+#### Drafts list, empty
+
+Nothing renders. A project with no guided interview gains no header, no empty-state card, and no placeholder row: the surface only appears once there is something to resume.
+
+#### Drafts list, populated
+
+Section header `{heading} · {n}` above a 1px-gap row grid, matching the coverage grid's divider treatment. Rows carry a status dot, `confirmed/total`, and one action. The list keeps the helper's order (most recently updated first) so scanning matches memory of what was last worked on.
+
+#### Drafts list, unreadable checkpoint
+
+The row still renders, with the red `error` dot, "Checkpoint unreadable", the helper's message in the row's `title`, and "Unavailable" in place of the action. The row is not a link. A damaged checkpoint is surfaced rather than hidden, and nothing offers to repair or delete it.
+
 #### Intake, empty (`/define/new`, guided branch)
 
-Centred `.surface` card. Title field autofocused. Slug empty and derived on first keystroke. Submit disabled until title, slug, and description all pass local validation. No example content prefilled: a placeholder is a hint, a prefill becomes someone else's PRD.
+Centred `.surface` card with the description field autofocused. Submit is
+disabled until the description contains non-whitespace text. No example content
+is prefilled: a placeholder is a hint, a prefill becomes someone else's PRD.
 
-#### Intake, slug checking
+#### Intake, identity derivation
 
-Slug field shows a 11px tertiary caption "Checking…" 300ms after the last keystroke. The submit button stays enabled: the check informs, it does not gate, and the helper validates authoritatively at the write.
-
-#### Intake, slug collision
-
-Caption switches to the existing feature's status and the button splits into "Resume interview" (primary) and "Use a different slug" (secondary). Description and title text are preserved through the switch. The form never silently attaches a new description to existing progress.
-
-#### Intake, invalid slug
-
-Inline error under the field, from the helper's message when the failure came from the helper, otherwise the local rule ("lowercase letters, digits, and hyphens, 1 to 50 characters"). Border turns `--color-red`. Submit disabled.
+The authoring route displays **Deriving title…** while planning runs. The opaque
+route is replaced only after the model title passes validation and the package is
+canonicalized. A collision is reported without moving or merging checkpoints.
 
 #### Intake, submitting
 
@@ -461,15 +485,24 @@ Fields locked at 0.5 opacity, button label becomes "Starting…" with the width 
 
 #### Interview, first load
 
-Because a provisional PRD exists from the first call, the populated state is the first state. The preview shows the draft, the coverage rail shows every area with its label, and the question column shows the highest-value clarification. There is no onboarding overlay and no empty document.
+The page shows the complete model-planned set of conversational questions and a readiness rail explaining why those answers matter. The count is determined by missing material decisions in the applicable PRD template, not a UI cap. The fixed question bank is not displayed. No document preview is rendered while questions remain; the interview expands into the available width. After all material inputs are confirmed and V1 generation completes, the embedded editor and preview appear with revision history.
 
 #### Interview, loading
 
 Three region shells at the correct sizes with content at 0.4 opacity, fading to full on arrival. No pulsing, no spinner over the page. The rail and preview populate first if the payload arrives together; they must not reflow when the question card lands.
 
-#### Interview, populated (question)
+Submitting intake creates the checkpoint and navigates here before model planning
+starts. The question column then shows “Analyzing with AI” until the initial plan
+arrives, so a slow configured CLI model never leaves the author waiting on the
+intake form without route-level feedback.
 
-Standard state. One question card, one control, one primary action. The preview keeps its scroll position across answers.
+#### Interview, populated (initial batch)
+
+Standard state. One card from the preplanned interview is visible with its
+position and one response control. Continue persists that answer immediately,
+then advances without another model call. The last question's action saves the
+last answer and starts generation directly; no additional Create PRD card
+appears. The preview opens only after self-review passes.
 
 #### Interview, follow-up pending
 
@@ -489,11 +522,18 @@ FindingsNotice lists each finding for this question; control is AnswerTextarea p
 
 #### Interview, blocked
 
-Question card stays, BlockingNotice appears below it naming the deferred required questions and stating that generation is blocked until they are confirmed. The draft remains available and openable: deferral never removes the provisional artifact.
+Question card stays and BlockingNotice names the deferred material decision. No PRD is generated until the decision is answered or becomes non-applicable from later evidence.
 
 #### Interview, drafted
 
-Question column swaps to SelfReviewSummary: passed, the artifact path, and two actions, "Open in editor" and "Back to feature". The coverage rail shows every row confirmed or not-material. The preview stays exactly where it was. No modal, no confetti, no redirect.
+Question column swaps to SelfReviewSummary. Each preview section exposes
+provenance, Edit draft, and Comment. Comments are accumulated across sections;
+the summary shows one “Regenerate with N comments” action. Submission sends the
+comments, complete current PRD, source inputs, and template contract to the
+configured model, which returns replacement bodies for exactly the affected
+sections. Instruction text is never appended verbatim. A failed model call
+keeps both the current draft and pending comments unchanged. The commit action
+remains separate so the reviewer can inspect the regenerated PRD first.
 
 #### Interview, drafted with open questions
 
@@ -533,7 +573,7 @@ Every field below comes from the helper result. No element on this surface deriv
 | Element | Source Field | Format | Constraints |
 |---------|-------------|--------|-------------|
 | Authoring bar title | `intake.feature_title`, falling back to the slug title-cased | string | Truncate at 48 chars with ellipsis, full value in `title` attribute |
-| Artifact chip | `artifact_type` | uppercase label from `ARTIFACTS[type].label` | Always "PRD" on this surface |
+| Artifact chip | `artifact_type` | label from `ARTIFACTS[type].label` | PRD, Design, or Technical RFC |
 | Revision | `revision` | `rev {n}` | Mono; changes are announced politely |
 | Save chip | mutation lifecycle plus `status` | enum | `saved` only after a returned revision exceeds the held one |
 | Progress count | `progress.confirmed` / `progress.total` | `{c}/{t} confirmed` | Denominator may decrease; never cached across payloads |
@@ -543,7 +583,7 @@ Every field below comes from the helper result. No element on this surface deriv
 | Question prompt | `current_question.prompt` | string | Verbatim, no truncation, no re-wrapping of punctuation |
 | Evidence body | `current_question.evidence` | string | Clamp 3 lines, expand in place |
 | Purpose tooltip | `current_question.purpose` | string | Optional; omitted when absent |
-| Suggestion body | `current_question.suggestion.answer` | string | When null, render the explicit no-grounded-response line, never an empty box |
+| Suggestion body | `current_question.suggestion.answer` | string | Render the suggestion panel only when an answer exists; never show an empty suggestion box |
 | Suggestion chip | `current_question.suggestion.confidence` | `grounded` / `partial` / `missing` | Chip text is the raw value title-cased |
 | Suggestion sources | `suggestion.sources[]` | `{id, path, status, excerpt}` | Path middle-truncated to 44 chars; excerpt clamped to 2 lines |
 | Gaps | `suggestion.gaps[]` | string list | Rendered in full; never summarised |
@@ -553,9 +593,13 @@ Every field below comes from the helper result. No element on this surface deriv
 | Textarea prefill | `response_control.initial_value` | string | Empty string means empty field, not a placeholder answer |
 | Blocking notice | `progress.deferred[]` and `message` | list plus string | Helper message verbatim |
 | Preview document | artifact content at `artifact_path` | Markdown | Read-only; re-rendered per revision |
-| Section provenance | `sections[]` | `{title, question_ids, coverage_ids}` | Order and titles from the helper; never parsed from Markdown |
+| Section provenance | `sections[]` | `{title, question_ids, coverage_ids, source_answers}` | Order, titles, and edit-prefill answers come from the helper; never parsed from Markdown |
 | Self-review summary | `self_review` | `{status, findings[], pass_count}` | Findings grouped by `question_id` |
 | Resume card status | `status` and `progress` | enum plus counts | From `--peek`, which must not mutate state |
+| Draft rows | `authoringSessions.sessions[]` | one row per entry, helper order | From `--list`, which must not mutate state; the client never reorders or filters |
+| Draft row identity | `feature_title` falling back to `feature_name`, plus `feature_name` and `revision` | string plus `rev {n}` | Slug and revision in mono; title truncates, slug does not |
+| Draft row recency | `updated_at` | relative (`12m ago`, `3h ago`, `2d ago`) | Tertiary; decorative, never the only way to tell rows apart |
+| Draft row action | `status` | `Resume` for an open interview, `Open` for a drafted one, `Unavailable` for an unreadable checkpoint | Accent on the action only; an unreadable row is not a link |
 | Helper identity footer | `implementation.helper_hash`, `question_bank_hash` | `sha256:` prefix, first 12 chars shown | Full value on hover; proves which implementation answered |
 
 
@@ -565,16 +609,17 @@ Every field below comes from the helper result. No element on this surface deriv
 
 | Trigger | Target | Response | Notes |
 |---------|--------|----------|-------|
-| Type in title | SlugField | Slug re-derives from the title | Stops deriving permanently once the slug is edited by hand |
-| Blur slug, or 300ms after last keystroke | SlugField | `authoringSession` check for that slug | Read-only call; must not create a checkpoint |
 | Submit intake | Intake form | `startAuthoring`, then route to the interview page | Button locks; failure keeps every field intact |
 | Select an action option | ActionChoiceGroup | Marks selection only | No mutation on selection: confirmation is always a second, explicit act |
 | Click Continue with Accept, Reject, or Defer selected | Question card | `selectAuthoringAction` with the rendered revision | Card enters loading, options disabled but visible |
 | Click Continue with Edit or Answer selected | Question card | `selectAuthoringAction(EDIT)`, control returns as a prefilled textarea | Two steps, matching the helper's persisted edit request |
-| Submit answer text | AnswerTextarea | `submitAuthoringAnswer` with the rendered revision | Empty or whitespace-only text does not submit |
+| Continue from an initial question | QuestionBatch | Sends `submitAuthoringAnswer` with that question ID and rendered revision, then shows the next question returned from the durable checkpoint | Empty or whitespace-only text does not save; no new planning model call occurs |
+| Submit the last prepared answer | QuestionBatch | Persists that answer; the helper generates and self-reviews immediately | No extra confirmation or model planning pass |
+| Submit follow-up or edited answer text | AnswerTextarea | `submitAuthoringAnswer` with the rendered revision | Empty or whitespace-only text does not submit |
 | Cmd/Ctrl + Enter in textarea | AnswerTextarea | Submits | Plain Enter inserts a newline: answers are prose |
 | Answer confirmed | Preview | Document replaced, affected sections highlighted, scroll position kept | Highlight targets sections whose `question_ids` include the answered ID |
-| Click Edit on a section | SectionProvenance | `reviseAuthoringCoverage` opens that question, question column scrolls into view | Never opens an inline Markdown editor |
+| Click Edit draft on a section | SectionProvenance | Opens an inline section editor and persists a manual section override | Source-answer editing is not offered in the generated preview |
+| Click Comment on a section | SectionProvenance | Adds a section-specific instruction to the pending review batch | Submission makes one model call that reconsiders and rewrites each affected section in current-PRD context; it never appends the instruction verbatim |
 | Click a confirmed coverage row | CoverageRail | Preview scrolls to that question's first section | Read-only navigation |
 | Mutation returns `revision_conflict` | Page | ConflictBanner appears in flow, save chip red, control disabled | Typed text preserved verbatim |
 | Click Reload in the banner | ConflictBanner | Refetch, banner clears, typed text restored into the new control when the question is unchanged | |
@@ -616,8 +661,7 @@ The question column never falls below 320px of content width, and the preview is
 
 | Component | Keys | Behavior |
 |-----------|------|----------|
-| Intake form | Tab | Title, slug, description, submit, in that order |
-| Intake form | Enter (single-line fields) | Submits when valid |
+| Intake form | Tab | Description, submit, in that order |
 | ActionChoiceGroup | Arrow Up/Down | Move selection within the group (single tab stop, roving tabindex) |
 | ActionChoiceGroup | Space / Enter | Select the focused option |
 | ActionChoiceGroup | 1–4 | Select the option at that position, mirroring the CLI's numbered prompt |
@@ -660,9 +704,8 @@ Radio rows are 36px tall and full-width clickable. The submit button is 32px tal
 
 | Element | Min | Max | Overflow | Placeholder |
 |---------|-----|-----|----------|-------------|
-| Feature title | 1 char | 80 chars | Ellipsis after 1 line in the bar; full text in the form | "Name this feature" |
-| Slug | 1 char | 50 chars | No wrap, horizontal scroll in field | Derived from title |
-| Description | 1 char (helper), 40 chars recommended | 2000 chars | Field scrolls after 240px height | "Who hits the problem, what happens today, and what should change" |
+| Feature title | 3 chars | 80 chars | Ellipsis after 1 line in the bar; **Deriving title…** until the model result | Model-derived only |
+| Description | 1 non-whitespace char | none | Field scrolls after 240px height | "Who hits the problem, what happens today, and what should change" |
 | Description helper hint | — | — | — | Shown below 40 chars, as a hint, never as a block |
 | Question prompt | — | — | Wraps freely, never truncated | — |
 | Evidence body | — | — | Clamp 3 lines, "Show more" expands in place | — |
@@ -689,7 +732,7 @@ Placeholders are hints only. No field on the intake form is pre-filled with exam
 - `authoring-bar` and `coverage-rail` use `position: sticky`, which fails inside an ancestor with `overflow: hidden`. The existing `<main>` in the Define pages sets `overflow: auto`; keep the sticky elements outside any wrapper that clips.
 - `guided/DraftPreview.tsx` renders per-section so each section can carry its own provenance footer, which `editor/SpecPreview.tsx` cannot do as a single Markdown block. It reuses that component's typography rules verbatim; keep the two in sync when either changes.
 - `progress.total` can decrease when the planner drops an unsurfaced question. Derive the count from each payload and never persist it in component state across fetches.
-- `--peek` is required for every read path, including the slug collision check and the ResumeCard. A plain call creates the checkpoint and generates the draft, so a hover-prefetch or a stray poll would create feature state the author never asked for.
+- `--peek` is required for every read path, including the ResumeCard. A plain call creates or advances a checkpoint, so a hover-prefetch or stray poll must remain read-only.
 - Do: use `.surface` for the question card, intake card, and preview panel. Don't: apply a shadow without its paired border, and don't elevate the suggestion panel, which is an inset block.
 - Confidence and impact labels are helper vocabulary (`evidence_backed`, `not_material`, `conditional`). Title-case them for display in one shared formatter; do not remap them to friendlier words in individual components, or the browser and the terminal will disagree about what an area's state is called.
 
@@ -697,12 +740,18 @@ Placeholders are hints only. No field on the intake form is pre-filled with exam
 ## Verification Criteria
 
 ### Intake
-- [ ] Title, slug, and description render from `next_input.fields`, with the helper's labels and descriptions
-- [ ] Slug derives from the title until manually edited, then stops deriving
-- [ ] The slug check performs a read-only call and creates no `.speed/features/<slug>/` directory
-- [ ] A colliding slug offers Resume or rename, and never submits a new description into existing progress
+- [ ] Only the description renders from `next_input.fields`; there is no title or slug input
+- [ ] The first route uses an opaque identity and shows **Deriving title…** until canonicalization succeeds
 - [ ] No field is prefilled with example content
-- [ ] Submitting routes to `/define/:feature/authoring/prd` with a draft already present
+- [ ] Submitting routes immediately to `/define/:opaque-id/authoring/prd` with no draft preview, then replaces the route after model title derivation
+
+### Drafts list
+- [ ] A project with no interview renders no list, no header, and no empty state
+- [ ] Rows appear in the order the helper returned them, with no client-side sort or filter
+- [ ] A listed `confirmed/total` matches what the interview page shows for the same feature
+- [ ] Opening the list creates no `.speed/features/<slug>/` directory and advances no revision
+- [ ] A drafted interview offers Open, an open one offers Resume, an unreadable one offers neither and is not a link
+- [ ] Every row reaches `/define/:feature/authoring/:artifact` for its own feature
 
 ### Interview content fidelity
 - [ ] Question prompt, evidence, option labels, and option order match the CLI `--json` payload byte for byte
@@ -712,15 +761,26 @@ Placeholders are hints only. No field on the intake form is pre-filled with exam
 - [ ] Coverage labels and impacts display the helper's values with no client-side recomputation
 
 ### Interview behaviour
-- [ ] The first load shows a populated preview and a question, never an empty document
+- [ ] Interviewing shows one carousel card from the complete initial plan, regardless of question count, with position and navigation controls and no placeholder document; V1 appears only when ready
+- [ ] Every initial answer is durably mutated before the next question appears; the final answer generates locally without another planning-model call
+- [ ] Scope multi-select choices state `Include` or `Exclude`; suggested choices are visually advisory rather than implying a single correct answer
 - [ ] Confirming an answer keeps the preview's scroll position and highlights only sections sourced from that question
 - [ ] Selecting an action never mutates state without the explicit Continue
 - [ ] Edit is a two-step flow: action persisted, then a prefilled textarea
-- [ ] Section Edit opens the question named in `sections[].question_ids`
+- [ ] Generated sections show provenance, Edit draft, and Comment, with no Edit answer action
 - [ ] Deferring a required question shows the blocking notice and leaves the draft openable
 - [ ] `revision_conflict` renders the in-flow banner, keeps typed text, and offers reload
 - [ ] A CLI answer updates the rail and preview without disturbing focus in the question column
-- [ ] `drafted` and `drafted_with_open_questions` both render in place, with no modal and no redirect
+- [ ] `drafted` and `published` render in place; `review_repair` is explicitly non-ready and only exposes the generated document when the editor is needed to repair it
+
+### Generated PRD contract
+
+- [ ] Metadata includes Status, Owner, and Updated; internal size classification is not exposed
+- [ ] Summary, Problem & Evidence, Hypothesis, User Stories, Requirements & Acceptance, Scope, Guardrails / Must Not Regress, Delivery, Risks & Open Questions, Success, and References are present in template order
+- [ ] Requirements pair product behavior with an independent pass/fail condition
+- [ ] Scope separates Included from Not included
+- [ ] Guardrails protect existing behavior and use an observable verification rather than repeating new-feature acceptance
+- [ ] Success is explicitly post-launch; unsupported targets, windows, or owners are marked provisional or unassigned rather than invented
 
 ### Design system
 - [ ] Token audit passes with zero hardcoded colour, font, or size values outside the token set

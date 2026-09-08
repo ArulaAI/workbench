@@ -1,7 +1,9 @@
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
-import path from "path";
+import { fileURLToPath } from "node:url";
 
+// .mts: this project is CommonJS, and vitest/config's CJS entry cannot require
+// the installed ESM-only vite under Node 20.
 export default defineConfig({
   plugins: [react()],
   test: {
@@ -11,7 +13,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      "@": path.resolve(__dirname, "."),
+      "@": fileURLToPath(new URL(".", import.meta.url)),
     },
   },
 });

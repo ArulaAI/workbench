@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
-import { QuestionCard } from "@/components/ceremony/guided";
+import { QuestionBatch, QuestionCard } from "@/components/ceremony/guided";
 import type { CurrentQuestion } from "@/lib/graphql/queries/authoring";
 
 const ACTION_QUESTION: CurrentQuestion = {
@@ -46,6 +46,37 @@ const TEXT_QUESTION: CurrentQuestion = {
   },
 };
 
+const MODEL_CHOICE_QUESTION: CurrentQuestion = {
+  ...ACTION_QUESTION,
+  id: "P-Q2",
+  prompt: "What should happen to tasks that do not have a due date?",
+  suggestion: {
+    id: "model-p-q2-0",
+    answer: "Existing and new undated tasks remain valid and unchanged.",
+    confidence: "partial",
+    sources: [],
+    gaps: ["Confirm the backward-compatible default."],
+  },
+  response_control: {
+    id: "model-answer-p-q2",
+    input_type: "multi_select",
+    prompt: "Choose the behavior that should apply.",
+    submit_action: "answer",
+    allow_other: true,
+    options: [
+      {
+        label: "Keep undated tasks valid",
+        value: "Existing and new undated tasks remain valid and unchanged.",
+        recommended: true,
+      },
+      {
+        label: "Show undated tasks last",
+        value: "Undated tasks appear after tasks that have a due date.",
+      },
+    ],
+  },
+};
+
 function renderCard(question: CurrentQuestion, overrides = {}) {
   const props = {
     question,
@@ -62,12 +93,11 @@ function renderCard(question: CurrentQuestion, overrides = {}) {
 }
 
 describe("QuestionCard", () => {
-  it("renders the helper's prompt, evidence, gaps, and only the returned options", () => {
+  it("renders the prompt, evidence, and only the returned options", () => {
     renderCard(ACTION_QUESTION);
 
     expect(screen.getByText(ACTION_QUESTION.prompt)).toBeInTheDocument();
     expect(screen.getByText(/Confirmed flows/)).toBeInTheDocument();
-    expect(screen.getByText(/does not resolve this decision/)).toBeInTheDocument();
     const options = screen.getAllByRole("radio");
     expect(options.map((option) => option.textContent)).toEqual([
       "Answer question",
@@ -76,11 +106,10 @@ describe("QuestionCard", () => {
     expect(screen.queryByText("Accept suggestion")).not.toBeInTheDocument();
   });
 
-  it("states plainly when no grounded response is available", () => {
+  it("does not present an empty suggestion as useful guidance", () => {
     renderCard(ACTION_QUESTION);
-    expect(
-      screen.getByText("No grounded response is available for this question."),
-    ).toBeInTheDocument();
+    expect(screen.queryByLabelText(/Suggested response/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/does not resolve this decision/)).not.toBeInTheDocument();
   });
 
   it("requires an explicit continue before acting on a selection", () => {
@@ -102,16 +131,111 @@ describe("QuestionCard", () => {
     const props = renderCard(TEXT_QUESTION, { draftText: "A prefilled suggestion." });
 
     expect(props.onDraftTextChange).toHaveBeenCalledWith("A prefilled suggestion.");
-    fireEvent.click(screen.getByRole("button", { name: "Confirm answer" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save answer" }));
     expect(props.onAnswer).toHaveBeenCalledWith("A prefilled suggestion.");
   });
 
   it("does not submit whitespace-only answers", () => {
     const props = renderCard(TEXT_QUESTION, { draftText: "   " });
 
-    const submit = screen.getByRole("button", { name: "Confirm answer" });
+    const submit = screen.getByRole("button", { name: "Save answer" });
     expect(submit).toBeDisabled();
     fireEvent.click(submit);
     expect(props.onAnswer).not.toHaveBeenCalled();
+  });
+
+  it("submits contextual model choices as complete answer text", () => {
+    const props = renderCard(MODEL_CHOICE_QUESTION);
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /Keep undated tasks valid/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /Show undated tasks last/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Save answer" }));
+
+    expect(props.onAnswer).toHaveBeenCalledWith(
+      "Existing and new undated tasks remain valid and unchanged.\n" +
+        "Undated tasks appear after tasks that have a due date.",
+    );
+    expect(screen.getByText("Suggested")).toBeInTheDocument();
+    expect(screen.getByText(/Select every statement that should apply/)).toBeInTheDocument();
+  });
+
+  it("includes selected choices when Cmd+Enter submits an Other answer", () => {
+    const props = renderCard(MODEL_CHOICE_QUESTION);
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /Keep undated tasks valid/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /Other/ }));
+    const other = screen.getByRole("textbox", { name: "Your answer" });
+    fireEvent.change(other, { target: { value: "Undated tasks can be filtered separately." } });
+    fireEvent.keyDown(other, { key: "Enter", metaKey: true });
+
+    expect(props.onAnswer).toHaveBeenCalledWith(
+      "Existing and new undated tasks remain valid and unchanged.\n" +
+        "Undated tasks can be filtered separately.",
+    );
+  });
+
+  it("persists the current planned answer before the server advances", () => {
+    const onSubmit = vi.fn();
+    render(
+      <QuestionBatch
+        questions={[TEXT_QUESTION, MODEL_CHOICE_QUESTION]}
+        revision={0}
+        submitting={false}
+        onSubmit={onSubmit}
+      />,
+    );
+
+    expect(screen.getByText(/These 2 questions were identified together/)).toBeInTheDocument();
+    expect(screen.getByText(TEXT_QUESTION.prompt)).toBeInTheDocument();
+    expect(screen.queryByText(MODEL_CHOICE_QUESTION.prompt)).not.toBeInTheDocument();
+    expect(screen.getByText("1/2")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Save & continue" }));
+
+    expect(screen.queryByRole("button", { name: "Create PRD" })).not.toBeInTheDocument();
+    expect(onSubmit).toHaveBeenCalledWith({
+      question_id: "P-Q5",
+      answer: "A prefilled suggestion.",
+    });
+    // The next question is rendered only after the persisted server checkpoint
+    // is returned; it is never advanced optimistically in browser memory.
+    expect(screen.getByText(TEXT_QUESTION.prompt)).toBeInTheDocument();
+    expect(screen.queryByText(MODEL_CHOICE_QUESTION.prompt)).not.toBeInTheDocument();
+  });
+
+  it("does not expose browser-only navigation for unsaved prepared answers", () => {
+    render(
+      <QuestionBatch
+        questions={[TEXT_QUESTION, MODEL_CHOICE_QUESTION]}
+        revision={0}
+        submitting={false}
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Previous question" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Next question" })).toBeDisabled();
+  });
+
+  it("uses neutral PRD creation copy without an AI label", () => {
+    const { rerender } = render(
+      <QuestionBatch
+        questions={[TEXT_QUESTION]}
+        revision={0}
+        submitting={false}
+        onSubmit={vi.fn()}
+      />,
+    );
+    rerender(
+      <QuestionBatch
+        questions={[TEXT_QUESTION]}
+        revision={0}
+        submitting
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Generating PRD…" })).toBeInTheDocument();
+    expect(screen.queryByText(/with AI/i)).not.toBeInTheDocument();
   });
 });

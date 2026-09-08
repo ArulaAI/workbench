@@ -67,7 +67,7 @@ def register_project(conn: sqlite3.Connection, project_root: str) -> None:
         if existing:
             conn.execute(
                 """UPDATE project
-                   SET git_head = ?, updated_at = strftime('%Y-%m-%dT%%H:%%M:%%SZ','now')
+                   SET git_head = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
                    WHERE id = 'default'""",
                 (git_head,),
             )
@@ -562,16 +562,24 @@ def start_authoring_watcher(
     project_root: str,
     sub_manager: SubscriptionManager,
     loop: asyncio.AbstractEventLoop,
+    observer: Observer | None = None,
 ) -> Observer:
-    """Watch every feature's interview checkpoint for cross-surface resume."""
+    """Watch every feature's interview checkpoint for cross-surface resume.
+
+    A single-player layout keeps checkpoints in the same directory the log
+    watcher already observes, and the fsevents backend refuses a second native
+    watch on one path. Passing that observer in adds this handler to the watch
+    it already holds; a multiplayer layout gets a new watch on the shared zone.
+    """
     from .paths import get_paths
     paths = get_paths(project_root)
     features_dir = paths.features_dir
     features_dir.mkdir(parents=True, exist_ok=True)
 
     handler = _AuthoringCheckpointHandler(sub_manager, loop)
-    observer = Observer()
-    observer.schedule(handler, str(features_dir), recursive=True)
-    observer.start()
+    target = observer or Observer()
+    target.schedule(handler, str(features_dir), recursive=True)
+    if observer is None:
+        target.start()
     log.info("Authoring checkpoint watcher started on %s", features_dir)
-    return observer
+    return target

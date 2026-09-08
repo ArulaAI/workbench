@@ -1,0 +1,77 @@
+{
+  "version": "rfc-v1",
+  "questions": [
+    {
+      "id": "R-Q1",
+      "prompt": "What is the smallest concrete interface or usage example that proves this design solves the linked product requirement?",
+      "evidence": "Linked PRD behavior, existing interfaces, and repository conventions",
+      "purpose": "Ground the RFC in a concrete developer-facing contract before implementation detail.",
+      "completion_evidence": "Shows a concrete call, event, request, or function contract and its observable result.",
+      "quality": {"min_chars": 50, "follow_up_prompt": "Add a concrete usage example and its observable result."},
+      "sections": ["Basic Example", "Interface Contract"]
+    },
+    {
+      "id": "R-Q2",
+      "prompt": "Which data structures, persisted fields, relationships, states, and transitions does the change require?",
+      "evidence": "Linked PRD entities, existing storage, and lifecycle behavior",
+      "purpose": "Define the durable data and state contract.",
+      "completion_evidence": "Names types or fields, persistence and nullability decisions, valid states, and important invalid transitions.",
+      "quality": {"min_chars": 60, "follow_up_prompt": "Add the data fields, persistence rules, states, and invalid transitions that matter."},
+      "sections": ["Data Model", "State Machine"]
+    },
+    {
+      "id": "R-Q3",
+      "prompt": "What API, command, event, or module surface changes, and how are invalid inputs reported?",
+      "evidence": "Linked PRD flows, current API surface, and error conventions",
+      "purpose": "Make the external and internal interface testable.",
+      "completion_evidence": "Defines inputs, outputs, errors, compatibility behavior, and validation constraints.",
+      "quality": {"min_chars": 60, "follow_up_prompt": "Add the inputs, outputs, validation, errors, and compatibility behavior."},
+      "sections": ["API Surface", "Validation Rules"]
+    },
+    {
+      "id": "R-Q4",
+      "prompt": "What can fail, and which unit, integration, end-to-end, and edge-case checks prove the implementation is safe?",
+      "evidence": "PRD acceptance criteria, existing test suites, regressions, and failure modes",
+      "purpose": "Turn product acceptance and technical risk into a verification plan.",
+      "completion_evidence": "Pairs material risks with test levels, concrete assertions, and important edge cases.",
+      "quality": {"min_chars": 70, "follow_up_prompt": "Add the material risks, test levels, assertions, and edge cases."},
+      "sections": ["Testing"]
+    },
+    {
+      "id": "R-Q5",
+      "prompt": "Which security, privacy, authorization, rate, and audit controls apply to this change?",
+      "evidence": "Linked PRD guardrails, data sensitivity, trust boundaries, and project controls",
+      "purpose": "Keep trust and abuse boundaries explicit.",
+      "completion_evidence": "States applicable controls or a justified non-applicability decision with verification.",
+      "quality": {"min_chars": 50, "follow_up_prompt": "Add the applicable security controls and how they will be verified, or justify why none apply."},
+      "sections": ["Security & Controls"]
+    },
+    {
+      "id": "R-Q6",
+      "prompt": "What key architecture choices were made, which alternatives were rejected, and what drawbacks remain?",
+      "evidence": "Repository architecture, linked PRD constraints, performance needs, and team conventions",
+      "purpose": "Preserve technical judgment rather than only the selected solution.",
+      "completion_evidence": "Records at least one decision, alternatives, rationale, and a real tradeoff or drawback.",
+      "quality": {"min_chars": 70, "follow_up_prompt": "Add the chosen approach, alternatives, rationale, and drawbacks."},
+      "sections": ["Key Decisions", "Drawbacks", "Search / Query Strategy"]
+    },
+    {
+      "id": "R-Q7",
+      "prompt": "How will existing data and callers migrate, how can the rollout be reversed, and which files or services change?",
+      "evidence": "Current schema and callers, deployment model, linked PRD scope, and repository layout",
+      "purpose": "Make delivery, compatibility, rollback, and implementation impact explicit.",
+      "completion_evidence": "Defines migration ordering or non-applicability, rollback, compatibility, and concrete file or service impact.",
+      "quality": {"min_chars": 70, "follow_up_prompt": "Add migration order, rollback, compatibility, and concrete file or service impact."},
+      "sections": ["Migration Strategy", "File Impact"]
+    },
+    {
+      "id": "R-Q8",
+      "prompt": "What dependencies and unresolved technical decisions remain before implementation can start?",
+      "evidence": "Linked specifications, upstream services, ownership boundaries, and open design decisions",
+      "purpose": "Expose prerequisites and blockers for planning.",
+      "completion_evidence": "Names concrete dependencies and unresolved decisions, their owners or resolution path, or confirms none remain.",
+      "quality": {"min_chars": 50, "follow_up_prompt": "Add the concrete dependencies and unresolved decisions with an owner or resolution path."},
+      "sections": ["Dependencies", "Unresolved Questions"]
+    }
+  ]
+}

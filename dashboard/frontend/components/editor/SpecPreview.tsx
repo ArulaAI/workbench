@@ -3,14 +3,20 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-export function SpecPreview({ content }: { content: string }) {
+export function SpecPreview({
+  content,
+  scrollable = true,
+}: {
+  content: string;
+  scrollable?: boolean;
+}) {
   return (
     <div
       className="spec-preview"
       style={{
-        flex: 1,
-        height: "100%",
-        overflow: "auto",
+        flex: scrollable ? 1 : "none",
+        height: scrollable ? "100%" : "auto",
+        overflow: scrollable ? "auto" : "visible",
         padding: "24px",
       }}
     >

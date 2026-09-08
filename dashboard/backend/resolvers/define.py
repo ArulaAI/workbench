@@ -38,10 +38,33 @@ _PRD_REQUIRED_SECTIONS = frozenset([
     "Success Criteria",
 ])
 
+_GUIDED_PRD_REQUIRED_SECTIONS = frozenset([
+    "Summary",
+    "Problem & Evidence",
+    "Hypothesis",
+    "User Stories",
+    "Requirements & Acceptance",
+    "Scope",
+    "Guardrails / Must Not Regress",
+    "Success",
+])
+
 _RFC_REQUIRED_SECTIONS = frozenset([
     "Basic Example",
     "Data Model",
     "API Surface",
+])
+
+_DESIGN_REQUIRED_SECTIONS = frozenset([
+    "Design Intent",
+    "Pages / Routes",
+    "Layout Structure",
+    "Component Inventory",
+    "States",
+    "Interactions & Motion",
+    "Responsive Behavior",
+    "Accessibility",
+    "Verification Criteria",
 ])
 
 # States that indicate a feature is actively executing or beyond
@@ -122,11 +145,17 @@ def _audit_spec(path: Path, spec_type: str) -> SpecIndicator:
 
     # Select required sections based on spec type
     if spec_type == "product":
-        required = _PRD_REQUIRED_SECTIONS
+        required = (
+            _GUIDED_PRD_REQUIRED_SECTIONS
+            if "<!-- Interview: prd-v" in content
+            else _PRD_REQUIRED_SECTIONS
+        )
     elif spec_type == "tech":
         required = _RFC_REQUIRED_SECTIONS
+    elif spec_type == "design":
+        required = _DESIGN_REQUIRED_SECTIONS
     else:
-        # Design specs and other types have no required section checks in V1
+        # Other legacy types have no required section checks in V1.
         return SpecIndicator(
             exists=True,
             path=str(path),
@@ -219,13 +248,23 @@ def _match_specs_to_feature(
     primary: dict[str, Path | None] = {"product": None, "tech": None, "design": None}
     additional: list[tuple[str, Path]] = []
 
+    guided_dir = project_root / "specs" / feature_name
+    guided_candidates = {
+        "product": guided_dir / "prd.md",
+        "tech": guided_dir / "rfc.md",
+        "design": guided_dir / "design.md",
+    }
+
     for spec_type, spec_dir in spec_dirs.items():
+        guided_candidate = guided_candidates[spec_type]
+        if guided_candidate.is_file():
+            primary[spec_type] = guided_candidate
         if not spec_dir.is_dir():
             continue
 
         # Primary match: filename convention
         candidate = spec_dir / f"{feature_name}.md"
-        if candidate.exists():
+        if candidate.exists() and primary[spec_type] is None:
             primary[spec_type] = candidate
 
         # Scan for frontmatter matches (may find additional specs)

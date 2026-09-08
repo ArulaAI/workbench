@@ -154,3 +154,28 @@ class TestSchemaRegistration:
         sdl = schema.as_str()
         assert "currentRevision: RevisionSummary!" in sdl
         assert "revisionCount: Int!" in sdl
+
+    def test_batched_authoring_mutation_is_registered(self) -> None:
+        sdl = schema.as_str()
+        assert "submitAuthoringAnswers(" in sdl
+        assert "answers: JSON!" in sdl
+
+
+class TestBootstrapJsonShape:
+
+    def test_bootstrap_status_is_queryable_and_uses_graphql_casing(
+        self, tmp_path: Path
+    ) -> None:
+        result = schema.execute_sync(
+            "query { bootstrapStatus }",
+            context_value=_make_context(tmp_path),
+        )
+
+        assert result.errors is None
+        assert result.data["bootstrapStatus"] == {
+            "needsBootstrap": True,
+            "graphBuilt": False,
+            "visionCommitted": False,
+            "conventionsCommitted": False,
+            "currentStep": "graph",
+        }

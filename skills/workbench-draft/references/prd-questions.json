@@ -1,5 +1,5 @@
 {
-  "version": "prd-v2",
+  "version": "prd-v4",
   "questions": [
     {
       "id": "P-Q1",
@@ -16,17 +16,17 @@
       "id": "P-Q2",
       "coverage": "user_boundary",
       "applicability": "always",
-      "prompt": "Who needs this outcome? If all users behave the same, say so; describe different access or constraints only when they genuinely exist.",
+      "prompt": "Who needs this outcome, what should they be able to accomplish, and what existing behavior must remain unchanged? If every user behaves the same, say so.",
       "evidence": "Discover personas, existing roles and permissions, and current journeys",
-      "purpose": "Define who receives the outcome and only the access boundaries that actually matter.",
-      "completion_evidence": "Identifies the affected user and states whether access or constraints differ; one undifferentiated user is a valid answer.",
-      "quality": {"min_chars": 30, "follow_up_prompt": "Please identify who needs the outcome and whether everyone has the same access or a meaningful boundary exists."},
-      "sections": ["User Stories"]
+      "purpose": "Capture the audience, desired outcome, and non-regression boundary in one decision when the feature is simple.",
+      "completion_evidence": "Identifies the affected user, desired outcome, whether access differs, and what existing value must remain true.",
+      "quality": {"min_chars": 40, "follow_up_prompt": "Please identify who needs the outcome, what they should accomplish, and what existing behavior must remain unchanged."},
+      "sections": ["Hypothesis", "User Stories", "Guardrails / Must Not Regress"]
     },
     {
       "id": "P-Q3",
       "coverage": "hypothesis",
-      "applicability": "always",
+      "applicability": "only_if_outcome_is_still_unclear",
       "prompt": "What user and business outcomes should change, and which guardrails must not regress?",
       "evidence": "Discover outcomes, product vision, baselines, analytics, and policy",
       "purpose": "Separate desired outcomes from implementation and protect existing value.",
@@ -38,17 +38,17 @@
       "id": "P-Q4",
       "coverage": "product_behavior",
       "applicability": "always",
-      "prompt": "What are the primary, alternate, failure, cancellation, and recovery flows from entry to completion?",
+      "prompt": "Walk me through the essential journey from entry to completion. Include the observable result on the happy path and for any material failure or recovery path; this answer will become the first acceptance criteria.",
       "evidence": "Current product behavior, related requirements, defects, and support evidence",
       "purpose": "Cover the complete journey rather than only its happy path.",
-      "completion_evidence": "Describes entry, completion, and material alternate, failure, cancellation, or recovery behavior.",
+      "completion_evidence": "Describes entry, completion, and the observable result for each material success, failure, or recovery path.",
       "quality": {"min_chars": 50, "follow_up_prompt": "Please add the journey entry and completion plus the material failure, cancellation, or recovery path."},
       "sections": ["Requirements & Acceptance"]
     },
     {
       "id": "P-Q5",
       "coverage": "acceptance",
-      "applicability": "always",
+      "applicability": "only_if_acceptance_is_still_unclear",
       "prompt": "What must the product do, and what observable Given/When/Then behavior proves each stable requirement?",
       "evidence": "Confirmed flows, business rules, policies, and existing contracts",
       "purpose": "Turn product obligations into stable, observable requirements.",
@@ -59,7 +59,7 @@
     {
       "id": "P-Q6",
       "coverage": "success",
-      "applicability": "always",
+      "applicability": "only_if_measurement_is_material",
       "prompt": "How will success be measured, what threshold or baseline is required, where does the measurement come from, and who owns it?",
       "evidence": "Existing instrumentation, historical baselines, and desired outcomes",
       "purpose": "Make success measurable and operationally owned.",
@@ -70,18 +70,18 @@
     {
       "id": "P-Q7",
       "coverage": "scope_dependencies",
-      "applicability": "scope_signal",
-      "prompt": "What is in scope, explicitly out of scope, dependent on other work, or constrained by sequencing?",
+      "applicability": "always",
+      "prompt": "What is in scope, explicitly out of scope, dependent on other work, or constrained by sequencing? Include any material release risk or open decision and its owner; say none if there is not one.",
       "evidence": "Related features, organizational constraints, and release dependencies",
-      "purpose": "Set an implementable boundary and expose sequencing dependencies.",
-      "completion_evidence": "States inclusions, exclusions with reasons, and relevant dependencies or sequencing constraints.",
-      "quality": {"min_chars": 50, "follow_up_prompt": "Please add explicit inclusions, exclusions with reasons, and any dependency or sequencing constraint."},
-      "sections": ["Scope"]
+      "purpose": "Set an implementable boundary and capture delivery dependencies or risks without forcing another question for a simple feature.",
+      "completion_evidence": "States inclusions, exclusions, relevant dependencies, and any material release risk or open decision with an owner.",
+      "quality": {"min_chars": 50, "follow_up_prompt": "Please add explicit inclusions, exclusions, dependencies, and any material release risk or open decision with an owner."},
+      "sections": ["Scope", "Delivery, Risks & Open Questions"]
     },
     {
       "id": "P-Q8",
       "coverage": "delivery_controls",
-      "applicability": "risk_signal",
+      "applicability": "only_if_delivery_control_is_still_unclear",
       "prompt": "Which authorization, privacy, compliance, abuse, rollout, assumption, risk, or unresolved decision needs explicit ownership?",
       "evidence": "Security policy, regulatory requirements, historical failures, and existing decisions",
       "purpose": "Surface controls, risks, and unresolved decisions before approval.",

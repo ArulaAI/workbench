@@ -2,10 +2,10 @@
 
 import { useEffect, useRef, useImperativeHandle, forwardRef } from "react";
 import { EditorView, keymap, drawSelection, highlightActiveLine, lineNumbers, highlightActiveLineGutter, Decoration, type DecorationSet } from "@codemirror/view";
-import { EditorState, StateField, StateEffect } from "@codemirror/state";
+import { EditorState, StateField, StateEffect, Transaction } from "@codemirror/state";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { languages } from "@codemirror/language-data";
-import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
+import { defaultKeymap, history, historyKeymap, indentWithTab, undo as undoCommand, redo as redoCommand } from "@codemirror/commands";
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
 import { syntaxHighlighting, HighlightStyle, bracketMatching, foldGutter, foldKeymap } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
@@ -100,6 +100,16 @@ const editorTheme = EditorView.theme({
   },
 }, { dark: true });
 
+const autoHeightTheme = EditorView.theme({
+  "&": {
+    height: "auto",
+    minHeight: "100%",
+  },
+  ".cm-scroller": {
+    overflow: "visible",
+  },
+});
+
 /* ── Syntax highlighting ────────────────────────────────────────── */
 
 const markdownHighlight = HighlightStyle.define([
@@ -160,6 +170,9 @@ export interface SpecEditorHandle {
   replaceAndHighlight: (oldText: string, newText: string) => boolean;
   /** Scroll to a section heading and briefly highlight the line. Returns false if heading not found. */
   scrollToSection: (sectionName: string, line?: number | null) => boolean;
+  undo: () => boolean;
+  redo: () => boolean;
+  applyFormat: (format: "normal" | "heading2" | "heading3" | "bold" | "italic" | "bullet" | "numbered" | "link" | "table") => void;
 }
 
 /**
@@ -169,6 +182,8 @@ export interface SpecEditorHandle {
  */
 export interface EditorSelection {
   text: string;
+  from: number;
+  to: number;
   /** Heading text of the nearest preceding markdown heading, or null. */
   sectionTitle: string | null;
   /** slugified section id derived from the heading. */
@@ -184,10 +199,12 @@ interface SpecEditorProps {
   onCursorChange?: (pos: CursorPosition) => void;
   onSelectionChange?: (selection: EditorSelection | null) => void;
   readOnly?: boolean;
+  showLineNumbers?: boolean;
+  autoHeight?: boolean;
 }
 
 export const SpecEditor = forwardRef<SpecEditorHandle, SpecEditorProps>(
-  function SpecEditor({ content, specType, onChange, onCursorChange, onSelectionChange, readOnly = false }, ref) {
+  function SpecEditor({ content, specType, onChange, onCursorChange, onSelectionChange, readOnly = false, showLineNumbers = true, autoHeight = false }, ref) {
     const containerRef = useRef<HTMLDivElement>(null);
     const viewRef = useRef<EditorView | null>(null);
     const onChangeRef = useRef(onChange);
@@ -279,6 +296,43 @@ export const SpecEditor = forwardRef<SpecEditorHandle, SpecEditorProps>(
 
         return true;
       },
+      undo: () => Boolean(viewRef.current && undoCommand(viewRef.current)),
+      redo: () => Boolean(viewRef.current && redoCommand(viewRef.current)),
+      applyFormat(format) {
+        const view = viewRef.current;
+        if (!view) return;
+        const selection = view.state.selection.main;
+        const selected = view.state.doc.sliceString(selection.from, selection.to);
+        const wrap = (before: string, after = before, fallback = "text") => {
+          const value = selected || fallback;
+          view.dispatch({
+            changes: { from: selection.from, to: selection.to, insert: `${before}${value}${after}` },
+            selection: { anchor: selection.from + before.length, head: selection.from + before.length + value.length },
+          });
+          view.focus();
+        };
+        if (format === "bold") return wrap("**");
+        if (format === "italic") return wrap("_");
+        if (format === "link") return wrap("[", "](https://)", "link text");
+        if (format === "table") {
+          view.dispatch({ changes: { from: selection.from, to: selection.to, insert: "| Column | Column |\n|---|---|\n| Value | Value |" } });
+          view.focus();
+          return;
+        }
+        const fromLine = view.state.doc.lineAt(selection.from);
+        const toLine = view.state.doc.lineAt(selection.to);
+        const source = view.state.doc.sliceString(fromLine.from, toLine.to);
+        const transformed = source.split("\n").map((line, index) => {
+          const clean = line.replace(/^(?:#{1,6}\s+|[-*]\s+|\d+\.\s+)/, "");
+          if (format === "heading2") return `## ${clean}`;
+          if (format === "heading3") return `### ${clean}`;
+          if (format === "bullet") return `- ${clean}`;
+          if (format === "numbered") return `${index + 1}. ${clean}`;
+          return clean;
+        }).join("\n");
+        view.dispatch({ changes: { from: fromLine.from, to: toLine.to, insert: transformed } });
+        view.focus();
+      },
     }));
 
     useEffect(() => {
@@ -329,6 +383,8 @@ export const SpecEditor = forwardRef<SpecEditorHandle, SpecEditorProps>(
                 if (coordsEnd && coordsStart) {
                   onSelectionRef.current({
                     text,
+                    from: sel.from,
+                    to: sel.to,
                     sectionTitle,
                     sectionId,
                     rect: {
@@ -357,12 +413,12 @@ export const SpecEditor = forwardRef<SpecEditorHandle, SpecEditorProps>(
           highlightActiveLine(),
           highlightActiveLineGutter(),
           highlightSelectionMatches(),
-          lineNumbers(),
-          foldGutter(),
+          ...(showLineNumbers ? [lineNumbers(), foldGutter()] : []),
           markdown({ base: markdownLanguage, codeLanguages: languages }),
           syntaxHighlighting(markdownHighlight),
           highlightField,
           editorTheme,
+          ...(autoHeight ? [autoHeightTheme] : []),
           keymap.of([
             ...defaultKeymap,
             ...historyKeymap,
@@ -386,14 +442,24 @@ export const SpecEditor = forwardRef<SpecEditorHandle, SpecEditorProps>(
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
+    useEffect(() => {
+      const view = viewRef.current;
+      if (!view || view.state.doc.toString() === content) return;
+      view.dispatch({
+        changes: { from: 0, to: view.state.doc.length, insert: content },
+        annotations: Transaction.addToHistory.of(false),
+      });
+    }, [content]);
+
     return (
       <div
         ref={containerRef}
         data-readonly={readOnly ? "true" : "false"}
         style={{
-          flex: 1,
-          height: "100%",
-          overflow: "hidden",
+          flex: autoHeight ? "none" : 1,
+          height: autoHeight ? "auto" : "100%",
+          minHeight: autoHeight ? "100%" : undefined,
+          overflow: autoHeight ? "visible" : "hidden",
           // Ambient visual cue for read-only mode: a subtle diagonal
           // stripe pattern so the user knows they can't type without
           // needing to read the banner. The gradient is nearly

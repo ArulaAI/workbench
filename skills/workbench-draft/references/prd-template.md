@@ -101,21 +101,39 @@ If <change>, then <observable behavior or outcome>, because <evidence-backed rea
 - Omit empty table rows. A mandatory section may contain one honest sentence
   saying no feature-specific item was identified.
 
-## Confidence-aware drafting
+## Interview readiness and drafting
 
-Generate the provisional PRD before clarification is complete. Use the internal
-coverage assessment without printing bare numeric scores in the document:
+Do not generate or display a PRD until every applicable, material product
+decision has a usable value. The interview is adaptive: a strong answer may
+cover several sections. Keep every mandatory template section; when no
+feature-specific item is material, use one honest sentence instead of a
+placeholder or an invented item. Use the internal coverage assessment without printing bare numeric
+scores in the document:
 
 - `confirmed` or `evidence_backed`: state the supported content directly;
-- `inferred`: propose content and label it for review;
-- `not_material`: use a concise baseline statement instead of asking a question;
-- `unresolved` with low impact: record an open question or reviewable inference;
-- `unresolved` with high impact: mark the affected section unresolved and ask a
-  contextual clarification.
+- `inferred`: use it only when the source wording is specific enough to compose
+  a meaningful section; otherwise ask a conversational clarification;
+- `not_material`: keep the mandatory section concise and state that no
+  feature-specific item was identified;
+- `unresolved`: ask a contextual clarification before generating V1.
 
-Surface no more than three high-value clarifications. Reassess after each answer
-and remove any unsurfaced question that the new evidence resolves. Regenerate
-the affected sections while preserving the rest of the draft.
+Plan the complete necessary question batch once from the initial evidence and
+present it one question at a time. Persist each answer to the shared checkpoint
+before presenting the next prepared question; do not make another model call
+between answers. After the final answer, reassess the persisted state locally
+and generate V1 without appending another interview question. Newly noticed
+uncertainty belongs in the open-decision content for review. Use meaningful
+content only—never placeholder, generic "proposed", or "unresolved" copy. Do
+not expose the fixed question bank as a checklist.
+
+During review, preserve the link from each section to its source answers. The
+generated preview offers direct section editing and comments, not source-answer
+editing. A reviewer may collect comments on several sections and submit them in
+one regeneration pass. Treat comments as revision instructions: reconsider each
+affected section against the complete current PRD and this template, and return
+its complete replacement body. Never append a comment verbatim as PRD content.
+If the configured model cannot produce a valid revision plan, preserve the
+existing artifact unchanged.
 
 ## AI-agent extension
 

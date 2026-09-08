@@ -9,6 +9,7 @@ REPO = Path(__file__).resolve().parents[2]
 
 def test_real_catalog_contains_health_and_draft():
     assert [pkg.name for pkg in load_catalog(REPO / "skills")] == [
+        "workbench-define",
         "workbench-draft",
         "workbench-health"
     ]

@@ -103,6 +103,21 @@ def match_spec_to_feature(
     if fm_feature:
         return fm_feature
 
+    # Guided authoring stores one artifact per feature directory, for example
+    # specs/due-dates-for-tasks/prd.md. The parent directory is the feature.
+    try:
+        guided_rel = path.relative_to(project_root / "specs")
+    except ValueError:
+        guided_rel = None
+    if guided_rel and len(guided_rel.parts) == 2 and guided_rel.name in {
+        "prd.md", "rfc.md", "design.md",
+    }:
+        guided_feature = guided_rel.parent.name
+        from .paths import get_paths
+        known_root = get_paths(project_root).features_dir
+        if (known_root / guided_feature).is_dir():
+            return guided_feature
+
     stem = path.stem  # e.g., "speed-defects" or "fix-stale-branch-on-retry"
 
     # 2. Filename match against known features
@@ -280,7 +295,7 @@ def _index_spec(
            (path, spec_type, feature, lifecycle_state, content_hash,
             section_count, completeness, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, ?,
-                   strftime('%Y-%m-%dT%%H:%%M:%%SZ','now'))""",
+                   strftime('%Y-%m-%dT%H:%M:%SZ','now'))""",
         (
             parsed.path,
             spec_type,

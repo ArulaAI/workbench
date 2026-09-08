@@ -327,12 +327,13 @@ export function IntelPanel({
   const auditStartedAt = auditStatusResult.data?.auditStatus?.startedAt ?? null;
 
   /* Re-fetch audit data when a new audit file is written (by anyone) */
-  useSubscription<{ auditCompleted: { feature: string; file: string } }>(
+  type AuditCompletedData = { auditCompleted: { feature: string; file: string } };
+  useSubscription<AuditCompletedData, AuditCompletedData>(
     { query: AUDIT_COMPLETED_SUBSCRIPTION, variables: {} },
-    useCallback((_prev: unknown, _data: unknown) => {
+    useCallback((_prev: AuditCompletedData | undefined, data: AuditCompletedData) => {
       refetchLatestAudit({ requestPolicy: "network-only" });
       refetchAuditStatus({ requestPolicy: "network-only" });
-      return _data;
+      return data;
     }, [refetchLatestAudit, refetchAuditStatus]),
   );
 

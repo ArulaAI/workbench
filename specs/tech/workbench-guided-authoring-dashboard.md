@@ -1,21 +1,33 @@
-# RFC: PRD Drafting in the Dashboard
+# RFC: Guided Artifact Drafting in the Dashboard
 
 ## Outcome
 
-Let an author start and finish a PRD from the dashboard: give the feature a title
-and a short description, answer the interview questions the helper selects, and
+Let an author start and finish a PRD from the dashboard: describe the feature in
+their own words, navigate under an opaque temporary identity, let the planner
+derive a concise display title and canonical repository slug, answer only the
+interview questions the helper still needs, and
 get the same `specs/<feature>/prd.md` that `workbench draft prd <feature>`
-produces. Same questions, same suggestions, same clarification budget, same
-generated document.
+produces. The helper asks only the conversational questions needed to make the
+applicable PRD sections meaningful, then generates the same document on every
+surface.
+
+Completed drafts stay in the authoring route. The right panel embeds the existing
+CodeMirror editor with a small formatting toolbar, word/character counts, and a
+revision dropdown backed by checkpointed `artifact_versions`. A full-document
+save is validated against the active PRD template and persisted as one revision.
+Review comments support both document-wide chat instructions and selected-text
+anchors; selected anchors retain section, quote, offsets, and source revision.
 
 The dashboard becomes a third client of the existing interview. It contributes no
 question wording, no ordering, no gate, and no generation logic. Everything it
 shows comes from the helper's JSON result.
 
-Product branch only. The Design branch stays on the CLI and the conversational
-skill; no Design UI, no Design intake, and no Design skill work is in this RFC.
-The interview mechanic is shared, so adding Design later is a new route and a new
-question bank, not a second engine.
+PRD, Design, and Technical RFC use one dashboard shell. PRD begins with a
+freeform brief without a client-side character cap; Design requires a pinned,
+hash-verified published PRD version and RFC requires pinned published PRD and
+Design versions. Newer working drafts do not mutate those upstream snapshots.
+Each branch owns its question bank and generation persona while sharing intake
+navigation, interview controls, editor, comments, publish action, and versions.
 
 ## Surfaces Today
 
@@ -38,51 +50,69 @@ RFC adds one adapter so it can.
 
 ```text
 /define/new
-   │  Title:       Due dates for tasks
-   │  Slug:        due-dates-for-tasks          (derived, editable)
    │  Description: Team leads cannot see which tasks are overdue ...
    ▼
-startAuthoring ──► provisional prd.md exists immediately, revision 0
+startAuthoring ──► interview checkpoint exists immediately; no model wait, no prd.md yet
    │
    ▼
 /define/<feature>/authoring/prd
-   │  [P-Q5] contextual question, evidence, suggestion, one control
-   │  answer / accept / edit / reject / defer      (only what the helper offers)
-   │  each answer regenerates the affected sections
+   │  visible analysis state while one model plan returns every material question
+   │  one question card is visible; each answer is checkpointed before advancing
    ▼
-status: drafted            or   drafted_with_open_questions
-   preview + self-review        preview + open findings tied to their questions
+final confirmed answer ──► meaningful V1 generated locally in the 11-section template
+   │  edit a section directly / collect section comments
+   │  submit all comments once ──► one regeneration revision
+   │
+   ▼
+Review & commit ──► prepareAuthoringCommit ──► existing Define commit flow
 ```
 
-Two things follow from the helper's behaviour and shape the UI. A usable PRD
-exists before the first question is answered, so the page opens with a draft
-preview rather than an empty document. And the clarification plan is
-recalculated after every answer within a budget of three, so the question count
-moves and the UI must not present a fixed-length wizard.
+The page opens as a short, contextual interview, not a template checklist. No
+draft is shown until the readiness gate passes. The model plans the complete
+necessary batch once from the intake, PRD template, and repository
+context. The browser presents that preplanned batch one question at a time and
+persists each answer to the shared checkpoint before advancing. Submitting the
+last answer generates the draft immediately from the stored plan and confirmed
+evidence. There is no separate Create PRD step and no second model planning pass.
+The initial plan is the only pass allowed to introduce interview questions;
+later uncertainty remains visible as an open decision in the draft rather than
+starting another question round. Follow-ups and later source-answer edits remain
+single-question flows.
 
-## Intake: Title, Slug, Description
+The configured `claude-code/sonnet` path launches a fresh CLI subprocess. The v5
+planner uses the completeness-focused `complete-template-intake-v1` contract:
+the model returns an AI-derived title, resolved coverage, and every material
+question needed by the applicable PRD template. Full PRD
+composition is deferred until local generation after the interview. On September
+8, the supplied 968-character brief took 56–60 seconds with the former full-plan
+schema and 22.0 seconds with the compact contract, a roughly 61% reduction. The
+plan records `timing.model_ms` and `timing.total_ms` for diagnosis. Final
+synthesis is local, so this model startup/output cost occurs once rather than
+again after the last answer. `startAuthoring` does not wait for the planner: it
+persists the intake checkpoint and navigates immediately, then the authoring
+route runs the planner while showing its analysis state. Reaching a true 2–5
+second first-question response will require a persistent provider connection or
+streaming transport; changing CLI model tiers alone did not improve the trace.
 
-The helper's `new_prd_basics` form returns `feature_slug` and
-`feature_description`. The dashboard asks for a title instead of a slug, because
-a slug is a repository identifier and not how an author names a feature. Rather
-than let the UI invent a field, the form gains `feature_title` in the helper and
-the UI stays a generic renderer of the returned fields.
+## Intake: Description and model-derived identity
+
+The intake UI asks only for the author's feature description. The server creates
+an opaque `draft-*` identity so the checkpoint and route can exist immediately;
+the compact AI plan derives a concise capability name and atomically renames the
+package and route to its canonical slug. No guessed title is rendered.
 
 | Field | Source of truth | Behaviour |
 |---|---|---|
-| Title | New helper field `feature_title` | Free text. Becomes the PRD H1 and the display name. |
-| Slug | Existing `feature_slug` | Derived client-side by `deriveSlug`, a mirror of the helper's `_slugify` held in place by `__tests__/guided/slug.test.ts`. Editable; the helper validates against `FEATURE_RE` before any write. |
-| Description | Existing `feature_description` | Persisted as direct problem evidence. P-Q1 is skipped when it is sufficient. |
+| Title | Compact AI plan `feature_title` | Derived as a concise capability name; becomes the PRD H1 and display name. Until available the UI says **Deriving title…**. |
+| Slug | Helper canonicalization | Derived server-side from the validated model title after planning; the opaque intake route is replaced without losing state. |
+| Description | Existing `feature_description` | Freeform intake with no hard cap or character counter, persisted as direct problem evidence. P-Q1 is skipped when it is sufficient. |
 
-Today the PRD H1 is reconstructed from the slug, so `due-dates-for-tasks` renders
-as "Due Dates For Tasks". Persisting the title keeps the author's wording in the
-document on every surface.
+Persisting the model-derived title avoids copying the author's opening sentence
+or reconstructing an awkward title from the temporary identity.
 
-Before submitting, the page calls `authoringSession` for the derived slug. A
-`not_started` result means the slug is free. An existing checkpoint means the
-form offers to resume that interview or asks for a different name; it never
-silently attaches a new description to someone else's in-progress work, which is
-what the helper already refuses at the write.
+Because the temporary identity is random, intake does not perform a semantic
+slug collision check. Canonicalization detects an existing target before rename
+and never silently attaches the new brief to another checkpoint.
 
 ## Adapter Boundary
 
@@ -109,7 +139,7 @@ Rules for the adapter:
 
 - Exit status is not the error signal. Status `0`, `1`, and `2` all carry a JSON
   payload; the `status` field is authoritative.
-- 20s timeout per call, surfaced as `helper_unavailable` with the resolved helper
+- A bounded helper timeout, surfaced as `helper_unavailable` with the resolved helper
   path and interpreter.
 - Never repair, default, or reshape helper output. An unparseable payload is an
   error, not an empty session.
@@ -117,17 +147,26 @@ Rules for the adapter:
 
 ## Helper Contract Additions
 
-Implemented in `draft.py` so the CLI and the agent inherit all of them. All five
+Implemented in `draft.py` so the CLI and the agent inherit all of them. All six
 landed on `codex/guided-prd-dashboard-ui`, including path resolution, so
 multiplayer projects are supported rather than refused.
 
 | # | Addition | Why the dashboard needs it | Blocking |
 |---|---|---|---|
-| 1 | `--peek`: return the current result from persisted state only, with `status: not_started` when no checkpoint exists | A page load or poll must not write. A plain `run_once` creates the checkpoint, plans clarifications, refreshes suggestions, and generates the provisional PRD, so the read path currently mutates state. | Yes |
-| 2 | `sections` array in the result and in `draft-prd.json`: `{title, question_ids, coverage_ids, state}` | Section-level Edit needs the source question. `PRD_SECTION_MAP` lives only in code and `_render_prd_section` emits no per-question headings, so the UI would otherwise regex generated Markdown. | Yes |
-| 3 | `feature_title` on the intake form, persisted with the intake evidence and used as the PRD H1 and display name | Keeps the author's own name for the feature instead of a title-cased slug. | Yes |
+| 1 | `--peek`: return the current result from persisted state only, with `status: not_started` when no checkpoint exists | A page load or poll must not write. A plain `run_once` creates or advances the interview checkpoint. | Yes |
+| 2 | `sections` array in the result and in `draft-prd.json`: `{title, question_ids, coverage_ids, state, source_answers}` | Section-level Edit needs both the exact source question and its confirmed value. The mapping reflects only answers actually composed into the section, so the UI never guesses from generated Markdown. | Yes |
+| 3 | `feature_title` in the normalized compact plan, persisted with intake evidence and used as the PRD H1 and display name | Gives every surface the same concise semantic title without asking the author to name the feature. | Yes |
 | 4 | Resolve `.speed` paths through the same single-player/multiplayer rule as `dashboard/backend/paths.py` | `draft.py` wrote `.speed/features/<f>/` unconditionally; in a multiplayer project the dashboard reads `.speed/shared/features/<f>/draft-prd.json`, so guided drafts were invisible there. | Yes |
-| 5 | `authoring_url` beside `dashboard_url` on the artifact record | The helper returns the feature page; the interview is a deeper route. Without it, every client hardcodes the route shape. | No, route fallback documented |
+| 5 | `authoring_url` beside `dashboard_url` on the artifact record | JSON retains the feature URL for compatibility, while every user-facing completion hands off only to the deeper authoring route. | Yes |
+| 6 | `--list`: summarize every checkpoint under the resolved features root, most recently updated first | Resuming needs a project-wide list, and no surface had one. Globbing `authoring-*.json` from the resolver would put status, progress, and layout resolution in an adapter. One subprocess returns the whole list. | Yes |
+| 7 | `--review-comments-json` plus `--review-plan-json`: apply section-scoped comments and validated host-model replacement bodies in one revision | Reviewers can collect feedback across the document; the model reconsiders each affected section in the context of the current PRD instead of appending the comment as document prose. A failed model call leaves the artifact unchanged. | Yes |
+
+`--list` resolves the current suggestion for each entry exactly as `--peek`
+does. That step appends to `clarifications_asked`, which decides how many
+questions stay active, so skipping it makes a listed `confirmed/total` disagree
+with the interview page for the same feature. A checkpoint that fails to read or
+validate is returned as one entry with `status: error` and its message, never
+dropped from the list and never rewritten.
 
 The dashboard's CORS origin list reads `DASHBOARD_ALLOWED_ORIGINS` (comma
 separated, defaulting to port 3000) so a worktree can serve its own dashboard on
@@ -137,14 +176,20 @@ a spare port without the browser blocking every mutation at preflight.
 
 One resolver module, `dashboard/backend/resolvers/authoring.py`, with types in
 `authoring_types.py`. Field names mirror the helper's vocabulary so a UI state
-maps to a CLI flag without a translation table. `artifactType` is present and
-defaults to `"prd"`; the UI only ever sends `prd`, and Design later needs no
-schema change.
+maps to a CLI flag without a translation table. `artifactType` defaults to
+`"prd"` and is sent explicitly for PRD, Design, and RFC mutations.
 
 ```graphql
 type Query {
   authoringIntake: AuthoringIntake!
   authoringSession(featureName: String!, artifactType: String = "prd"): AuthoringSession!
+  authoringSessions(artifactType: String = "prd"): AuthoringSessionList!
+}
+
+type AuthoringSessionList {
+  status: String!
+  message: String!
+  sessions: [AuthoringSessionSummary!]!
 }
 
 type Mutation {
@@ -154,12 +199,19 @@ type Mutation {
   submitAuthoringAnswer(featureName: String!, answer: String!,
                         expectedRevision: Int!,
                         artifactType: String = "prd"): AuthoringSession!
+  submitAuthoringAnswers(featureName: String!, answers: JSON!,
+                         expectedRevision: Int!,
+                         artifactType: String = "prd"): AuthoringSession!
   selectAuthoringAction(featureName: String!, action: AuthoringAction!,
                         expectedRevision: Int!,
                         artifactType: String = "prd"): AuthoringSession!
   reviseAuthoringCoverage(featureName: String!, coverageId: String!,
                           answer: String!, expectedRevision: Int!,
                           artifactType: String = "prd"): AuthoringSession!
+  prepareAuthoringCommit(featureName: String!,
+                         artifactType: String = "prd"): AuthoringSession!
+  publishAuthoringDraft(featureName: String!, expectedRevision: Int!,
+                        artifactType: String = "prd"): AuthoringSession!
 }
 
 enum AuthoringAction { ACCEPT EDIT REJECT DEFER }
@@ -173,10 +225,13 @@ type Subscription {
 |---|---|
 | `authoringIntake` | `draft.py prd --json` |
 | `authoringSession` | `draft.py prd <feature> --peek --json` |
+| `authoringSessions` | `draft.py prd --list --json` |
 | `startAuthoring` | `draft.py prd <feature> --feature-title T --feature-description D --json` |
 | `submitAuthoringAnswer` | `--answer T --expected-revision N` |
+| `submitAuthoringAnswers` | `--answers-json '[{"question_id":"P-Q2","answer":"..."}]' --expected-revision N` |
 | `selectAuthoringAction` | `--accept-suggestion` / `--edit-suggestion` / `--reject-suggestion` / `--defer` |
 | `reviseAuthoringCoverage` | `--update-coverage C --answer T --expected-revision N` |
+| `prepareAuthoringCommit` | Read-only `--peek`, then create missing ceremony ownership state before opening the existing Define commit flow |
 
 `AuthoringSession` projects the helper result field for field: `status`,
 `revision`, `resumeStep`, `progress`, `coverage`, `currentQuestion` (with
@@ -186,8 +241,15 @@ type Subscription {
 rather than enumerated GraphQL enums, so a question-bank change reaches the UI
 without a resolver edit.
 
-`Query.authoringSession` never writes. Starting an interview is a mutation
-because it creates the checkpoint and the provisional PRD.
+`AuthoringSessionSummary` is the resume projection only: `featureName`,
+`featureTitle`, `artifactType`, `status`, `revision`, `updatedAt`, `progress`,
+`draftAvailable`, `artifactPath`, `authoringUrl`, `message`. It carries no
+question, suggestion, or artifact content, so listing a project costs one
+subprocess and no document reads.
+
+`Query.authoringSession` and `Query.authoringSessions` never write. Starting an
+interview is a mutation because it creates the checkpoint. Artifact generation
+remains blocked until every material interview answer is confirmed.
 
 ## Interview Page
 
@@ -215,28 +277,45 @@ Route: `/define/<feature>/authoring/prd`, inside the existing `IconRail` and
 exists, showing artifact type, status, `confirmed/total`, and a link built from
 `authoring_url` or the route shape.
 
-The question region is a generic renderer over `responseControl`. A
+For a new model-planned interview, the question region receives every entry in
+`planning.questions` as one stable plan but renders only the current persisted
+question. Each card is a generic renderer over
+`responseControl`. A
 `single_select` becomes a radio group over the returned options in the returned
-order; a `textarea` becomes a labelled field prefilled from `initial_value` with
-the returned prompt as its label. Unavailable actions are absent from the payload
-and must not appear as disabled choices. Nothing in the UI may add, relabel,
-reorder, or infer an option, which is what keeps the browser and the terminal
-identical.
+order; a `multi_select` uses checkboxes and labels each scope choice explicitly
+as `Include` or `Exclude`; a `textarea` becomes a labelled field prefilled from
+`initial_value` with the returned prompt as its label. Each Continue persists
+that question before the next prepared question is shown. Unavailable actions are
+absent from the payload and must not appear as disabled choices. Option meaning
+is normalized in the planner payload, never inferred by the browser.
 
 Follow-ups, edit prefill, rejected suggestions, and self-review repair all arrive
 as an ordinary control with a different `id` and prompt, so they need no special
 components. Deferral shows a blocking notice naming the deferred required
 questions, using the helper's own message.
 
-The coverage region lists `coverage` entries with confidence label and impact,
-and shows `confirmed/total` with a note that the plan adapts. Because the planner
-may drop an unsurfaced question when another answer raises its confidence, a
-fixed stepper would appear to lose steps.
+The default readiness region says when V1 is available, lists the sections
+supported by confirmed inputs, and explains only the next material gap. It does
+not expose stable coverage IDs as a questionnaire. `?view=coverage` switches to
+the original coverage region for evaluation; that view lists `coverage` entries
+with confidence label and impact and shows `confirmed/total`.
 
-The preview region renders the artifact for the current revision, each section
-footed by its source question IDs and an Edit control that calls
-`reviseAuthoringCoverage`. Generated prose is never directly editable on this
-page; repair happens through the answer that produced it.
+The preview region is absent until the interview reaches a terminal generated
+state. It then renders the artifact for the current revision. The generated
+document always keeps the 11 core sections from `PRD Proposal.docx`; metadata
+keeps internal PRD size out of the artifact, requirements pair behavior with independent pass/fail checks,
+scope separates included from not included, guardrails protect existing behavior
+with observable verification, and success describes a post-launch signal. Each
+section exposes its answer provenance, **Edit draft**, and **Comment**. Edit draft
+opens an explicit section textarea and calls `reviseAuthoringSection`; comments
+can be collected across sections and submitted in one regeneration pass. The
+configured model receives the current PRD, author inputs, confirmed answers,
+the fixed authoring context package, template contract, and comments, then returns complete
+replacement bodies only for the affected sections. Comments are instructions,
+never verbatim content to append. If that model call fails, no revision is
+persisted and the browser keeps the comments available for retry.
+Direct edits are persisted as `manual_sections`, labeled `manual` in provenance,
+and applied after answer-derived composition during every later regeneration.
 
 ## Status Mapping
 
@@ -247,38 +326,55 @@ page; repair happens through the answer that produced it.
 | `question` | Question card with the returned control |
 | `blocked` | Question card plus the blocking notice for deferred required questions |
 | `drafted` | Preview, self-review passed, interview complete |
-| `drafted_with_open_questions` | Preview plus open findings and their source questions |
+| `review_repair` | Source-question repair, or a non-ready editor when structural/manual reconciliation needs a direct document repair |
+| `published` | Current immutable version selected; subsequent edits branch a new draft revision |
 | `revision_conflict` | Conflict banner, reload action, local text preserved |
 | `error` | Helper message verbatim with the attempted invocation |
 | `helper_unavailable` | Adapter failure with resolved helper path and interpreter |
 
+Completed PRD states expose one `Review & commit` action in the editor header,
+beside the Edit/View Markdown toggle. The action does not write a
+second kind of commit record. The mutation ensures older guided checkpoints
+have the ceremony state and PRD claim required by the existing Define commit
+flow, then the browser navigates to `/define/<feature>` for validation and
+commitment.
+
 ## Live Refresh and Concurrency
 
-`.speed/features/<f>/authoring-prd.json` is the shared truth. A watchdog
-observer, registered in the `create_app` lifespan beside the existing spec and
-active-feature watchers, publishes `EventType.AUTHORING_SESSION_CHANGED` with
+`.speed/features/<f>/authoring-prd.json` is the shared truth. A watchdog handler,
+registered in the `create_app` lifespan, publishes
+`EventType.AUTHORING_SESSION_CHANGED` with
 `{feature, artifact_type, revision, status}` on every checkpoint change. An
 answer confirmed in the terminal therefore advances an open dashboard tab without
 a poll.
+
+The handler joins the observer the log watcher already owns rather than starting
+its own. In a single-player layout both watch `.speed/features`, and the fsevents
+backend raises `Cannot add watch - it is already scheduled` for a second native
+watch on one path, which silently killed the emitter thread and left checkpoint
+events undelivered. Sharing the observer also gives a multiplayer layout its own
+watch on `.speed/shared/features`, which is a different path.
 
 Write safety comes from the helper: the feature lock serialises writes and
 `--expected-revision` rejects a stale author. The dashboard's obligations:
 
 - Send the revision the rendered question came from, never a cached one.
+- Send one initial answer with its persisted question ID and rendered revision.
+  A question-ID mismatch rejects that answer without advancing the checkpoint.
 - Treat `revision_conflict` as a page state, not a toast. The banner names the
   held revision and the current one and offers reload, and unsent local text
   survives that reload.
 - Mark a control saved only after the mutation returns a higher revision.
   Optimistic confirmation is prohibited.
 
-## Conflict with Direct Draft Editing
+## Direct Draft Editing
 
-`Mutation.updateDraft` writes `draft-prd.json` and the spec file directly. For a
-guided PRD that edit is lost at the next regeneration, since the checkpoint
-remains the document's only source. Guided drafts are identified by the
-`authoring` key that `_ensure_define_compatibility` writes into the draft record.
-For those, `updateDraft` returns a refusal naming the responsible question and
-the section Edit route. Non-guided drafts keep their current behaviour.
+Guided PRDs are edited section-by-section through `reviseAuthoringSection` so
+the authoring checkpoint remains the source of truth. The helper stores the
+body, actor, timestamp, and revision under `manual_sections`. Later answer edits
+regenerate the PRD but retain overridden bodies. The general editor remains
+available for full-document review; its existing guided-draft guard continues
+to prevent an untracked edit that a later regeneration could erase.
 
 ## Design Language
 
@@ -300,14 +396,14 @@ the 4px grid at 24px page padding, 16px region gaps, 20px card padding.
 - Local edits are never shown as saved before the checkpoint advances.
 - No dashboard-only draft, template, or prompt pipeline is introduced for a
   guided PRD.
-- A slug collision asks for a different name or an explicit resume; it never
-  attaches new intake evidence to existing progress.
+- A canonicalization collision fails without moving either feature package; it
+  never attaches new intake evidence to existing progress.
 
 ## Verification
 
-- Title, slug, and description submitted in the browser produce
-  `specs/<feature>/prd.md` with the author's title as its H1 and a provisional
-  draft available before the first question is answered.
+- A description submitted in the browser creates only the opaque interview
+  checkpoint. Completing every material answer produces
+  `specs/<feature>/prd.md` with the derived title as its H1 and reveals V1.
 - A PRD started in the dashboard and continued through
   `workbench draft prd <feature>` resumes the same question at the same revision,
   and the reverse order behaves identically.
@@ -315,6 +411,11 @@ the 4px grid at 24px page padding, 16px region gaps, 20px card padding.
   match the CLI `--json` payload byte for byte.
 - `authoringSession` leaves `authoring-prd.json`, `specs/<f>/`, and
   `draft-prd.json` unmodified, including the first call for an unknown feature.
+- `authoringSessions` lists every interview in the project, writes nothing, and
+  reports the same status, revision, and `confirmed/total` that
+  `authoringSession` reports for each of those features.
+- A checkpoint that cannot be read appears in the list as one `error` entry and
+  is left on disk untouched.
 - The rendered clarification count changes when an answer raises another area's
   confidence, without the UI showing a lost or skipped step.
 - Two open clients answering the same question yield one confirmed answer and one
@@ -331,7 +432,7 @@ the 4px grid at 24px page padding, 16px region gaps, 20px card padding.
 
 ## Out of Scope
 
-Design and Technical branches in the UI, ADR-candidate capture, changes to
-ratification and commitment, replacing `ceremony_generator.py` for non-guided
+ADR-candidate capture, changes to ratification and commitment, replacing
+`ceremony_generator.py` for non-guided
 drafts, model-generated suggestions, asynchronous suggestion precomputation, and
 multi-author presence.

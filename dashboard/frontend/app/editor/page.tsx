@@ -23,6 +23,11 @@ import {
   type SpecData,
   type SpecMutationResult,
 } from "@/lib/graphql/queries/editor";
+import {
+  editorPathFromSearch,
+  specTypeForPath,
+  toRelativeSpecPath,
+} from "@/lib/editor-path";
 
 /* ── Inline Navigator ──────────────────────────────────────────── */
 
@@ -41,12 +46,6 @@ const STATE_PRIORITY: Record<string, number> = {
   completed: 3, complete: 3, done: 3, unplanned: 4,
 };
 
-/** Convert absolute path to relative (specs/...) for the spec editor API. */
-function toRelativePath(absPath: string): string {
-  const idx = absPath.indexOf("specs/");
-  return idx >= 0 ? absPath.slice(idx) : absPath;
-}
-
 function SpecRow({
   label,
   path,
@@ -62,7 +61,7 @@ function SpecRow({
   color: string;
   onSelect: (path: string) => void;
 }) {
-  const relPath = path ? toRelativePath(path) : null;
+  const relPath = path ? toRelativeSpecPath(path) : null;
 
   if (!exists || !relPath) {
     return (
@@ -121,7 +120,7 @@ function FeatureGroup({
     })),
   ];
 
-  const isActive = specs.some((s) => s.path && activeSpec === toRelativePath(s.path));
+  const isActive = specs.some((s) => s.path && activeSpec === toRelativeSpecPath(s.path));
   const [expanded, setExpanded] = useState(defaultOpen ?? isActive);
 
   // Auto-expand when a spec inside this group becomes active
@@ -156,7 +155,7 @@ function FeatureGroup({
                 label={s.label}
                 path={s.path}
                 exists={s.exists}
-                active={activeSpec === (s.path ? toRelativePath(s.path) : null)}
+                active={activeSpec === (s.path ? toRelativeSpecPath(s.path) : null)}
                 color={s.color}
                 onSelect={onSelectSpec}
               />
@@ -212,7 +211,7 @@ function Navigator({
     ? features.find((f) =>
         [f.specified.productSpec.path, f.specified.technicalSpec.path, f.specified.designSpec.path]
           .filter(Boolean)
-          .map((p) => toRelativePath(p!))
+          .map((p) => toRelativeSpecPath(p!))
           .includes(activeSpec)
       )
     : null;
@@ -687,19 +686,29 @@ export default function EditorPage() {
   // Restore session from localStorage after hydration (SSR-safe)
   useEffect(() => {
     const session = readSession();
+    const requestedPath = editorPathFromSearch(window.location.search);
+    let restoredTabs: TabItem[] = [];
     if (session) {
       const openTabs = Array.isArray(session.openTabs) ? session.openTabs : [];
       if (openTabs.length > 0) {
-        setTabs(openTabs.map(t => ({
+        restoredTabs = openTabs.map(t => ({
           path: t.path,
           specType: t.specType,
           saveState: "clean" as const,
-        })));
+        }));
       }
-      if (session.activeTab) setActiveSpec(session.activeTab);
       if (typeof session.explorerOpen === "boolean") setExplorerOpen(session.explorerOpen);
       if (session.mode === "preview" || session.mode === "edit") setMode(session.mode);
     }
+    if (requestedPath && !restoredTabs.some((tab) => tab.path === requestedPath)) {
+      restoredTabs.push({
+        path: requestedPath,
+        specType: specTypeForPath(requestedPath),
+        saveState: "clean",
+      });
+    }
+    setTabs(restoredTabs);
+    setActiveSpec(requestedPath ?? session?.activeTab ?? null);
     hydrated.current = true;
   }, []);
 
@@ -800,11 +809,7 @@ export default function EditorPage() {
     setActiveSpec(path);
     setTabs((prev) => {
       if (prev.some((t) => t.path === path)) return prev;
-      let specType = "prd";
-      if (path.includes("/tech/")) specType = "rfc";
-      else if (path.includes("/design/")) specType = "dsn";
-      else if (path.includes("/defects/")) specType = "defect";
-      return [...prev, { path, specType, saveState: "clean" }];
+      return [...prev, { path, specType: specTypeForPath(path), saveState: "clean" }];
     });
   }, []);
 

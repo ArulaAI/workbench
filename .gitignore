@@ -25,6 +25,7 @@ site/.astro/
 
 # Next.js build output
 .next/
+.next-*/
 
 # TypeScript build cache
 tsconfig.tsbuildinfo

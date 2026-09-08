@@ -132,7 +132,7 @@ export function CoverageRail({
   const entries = Object.entries(coverage);
   return (
     <aside
-      className="surface-elevated"
+      className="surface-elevated guided-authoring-coverage"
       style={{
         width: 280,
         flexShrink: 0,

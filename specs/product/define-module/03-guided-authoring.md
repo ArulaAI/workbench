@@ -1,7 +1,32 @@
 # Feature Note: Guided Authoring
 
-**Status:** Proposed on top of partial generation and editing foundations  
+**Status:** Core PRD, Design, and Technical RFC authoring implemented; Discover handoff, ADR capture/finalization, and evaluation readiness remain outside the current slice
 **Owns:** One shared cross-surface interview mechanic with product, design, and technical branches; branch-input validation; human answer decisions; question-level resume and staleness; canonical artifact generation; provenance-aware editing; self-review; and CLI/dashboard parity inside an authoring session.
+
+## Dashboard authoring refinement (2026-09-07)
+
+The dashboard uses one shell for PRD, Design, and Technical RFC. PRD starts as
+one chat-style description input with no character counter or hard cap. The
+server creates an opaque temporary identity, the model derives a concise display
+title, and the workflow atomically canonicalizes the feature slug from that
+title. Design requires the exact published PRD; Technical RFC requires the exact
+published PRD and Design. Each uses its own interview agent and question bank.
+Once the smallest necessary clarification set is answered, the first draft opens
+in a simple editor beside the chat instead of linking to a separate editor route.
+Authors can save formatting/content changes as a new version, inspect older
+versions, see live word and character counts, leave broad change requests in
+chat, or select exact text and attach a section-and-line-scoped comment. All
+anchors and earlier artifact versions survive the next revision. Publishing
+creates an immutable labelled snapshot; subsequent edits create a new draft
+without replacing the published version. The editor header owns the single
+`Review & commit` action and an Edit/View toggle. View renders the complete
+Markdown file, while Edit keeps the metadata in the document scroll region so
+it scrolls away with the body instead of remaining sticky.
+
+The initial interview questions are planned once. Every answer is persisted to
+the shared checkpoint before the next question appears. Answering the final
+question generates the first draft immediately; there is no separate Create PRD
+confirmation or second planning pass.
 
 ## Why This Is Needed
 
@@ -28,24 +53,20 @@ flowchart TD
     C -- "No" --> D["Explain missing, stale, or contradictory input"]
     D --> B
     C -- "Yes" --> E["Load persona question bank"]
-    E --> F["Ask one required or conditional question"]
-    F --> H{"Author response"}
-    H -- "Answer or edit" --> I["Persist confirmed answer and provenance"]
-    H -- "Defer" --> J["Persist unresolved impact"]
-    I --> K["Capture any ADR candidate"]
-    J --> K
-    K --> L{"More required questions?"}
-    L -- "Yes" --> F
-    L -- "No" --> M["Generate canonical artifact from confirmed answers"]
+    E --> F["Plan the smallest useful initial PRD batch"]
+    F --> H["Show one carousel question from the prepared batch"]
+    H --> I["Persist each answer and provenance before advancing"]
+    I --> M["Generate canonical artifact from confirmed answers"]
     M --> N["Run persona and cross-spec self-review"]
     N --> O{"Blocking gap?"}
-    O -- "Yes" --> F
+    O -- "Yes" --> Q["Reopen the responsible source answer for repair"]
+    Q --> M
     O -- "No" --> P["Publish the same generated artifact and review state to CLI and dashboard"]
 ```
 
 The CLI/active agent and dashboard can both start, conduct, resume, and complete the interview in v1. The dashboard's **New Spec** action does not invoke a separate broad-generation path: after shared feature/package resolution, it selects the PRD, design, or RFC branch, runs the same branch prerequisite gate, loads the same versioned question bank, and writes to the same persisted interview session used by `workbench draft`.
 
-The two surfaces are clients of one guided-authoring workflow, not independent interview engines. An author may answer in the dashboard, continue through the CLI/active agent, and return to the dashboard without duplicating a session, replaying confirmed questions, changing question order, or generating a second artifact. Both surfaces show the same current question, confirmed/deferred answers, evidence, ADR candidates, self-review findings, artifact revision, and next action.
+The two surfaces are clients of one guided-authoring workflow, not independent interview engines. An author may answer in the dashboard, continue through the CLI/active agent, and return to the dashboard without duplicating a session, replaying confirmed questions, changing question order, or generating a second artifact. Both surfaces show the same current question, confirmed/deferred answers, evidence, self-review findings, artifact revision, and next action. ADR candidates are not yet projected by this implementation.
 
 ## Dashboard Authoring Contract
 
@@ -53,7 +74,8 @@ From the dashboard, an eligible author can select **New Spec**, choose PRD, desi
 
 During the interview, the dashboard must provide:
 
-- one required or conditionally activated question at a time;
+- for a new PRD, one question at a time from the complete initial plan of all
+  material contextual questions, with every submitted answer durably resumable;
 - the same question ID, wording, evidence, and question-bank version as the CLI/agent;
 - a single-select response control for accept suggestion, edit suggestion,
   reject suggestion, and defer, followed by a prefilled edit field when Edit is
@@ -61,12 +83,20 @@ During the interview, the dashboard must provide:
   actions are omitted rather than displayed as selectable choices;
 - visible save/checkpoint state after each durable transition;
 - progress, unresolved requirements, stale answers, and the exact resume point;
-- visible ADR-candidate capture for significant confirmed choices; and
 - generation and self-review actions only when the same branch gates would permit them through the CLI/agent.
 
-Selecting **Generate Spec** creates or updates the one canonical artifact from confirmed answers. It must not create an unrelated dashboard-only draft, bypass unanswered material questions, or use a different prompt/template pipeline. The generated path, content, revision/hash, source-answer mapping, unresolved items, and self-review result are identical regardless of which surface initiated generation.
+Submitting the last required answer immediately creates or updates the one canonical artifact from confirmed answers. There is no separate **Create PRD** or **Generate Spec** confirmation. Generation must not create an unrelated dashboard-only draft, bypass unanswered material questions, or use a different prompt/template pipeline. The generated path, content, revision/hash, source-answer mapping, unresolved items, and self-review result are identical regardless of which surface initiated generation.
 
-Generated sections are not edited directly. Each section shows its source question IDs, confirmed answers, and evidence references. Selecting **Edit** on a section or self-review finding opens the responsible question with its current answer. After the author confirms the revised answer, the system regenerates the affected sections and reruns self-review. This keeps the interview state and generated artifact consistent and preserves one authoritative source for every generated section.
+Each generated section shows its source question IDs and offers **Edit draft**
+and **Comment**. Edit draft makes an explicit manual section override; Comment
+collects requested changes so several sections can be regenerated in one pass.
+On submission, the model reconsiders each affected section against the complete
+existing PRD and its source context and returns a structured replacement body;
+the comment itself is never appended as PRD prose. Model failure leaves the
+current artifact unchanged and the comments available to retry.
+The preview does not expose an **Edit answer** action. A blocking self-review
+finding may still reopen its responsible question so the author can repair the
+underlying decision before regeneration.
 
 If both surfaces are open, persisted session revision controls prevent silent last-write-wins behavior. A stale client must reload or deliberately reconcile before changing an answer. The dashboard never represents locally cached answers as saved until the shared checkpoint succeeds.
 
@@ -75,20 +105,15 @@ If both surfaces are open, persisted session revision controls prevent silent la
 The artifact choice determines the next input; the UI does not offer one generic
 repository feature picker for every branch.
 
-- **New PRD:** collect the feature slug and a short problem/outcome description
-  together in one form. Do not enumerate existing feature directories or
-  specifications as suggestions. Normalize and validate the proposed feature
-  identity; a collision asks for a different name rather than silently resuming
-  existing work. Persist the description as direct evidence and immediately
-  present it as the initial P-Q1 suggestion. It remains unconfirmed until the
-  author accepts or edits it. If an empty interview checkpoint was created
-  before the description arrived, attach the description to that checkpoint as
-  evidence and regenerate the initial suggestion rather than rejecting or
-  dropping the intake.
-- **Design:** ask for the upstream PRD first. Accept a PRD reference or offer
-  only PRDs that pass the Design prerequisite gate. Derive the feature identity
-  from that PRD when possible. Feature-name entry is a fallback third step, not
-  a list of arbitrary repository features.
+- **New PRD:** collect only a short problem/outcome description. Do not ask for
+  or display a guessed title or slug. Persist it under an opaque temporary
+  identity, navigate immediately, show **Deriving title…**, and canonicalize the
+  feature identity only from the model title. Treat the description as direct
+  evidence and let the planner resolve P-Q1 when it is sufficient.
+- **Design and Technical RFC:** enter through an existing canonical feature.
+  Design is blocked until its PRD has an immutable, hash-verified published
+  version. Technical RFC is blocked until both PRD and Design have published
+  versions. A newer working draft does not invalidate the last published snapshot.
 
 CLI/agent and dashboard clients consume this same branch-aware intake result.
 
@@ -97,18 +122,20 @@ CLI/agent and dashboard clients consume this same branch-aware intake result.
 1. Invoke the shared feature/package resolver and receive the canonical feature reference, requested artifact type, actor, and current journey inputs.
 2. Validate the selected branch's exact prerequisite revisions and show missing, stale, contradictory, or unratified inputs with their impact.
 3. Load the question bank for the selected persona.
-4. Ask one required or conditionally activated question at a time.
+4. Plan every contextual question needed to complete the applicable template,
+   without a fixed question-count limit. Present one question at a time and
+   persist each answer immediately before advancing. Do not append a newly
+   discovered question during final synthesis.
 5. Return a shared selectable action control. Persist the selected action before
    collecting any second-step edit text, then persist the resulting answer or
    deferral state.
-6. Capture significant choices as visible ADR candidates without creating an ADR prematurely.
-7. Checkpoint after each durable transition—including intake evidence and an
+6. Checkpoint after each durable transition—including intake evidence and an
    edit selection—and resume at the exact saved control with the same confirmed
    answers and Discover outputs.
-8. Generate the canonical template only from confirmed information.
-9. Self-review and return gaps to the responsible question on either surface.
-10. Repair generated content only by editing its source answer, regenerating affected sections, and rerunning self-review.
-11. Publish the same generated revision, provenance, findings, and authoring next action to CLI/agent and dashboard, then return the branch result to orchestration for journey routing.
+7. Generate the canonical template only from confirmed information.
+8. Self-review and return answer-level gaps to the responsible question on either surface; expose structural repair in the embedded editor without marking V1 ready.
+9. Preserve direct section/document edits and anchored review comments as attributable, revisioned provenance.
+10. Publish the same generated revision, provenance, findings, and authoring next action to CLI/agent and dashboard, then return the branch result to orchestration for journey routing.
 
 ## Persona Branches
 
@@ -194,7 +221,7 @@ Technical answers must resolve existing files, symbols, and contracts or label t
 | AUTH-S6 | As an author, I want self-review findings tied back to their source questions so I can repair reasoning instead of patching unexplained prose. | CLI/agent + dashboard authoring/review | Self-review checks required sections, unsupported claims, contradictions, scope drift, unresolved material answers, and upstream coverage. Every blocking finding names and reopens the responsible question/answer on either surface; regeneration updates affected managed sections and records the artifact revision checked. | Self-reviewed draft or question-level repair loop | Must |
 | AUTH-S7 | As a reviewer, I want to inspect how a draft was produced so I can distinguish repository evidence, system assistance, human decisions, and unresolved gaps before approval. | CLI/agent + dashboard detail | Both surfaces expose the same artifact/input revisions, section-to-question mappings, answer evidence, ADR candidates, unresolved items, and self-review findings. Neither surface shows evidence from a different artifact revision. | Reviewable provenance for the exact draft | Must |
 | AUTH-S8 | As an author, I want dashboard **New Spec** and `workbench draft` to generate the same canonical artifact so my choice of surface cannot change or duplicate the specification. | CLI/agent + dashboard authoring | Both entries use the feature/package identity returned by the shared resolver and resolve one artifact identity and persisted interview session. **Generate Spec** applies the same completion gate, confirmed answers, template version, generation rules, and self-review; it produces one matching path, content revision/hash, provenance record, and authoring next action. Concurrent stale writes require reload or explicit reconciliation. | One cross-surface canonical artifact | Must |
-| AUTH-S9 | As an author, I want to repair generated content through its source answer so the interview and specification cannot diverge. | CLI/agent + dashboard authoring | Selecting **Edit** on a generated section or finding opens the responsible question and current answer. Confirming the revision regenerates affected sections, updates provenance, and reruns self-review. Direct generated-document editing and manual overrides are not permitted. | Source-answer repair and regenerated draft | Must |
+| AUTH-S9 | As an author, I want clear ways to refine generated content without returning to old interview answers. | CLI/agent + dashboard authoring | Every generated section retains source provenance and offers **Edit draft** plus **Comment**, but no **Edit answer** action. Direct edits are recorded as manual overrides. Multiple comments can be submitted together; the model rewrites exactly those section bodies using the comments, existing PRD, source inputs, and template structure. It never appends instruction text verbatim, and model failure changes no artifact state. A blocking self-review finding may still reopen its responsible source question. | Direct refinement, model-reconsidered review comments, and traceable provenance | Must |
 
 ## Skill Delivery Dependency
 
@@ -204,9 +231,19 @@ Guided authoring is delivered through `workbench-draft`, whose packaging, global
 
 **Existing:** [`ceremony_generator.py`](../../../dashboard/backend/ceremony_generator.py) generates PRD, design, and RFC drafts from canonical templates, includes earlier specs, checks required headings, retries, and persists drafts. [`ceremony_editor.py`](../../../dashboard/backend/resolvers/ceremony_editor.py) supports draft updates, validation, decomposition, and child RFC generation. The dashboard has feature authoring and review surfaces.
 
-**Partial:** dashboard generation is broad-prompt/refinement based. It accepts only `prd`, `design`, and `rfc`; there is no shared persisted question-by-question session, answer decision history, canonical persona question bank, answer-level provenance, cross-surface concurrency control, or source-answer regeneration flow.
+**Implemented in this slice:** one persisted question-at-a-time workflow serves
+PRD, Design, and Technical RFC across CLI and dashboard. It includes model title
+derivation, artifact-specific question banks, strict published-upstream gates,
+answer and edit provenance, ownership checks, optimistic revision control,
+embedded editing, anchored comments, deterministic self-review, publication,
+and selectable immutable versions. `workbench-define` reconciles the three core
+artifacts and `workbench audit <feature>` writes a frozen connected core-package
+audit with stable finding IDs and staleness detection.
 
-**Proposed:** SPEED has no canonical built-in skill catalog, projector, `workbench-draft` skill, or `workbench skills` commands. Those claims must not be described as existing.
+**Still unsupported:** a reviewed Discover handoff contract, ADR candidate
+capture/finalization, evaluation specifications, final package ratification, and
+an honest Plan-ready result. The package index reports these as blockers rather
+than treating published core artifacts as a completed Define journey.
 
 ## Completion Signals
 
@@ -217,12 +254,14 @@ Guided authoring is delivered through `workbench-draft`, whose packaging, global
 - Interrupted sessions resume without losing confirmed answers or referenced Discover outputs.
 - CLI/active-agent and dashboard entry differences do not change required questions, gates, answers, generation, self-review, or outputs.
 - Dashboard **New Spec** and `workbench draft` resolve one session and one canonical artifact rather than creating independent drafts.
-- An author can switch surfaces and resume the same current question without losing or duplicating confirmed work.
-- Generated sections expose their source questions/answers and can be changed only by editing the source answer and regenerating affected sections.
+- An author can switch surfaces and resume the same planned batch or repair question without losing or duplicating confirmed work.
+- Generated sections expose their source-question provenance and can be refined
+  through a direct draft edit or batched review comments; the preview does not
+  offer source-answer editing.
 
 ## Suggested Responses — Product v1 Decision
 
-The first Product slice shows a suggested response for every P-Q question. It
+The Product slice may show a suggested response for a material P-Q question. It
 derives the suggestion from the persisted feature context, intent, source
 statuses, and earlier confirmed interview answers. The response exposes its
 supporting source IDs and paths, confidence, and missing, stale, empty, or
@@ -243,8 +282,7 @@ The author must choose one explicit action:
 The checkpoint stores the suggestion separately from the confirmed answer and
 records suggestion ID, sources, decision, actor, time, and revision. Only
 accepted or edited answers enter the generated PRD. This v1 decision does not
-settle model-generated suggestions, asynchronous precomputation, or Discover's
-final evidence schema; those remain later compatibility decisions.
+settle Discover's final evidence schema; that remains a later compatibility decision.
 
 ## Suggested Responses — Design v1 Decision
 
@@ -271,9 +309,9 @@ recording any remaining quality gap. No surface invents additional probes.
 
 After all required answers are confirmed, the helper generates the artifact and
 runs deterministic self-review for required sections, placeholders, unresolved
-markers, and persisted answer-quality gaps. Every finding carries its source
-P-Q or D-Q ID. On the first failing pass, those answers become stale and reopen
-for repair; generated prose is never edited independently. The second pass is
-final. A clean result is `drafted`; remaining findings produce
-`drafted_with_open_questions` and a `Self-Review Open Questions` section rather
-than an endless repair loop or invented certainty.
+markers, malformed tables, stable requirement IDs, scope boundaries, stale
+manual overrides, and persisted answer-quality gaps. Answer-level findings carry
+their P-Q, D-Q, or T-Q source and reopen it for repair. Structural findings enter
+`review_repair` and expose the editor without reporting V1 ready. A clean result
+is `drafted`; the implementation no longer exposes a misleading
+`drafted_with_open_questions` terminal state.

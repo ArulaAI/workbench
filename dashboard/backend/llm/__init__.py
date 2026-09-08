@@ -67,7 +67,13 @@ def read_model_config(project_root: Path | None = None) -> dict[str, Any]:
         data = tomllib.loads(toml_path.read_text(encoding="utf-8"))
         agent = data.get("agent", {})
         config: dict[str, Any] = {}
-        for key in ("provider", "cli_command", "ollama_base_url"):
+        for key in (
+            "provider",
+            "cli_command",
+            "ollama_base_url",
+            "planning_model",
+            "support_model",
+        ):
             val = agent.get(key)
             if val:
                 config[key] = str(val)
@@ -219,6 +225,7 @@ def _ollama_complete(
     temperature: float = 0.2,
     max_tokens: int = 4096,
     project_root: Path | None = None,
+    timeout: int = 120,
 ) -> tuple[T, int]:
     """Call Ollama's /api/chat directly with native tool calling.
 
@@ -256,7 +263,7 @@ def _ollama_complete(
     }
 
     start = time.monotonic()
-    resp = httpx.post(f"{base_url}/api/chat", json=payload, timeout=300)
+    resp = httpx.post(f"{base_url}/api/chat", json=payload, timeout=timeout)
     resp.raise_for_status()
     elapsed_ms = int((time.monotonic() - start) * 1000)
 
@@ -283,18 +290,18 @@ def _cli_complete_text(
 ) -> str:
     """Run a CLI LLM call for long text output.
 
-    Matches _cli_complete: prompt as CLI argument, --output-format json.
-    This pattern completes in 10-76s. Stdin piping with stream-json
-    triggered agentic tool-use loops that caused 900s timeouts.
+    Matches _cli_complete while keeping user content out of argv. Claude uses
+    print mode and Codex uses ephemeral non-interactive execution.
     """
     import subprocess
 
     parts = []
+    system_parts = []
     for msg in messages:
         role = msg.get("role", "user")
         content = msg.get("content", "")
         if role == "system":
-            parts.append(f"<system>\n{content}\n</system>\n")
+            system_parts.append(content)
         else:
             parts.append(content)
     prompt = "\n".join(parts)
@@ -304,8 +311,10 @@ def _cli_complete_text(
     model_tier = model.split("/")[-1]  # e.g. "opus", "sonnet"
 
     if command == "claude":
-        cmd = [command, "-p", prompt, "--output-format", "json",
+        cmd = [command, "-p", "--output-format", "json",
                "--model", model_tier, "--tools", ""]
+        if system_parts:
+            cmd.extend(["--system-prompt", "\n\n".join(system_parts)])
         last_err = ""
         for attempt in range(3):
             if attempt > 0:
@@ -313,11 +322,11 @@ def _cli_complete_text(
                 _time.sleep(2 ** attempt)  # 2s, 4s backoff
                 log.info("Retrying CLI call (attempt %d/3)", attempt + 1)
             result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=timeout,
+                cmd, input=prompt, capture_output=True, text=True, timeout=timeout,
             )
             if result.returncode == 0:
                 break
-            last_err = result.stderr.strip() or "(no stderr)"
+            last_err = _cli_error_detail(result.stdout, result.stderr)
             if "overloaded" not in last_err.lower() and "529" not in last_err:
                 raise RuntimeError(f"{command} CLI failed: {last_err}")
         else:
@@ -329,9 +338,19 @@ def _cli_complete_text(
             raise RuntimeError(f"{command} CLI returned error as result: {text[:200]}")
         return text
     elif command == "codex":
+        if system_parts:
+            prompt = (
+                "<system>\n"
+                + "\n\n".join(system_parts)
+                + "\n</system>\n\n"
+                + prompt
+            )
         result = subprocess.run(
-            [command, "-p", prompt],
-            capture_output=True, text=True, timeout=timeout,
+            [
+                command, "exec", "--ephemeral", "--sandbox", "read-only",
+                "--color", "never", "--model", model_tier, "-",
+            ],
+            input=prompt, capture_output=True, text=True, timeout=timeout,
         )
         if result.returncode != 0:
             raise RuntimeError(f"codex CLI failed: {result.stderr[:300]}")
@@ -378,11 +397,44 @@ def _extract_text_from_stream_json(raw: str) -> str:
     return raw.strip()
 
 
+def _cli_error_detail(stdout: str, stderr: str) -> str:
+    """Surface structured CLI API errors that are often written to stdout."""
+    detail = stderr.strip()
+    try:
+        payload = json.loads(stdout)
+    except (json.JSONDecodeError, TypeError):
+        payload = None
+    if isinstance(payload, dict):
+        message = str(payload.get("result") or payload.get("error") or "").strip()
+        status = payload.get("api_error_status")
+        if message:
+            return f"API {status}: {message}" if status else message
+    return detail or stdout.strip()[:300] or "unknown CLI failure"
+
+
+def _validate_cli_response(text: str, response_model: Type[T]) -> T:
+    """Validate the full response first, then scan for a JSON object envelope."""
+    try:
+        return response_model.model_validate_json(text)
+    except Exception as direct_error:
+        decoder = json.JSONDecoder()
+        for index, char in enumerate(text):
+            if char != "{":
+                continue
+            try:
+                payload, _end = decoder.raw_decode(text[index:])
+                return response_model.model_validate(payload)
+            except Exception:
+                continue
+        raise direct_error
+
+
 def _cli_complete(
     messages: list[dict[str, str]],
     model: str,
     project_root: Path | None = None,
     response_schema: Optional[dict] = None,
+    max_tokens: int = 4096,
     timeout: int = 120,
 ) -> tuple[str, float, int]:
     """Run an LLM call through a CLI tool. Returns (text, cost_usd, elapsed_ms)."""
@@ -390,22 +442,16 @@ def _cli_complete(
 
     # Build prompt from messages
     parts = []
+    system_parts = []
     for msg in messages:
         role = msg.get("role", "user")
         content = msg.get("content", "")
         if role == "system":
-            parts.append(f"<system>\n{content}\n</system>\n")
+            system_parts.append(content)
         else:
             parts.append(content)
 
     prompt = "\n".join(parts)
-
-    # If we need structured output, append the schema to the prompt
-    if response_schema:
-        prompt += (
-            f"\n\nRespond with ONLY valid JSON matching this schema, no other text:\n"
-            f"```json\n{json.dumps(response_schema, indent=2)}\n```"
-        )
 
     config = read_model_config(project_root)
     command = config.get("cli_command", model.split("/")[0])
@@ -413,20 +459,63 @@ def _cli_complete(
     start = time.monotonic()
 
     if command == "claude":
+        model_tier = model.split("/")[-1]
+        cli_args = [
+            command,
+            "-p",
+            "--output-format",
+            "json",
+            "--model",
+            model_tier,
+            "--effort",
+            "high" if max_tokens >= 6000 else "low",
+            "--tools",
+            "",
+            "--strict-mcp-config",
+            "--mcp-config",
+            '{"mcpServers":{}}',
+            "--no-session-persistence",
+            "--disable-slash-commands",
+            "--no-chrome",
+            "--permission-mode",
+            "dontAsk",
+        ]
+        if system_parts:
+            cli_args.extend(["--system-prompt", "\n\n".join(system_parts)])
+        if response_schema:
+            cli_args.extend(["--json-schema", json.dumps(response_schema)])
         result = subprocess.run(
-            [command, "-p", prompt, "--output-format", "json"],
-            capture_output=True, text=True, timeout=timeout,
+            cli_args,
+            input=prompt, capture_output=True, text=True, timeout=timeout,
         )
         elapsed_ms = int((time.monotonic() - start) * 1000)
         if result.returncode != 0:
-            raise RuntimeError(f"claude CLI failed: {result.stderr[:200]}")
+            raise RuntimeError(
+                f"claude CLI failed: {_cli_error_detail(result.stdout, result.stderr)[:300]}"
+            )
         data = json.loads(result.stdout)
-        text = data.get("result", "")
+        structured = data.get("structured_output")
+        text = json.dumps(structured) if isinstance(structured, dict) else data.get("result", "")
         cost = data.get("total_cost_usd", 0)
     elif command == "codex":
+        if system_parts:
+            prompt = (
+                "<system>\n"
+                + "\n\n".join(system_parts)
+                + "\n</system>\n\n"
+                + prompt
+            )
+        if response_schema:
+            prompt += (
+                f"\n\nRespond with ONLY valid JSON matching this schema, no other text:\n"
+                f"```json\n{json.dumps(response_schema, indent=2)}\n```"
+            )
         result = subprocess.run(
-            [command, "-p", prompt],
-            capture_output=True, text=True, timeout=timeout,
+            [
+                command, "exec", "--ephemeral", "--sandbox", "read-only",
+                "--color", "never", "--model", model.split("/")[-1], "-",
+            ],
+            input=prompt, capture_output=True, text=True, timeout=timeout,
         )
         elapsed_ms = int((time.monotonic() - start) * 1000)
         if result.returncode != 0:
@@ -450,6 +539,7 @@ def llm_complete(
     spec_path: Optional[str] = None,
     purpose: Optional[str] = None,
     project_root: Optional[Path] = None,
+    timeout: int = 120,
 ) -> T:
     """Make an LLM call and return a validated Pydantic model.
 
@@ -457,13 +547,21 @@ def llm_complete(
     or to litellm+instructor for everything else.
     Caches responses in SQLite by content hash.
     """
+    if conn:
+        ensure_llm_tables(conn)
     # Check cache first
-    cache_key = _cache_key(model, messages, response_model.__name__)
+    schema = response_model.model_json_schema()
+    cache_key = _cache_key(model, messages, schema)
     if conn:
         cached = _get_cached(conn, cache_key)
         if cached:
-            log.debug("Cache hit for %s", cache_key[:16])
-            return response_model.model_validate_json(cached)
+            try:
+                log.debug("Cache hit for %s", cache_key[:16])
+                return response_model.model_validate_json(cached)
+            except Exception:
+                log.warning("Discarding incompatible cached LLM response for %s", cache_key[:16])
+                conn.execute("DELETE FROM llm_cache WHERE cache_key = ?", (cache_key,))
+                conn.commit()
 
     start = time.monotonic()
 
@@ -473,6 +571,7 @@ def llm_complete(
             messages, model, response_model,
             temperature=temperature, max_tokens=max_tokens,
             project_root=project_root,
+            timeout=timeout,
         )
         result_json = result.model_dump_json()
         if conn:
@@ -482,38 +581,36 @@ def llm_complete(
 
     elif _is_cli_model(model, project_root):
         # CLI path: include schema in prompt, parse JSON from response
-        schema = response_model.model_json_schema()
-        text, cost, elapsed_ms = _cli_complete(messages, model, project_root, response_schema=schema)
-
-        # Extract JSON from the response (may have markdown fences)
-        json_text = text
-        if "```json" in json_text:
-            json_text = json_text.split("```json")[-1].split("```")[0].strip()
-        elif "```" in json_text:
-            json_text = json_text.split("```")[1].split("```")[0].strip()
+        text, cost, elapsed_ms = _cli_complete(
+            messages, model, project_root, response_schema=schema,
+            max_tokens=max_tokens,
+            timeout=timeout,
+        )
 
         try:
-            result = response_model.model_validate_json(json_text)
+            result = _validate_cli_response(text, response_model)
         except Exception:
             # Retry once with a nudge
             retry_msgs = messages + [
                 {"role": "assistant", "content": text},
                 {"role": "user", "content": "That response was not valid JSON. Please respond with ONLY the JSON object, no other text."},
             ]
-            text2, cost2, elapsed2 = _cli_complete(retry_msgs, model, project_root, response_schema=schema)
-            json_text2 = text2
-            if "```json" in json_text2:
-                json_text2 = json_text2.split("```json")[-1].split("```")[0].strip()
-            elif "```" in json_text2:
-                json_text2 = json_text2.split("```")[1].split("```")[0].strip()
-            result = response_model.model_validate_json(json_text2)
+            text2, cost2, elapsed2 = _cli_complete(
+                retry_msgs, model, project_root, response_schema=schema,
+                max_tokens=max_tokens,
+                timeout=timeout,
+            )
+            result = _validate_cli_response(text2, response_model)
             cost += cost2
             elapsed_ms += elapsed2
 
         result_json = result.model_dump_json()
         if conn:
             _set_cached(conn, cache_key, result_json)
-            _log_call(conn, model, messages, result_json, elapsed_ms, spec_path, purpose)
+            _log_call(
+                conn, model, messages, result_json, elapsed_ms, spec_path, purpose,
+                actual_cost_usd=cost,
+            )
         return result
     else:
         # litellm + instructor path
@@ -526,6 +623,7 @@ def llm_complete(
             max_retries=max_retries,
             temperature=temperature,
             max_tokens=max_tokens,
+            timeout=timeout,
         )
         elapsed_ms = int((time.monotonic() - start) * 1000)
 
@@ -673,7 +771,7 @@ LLM_CACHE_DDL = """
 CREATE TABLE IF NOT EXISTS llm_cache (
     cache_key   TEXT PRIMARY KEY,
     response    TEXT NOT NULL,
-    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%%H:%%M:%%SZ','now'))
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 );
 
 CREATE TABLE IF NOT EXISTS llm_calls (
@@ -685,7 +783,7 @@ CREATE TABLE IF NOT EXISTS llm_calls (
     elapsed_ms  INTEGER,
     purpose     TEXT,
     spec_path   TEXT,
-    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%%H:%%M:%%SZ','now'))
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 );
 """
 
@@ -695,20 +793,34 @@ def ensure_llm_tables(conn: sqlite3.Connection) -> None:
     conn.executescript(LLM_CACHE_DDL)
 
 
-def _cache_key(model: str, messages: list[dict], response_type: str) -> str:
-    raw = json.dumps({"model": model, "messages": messages, "type": response_type}, sort_keys=True)
+def _cache_key(model: str, messages: list[dict], response_schema: dict) -> str:
+    raw = json.dumps(
+        {"model": model, "messages": messages, "schema": response_schema},
+        sort_keys=True,
+    )
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
 def _get_cached(conn: sqlite3.Connection, key: str) -> Optional[str]:
-    row = conn.execute("SELECT response FROM llm_cache WHERE cache_key = ?", (key,)).fetchone()
+    row = conn.execute(
+        """SELECT response FROM llm_cache
+           WHERE cache_key = ?
+             AND created_at >= strftime('%Y-%m-%dT%H:%M:%SZ','now','-30 days')""",
+        (key,),
+    ).fetchone()
     return row["response"] if row else None
 
 
 def _set_cached(conn: sqlite3.Connection, key: str, response: str) -> None:
     conn.execute(
-        "INSERT OR REPLACE INTO llm_cache (cache_key, response) VALUES (?, ?)",
+        """INSERT OR REPLACE INTO llm_cache (cache_key, response, created_at)
+           VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%SZ','now'))""",
         (key, response),
+    )
+    conn.execute(
+        """DELETE FROM llm_cache WHERE cache_key NOT IN (
+               SELECT cache_key FROM llm_cache ORDER BY created_at DESC LIMIT 1000
+           )"""
     )
     conn.commit()
 
@@ -716,19 +828,19 @@ def _set_cached(conn: sqlite3.Connection, key: str, response: str) -> None:
 def _log_call(
     conn: sqlite3.Connection, model: str, messages: list[dict],
     response: str, elapsed_ms: int, spec_path: Optional[str], purpose: Optional[str],
+    actual_cost_usd: Optional[float] = None,
 ) -> None:
     # Estimate tokens (rough: 4 chars per token)
     input_chars = sum(len(m.get("content", "")) for m in messages)
     tokens_in = input_chars // 4
     tokens_out = len(response) // 4
-    try:
-        cost = litellm.completion_cost(model=model, prompt=str(tokens_in), completion=str(tokens_out))
-    except Exception:
-        cost = 0.0
+    cost = float(actual_cost_usd) if actual_cost_usd is not None else 0.0
 
     conn.execute(
-        """INSERT INTO llm_calls (model, tokens_in, tokens_out, cost_usd, elapsed_ms, purpose, spec_path)
-           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        """INSERT INTO llm_calls (
+               model, tokens_in, tokens_out, cost_usd, elapsed_ms,
+               purpose, spec_path, created_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ','now'))""",
         (model, tokens_in, tokens_out, cost, elapsed_ms, purpose, spec_path),
     )
     conn.commit()

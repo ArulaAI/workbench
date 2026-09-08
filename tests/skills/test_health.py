@@ -46,7 +46,9 @@ def test_helper_reports_imported_skills_ready(tmp_project):
     )
     assert result["catalog_version"] == "test"
     assert result["harness"] == "claude"
-    assert result["skills"] == ["workbench-draft", "workbench-health"]
+    assert result["skills"] == [
+        "workbench-define", "workbench-draft", "workbench-health"
+    ]
     assert result["issues"] == []
 
 

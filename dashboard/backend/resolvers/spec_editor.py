@@ -8,11 +8,13 @@ from __future__ import annotations
 
 import logging
 import os
+import json
 import sqlite3
 from pathlib import Path
 from typing import Optional
 
 from ..spec_parser import extract_sections, run_checklist, score_spec_completeness
+from ..paths import get_paths
 from ..spec_registry import (
     classify_spec_type,
     detect_ghosts,
@@ -35,6 +37,23 @@ from .spec_editor_types import (
 )
 
 log = logging.getLogger("speed.dashboard.spec_editor")
+
+
+def _guided_authoring_target(project_root: Path, path: str) -> tuple[str, str] | None:
+    """Identify canonical generated artifacts owned by guided authoring."""
+    parts = Path(path).parts
+    if len(parts) != 3 or parts[0] != "specs":
+        return None
+    feature, filename = parts[1], parts[2]
+    artifact_type = Path(filename).stem
+    if artifact_type not in {"prd", "design", "rfc"}:
+        return None
+    record_path = get_paths(project_root).ceremony_draft(feature, artifact_type)
+    try:
+        record = json.loads(record_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return (feature, artifact_type) if isinstance(record.get("authoring"), dict) else None
 
 
 # ── Queries ──────────────────────────────────────────────────────────────
@@ -120,13 +139,26 @@ def get_spec(
     conn: sqlite3.Connection, project_root: Path, path: str
 ) -> Optional[StructuredSpec]:
     """Return a single spec as structured sections."""
+    full_path = (project_root / path).resolve()
+    specs_root = (project_root / "specs").resolve()
+    try:
+        full_path.relative_to(specs_root)
+    except ValueError:
+        return None
+
     row = conn.execute(
         "SELECT * FROM spec_index WHERE path = ?", (path,)
     ).fetchone()
+    if not row and full_path.is_file() and full_path.suffix == ".md":
+        # A generated draft can be opened before the filesystem watcher has
+        # indexed it. Index it synchronously so deep links never land blank.
+        update_spec(conn, full_path, project_root)
+        row = conn.execute(
+            "SELECT * FROM spec_index WHERE path = ?", (path,)
+        ).fetchone()
     if not row:
         return None
 
-    full_path = project_root / path
     if not full_path.exists():
         return None
 
@@ -306,10 +338,25 @@ def update_spec_content(
     # Resolve and validate path BEFORE any operations
     full_path = (project_root / path).resolve()
     specs_dir = (project_root / "specs").resolve()
-    if not str(full_path).startswith(str(specs_dir)):
+    try:
+        full_path.relative_to(specs_dir)
+    except ValueError:
         return SpecMutationResult(success=False, path=path, error="Path not under specs/")
     if not full_path.exists():
         return SpecMutationResult(success=False, path=path, error="Spec not found")
+    guided = _guided_authoring_target(
+        project_root, str(full_path.relative_to(project_root.resolve()))
+    )
+    if guided:
+        feature, artifact_type = guided
+        return SpecMutationResult(
+            success=False,
+            path=path,
+            error=(
+                f"This {artifact_type} is owned by guided authoring. Open "
+                f"/define/{feature}/authoring/{artifact_type} to edit it safely."
+            ),
+        )
 
     # Write directly (no tmp+replace — atomic replace triggers watcher delete events)
     try:

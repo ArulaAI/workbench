@@ -94,36 +94,19 @@ export interface VisionDraftData {
 
 export const BOOTSTRAP_STATUS_QUERY = gql`
   query BootstrapStatus {
-    bootstrapStatus {
-      needsBootstrap
-      graphBuilt
-      visionCommitted
-      conventionsCommitted
-      currentStep
-    }
+    bootstrapStatus
   }
 `;
 
 export const VISION_DRAFT_QUERY = gql`
   query VisionDraft {
-    visionDraft {
-      content
-      status
-    }
+    visionDraft
   }
 `;
 
 export const DERIVED_CONVENTIONS_QUERY = gql`
   query DerivedConventions {
-    derivedConventions {
-      id
-      convention
-      source
-      confidence
-      status
-      scope
-      tags
-    }
+    derivedConventions
   }
 `;
 
@@ -131,67 +114,42 @@ export const DERIVED_CONVENTIONS_QUERY = gql`
 
 export const START_GRAPH_BUILD_MUTATION = gql`
   mutation StartGraphBuild {
-    startGraphBuild {
-      status
-      fileCount
-      nodeCount
-      message
-    }
+    startGraphBuild
   }
 `;
 
 export const GENERATE_VISION_MUTATION = gql`
   mutation GenerateVision {
-    generateVision {
-      generatedContent
-      status
-      message
-    }
+    generateVision
   }
 `;
 
 export const COMMIT_VISION_MUTATION = gql`
   mutation CommitVision($content: String!) {
-    commitVision(content: $content) {
-      committed
-    }
+    commitVision(content: $content)
   }
 `;
 
 export const EXTRACT_CONVENTIONS_MUTATION = gql`
   mutation ExtractConventions {
-    extractConventions {
-      id
-      convention
-      source
-      confidence
-      status
-    }
+    extractConventions
   }
 `;
 
 export const RESOLVE_CONVENTION_MUTATION = gql`
   mutation ResolveConvention($conventionId: String!, $action: String!) {
-    resolveConvention(conventionId: $conventionId, action: $action) {
-      id
-      status
-    }
+    resolveConvention(conventionId: $conventionId, action: $action)
   }
 `;
 
 export const COMMIT_CONVENTIONS_MUTATION = gql`
   mutation CommitConventions($personaInput: String) {
-    commitConventions(personaInput: $personaInput) {
-      committed
-      acceptedCount
-    }
+    commitConventions(personaInput: $personaInput)
   }
 `;
 
 export const COMPLETE_BOOTSTRAP_MUTATION = gql`
   mutation CompleteBootstrap {
-    completeBootstrap {
-      complete
-    }
+    completeBootstrap
   }
 `;

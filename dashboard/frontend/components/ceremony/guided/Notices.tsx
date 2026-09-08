@@ -86,16 +86,30 @@ export function BlockingNotice({ message, deferred }: { message: string; deferre
 export function SelfReviewSummary({
   session,
   onEditQuestion,
+  pendingCommentCount = 0,
+  regenerating = false,
+  onRegenerate,
+  artifactLabel = "PRD",
 }: {
   session: AuthoringSession;
   onEditQuestion: (questionId: string) => void;
+  artifactLabel?: string;
+  pendingCommentCount?: number;
+  regenerating?: boolean;
+  onRegenerate?: () => void;
 }) {
   const findings = session.selfReview?.findings ?? [];
-  const passed = session.status === "drafted";
+  const passed = session.status === "drafted" || session.status === "published";
   return (
     <div className="surface" style={{ padding: 20 }}>
       <div className="type-section-title" style={{ marginBottom: 8 }}>
-        {passed ? "PRD drafted" : "PRD drafted with open questions"}
+        {session.status === "published"
+          ? `${artifactLabel} published`
+          : passed
+            ? `${artifactLabel} drafted`
+            : session.status === "review_repair"
+              ? `${artifactLabel} needs repair`
+              : `${artifactLabel} interview needs more information`}
       </div>
       <div
         className="type-body"
@@ -107,36 +121,53 @@ export function SelfReviewSummary({
         <ul style={{ listStyle: "none", padding: 0, margin: "16px 0 0 0" }}>
           {findings.map((finding, index) => (
             <li
-              key={`${finding.question_id}-${index}`}
+              key={`${finding.question_id ?? "document"}-${index}`}
               style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 8 }}
             >
-              <span className="type-mono-value" style={{ color: "var(--color-text-secondary)" }}>
-                {finding.question_id}
-              </span>
+              {finding.question_id && (
+                <span className="type-mono-value" style={{ color: "var(--color-text-secondary)" }}>
+                  {finding.question_id}
+                </span>
+              )}
               <span className="type-body" style={{ flex: 1 }}>
                 {finding.message}
               </span>
-              <button
-                type="button"
-                className="type-caption"
-                onClick={() => onEditQuestion(finding.question_id)}
-                style={{
-                  background: "transparent",
-                  border: "none",
-                  color: "var(--color-text-secondary)",
-                  cursor: "pointer",
-                  fontWeight: 500,
-                }}
-              >
-                Edit
-              </button>
+              {finding.question_id ? (
+                <button
+                  type="button"
+                  className="type-caption"
+                  onClick={() => onEditQuestion(finding.question_id as string)}
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    color: "var(--color-text-secondary)",
+                    cursor: "pointer",
+                    fontWeight: 500,
+                  }}
+                >
+                  Edit answer
+                </button>
+              ) : (
+                <span className="type-caption">Fix in editor</span>
+              )}
             </li>
           ))}
         </ul>
       )}
       {session.artifactPath && (
-        <div className="type-caption" style={{ marginTop: 16 }}>
-          {session.artifactPath}
+        <div style={{ marginTop: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+          <div className="type-caption">{session.artifactPath}</div>
+          {pendingCommentCount > 0 && onRegenerate && (
+            <button
+              type="button"
+              className="type-badge"
+              disabled={regenerating}
+              onClick={onRegenerate}
+              style={{ height: 32, padding: "0 16px", border: "1px solid var(--color-accent)", borderRadius: 6, background: "var(--color-accent-dim)", color: "var(--color-accent)", cursor: regenerating ? "not-allowed" : "pointer" }}
+            >
+              {regenerating ? "Regenerating…" : `Regenerate with ${pendingCommentCount} comment${pendingCommentCount === 1 ? "" : "s"}`}
+            </button>
+          )}
         </div>
       )}
     </div>

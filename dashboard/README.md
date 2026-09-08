@@ -27,11 +27,16 @@ speed dashboard start --api-only
 # Custom port:
 speed dashboard start --port 5000
 
+# Custom frontend port (useful when another project already uses 3000):
+speed dashboard start --frontend-port 3001
+
 # Stop everything:
 speed dashboard stop
 ```
 
-The API serves at `http://localhost:4440/graphql` (GraphiQL explorer included). The frontend serves at `http://localhost:3000`.
+The API serves at `http://localhost:4440/graphql` (GraphiQL explorer included). The frontend serves at `http://localhost:3000` by default. The same defaults can be configured with `SPEED_DASHBOARD_PORT` and `SPEED_DASHBOARD_FRONTEND_PORT`.
+
+Each launched frontend uses a build cache isolated by its API and frontend ports. If the requested frontend port is already occupied, startup leaves the API running and asks you to stop the existing frontend or choose `--frontend-port`; it does not attach the new project to an unrelated dev server.
 
 ## Manual Setup
 

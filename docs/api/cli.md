@@ -234,7 +234,7 @@ Emergency recovery from a crashed session. Breaks stale locks, kills orphan agen
 
 ### `dashboard start|stop|status|ingest`
 Manages the monitoring dashboard.
-*   `start [--port PORT] [--api-only]`: Launches FastAPI backend (default port 4440) and Next.js frontend (port 3000).
+*   `start [--port PORT] [--frontend-port PORT] [--api-only]`: Launches the FastAPI backend (default port 4440) and Next.js frontend (default port 3000). Frontend build output is isolated per API/frontend port so concurrent project dashboards do not overwrite each other's client bundles. Defaults can also be set with `SPEED_DASHBOARD_PORT` and `SPEED_DASHBOARD_FRONTEND_PORT`.
 *   `stop`: Graceful shutdown with timeout, then force-kills.
 *   `status`: Shows running/dead state of dashboard processes.
 *   `ingest`: Backfills the dashboard database from state files without starting the server.

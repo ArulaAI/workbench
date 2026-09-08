@@ -317,6 +317,96 @@ export function ActionChoiceGroup({
   );
 }
 
+export function AnswerChoiceGroup({
+  control,
+  disabled,
+  selected,
+  onSelect,
+}: {
+  control: ResponseControl;
+  disabled: boolean;
+  selected: string[];
+  onSelect: (value: string) => void;
+}) {
+  const multiple = control.input_type === "multi_select";
+  const options = [
+    ...(control.options ?? []),
+    ...(control.allow_other
+      ? [{ value: "__other__", label: "Other — write my own answer", description: null }]
+      : []),
+  ];
+  const groupId = `control-${control.id}`;
+  return (
+    <div>
+      <div id={groupId} className="type-cell-label">{control.prompt}</div>
+      {multiple && (
+        <div className="type-caption" style={{ marginTop: 4 }}>
+          Select every statement that should apply. Suggested choices are proposed from
+          the feature context; review each one before submitting.
+        </div>
+      )}
+      <div
+        role={multiple ? "group" : "radiogroup"}
+        aria-labelledby={groupId}
+        style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}
+      >
+        {options.map((option) => {
+          const active = selected.includes(option.value);
+          return (
+            <button
+              key={option.value}
+              type="button"
+              role={multiple ? "checkbox" : "radio"}
+              aria-checked={active}
+              disabled={disabled}
+              onClick={() => onSelect(option.value)}
+              style={{
+                display: "flex",
+                alignItems: "flex-start",
+                gap: 10,
+                padding: "10px 12px",
+                textAlign: "left",
+                borderRadius: 6,
+                border: `1px solid ${active ? "var(--color-accent)" : "var(--color-border)"}`,
+                background: active ? "var(--color-accent-dim)" : "transparent",
+                color: "var(--color-text)",
+                cursor: disabled ? "not-allowed" : "pointer",
+                opacity: disabled ? 0.4 : 1,
+              }}
+            >
+              <span
+                aria-hidden="true"
+                style={{
+                  width: 12,
+                  height: 12,
+                  marginTop: 2,
+                  borderRadius: multiple ? 2 : 6,
+                  flexShrink: 0,
+                  border: `1px solid ${active ? "var(--color-accent)" : "var(--color-text-tertiary)"}`,
+                  background: active ? "var(--color-accent)" : "transparent",
+                }}
+              />
+              <span style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                <span style={{ fontSize: 13, fontWeight: 500 }}>
+                  {option.label}
+                  {"recommended" in option && option.recommended && (
+                    <span className="type-compact-label" style={{ marginLeft: 8, color: "var(--color-accent)" }}>
+                      Suggested
+                    </span>
+                  )}
+                </span>
+                {option.description && (
+                  <span className="type-caption">{option.description}</span>
+                )}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export function QuestionCard({
   question,
   revision,
@@ -325,6 +415,15 @@ export function QuestionCard({
   onDraftTextChange,
   onAction,
   onAnswer,
+  onDirtyChange,
+  position,
+  total,
+  prepared = false,
+  preparedAnswer,
+  answerButtonLabel,
+  submittingButtonLabel,
+  onPrevious,
+  onNext,
 }: {
   question: CurrentQuestion;
   revision: number;
@@ -333,31 +432,122 @@ export function QuestionCard({
   onDraftTextChange: (value: string) => void;
   onAction: (action: AuthoringAction) => void;
   onAnswer: (text: string) => void;
+  onDirtyChange?: (dirty: boolean) => void;
+  position?: number;
+  total?: number;
+  prepared?: boolean;
+  preparedAnswer?: string;
+  answerButtonLabel?: string;
+  submittingButtonLabel?: string;
+  onPrevious?: () => void;
+  onNext?: () => void;
 }) {
   const control = question.response_control;
   const isText = control.input_type === "textarea";
+  const isAnswerChoice =
+    control.submit_action === "answer" &&
+    (control.input_type === "single_select" || control.input_type === "multi_select");
   const [selected, setSelected] = useState<string | null>(null);
+  const [selectedAnswers, setSelectedAnswers] = useState<string[]>([]);
+  const [otherAnswer, setOtherAnswer] = useState("");
 
   useEffect(() => {
     setSelected(null);
-  }, [question.id, control.id, revision]);
+    setSelectedAnswers([]);
+    setOtherAnswer("");
+    if (!isAnswerChoice || !preparedAnswer) return;
+    const optionValues = (control.options ?? []).map((option) => option.value);
+    if (control.input_type === "single_select") {
+      if (optionValues.includes(preparedAnswer)) {
+        setSelectedAnswers([preparedAnswer]);
+      } else {
+        setSelectedAnswers(["__other__"]);
+        setOtherAnswer(preparedAnswer);
+      }
+      return;
+    }
+    const submittedValues = preparedAnswer.split("\n").filter(Boolean);
+    const known = submittedValues.filter((value) => optionValues.includes(value));
+    const other = submittedValues.filter((value) => !optionValues.includes(value));
+    setSelectedAnswers([...known, ...(other.length ? ["__other__"] : [])]);
+    setOtherAnswer(other.join("\n"));
+  }, [question.id, control.id, isAnswerChoice, preparedAnswer]);
 
   useEffect(() => {
-    if (isText) onDraftTextChange(control.initial_value ?? "");
+    if (isText) onDraftTextChange(preparedAnswer ?? control.initial_value ?? "");
     // Prefill comes from the payload that produced this control.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [question.id, control.id, isText]);
+  }, [question.id, control.id, isText, preparedAnswer]);
 
   const findings = question.review_findings ?? [];
   const followUp = question.follow_up;
   const canSubmitText = draftText.trim().length > 0;
+  const otherSelected = selectedAnswers.includes("__other__");
+  const canSubmitChoice =
+    selectedAnswers.length > 0 && (!otherSelected || otherAnswer.trim().length > 0);
+  const choiceAnswer = () => selectedAnswers
+    .filter((value) => value !== "__other__")
+    .concat(otherSelected ? [otherAnswer.trim()] : [])
+    .join("\n");
 
   return (
-    <div className="surface" style={{ padding: 20, display: "flex", flexDirection: "column", gap: 16 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <span className="type-mono-value" style={{ color: "var(--color-accent)" }}>
-          {question.id}
-        </span>
+    <div
+      className="surface"
+      style={{ padding: 20, display: "flex", flexDirection: "column", gap: 16 }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+        }}
+      >
+        <div className="type-compact-label">
+          {position && total ? "Question" : "Let's clarify one thing"}
+          {prepared ? " · Answer ready" : ""}
+        </div>
+        {position && total && total > 1 && (
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <button
+              type="button"
+              aria-label="Previous question"
+              disabled={submitting || !onPrevious}
+              onClick={onPrevious}
+              className="type-section-title"
+              style={{
+                border: "none",
+                background: "transparent",
+                color: "var(--color-text-secondary)",
+                cursor: onPrevious ? "pointer" : "not-allowed",
+                opacity: onPrevious ? 1 : 0.35,
+                padding: "0 4px",
+              }}
+            >
+              ‹
+            </button>
+            <span className="type-mono-value" aria-live="polite">
+              {position}/{total}
+            </span>
+            <button
+              type="button"
+              aria-label="Next question"
+              disabled={submitting || !onNext}
+              onClick={onNext}
+              className="type-section-title"
+              style={{
+                border: "none",
+                background: "transparent",
+                color: "var(--color-text-secondary)",
+                cursor: onNext ? "pointer" : "not-allowed",
+                opacity: onNext ? 1 : 0.35,
+                padding: "0 4px",
+              }}
+            >
+              ›
+            </button>
+          </div>
+        )}
       </div>
 
       <div style={{ fontSize: 15, fontWeight: 500, color: "var(--color-text)", lineHeight: 1.5 }}>
@@ -369,32 +559,77 @@ export function QuestionCard({
       {followUp?.prompt && <FollowUpNotice prompt={followUp.prompt} />}
       {!followUp?.prompt && findings.length > 0 && <FindingsNotice findings={findings} />}
 
-      {question.suggestion && <SuggestionPanel suggestion={question.suggestion} />}
+      {question.suggestion?.answer && <SuggestionPanel suggestion={question.suggestion} />}
 
       {isText ? (
         <AnswerTextarea
           control={control}
           disabled={submitting}
           value={draftText}
-          onChange={onDraftTextChange}
+          onChange={(value) => {
+            onDirtyChange?.(Boolean(value.trim()));
+            onDraftTextChange(value);
+          }}
           onSubmit={() => canSubmitText && onAnswer(draftText)}
         />
+      ) : isAnswerChoice ? (
+        <>
+          <AnswerChoiceGroup
+            control={control}
+            disabled={submitting}
+            selected={selectedAnswers}
+            onSelect={(value) => {
+              onDirtyChange?.(true);
+              if (control.input_type === "multi_select") {
+                setSelectedAnswers((current) =>
+                  current.includes(value)
+                    ? current.filter((item) => item !== value)
+                    : [...current, value],
+                );
+              } else {
+                setSelectedAnswers([value]);
+              }
+            }}
+          />
+          {otherSelected && (
+            <AnswerTextarea
+              control={{ ...control, id: `${control.id}-other`, prompt: "Your answer" }}
+              disabled={submitting}
+              value={otherAnswer}
+              onChange={(value) => {
+                onDirtyChange?.(true);
+                setOtherAnswer(value);
+              }}
+              onSubmit={() => canSubmitChoice && onAnswer(choiceAnswer())}
+            />
+          )}
+        </>
       ) : (
         <ActionChoiceGroup
           control={control}
           disabled={submitting}
           selected={selected}
-          onSelect={setSelected}
+          onSelect={(value) => {
+            onDirtyChange?.(true);
+            setSelected(value);
+          }}
         />
       )}
 
       <div>
         <button
           type="button"
-          disabled={submitting || (isText ? !canSubmitText : !selected)}
+          disabled={
+            submitting ||
+            (isText ? !canSubmitText : isAnswerChoice ? !canSubmitChoice : !selected)
+          }
           onClick={() => {
             if (isText) {
               onAnswer(draftText);
+              return;
+            }
+            if (isAnswerChoice) {
+              onAnswer(choiceAnswer());
               return;
             }
             if (selected) onAction(ACTION_BY_VALUE[selected] ?? "DEFER");
@@ -408,13 +643,101 @@ export function QuestionCard({
             background: "var(--color-accent)",
             color: "var(--color-bg)",
             cursor: "pointer",
-            opacity: submitting || (isText ? !canSubmitText : !selected) ? 0.4 : 1,
+            opacity:
+              submitting ||
+              (isText ? !canSubmitText : isAnswerChoice ? !canSubmitChoice : !selected)
+                ? 0.4
+                : 1,
             transition: "opacity 120ms ease-out",
           }}
         >
-          {submitting ? "Saving…" : isText ? "Confirm answer" : "Continue"}
+          {submitting
+            ? submittingButtonLabel ?? "Saving…"
+            : isText || isAnswerChoice
+              ? answerButtonLabel ?? (prepared ? "Update answer" : "Save answer")
+              : "Continue"}
         </button>
       </div>
+    </div>
+  );
+}
+
+export function QuestionBatch({
+  questions,
+  revision,
+  submitting,
+  onSubmit,
+  artifactLabel = "PRD",
+  onDirtyChange,
+}: {
+  questions: CurrentQuestion[];
+  revision: number;
+  submitting: boolean;
+  onSubmit: (answer: { question_id: string; answer: string }) => void;
+  artifactLabel?: string;
+  onDirtyChange?: (dirty: boolean) => void;
+}) {
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const questionKey = questions.map((question) => question.id).join(":");
+
+  useEffect(() => {
+    setDrafts(Object.fromEntries(
+      questions.map((question) => [
+        question.id,
+        question.response_control.initial_value ?? "",
+      ]),
+    ));
+    onDirtyChange?.(false);
+    // Reset only when the persisted batch changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [questionKey]);
+
+  // Only the current persisted question is rendered here. After it is saved,
+  // the server advances the checkpoint and the route renders the next
+  // question from that checkpoint. Keeping progression server-driven prevents
+  // a reload or surface switch from losing answers held only in React state.
+  const currentQuestion = questions[0];
+  const isLastQuestion = questions.length === 1;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div className="surface" role="status" style={{ padding: 16 }}>
+        <div className="type-compact-label">Interview planned once</div>
+        <div className="type-body" style={{ marginTop: 6 }}>
+          These {questions.length} questions were identified together from your feature
+          description and the {artifactLabel} template. Answer one at a time; Continue moves to the
+          next prepared question without another planning wait.
+        </div>
+      </div>
+      {currentQuestion && (
+        <QuestionCard
+          key={currentQuestion.id}
+          question={currentQuestion}
+          revision={revision}
+          submitting={submitting}
+          draftText={drafts[currentQuestion.id] ?? ""}
+          onDraftTextChange={(value) =>
+            setDrafts((current) => ({
+              ...current,
+              [currentQuestion.id]: value,
+            }))
+          }
+          onDirtyChange={onDirtyChange}
+          onAction={() => undefined}
+          onAnswer={(answer) => {
+            onDirtyChange?.(true);
+            onSubmit({ question_id: currentQuestion.id, answer });
+          }}
+          position={1}
+          total={questions.length}
+          prepared={false}
+          answerButtonLabel={
+            isLastQuestion
+              ? `Generate ${artifactLabel}`
+              : "Save & continue"
+          }
+          submittingButtonLabel={isLastQuestion ? `Generating ${artifactLabel}…` : "Saving…"}
+        />
+      )}
     </div>
   );
 }

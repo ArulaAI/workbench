@@ -6,7 +6,7 @@ const STATUS_LABEL: Record<string, string> = {
   question: "Interview in progress",
   blocked: "Blocked by a deferred answer",
   drafted: "Drafted",
-  drafted_with_open_questions: "Drafted with open questions",
+  review_repair: "Draft needs repair",
 };
 
 export function ResumeCard({

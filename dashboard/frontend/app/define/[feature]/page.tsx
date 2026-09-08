@@ -7,7 +7,6 @@ import { ErrorBoundary } from "@/components/shared/error-boundary";
 import { IconRail } from "@/components/landing/IconRail";
 import { Header } from "@/components/layout/header";
 import { BlufView } from "@/components/ceremony/BlufView";
-import { ContextPanel } from "@/components/ceremony/ContextPanel";
 import { CeremonyLayout } from "@/components/ceremony/CeremonyLayout";
 import {
   CONTEXT_PACKAGE_QUERY,
@@ -17,10 +16,6 @@ import {
   type RefineIntentData,
   type RefineIntentVars,
 } from "@/lib/graphql/queries/ceremony-context";
-import {
-  CEREMONY_INFO_QUERY,
-  type CeremonyInfoData,
-} from "@/lib/graphql/queries/ceremony";
 import { ResumeCard } from "@/components/ceremony/guided";
 import {
   AUTHORING_SESSION_QUERY,
@@ -72,10 +67,15 @@ export default function DefineFeaturePage() {
   );
 
   // Guided authoring checkpoint, read-only: --peek never creates state.
+  // Subscribe after mount so the outgoing authoring route can tear down its
+  // identical operation before urql publishes the incoming result. Without
+  // this handoff React 19 reports a cross-component render update.
+  const [authoringSubscribed, setAuthoringSubscribed] = useState(false);
+  React.useEffect(() => setAuthoringSubscribed(true), []);
   const [{ data: authoringData }] = useQuery<AuthoringSessionData>({
     query: AUTHORING_SESSION_QUERY,
     variables: { featureName, artifactType: "prd" },
-    pause: !isValidFeatureName(featureName),
+    pause: !authoringSubscribed || !isValidFeatureName(featureName),
     requestPolicy: "network-only",
   });
   const authoring = authoringData?.authoringSession;

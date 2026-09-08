@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { deriveSlug, isValidSlug } from "@/lib/graphql/queries/authoring";
+import {
+  deriveSlug,
+  deriveTitleFromDescription,
+  isValidSlug,
+} from "@/lib/graphql/queries/authoring";
 
 describe("deriveSlug", () => {
   it("mirrors the helper's normalisation rules", () => {
@@ -13,6 +17,16 @@ describe("deriveSlug", () => {
     const slug = deriveSlug("a".repeat(48) + " b c");
     expect(slug.length).toBeLessThanOrEqual(50);
     expect(slug.endsWith("-")).toBe(false);
+  });
+});
+
+describe("deriveTitleFromDescription", () => {
+  it("uses the described capability instead of copying the opening sentence", () => {
+    const title = deriveTitleFromDescription(
+      "I want a dashboard that shows an individual's net worth.",
+    );
+    expect(title).toBe("Net worth dashboard");
+    expect(deriveSlug(title)).toBe("net-worth-dashboard");
   });
 });
 

@@ -36,8 +36,22 @@ _TABLE_ROW_RE = re.compile(r"^\|(.+)\|$", re.MULTILINE)
 _VAGUE_RE = re.compile(
     r"\b(appropriate|reasonable|properly|correctly|adequately)\b", re.IGNORECASE
 )
-_STORY_ID_RE = re.compile(r"\bS\d+\b")
+_STORY_ID_RE = re.compile(r"\b(?:S\d+|US-\d+)\b")
 _GWT_RE = re.compile(r"\b(Given|When|Then)\b", re.IGNORECASE)
+_GUIDED_PRD_RE = re.compile(r"<!-- Interview: prd-v\d+;")
+
+_GUIDED_PRD_TABLES: dict[str, tuple[str, ...]] = {
+    "User Stories": ("ID", "Story", "Priority"),
+    "Requirements & Acceptance": ("ID", "Story", "Product behavior", "Done when"),
+    "Scope": ("Included", "Not included"),
+    "Guardrails / Must Not Regress": (
+        "ID", "What must remain true", "How it will be verified",
+    ),
+    "Delivery, Risks & Open Questions": (
+        "ID", "Type", "Item", "Impact or decision blocked", "Owner",
+    ),
+    "Success": ("ID", "Outcome or signal", "Target", "Window", "Owner"),
+}
 
 # Section headings expected per spec type (T1 = must have, T2 = should have)
 _TYPE_SECTIONS: dict[str, dict[str, set[str]]] = {
@@ -163,9 +177,26 @@ def _validate_template(draft: SpecDraft, project_root: Path) -> ValidationDimens
     sections = extract_sections_from_content(draft.content)
     present_headings = {s.heading for s in sections}
 
-    type_sections = _TYPE_SECTIONS.get(draft.spec_type, {})
-    t1_required = type_sections.get("T1", set())
-    t2_recommended = type_sections.get("T2", set())
+    # Guided PRDs have their own decision-document contract. Validate that
+    # contract directly instead of applying legacy heading names and reporting
+    # semantically equivalent content as missing.
+    guided_prd = draft.spec_type == "prd" and bool(_GUIDED_PRD_RE.search(draft.content))
+    if guided_prd:
+        t1_required = {
+            "Summary",
+            "Problem & Evidence",
+            "Hypothesis",
+            "User Stories",
+            "Requirements & Acceptance",
+            "Scope",
+            "Guardrails / Must Not Regress",
+            "Success",
+        }
+        t2_recommended: set[str] = set()
+    else:
+        type_sections = _TYPE_SECTIONS.get(draft.spec_type, {})
+        t1_required = type_sections.get("T1", set())
+        t2_recommended = type_sections.get("T2", set())
 
     for heading in t1_required:
         if heading not in present_headings:
@@ -192,6 +223,44 @@ def _validate_template(draft: SpecDraft, project_root: Path) -> ValidationDimens
                 cross_ref_spec=None,
                 cross_ref_section=None,
             ))
+
+    if guided_prd:
+        sections_by_heading = {section.heading: section for section in sections}
+        for heading, expected_columns in _GUIDED_PRD_TABLES.items():
+            section = sections_by_heading.get(heading)
+            if section is None:
+                continue
+            rows = _TABLE_ROW_RE.findall(section.raw_markdown)
+            if heading == "Delivery, Risks & Open Questions" and not rows:
+                continue
+            header_cells = {
+                cell.strip().lower()
+                for cell in (rows[0].split("|") if rows else [])
+                if cell.strip()
+            }
+            missing_columns = [
+                column for column in expected_columns
+                if column.lower() not in header_cells
+            ]
+            data_rows = [
+                row for row in rows[1:]
+                if not all(character in "-|: " for character in row)
+            ]
+            if missing_columns or not data_rows:
+                detail = (
+                    "missing columns " + ", ".join(missing_columns)
+                    if missing_columns else "no data rows"
+                )
+                issues.append(ValidationIssue(
+                    id=_issue_id("template", f"guided-table-{heading}-{detail}"),
+                    dimension="template",
+                    severity="error",
+                    message=f"'{heading}' must use its PRD template table ({detail})",
+                    section=heading,
+                    line=section.line_start,
+                    cross_ref_spec=None,
+                    cross_ref_section=None,
+                ))
 
     # Check tables aren't empty placeholders
     for section in sections:
@@ -235,9 +304,10 @@ def _validate_structure(draft: SpecDraft, project_root: Path) -> ValidationDimen
     issues: list[ValidationIssue] = []
     sections = extract_sections_from_content(draft.content)
     present_headings = {s.heading for s in sections}
+    guided_prd = draft.spec_type == "prd" and bool(_GUIDED_PRD_RE.search(draft.content))
 
     # Check acceptance criteria use Given/When/Then
-    criteria_sections = [
+    criteria_sections = [] if guided_prd else [
         s for s in sections
         if any(kw in s.heading.lower() for kw in (
             "acceptance criteria", "user stories", "verification criteria",
@@ -282,7 +352,7 @@ def _validate_structure(draft: SpecDraft, project_root: Path) -> ValidationDimen
                 ))
 
     # Check Scope has In Scope / Out of Scope subsections
-    if "Scope" in present_headings:
+    if "Scope" in present_headings and not guided_prd:
         has_in = "In Scope" in present_headings
         has_out = any("out of scope" in h.lower() for h in present_headings)
         if not has_in:

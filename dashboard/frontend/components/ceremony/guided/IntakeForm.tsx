@@ -1,9 +1,7 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useState } from "react";
 import {
-  deriveSlug,
-  isValidSlug,
   type IntakeField,
   type IntakeInput,
 } from "@/lib/graphql/queries/authoring";
@@ -43,6 +41,65 @@ export function ArtifactChoice({
           </button>
         ))}
       </div>
+    </div>
+  );
+}
+
+export type GuidedArtifactType = "prd" | "design" | "rfc";
+
+export function ArtifactTabs({
+  value,
+  onChange,
+}: {
+  value: GuidedArtifactType;
+  onChange: (value: GuidedArtifactType) => void;
+}) {
+  const options: { value: GuidedArtifactType; label: string }[] = [
+    { value: "prd", label: "PRD" },
+    { value: "design", label: "Design" },
+    { value: "rfc", label: "Technical RFC" },
+  ];
+  return (
+    <div aria-label="Artifact type" style={{ display: "flex", gap: 4, padding: 4, borderRadius: 7, background: "var(--color-bg-elevated)", border: "1px solid var(--color-border)" }}>
+      {options.map((option) => (
+        <button key={option.value} type="button" aria-pressed={value === option.value} onClick={() => onChange(option.value)}
+          className="type-badge" style={{ height: 30, padding: "0 14px", border: 0, borderRadius: 5, background: value === option.value ? "var(--color-accent-dim)" : "transparent", color: value === option.value ? "var(--color-accent)" : "var(--color-text-secondary)", cursor: "pointer" }}>
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+export function ArtifactSourceIntake({
+  input,
+  artifactType,
+  submitting,
+  serverError,
+  onSelect,
+}: {
+  input: IntakeInput;
+  artifactType: Exclude<GuidedArtifactType, "prd">;
+  submitting: boolean;
+  serverError: string | null;
+  onSelect: (featureName: string) => void;
+}) {
+  const label = artifactType === "design" ? "Design" : "Technical RFC";
+  return (
+    <div className="surface" style={{ padding: "32px 24px", maxWidth: 560, width: "100%" }}>
+      <div className="type-page-title">{input.prompt}</div>
+      <div className="type-body" style={{ marginTop: 8 }}>Choose a published upstream version. The {label} agent will use that immutable snapshot as fixed context and ask only artifact-specific questions.</div>
+      <div style={{ marginTop: 20, display: "flex", flexDirection: "column", gap: 8 }}>
+        {(input.options ?? []).map((option) => (
+          <button key={option.feature_name ?? option.value} type="button" disabled={submitting} onClick={() => onSelect(String(option.feature_name ?? option.value ?? ""))}
+            style={{ minHeight: 48, padding: "10px 12px", textAlign: "left", borderRadius: 6, border: "1px solid var(--color-border)", background: "var(--color-bg-elevated)", color: "var(--color-text)", cursor: submitting ? "default" : "pointer" }}>
+            <div className="type-section-title">{option.label ?? option.feature_name}</div>
+            {option.path && <div className="type-caption" style={{ marginTop: 3, fontFamily: "var(--font-mono)" }}>{option.path}</div>}
+          </button>
+        ))}
+        {(input.options ?? []).length === 0 && <div className="type-body">Create and publish a PRD first, then return here.</div>}
+      </div>
+      {serverError && <div role="alert" style={{ marginTop: 14, color: "var(--color-red)", fontSize: 12 }}>{serverError}</div>}
     </div>
   );
 }
@@ -95,58 +152,19 @@ function fieldById(fields: IntakeField[], id: string): IntakeField | undefined {
 export function GuidedPrdIntakeForm({
   input,
   submitting,
-  existingStatus,
   serverError,
-  onSlugChange,
   onSubmit,
-  onResume,
 }: {
   input: IntakeInput;
   submitting: boolean;
-  existingStatus: string | null;
   serverError: string | null;
-  onSlugChange: (slug: string) => void;
-  onSubmit: (title: string, slug: string, description: string) => void;
-  onResume: (slug: string) => void;
+  onSubmit: (description: string) => void;
 }) {
   const fields = input.fields ?? [];
-  const titleField = fieldById(fields, "feature_title");
-  const slugField = fieldById(fields, "feature_slug");
   const descriptionField = fieldById(fields, "feature_description");
 
-  const [title, setTitle] = useState("");
-  const [slug, setSlug] = useState("");
-  const [slugEdited, setSlugEdited] = useState(false);
   const [description, setDescription] = useState("");
-
-  const slugError = useMemo(() => {
-    if (!slug) return null;
-    return isValidSlug(slug)
-      ? null
-      : "Use lowercase letters, digits, and single hyphens, 1 to 50 characters.";
-  }, [slug]);
-
-  const collision = Boolean(existingStatus && existingStatus !== "not_started");
-  const ready =
-    title.trim().length > 0 &&
-    slug.length > 0 &&
-    !slugError &&
-    description.trim().length > 0;
-
-  const applyTitle = (value: string) => {
-    setTitle(value);
-    if (!slugEdited) {
-      const derived = deriveSlug(value);
-      setSlug(derived);
-      onSlugChange(derived);
-    }
-  };
-
-  const applySlug = (value: string) => {
-    setSlugEdited(true);
-    setSlug(value);
-    onSlugChange(value);
-  };
+  const ready = description.trim().length >= 10;
 
   const inputStyle: React.CSSProperties = {
     display: "block",
@@ -167,93 +185,29 @@ export function GuidedPrdIntakeForm({
       onSubmit={(event) => {
         event.preventDefault();
         if (!ready || submitting) return;
-        if (collision) {
-          onResume(slug);
-          return;
-        }
-        onSubmit(title.trim(), slug, description.trim());
+        onSubmit(description.trim());
       }}
     >
-      <div className="type-section-title">New PRD</div>
-      <div className="type-caption" style={{ marginTop: 4 }}>
-        {input.prompt}
-      </div>
-
-      <div style={{ marginTop: 20 }}>
-        <label className="type-cell-label" htmlFor="feature_title">
-          {titleField?.prompt ?? "Title"}
-        </label>
-        <input
-          id="feature_title"
-          value={title}
-          maxLength={80}
-          disabled={submitting}
-          autoFocus
-          onChange={(event) => applyTitle(event.target.value)}
-          placeholder="Name this feature"
-          style={{ ...inputStyle, fontSize: 18 }}
-        />
-        {titleField?.description && (
-          <div className="type-caption" style={{ marginTop: 8 }}>
-            {titleField.description}
-          </div>
-        )}
-      </div>
-
-      <div style={{ marginTop: 20 }}>
-        <label className="type-cell-label" htmlFor="feature_slug">
-          {slugField?.prompt ?? "Slug"}
-        </label>
-        <input
-          id="feature_slug"
-          value={slug}
-          maxLength={50}
-          disabled={submitting}
-          onChange={(event) => applySlug(event.target.value)}
-          style={{
-            ...inputStyle,
-            fontFamily: "var(--font-mono)",
-            fontSize: 13,
-            fontWeight: 500,
-            borderColor: slugError ? "var(--color-red)" : "var(--color-border)",
-          }}
-        />
-        {slugError ? (
-          <div style={{ marginTop: 8, fontSize: 11, fontWeight: 500, color: "var(--color-red)" }}>
-            {slugError}
-          </div>
-        ) : (
-          <div
-            className="type-caption"
-            style={{ marginTop: 8, fontFamily: "var(--font-mono)" }}
-          >
-            {slug ? `specs/${slug}/prd.md` : "Derived from the title"}
-          </div>
-        )}
-        {collision && (
-          <div style={{ marginTop: 8, fontSize: 11, fontWeight: 500, color: "var(--color-amber)" }}>
-            An interview already exists for this slug ({existingStatus}). Resume it, or use a
-            different slug.
-          </div>
-        )}
+      <div className="type-page-title">{input.prompt}</div>
+      <div className="type-body" style={{ marginTop: 8 }}>
+        Start with the idea in your own words. I’ll derive the title and ask only what the draft still needs.
       </div>
 
       <div style={{ marginTop: 20 }}>
         <label className="type-cell-label" htmlFor="feature_description">
-          {descriptionField?.prompt ?? "What problem should it solve?"}
+          {descriptionField?.prompt ?? "What would you like to ship?"}
         </label>
         <textarea
           id="feature_description"
           value={description}
-          maxLength={2000}
           disabled={submitting}
+          autoFocus
           onChange={(event) => setDescription(event.target.value)}
-          placeholder="Who hits the problem, what happens today, and what should change"
-          style={{ ...inputStyle, fontSize: 13, minHeight: 96, lineHeight: 1.5, resize: "vertical" }}
+          placeholder="Describe what should change, who it helps, and why it matters…"
+          style={{ ...inputStyle, fontSize: 14, minHeight: 132, lineHeight: 1.6, resize: "vertical" }}
         />
         <div className="type-caption" style={{ marginTop: 8 }}>
-          {descriptionField?.description ??
-            "Include who experiences the problem, what happens today, and the outcome."}
+          {descriptionField?.description}
         </div>
       </div>
 
@@ -267,29 +221,6 @@ export function GuidedPrdIntakeForm({
       )}
 
       <div style={{ marginTop: 20, display: "flex", justifyContent: "flex-end", gap: 8 }}>
-        {collision && (
-          <button
-            type="button"
-            className="type-badge"
-            disabled={submitting}
-            onClick={() => {
-              setSlugEdited(true);
-              setSlug("");
-              onSlugChange("");
-            }}
-            style={{
-              height: 32,
-              padding: "0 16px",
-              borderRadius: 6,
-              background: "transparent",
-              color: "var(--color-text-secondary)",
-              border: "1px solid var(--color-border)",
-              cursor: "pointer",
-            }}
-          >
-            Use a different slug
-          </button>
-        )}
         <button
           type="submit"
           className="type-badge"
@@ -305,7 +236,7 @@ export function GuidedPrdIntakeForm({
             opacity: !ready || submitting ? 0.4 : 1,
           }}
         >
-          {submitting ? "Starting…" : collision ? "Resume interview" : "Start interview"}
+          {submitting ? "Starting…" : "Continue"}
         </button>
       </div>
     </form>

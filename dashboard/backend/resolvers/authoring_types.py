@@ -30,6 +30,30 @@ class AuthoringProgress:
 
 
 @strawberry.type
+class AuthoringSessionSummary:
+    """One persisted interview, as listed for resuming."""
+
+    feature_name: str
+    feature_title: Optional[str]
+    artifact_type: str
+    status: str
+    revision: Optional[int]
+    updated_at: Optional[str]
+    progress: AuthoringProgress
+    draft_available: bool
+    artifact_path: Optional[str]
+    authoring_url: Optional[str]
+    message: str
+
+
+@strawberry.type
+class AuthoringSessionList:
+    status: str
+    message: str
+    sessions: list[AuthoringSessionSummary]
+
+
+@strawberry.type
 class AuthoringIntake:
     status: str
     artifact_type: Optional[str]
@@ -58,10 +82,17 @@ class AuthoringSession:
     current_question: Optional[strawberry.scalars.JSON]
     coverage: Optional[strawberry.scalars.JSON]
     sections: Optional[strawberry.scalars.JSON]
+    intake: Optional[strawberry.scalars.JSON]
+    interview: Optional[strawberry.scalars.JSON]
     self_review: Optional[strawberry.scalars.JSON]
     resume_step: Optional[strawberry.scalars.JSON]
     upstream: Optional[strawberry.scalars.JSON]
     implementation: Optional[strawberry.scalars.JSON]
+    planning: Optional[strawberry.scalars.JSON]
+    review_comments: Optional[strawberry.scalars.JSON]
+    versions: Optional[strawberry.scalars.JSON]
+    published_revision: Optional[int]
+    publish_history: Optional[strawberry.scalars.JSON]
 
 
 @strawberry.type

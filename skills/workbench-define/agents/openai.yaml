@@ -1,0 +1,4 @@
+interface:
+  display_name: "Workbench Define"
+  short_description: "Resume and audit a Define package"
+  default_prompt: "Use $workbench-define to inspect this feature package, report the next safe action, or run its connected audit."

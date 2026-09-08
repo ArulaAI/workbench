@@ -20,6 +20,11 @@ import { BuiltCell } from "@/components/define/built-cell";
 import { GapCell } from "@/components/define/gap-cell";
 import { IconRail } from "@/components/landing/IconRail";
 import { Header } from "@/components/layout/header";
+import { DraftsInProgress } from "@/components/ceremony/guided";
+import {
+  AUTHORING_SESSIONS_QUERY,
+  type AuthoringSessionsData,
+} from "@/lib/graphql/queries/authoring";
 
 /* ── Toolbar Button ────────────────────────────────────────────── */
 
@@ -271,6 +276,14 @@ export default function DefinePage() {
     variables: { feature: selectedFeature },
   });
 
+  // Read-only: --list reads checkpoints and writes nothing.
+  const [{ data: draftsData }] = useQuery<AuthoringSessionsData>({
+    query: AUTHORING_SESSIONS_QUERY,
+    variables: { artifactType: "prd" },
+    requestPolicy: "network-only",
+  });
+  const drafts = draftsData?.authoringSessions?.sessions ?? [];
+
   const isCompact = useMediaQuery("(max-width: 1023px)");
   const prefersReducedMotion = useMediaQuery(
     "(prefers-reduced-motion: reduce)",
@@ -306,11 +319,21 @@ export default function DefinePage() {
   } else {
     const view = data?.defineView;
     if (!view || view.features.length === 0) {
-      content = <EmptyState />;
+      content = (
+        <>
+          {drafts.length > 0 && (
+            <div style={{ marginBottom: 24 }}>
+              <DraftsInProgress sessions={drafts} />
+            </div>
+          )}
+          <EmptyState />
+        </>
+      );
     } else {
       content = (
         <DefineContent
           view={view}
+          drafts={drafts}
           isCompact={isCompact}
           explorerOpen={explorerOpen}
           setExplorerOpen={setExplorerOpen}
@@ -352,12 +375,14 @@ export default function DefinePage() {
 
 function DefineContent({
   view,
+  drafts,
   isCompact,
   explorerOpen,
   setExplorerOpen,
   prefersReducedMotion,
 }: {
   view: NonNullable<DefineViewData["defineView"]>;
+  drafts: AuthoringSessionsData["authoringSessions"]["sessions"];
   isCompact: boolean;
   explorerOpen: boolean;
   setExplorerOpen: (open: boolean) => void;
@@ -384,6 +409,13 @@ function DefineContent({
       {view.visionStatus === "missing" && (
         <div style={{ marginBottom: 20 }}>
           <VisionWarning variant="full" />
+        </div>
+      )}
+
+      {/* Resumable guided interviews, ahead of the coverage grid */}
+      {drafts.length > 0 && (
+        <div style={{ marginBottom: 24 }}>
+          <DraftsInProgress sessions={drafts} />
         </div>
       )}
 

@@ -15,10 +15,10 @@ _draft_python() {
 
 _draft_usage() {
     cat >&2 <<'USAGE'
-Usage: workbench draft <prd|design> <feature-name> [options]
+Usage: workbench draft <prd|design|rfc> <feature-name> [options]
 
-Starts or resumes the Product or PRD-linked Design interview. The artifact is
-generated only after every required answer is confirmed.
+Starts or resumes the Product, PRD-linked Design, or Product-and-Design-linked
+RFC interview. The artifact is generated only after every required answer is confirmed.
 
 Options:
     --feature-description TEXT Seed P-Q1 from the new feature's problem summary
@@ -36,9 +36,9 @@ USAGE
 cmd_draft() {
     case "${1:-}" in
         -h|--help) _draft_usage; return 0 ;;
-        ""|prd|design) ;;
+        ""|prd|design|rfc) ;;
         *)
-            log_error "Unsupported draft type: ${1:-missing} (supported: prd, design)"
+            log_error "Unsupported draft type: ${1:-missing} (supported: prd, design, rfc)"
             return 1
             ;;
     esac

@@ -4,25 +4,27 @@
 
 Implement `workbench draft prd <feature>` and the `workbench-draft` skill as two
 entry points into one persisted Product interview. The command plans contextual
-questions from confidence-scored coverage definitions, writes a provisional PRD
-immediately, stores confirmed clarifications, and regenerates affected sections.
-It returns the existing dashboard preview URL at
-`http://localhost:3000/define/<feature>`.
+questions from confidence-scored coverage definitions, stores confirmed
+clarifications, and writes V1 only after the interview is complete.
+It returns only the guided authoring URL at
+`http://localhost:3000/define/<feature>/authoring/prd`.
 
 The workflow does not ask a model to invent or rewrite product decisions.
 
 ## Shared Implementation Boundary
 
-The canonical implementation lives in
-`skills/workbench-draft/scripts/draft.py`, with its stable question bank in the
-same skill package. The `workbench draft` CLI and the conversational skill are
-adapters only: they select an interpreter and project root, then execute this
-helper. They must not independently implement questions, suggestions,
+The canonical implementation lives in `skills/workbench-draft/scripts/draft.py`.
+Its portable compact-plan normalizer lives beside it in `planner_contract.py`,
+with the stable question bank and planner prompt in the same skill package. The
+dashboard, `workbench draft` CLI, and conversational skill provide semantic
+model output through the same compact contract, then execute the helper. They
+must not independently implement normalization, questions, suggestions,
 checkpoint transitions, validation, or PRD rendering.
 
-Skill projection copies the helper and question bank byte-for-byte. Every JSON
-result exposes SHA-256 hashes for both files under `implementation`, allowing
-callers and tests to prove which shared implementation produced a response. A
+Skill projection copies the helper, planner contract, planner prompt, and
+question bank byte-for-byte. Every JSON result exposes SHA-256 hashes for all
+four files under `implementation`, allowing callers and tests to prove which
+shared implementation produced a response. A
 parity test starts through the CLI, continues through the projected skill, and
 then reloads through the CLI against the same checkpoint.
 
@@ -32,8 +34,9 @@ then reloads through the CLI against the same checkpoint.
 - Interactive terminal execution and conversational agent execution.
 - One question at a time with durable resume.
 - Contextual wording and conditional scope/control coverage.
-- A complete coverage confidence map and at most three clarifications.
-- Immediate provisional PRD generation before clarification completion.
+- A complete coverage confidence map and every material clarification needed by
+  the applicable PRD template.
+- V1 generation only after every material clarification is complete.
 - Grounded suggested responses with source, confidence, and gap reporting.
 - Explicit accept, edit, reject, and defer decisions.
 - Required-answer deferral and generation blocking.
@@ -48,6 +51,7 @@ answer editing, full self-review, and package ratification remain later slices.
 
 ```text
 workbench draft prd <feature>
+workbench draft prd --feature-description <text> --compact-plan-file <path> --json
 workbench draft prd <feature> --json
 workbench draft prd <feature> --answer <text> --expected-revision <n> --json
 workbench draft prd <feature> --update-coverage <coverage> --answer <text> --expected-revision <n> --json
@@ -58,17 +62,19 @@ workbench draft prd <feature> --defer --expected-revision <n> --json
 ```
 
 When invoked as `workbench draft prd` without a feature, the shared helper
-returns `needs_input` with one `new_prd_basics` form containing `feature_slug`
-and `feature_description`. It does not scan or expose existing feature
-directories. The client submits both using
-`workbench draft prd <slug> --feature-description <text>`. The helper persists
-the description separately from answers and treats it as direct problem
-evidence. P-Q1 is skipped when that evidence is sufficient. Continuing known
-work uses the full feature command without resubmitting intake context.
+returns `needs_input` with one `new_prd_basics` form containing only
+`feature_description`. It does not scan or expose existing feature directories.
+The current harness model derives the title and complete question plan using the
+packaged planner prompt, template, and bank. The client submits the description
+and compact plan without a feature argument; the helper derives and validates
+the slug from the semantic title before creating the checkpoint. The helper
+persists the description separately from answers and treats it as direct problem
+evidence. P-Q1 is skipped when that evidence is sufficient.
 
-Interactive terminal execution exposes the provisional PRD path, then loops over
-only selected material clarifications until final review or `:quit`. The skill
-uses the JSON form and submits answers with the returned revision.
+Interactive terminal execution loops over only selected material clarifications
+until final review or `:quit`. Each answer is checkpointed before the next one,
+and terminal completion prints only the guided authoring URL. The skill uses the
+JSON form and submits answers with the returned question ID and revision.
 
 Draft-review edits are submitted against a stable coverage ID with
 `--update-coverage` and `--answer`. The helper records the human revision,
@@ -145,10 +151,12 @@ self-review. A question never receives a second automatic follow-up.
 The Product v2 planner treats P-Q entries as stable coverage definitions rather
 than a fixed script. Every area receives a confidence label, numeric confidence,
 impact, evidence basis, and question value. Question value combines uncertainty,
-impact, and downstream leverage. The planner keeps at most three high-value
-clarifications, recalculates after every answer, and may drop an unsurfaced
-question when another answer raises its confidence. Once surfaced, a question
-remains stable so resume behavior stays deterministic.
+impact, and downstream leverage. The dashboard model planner keeps every material
+high-value clarifications in one initial batch. It performs one final reassessment
+after that batch is confirmed, but cannot add another interview question; newly
+noticed uncertainty is retained as an open decision in the PRD. Follow-up prompts
+declared by the question bank remain available for an answer that fails its
+quality rule.
 
 The evidence router reads available intent and context-package evidence plus
 earlier confirmed answers. Each suggestion reports `grounded`, `partial`, or
@@ -196,16 +204,20 @@ The result contains:
 {
   "implementation": {
     "helper_hash": "sha256:...",
-    "question_bank_hash": "sha256:..."
+    "question_bank_hash": "sha256:...",
+    "planner_contract_hash": "sha256:...",
+    "planner_prompt_hash": "sha256:..."
   },
   "artifact_path": "specs/add-due-date-to-task/prd.md",
-  "dashboard_url": "http://localhost:3000/define/add-due-date-to-task"
+  "dashboard_url": "http://localhost:3000/define/add-due-date-to-task",
+  "authoring_url": "http://localhost:3000/define/add-due-date-to-task/authoring/prd"
 }
 ```
 
-The dashboard reads the compatible context and draft records and renders the
-same generated content. This is a compatibility bridge, not the final shared
-orchestration resolver.
+JSON clients retain both URLs for compatibility, but user-facing CLI and skill
+completion returns only `authoring_url`. The authoring route reads the compatible
+context, interview, and draft records and renders the answered questions beside
+the same generated content.
 
 ## Failure Rules
 
@@ -213,8 +225,8 @@ orchestration resolver.
 - Malformed persisted state fails without replacement.
 - A question-bank version mismatch requires migration rather than silent resume.
 - A stale expected revision returns `revision_conflict` without changing state.
-- Deferred material answers remain visible and may block finalization, but never
-  block provisional artifact generation.
+- Deferred material answers remain visible and block artifact generation until
+  they are resolved.
 - Missing or partial suggestions reject unchanged acceptance without advancing
   the interview revision.
 - Rejecting a suggestion records the decision and keeps the question open.
@@ -222,10 +234,10 @@ orchestration resolver.
 
 ## Verification
 
-- The clarification count never exceeds three and varies with confidence and
-  decision impact.
-- A provisional PRD exists while clarifications remain open.
-- One answer can raise related confidence and remove an unsurfaced question.
+- No PRD artifact or preview exists while material clarifications remain open.
+- The initial Product question batch contains every material question required
+  for a faithful draft, with no fixed count limit, and
+  the final reassessment cannot append another one.
 - Authentication asks for the sign-in method, then keeps existing-user setup
   and data continuity as a user-confirmed backward-compatibility decision.
 - Authentication does not introduce sharing unless current evidence shows a

@@ -51,6 +51,31 @@
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;
 }
 
+/* Guided authoring keeps all three regions visible on wide screens, then
+   stacks them before their fixed reading widths would clip the PRD preview. */
+@media (max-width: 1150px) {
+  .guided-authoring-layout {
+    flex-direction: column;
+    overflow-y: auto !important;
+  }
+
+  .guided-authoring-coverage {
+    width: 100% !important;
+    max-height: 240px;
+  }
+
+  .guided-authoring-question {
+    min-width: 0 !important;
+    overflow: visible !important;
+    flex: 0 0 auto !important;
+  }
+
+  .guided-authoring-preview {
+    width: 100% !important;
+    min-height: 560px;
+  }
+}
+
 
 /* ── Base ───────────────────────────────────────────────────────── */
 

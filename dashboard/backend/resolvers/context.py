@@ -1251,7 +1251,10 @@ def assemble_context_package(
     # 5. Persist (before synthesis so navigation isn't blocked)
     persist_context_package(project_root, feature_name, pkg)
 
-    # 6. Signal completion (unblocks frontend navigation)
+    # 6. Tell clients that optional prose synthesis is deferred, then unblock
+    # navigation. The durable source package above is already sufficient for
+    # authoring; the BLUF can enrich it without adding model latency to intake.
+    _emit(sub_manager, feature_name, "synthesis", "deferred")
     _emit(sub_manager, feature_name, "complete", "ok")
 
     # 7. Synthesize BLUF summary (runs after navigation, updates persisted package)

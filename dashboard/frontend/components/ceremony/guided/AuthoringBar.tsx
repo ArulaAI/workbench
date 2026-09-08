@@ -2,12 +2,15 @@
 
 import type { AuthoringSession } from "@/lib/graphql/queries/authoring";
 
-export type SaveState = "saved" | "saving" | "conflict";
+export type SaveState = "saved" | "unsaved" | "saving" | "conflict" | "error";
+export type AuthoringView = "focused" | "coverage";
 
 const SAVE_STYLE: Record<SaveState, { label: string; color: string; background: string }> = {
   saved: { label: "Saved", color: "var(--color-emerald)", background: "rgba(68, 204, 119, 0.12)" },
+  unsaved: { label: "Unsaved", color: "var(--color-amber)", background: "rgba(240, 178, 50, 0.12)" },
   saving: { label: "Saving…", color: "var(--color-amber)", background: "rgba(240, 178, 50, 0.12)" },
   conflict: { label: "Conflict", color: "var(--color-red)", background: "rgba(239, 68, 100, 0.12)" },
+  error: { label: "Not saved", color: "var(--color-red)", background: "rgba(239, 68, 100, 0.12)" },
 };
 
 export function SaveStateChip({ state }: { state: SaveState }) {
@@ -27,11 +30,27 @@ export function SaveStateChip({ state }: { state: SaveState }) {
 export function AuthoringBar({
   session,
   saveState,
+  view = "focused",
+  onViewChange,
 }: {
   session: AuthoringSession;
   saveState: SaveState;
+  view?: AuthoringView;
+  onViewChange?: (view: AuthoringView) => void;
 }) {
-  const title = session.featureTitle || session.featureName || "";
+  const hasDerivedPrdTitle =
+    session.artifactType !== "prd" ||
+    Boolean(session.intake?.feature_title && session.featureTitle);
+  const title = hasDerivedPrdTitle
+    ? session.featureTitle || session.featureName || ""
+    : saveState === "error" ||
+        (session.planning?.mode === "fallback" &&
+          session.planning?.planner_version === "model-prd-v5")
+      ? "Title unavailable"
+      : "Deriving title…";
+  const artifactLabel = session.artifactType === "design" ? "Design" : session.artifactType === "rfc" ? "Technical RFC" : "PRD";
+  const ready = ["drafted", "published"].includes(session.status);
+  const repairing = session.status === "review_repair" && session.draftAvailable;
   return (
     <div
       className="surface-elevated"
@@ -71,21 +90,58 @@ export function AuthoringBar({
             borderRadius: 4,
           }}
         >
-          PRD
+          {artifactLabel}
         </span>
-        {session.revision !== null && (
-          <span className="type-mono-value" style={{ color: "var(--color-text-secondary)" }}>
-            rev {session.revision}
-          </span>
-        )}
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        {onViewChange && (
+          <div
+            role="group"
+            aria-label={`${artifactLabel} authoring view`}
+            style={{
+              display: "flex",
+              padding: 2,
+              border: "1px solid var(--color-border)",
+              borderRadius: 6,
+              background: "var(--color-bg)",
+            }}
+          >
+            {(["focused", "coverage"] as const).map((option) => (
+              <button
+                key={option}
+                type="button"
+                aria-pressed={view === option}
+                onClick={() => onViewChange(option)}
+                style={{
+                  border: "none",
+                  borderRadius: 4,
+                  padding: "3px 8px",
+                  background:
+                    view === option ? "var(--color-bg-card-hover)" : "transparent",
+                  color:
+                    view === option ? "var(--color-text)" : "var(--color-text-tertiary)",
+                  fontFamily: "var(--font-sans)",
+                  fontSize: 11,
+                  cursor: "pointer",
+                }}
+              >
+                {option === "focused" ? "Focused draft" : "Full coverage"}
+              </button>
+            ))}
+          </div>
+        )}
         <span
           className="type-caption"
           role="status"
           aria-live="polite"
         >
-          {session.progress.confirmed}/{session.progress.total} confirmed
+          {view === "focused"
+            ? ready
+              ? `V1 ready · ${session.progress.confirmed} confirmed input${session.progress.confirmed === 1 ? "" : "s"}`
+              : repairing
+                ? "Draft needs repair before V1"
+              : "Interview in progress"
+            : `${session.progress.confirmed}/${session.progress.total} confirmed`}
         </span>
         <SaveStateChip state={saveState} />
       </div>
@@ -120,9 +176,9 @@ export function ConflictBanner({
       }}
     >
       <span className="type-body" style={{ color: "var(--color-amber)" }}>
-        Someone else answered this interview. This tab holds revision {heldRevision}
+        This draft changed before your update finished. This tab holds revision {heldRevision}
         {currentRevision !== null ? `, current revision is ${currentRevision}` : ""}. Your
-        typed answer is kept.
+        typed answer is kept; reload to use the latest draft.
       </span>
       <button
         type="button"

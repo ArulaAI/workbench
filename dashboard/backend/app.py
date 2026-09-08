@@ -81,13 +81,13 @@ def create_app(project_root: str) -> FastAPI:
 
         # 9. Guided authoring checkpoint watcher (cross-surface resume)
         authoring_observer = ingest.start_authoring_watcher(
-            project_root, sub_manager, loop
+            project_root, sub_manager, loop, observer
         )
 
         yield
 
         # Shutdown
-        if authoring_observer:
+        if authoring_observer and authoring_observer is not observer:
             authoring_observer.stop()
             authoring_observer.join(timeout=5)
         if active_feature_observer:

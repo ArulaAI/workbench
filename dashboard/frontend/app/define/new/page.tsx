@@ -9,9 +9,11 @@ import { Header } from "@/components/layout/header";
 import { IntentInput } from "@/components/ceremony/IntentInput";
 import { BootstrapWizard } from "@/components/ceremony/BootstrapWizard";
 import {
-  ArtifactChoice,
-  DesignBranchNotice,
+  ArtifactSourceIntake,
+  ArtifactTabs,
+  DraftsInProgress,
   GuidedPrdIntakeForm,
+  type GuidedArtifactType,
 } from "@/components/ceremony/guided";
 import {
   BOOTSTRAP_STATUS_QUERY,
@@ -19,74 +21,123 @@ import {
 } from "@/lib/graphql/queries/ceremony-bootstrap";
 import {
   AUTHORING_INTAKE_QUERY,
-  AUTHORING_SESSION_QUERY,
+  AUTHORING_SESSIONS_QUERY,
   START_AUTHORING_MUTATION,
   type AuthoringIntakeData,
-  type AuthoringSessionData,
+  type IntakeInput,
+  type AuthoringSessionsData,
   type StartAuthoringData,
 } from "@/lib/graphql/queries/authoring";
 
-type Branch = "choose" | "prd" | "design" | "ceremony";
+type Branch = GuidedArtifactType | "ceremony";
 
 /**
  * Route: /define/new
- * Bootstrap first. Then the artifact choice returned by the interview helper:
+ * The artifact choice comes from the interview helper. Repository bootstrap is
+ * required only for the legacy intent-first ceremony, not guided PRD drafting:
  * PRD opens the guided intake form, Design points at the CLI. The intent-first
  * ceremony remains reachable as dashboard navigation, not as an interview
  * option the helper did not offer.
  */
 export default function DefineNewPage() {
   const router = useRouter();
-  const [branch, setBranch] = useState<Branch>("choose");
-  const [slug, setSlug] = useState("");
+  const [branch, setBranch] = useState<Branch>("prd");
   const [submitting, setSubmitting] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
 
   const [{ data: bootstrapData, fetching: bootstrapFetching }] =
     useQuery<BootstrapStatusData>({ query: BOOTSTRAP_STATUS_QUERY });
 
-  const [{ data: intakeData, fetching: intakeFetching }] = useQuery<AuthoringIntakeData>({
+  const [{ data: intakeData, fetching: intakeFetching, error: intakeError }] = useQuery<AuthoringIntakeData>({
     query: AUTHORING_INTAKE_QUERY,
-    variables: { artifactType: branch === "prd" ? "prd" : null },
-  });
-
-  const [{ data: existing }] = useQuery<AuthoringSessionData>({
-    query: AUTHORING_SESSION_QUERY,
-    variables: { featureName: slug, artifactType: "prd" },
-    pause: slug.length === 0,
+    variables: { artifactType: branch === "ceremony" ? null : branch },
     requestPolicy: "network-only",
   });
+
+  // Read-only: --list reads checkpoints and writes nothing.
+  const [{ data: draftsData }] = useQuery<AuthoringSessionsData>({
+    query: AUTHORING_SESSIONS_QUERY,
+    variables: { artifactType: branch === "ceremony" ? "prd" : branch },
+    requestPolicy: "network-only",
+  });
+  const drafts = draftsData?.authoringSessions?.sessions ?? [];
 
   const [, executeStart] = useMutation<StartAuthoringData>(START_AUTHORING_MUTATION);
 
   const start = useCallback(
-    async (title: string, featureSlug: string, description: string) => {
+    async (description: string) => {
       setSubmitting(true);
       setServerError(null);
-      try {
-        const result = await executeStart({
-          featureName: featureSlug,
-          featureTitle: title,
-          featureDescription: description,
-        });
-        const session = result.data?.startAuthoring;
-        if (!session || result.error) {
-          setServerError(result.error?.message ?? "The interview could not be started.");
-          return;
-        }
-        if (session.status === "error" || session.status === "helper_unavailable") {
-          setServerError(session.message);
-          return;
-        }
-        router.push(`/define/${featureSlug}/authoring/prd`);
-      } finally {
+      // An opaque intake route prevents raw description fragments from
+      // becoming package identity. Semantic planning replaces this with the
+      // server-derived title slug before the first answer is accepted.
+      const intakeId = globalThis.crypto?.randomUUID?.().replace(/-/g, "").slice(0, 16)
+        ?? Math.random().toString(36).slice(2, 18);
+      const featureSlug = `draft-${intakeId}`;
+      const fail = (message: string) => {
+        setServerError(message);
         setSubmitting(false);
+      };
+      let result;
+      try {
+        result = await executeStart({
+          featureName: featureSlug,
+          featureTitle: null,
+          featureDescription: description,
+          artifactType: "prd",
+        });
+      } catch (err) {
+        fail(err instanceof Error ? err.message : "The interview could not be started.");
+        return;
       }
+      const session = result.data?.startAuthoring;
+      if (!session || result.error) {
+        fail(result.error?.message ?? "The interview could not be started.");
+        return;
+      }
+      if (session.status === "error" || session.status === "helper_unavailable") {
+        fail(session.message);
+        return;
+      }
+      // `submitting` stays set so the form is inert through the route change.
+      router.push(`/define/${session.featureName ?? featureSlug}/authoring/prd`);
     },
     [executeStart, router],
   );
 
+  const startFromSource = useCallback(async (featureSlug: string) => {
+    if (branch === "prd" || branch === "ceremony" || !featureSlug) return;
+    setSubmitting(true);
+    setServerError(null);
+    try {
+      const result = await executeStart({
+        featureName: featureSlug,
+        featureTitle: null,
+        featureDescription: null,
+        artifactType: branch,
+      });
+      const session = result.data?.startAuthoring;
+      if (result.error || !session || ["error", "helper_unavailable"].includes(session.status)) {
+        setServerError(result.error?.message ?? session?.message ?? `The ${branch} interview could not be started.`);
+        setSubmitting(false);
+        return;
+      }
+      router.push(`/define/${featureSlug}/authoring/${branch}`);
+    } catch (err) {
+      setServerError(err instanceof Error ? err.message : `The ${branch} interview could not be started.`);
+      setSubmitting(false);
+    }
+  }, [branch, executeStart, router]);
+
   const needsBootstrap = bootstrapData?.bootstrapStatus?.needsBootstrap ?? false;
+  const sourceInput: IntakeInput = intakeData?.authoringIntake?.nextInput ?? {
+    id: "source_prd",
+    input_type: "prd_reference",
+    prompt: branch === "rfc"
+      ? "Which package with published PRD and Design should ground this Technical RFC?"
+      : "Which published PRD should ground this Design draft?",
+    options: [],
+  };
 
   return (
     <div style={{ display: "flex", height: "100vh" }}>
@@ -113,37 +164,42 @@ export default function DefineNewPage() {
           }}
         >
           <ErrorBoundary>
-            {bootstrapFetching ? null : needsBootstrap ? (
-              <BootstrapWizard onComplete={() => window.location.reload()} />
-            ) : branch === "ceremony" ? (
-              <IntentInput />
-            ) : branch === "design" ? (
-              <DesignBranchNotice onBack={() => setBranch("choose")} />
+            {branch !== "ceremony" && (
+              <ArtifactTabs value={branch} onChange={(value) => { setBranch(value); setServerError(null); }} />
+            )}
+            {branch === "ceremony" ? (
+              bootstrapFetching ? null : needsBootstrap ? (
+                <BootstrapWizard onComplete={() => window.location.reload()} />
+              ) : (
+                <IntentInput />
+              )
             ) : branch === "prd" ? (
               intakeData?.authoringIntake?.nextInput ? (
                 <GuidedPrdIntakeForm
                   input={intakeData.authoringIntake.nextInput}
                   submitting={submitting}
-                  existingStatus={existing?.authoringSession?.status ?? null}
                   serverError={serverError}
-                  onSlugChange={setSlug}
                   onSubmit={start}
-                  onResume={(featureSlug) =>
-                    router.push(`/define/${featureSlug}/authoring/prd`)
-                  }
                 />
               ) : null
-            ) : intakeFetching ? null : intakeData?.authoringIntake?.nextInput ? (
-              <ArtifactChoice
-                input={intakeData.authoringIntake.nextInput}
-                onSelect={(value) => setBranch(value === "design" ? "design" : "prd")}
+            ) : intakeFetching ? null : (
+              <ArtifactSourceIntake
+                input={sourceInput}
+                artifactType={branch}
+                submitting={submitting}
+                serverError={serverError ?? intakeError?.message ?? null}
+                onSelect={startFromSource}
               />
-            ) : (
-              <IntentInput />
             )}
           </ErrorBoundary>
 
-          {!needsBootstrap && branch === "choose" && (
+          {branch !== "ceremony" && drafts.length > 0 && (
+            <div style={{ maxWidth: 560, width: "100%", marginTop: 8 }}>
+              <DraftsInProgress sessions={drafts} heading="Resume a draft" />
+            </div>
+          )}
+
+          {branch !== "ceremony" && (
             <button
               type="button"
               className="type-caption"
