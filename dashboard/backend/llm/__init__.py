@@ -409,6 +409,17 @@ def _cli_error_detail(stdout: str, stderr: str) -> str:
         status = payload.get("api_error_status")
         if message:
             return f"API {status}: {message}" if status else message
+        errors = payload.get("errors")
+        if isinstance(errors, list):
+            messages = [e if isinstance(e, str) else e.get("message", "")
+                        for e in errors if isinstance(e, (str, dict))]
+            if any(messages):
+                return "; ".join(str(m) for m in messages if m)
+        if payload.get("is_error"):
+            subtype = payload.get("subtype", "")
+            if subtype == "error_max_structured_output_retries":
+                return "The model could not produce the required document format after repeated attempts. Retry the saved request."
+            return detail or f"Model generation failed ({subtype or 'no error detail returned'}). Retry the saved request."
     return detail or stdout.strip()[:300] or "unknown CLI failure"
 
 

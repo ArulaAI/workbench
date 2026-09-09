@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+import json
 
 from pydantic import BaseModel
 
@@ -12,6 +13,17 @@ from dashboard.backend.llm import _cache_key, _validate_cli_response
 
 class RevisionPayload(BaseModel):
     body: str
+
+
+def test_cli_error_details_prefer_errors_over_usage_envelope() -> None:
+    payload = {"is_error": True, "num_turns": 6, "usage": {"output_tokens": 28000},
+               "errors": ["Structured output failed validation", {"message": "Missing sections"}]}
+    assert llm._cli_error_detail(json.dumps(payload), "") == "Structured output failed validation; Missing sections"
+    payload.pop('errors')
+    payload['subtype'] = 'error_max_structured_output_retries'
+    detail = llm._cli_error_detail(json.dumps(payload), '')
+    assert 'required document format' in detail and 'Retry' in detail
+    assert 'output_tokens' not in detail
 
 
 def test_valid_json_with_an_embedded_code_fence_is_not_truncated() -> None:
