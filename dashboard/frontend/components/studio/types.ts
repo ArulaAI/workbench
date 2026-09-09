@@ -12,11 +12,15 @@ export type Snapshot = Version & {
   sources: Source[]; model: string; protected_sections_kept: string[];
 };
 export type Document = { head: string | null; published: string | null; versions: Version[]; snapshot: Snapshot | null; stale: Kind[]; blockers: string[] };
-export type Operation = { id: string; kind: Kind; status: "queued" | "running" | "completed" | "failed" | "interrupted" | "cancelled"; text: string; error: string | null; version_id: string | null };
+export type Operation = { id: string; kind: Kind; action?: string; status: "queued" | "running" | "completed" | "failed" | "interrupted" | "cancelled"; text: string; error: string | null; version_id: string | null };
+export type ClarificationAnswer = { choice: "option-1" | "option-2" | "option-3" | "custom"; text: string; saved_at: string };
+export type ClarificationQuestion = { id: string; question: string; why: string; options: {label: string; description: string}[] };
+export type Intake = { status: "checking" | "awaiting_answers" | "ready"; summary: string; questions: ClarificationQuestion[]; answers: Record<string, ClarificationAnswer> };
 export type Comment = { id: string; kind: Kind; section_id: string; version_id: string; text: string; quote: string; blocking: boolean; status: "open" | "addressed" | "resolved" | "dismissed"; outdated: boolean; addressed_version: string | null; dispositions: {status: string; reason: string}[] };
 export type Feature = {
   id: string; title: string; brief: string; context: string; revision: number; updated_at: string;
   documents: Record<Kind, Document>; operations: Operation[]; comments: Comment[];
+  intake?: Intake;
   messages: { id: string; role: string; kind: Kind; text: string; section_id: string | null; operation_id: string; version_id?: string }[];
 };
-export type Command = { action: string; kind?: Kind; text?: string; section_id?: string; version_id?: string; comment_id?: string; quote?: string; blocking?: boolean; items?: Item[] };
+export type Command = { action: string; kind?: Kind; text?: string; section_id?: string; version_id?: string; comment_id?: string; quote?: string; blocking?: boolean; items?: Item[]; question_id?: string; choice?: ClarificationAnswer["choice"] };

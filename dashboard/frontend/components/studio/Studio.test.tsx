@@ -37,7 +37,7 @@ beforeEach(() => {
 afterEach(() => {vi.unstubAllGlobals();});
 
 describe("Authoring studio workflow", () => {
-  it("shows the provisional document while a blocking decision remains", async () => {
+  it("preserves an existing draft while a later blocking decision remains", async () => {
     const state = fixture(); state.documents.prd.snapshot = {...snapshot, questions:[{id:"storage",question:"Where should views be stored?",why:"Affects persistence",blocking:true}]};
     state.documents.prd.blockers = ["Choose storage"];
     mockApi(state); render(<Studio />);
@@ -102,5 +102,92 @@ describe("Authoring studio workflow", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Your text is still here");
     expect(screen.getByLabelText("Section text · Markdown supported")).toHaveValue("My manual scope decision");
     expect(close).not.toHaveBeenCalled();
+  });
+});
+
+function intakeFixture(): Feature {
+  const state = fixture();
+  state.documents.prd = {head:null, published:null, versions:[], snapshot:null, stale:[], blockers:["Generate a draft first."]};
+  state.intake = {status:"awaiting_answers", summary:"Confirm audience and scope.", answers:{}, questions:[
+    {id:"audience", question:"Who should use saved views?", why:"This determines access.", options:[
+      {label:"Only me",description:"Personal access only."}, {label:"My team",description:"Share access within the team."}, {label:"Everyone",description:"Organization-wide access."}]},
+    {id:"sharing", question:"What sharing belongs in this release?", why:"This determines the scope.", options:[
+      {label:"No sharing",description:"Keep views personal."}, {label:"Read-only sharing",description:"Others can see a view."}, {label:"Collaborative views",description:"Others can update shared views."}]},
+  ]};
+  return state;
+}
+
+describe("Clarification before the first PRD", () => {
+  it("offers exactly four choices and holds the document until all answers are submitted", async () => {
+    let state = intakeFixture();
+    const commands: Record<string, unknown>[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url:string, init?:RequestInit) => {
+      if (init?.method === "POST") {
+        const payload = JSON.parse(init.body as string); commands.push(payload);
+        state = {...state, revision:state.revision+1, intake:{...state.intake!, answers:{...state.intake!.answers,
+          [payload.question_id]:{choice:payload.choice,text:payload.text || "Only me",saved_at:"now"}}}};
+        if (Object.keys(state.intake!.answers).length === 2) {
+          state.intake!.status = "ready";
+          state.operations = [{id:"generate",action:"generate",kind:"prd",status:"queued",text:"Generate using all answers",error:null,version_id:null}];
+        }
+      }
+      return {ok:true,json:async () => url.endsWith("/health") ? {contract:1} : url.endsWith("/features") ? [state] : state};
+    }));
+    render(<Studio />);
+    await screen.findByRole("heading",{name:"Who should use saved views?"});
+    expect(screen.getAllByRole("radio")).toHaveLength(4);
+    screen.getAllByRole("radio").forEach(r => expect(r).not.toBeChecked());
+    expect(screen.getByRole("button",{name:"Next",exact:true})).toBeDisabled();
+    expect(screen.queryByText("Personal saved views only.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button",{name:"Publish snapshot"})).not.toBeInTheDocument();
+    expect(screen.getByRole("tab",{name:/Design spec/})).toBeDisabled();
+    fireEvent.click(screen.getByRole("radio",{name:/Only me/}));
+    fireEvent.click(screen.getByRole("button",{name:"Next",exact:true}));
+    await screen.findByRole("heading",{name:"What sharing belongs in this release?"});
+    expect(commands[0]).toMatchObject({action:"answer_clarification",kind:"prd",question_id:"audience",choice:"option-1",expected_revision:3});
+    expect(state.documents.prd.head).toBeNull();
+    fireEvent.click(screen.getByRole("button",{name:"Back",exact:true}));
+    expect(screen.getByRole("radio",{name:/Only me/})).toBeChecked();
+    fireEvent.click(screen.getByRole("button",{name:"Next",exact:true}));
+    await screen.findByRole("heading",{name:"What sharing belongs in this release?"});
+    fireEvent.click(screen.getByRole("radio",{name:/Write my own/}));
+    expect(screen.getByRole("button",{name:"Generate PRD",exact:true})).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Your answer"),{target:{value:"Only invite-only read access in the first release."}});
+    fireEvent.click(screen.getByRole("button",{name:"Generate PRD",exact:true}));
+    await screen.findByRole("heading",{name:"Creating your first PRD"});
+    expect(commands.at(-1)).toMatchObject({action:"answer_clarification",question_id:"sharing",choice:"custom",text:"Only invite-only read access in the first release."});
+    expect(screen.queryByText("Personal saved views only.")).not.toBeInTheDocument();
+  });
+
+  it("resumes at the first unanswered question after returning to a workspace", async () => {
+    const state = intakeFixture();
+    state.intake!.answers.audience = {choice:"option-2",text:"My team",saved_at:"now"};
+    mockApi(state); render(<Studio />);
+    await screen.findByRole("heading",{name:"What sharing belongs in this release?"});
+    expect(screen.getByText("Question 2 of 2")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button",{name:"Back",exact:true}));
+    expect(screen.getByRole("radio",{name:/My team/})).toBeChecked();
+  });
+
+  it("retains a custom answer if saving fails", async () => {
+    mockApi(intakeFixture(), "Your answer could not be saved. Try again."); render(<Studio />);
+    await screen.findByRole("heading",{name:"Who should use saved views?"});
+    fireEvent.click(screen.getByRole("radio",{name:/Write my own/}));
+    fireEvent.change(screen.getByLabelText("Your answer"),{target:{value:"Only invited project owners."}});
+    fireEvent.click(screen.getByRole("button",{name:"Next",exact:true}));
+    await screen.findByRole("alert");
+    expect(screen.getByLabelText("Your answer")).toHaveValue("Only invited project owners.");
+    expect(screen.getByText("Question 1 of 2")).toBeInTheDocument();
+  });
+
+  it("shows a brief check before any drafting controls", async () => {
+    const state = intakeFixture();
+    state.intake = {...state.intake!, status:"checking",questions:[]};
+    state.operations = [{id:"check",kind:"prd",action:"clarify",status:"running",text:state.brief,error:null,version_id:null}];
+    mockApi(state); render(<Studio />);
+    await screen.findByRole("heading",{name:"Reviewing your brief"});
+    expect(screen.getByRole("button",{name:"Cancel brief review"})).toBeEnabled();
+    expect(screen.queryByRole("button",{name:"Generate PRD",exact:true})).not.toBeInTheDocument();
+    expect(screen.queryByRole("radio")).not.toBeInTheDocument();
   });
 });

@@ -29,7 +29,7 @@ site/.astro/
 /dashboard/frontend/next-env.d.ts
 
 # TypeScript build cache
-tsconfig.tsbuildinfo
+*.tsbuildinfo
 
 # Root-level build/dependency artifacts
 .astro/

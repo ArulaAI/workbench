@@ -10,7 +10,7 @@ import pytest
 
 from lib.authoring_studio import Studio, StudioError
 from lib.authoring_studio.generator import source
-from lib.authoring_studio.models import Command, CreateFeature, Generation, Item, RFC_MODULES, TEMPLATES
+from lib.authoring_studio.models import Clarification, Command, CreateFeature, Generation, Item, RFC_MODULES, TEMPLATES
 from lib.authoring_studio.service import markdown
 
 
@@ -45,7 +45,8 @@ def generated(kind="prd", head=None, scoped=None, **updates):
 
 def finish(studio, state, result=None, generator=None):
     op = next(o for o in state["operations"] if o["status"] == "queued")
-    studio.run(state["id"], op["id"], generator or (lambda s, o, h, u: (result or generated(o["kind"], h, o["section_id"]), [], "test-provider")))
+    studio.run(state["id"], op["id"], generator or (lambda s, o, h, u: (
+        Clarification(summary="The brief has enough direction.") if o["action"] == "clarify" else result or generated(o["kind"], h, o["section_id"]), [], "test-provider")))
     return studio.get(state["id"])
 
 
@@ -78,7 +79,7 @@ def test_create_and_commands_are_idempotent(studio):
     new = studio.command(state["id"], req)
     same = studio.command(state["id"], req)
     assert same["revision"] == new["revision"]
-    assert len(same["operations"]) == 2
+    assert len(same["operations"]) == 3
 
 
 def test_compare_and_swap_prevents_stale_writer(studio):
@@ -234,7 +235,8 @@ def test_exact_version_and_placeholders_are_checked_at_publication(studio):
 
 
 def test_scoped_edit_preserves_unrelated_blocking_decisions(studio):
-    state = finish(studio, create(studio), result=generated(questions=[{"id":"storage", "question":"Where is data stored?", "why":"Data loss risk", "blocking":True, "section_id":"requirements"}]))
+    state = draft(studio)
+    state = finish(studio, command(studio, state, "revise", text="Consider another persistence option"), result=generated(head=state["documents"]["prd"]["snapshot"], questions=[{"id":"storage", "question":"Where is data stored?", "why":"Data loss risk", "blocking":True, "section_id":"requirements"}]))
     state = finish(studio, command(studio, state, "revise", section_id="summary", text="Shorten the summary"))
     assert state["documents"]["prd"]["snapshot"]["questions"][0]["id"] == "storage"
 
@@ -278,7 +280,7 @@ def test_snapshot_and_operation_completion_roll_back_together(studio, monkeypatc
         save(conn, state)
     monkeypatch.setattr(studio.store, "save", fail_completion)
     state = finish(studio, state)
-    assert state["operations"][0]["status"] == "failed"
+    assert state["operations"][-1]["status"] == "failed"
     assert state["documents"]["prd"]["head"] is None
     assert state["messages"][0]["text"] == state["brief"]
     with studio.store.transaction() as conn:
@@ -331,3 +333,139 @@ def test_manual_edit_rejects_dangling_requirement_references(studio):
     with pytest.raises(StudioError, match="unavailable entity"):
         command(studio, state, "edit", section_id="requirements", version_id=state["documents"]["prd"]["head"], text="Requirements", items=[item])
     assert studio.get(state["id"])["revision"] == state["revision"]
+
+
+def clarification(count=2):
+    return Clarification.model_validate({"summary": "Clarify audience and scope before drafting.", "questions": [
+        {"id": f"q-{i}", "question": f"Who should use workflow {i}?", "why": "The answer determines access and scope.",
+         "options": [{"label": label, "description": description} for label, description in [
+             ("Personal", "Only the author uses this workflow."), ("Team", "People in the same team can use it."),
+             ("Organization", "Everyone in the organization can use it.")]]} for i in range(count)]})
+
+
+def awaiting_answers(studio, count=2):
+    state = create(studio)
+    calls = []
+    def check(s, operation, *_):
+        calls.append(operation["action"])
+        assert operation["action"] == "clarify", "A PRD must not be generated before answers."
+        return clarification(count), [], "test-provider"
+    state = finish(studio, state, generator=check)
+    assert calls == ["clarify"]
+    return state
+
+
+def test_brief_check_saves_questions_without_generating_any_prd(studio):
+    state = create(studio)
+    assert state["operations"][0]["action"] == "clarify"
+    state = awaiting_answers(studio)
+    assert state["intake"]["status"] == "awaiting_answers"
+    assert len(state["intake"]["questions"][0]["options"]) == 3
+    assert not state["documents"]["prd"]["head"]
+    assert not state["documents"]["prd"]["versions"]
+    with studio.store.transaction() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM snapshots").fetchone()[0] == 0
+    with pytest.raises(StudioError, match="every clarification"):
+        command(studio, state, "generate")
+
+
+def test_complete_brief_proceeds_directly_through_check_to_generation(studio):
+    calls = []
+    def provider(state, op, *_):
+        calls.append(op["action"])
+        return (Clarification(summary="The brief is sufficient.") if op["action"] == "clarify" else generated()), [], "test-provider"
+    state = finish(studio, create(studio), generator=provider)
+    assert calls == ["clarify", "generate"]
+    assert state["intake"]["questions"] == []
+    assert state["documents"]["prd"]["snapshot"]["number"] == 1
+
+
+def test_answers_survive_reload_and_only_final_answer_queues_generation(studio):
+    state = awaiting_answers(studio)
+    state = command(studio, state, "answer_clarification", question_id="q-0", choice="option-2", text="Ignored client substitution")
+    reloaded = Studio(studio.root).get(state["id"])
+    assert reloaded["intake"]["answers"]["q-0"]["text"] == "Team: People in the same team can use it."
+    assert not any(o["status"] == "queued" for o in reloaded["operations"])
+    assert reloaded["documents"]["prd"]["head"] is None
+    state = command(studio, reloaded, "answer_clarification", question_id="q-0", choice="option-1")
+    assert state["intake"]["answers"]["q-0"]["choice"] == "option-1"
+    state = command(studio, state, "answer_clarification", question_id="q-1", choice="custom", text="  Invite-only reviewers.  ")
+    assert state["intake"]["status"] == "ready"
+    assert state["operations"][-1]["action"] == "generate"
+    def provider(s, *_):
+        assert s["intake"]["answers"]["q-1"]["text"] == "Invite-only reviewers."
+        assert s["intake"]["answers"]["q-0"]["choice"] == "option-1"
+        return generated(), [], "test-provider"
+    assert finish(studio, state, generator=provider)["documents"]["prd"]["head"]
+
+
+def test_clarification_rejects_blank_unknown_and_stale_answers(studio):
+    state = awaiting_answers(studio)
+    with pytest.raises(StudioError, match="1 to 4,000"):
+        command(studio, state, "answer_clarification", question_id="q-0", choice="custom", text="   ")
+    with pytest.raises(StudioError, match="current clarification"):
+        command(studio, state, "answer_clarification", question_id="unknown", choice="option-1")
+    updated = command(studio, state, "answer_clarification", question_id="q-0", choice="option-1")
+    with pytest.raises(StudioError, match="workspace changed"):
+        command(studio, state, "answer_clarification", question_id="q-1", choice="option-1")
+    assert len(updated["intake"]["answers"]) == 1
+
+
+def test_final_answer_is_idempotent_and_failed_generation_retains_answers(studio):
+    state = awaiting_answers(studio, 1)
+    answer = Command(action="answer_clarification", question_id="q-0", choice="custom", text="Only feature owners.",
+                     request_id=uuid4().hex, expected_revision=state["revision"])
+    state = studio.command(state["id"], answer)
+    assert studio.command(state["id"], answer)["revision"] == state["revision"]
+    assert len(state["operations"]) == 2
+    def fail(*_):
+        raise RuntimeError("provider unavailable")
+    state = finish(studio, state, generator=fail)
+    assert state["intake"]["answers"]["q-0"]["text"] == "Only feature owners."
+    state = command(studio, state, "retry")
+    assert state["operations"][-1]["action"] == "generate"
+    assert finish(studio, state)["documents"]["prd"]["head"]
+
+
+def test_brief_check_cancellation_discards_late_questions(studio):
+    state = create(studio)
+    entered, release = Event(), Event()
+    def delayed(*_):
+        entered.set(); release.wait(timeout=5)
+        return clarification(), [], "test-provider"
+    with ThreadPoolExecutor() as pool:
+        job = pool.submit(finish, studio, state, generator=delayed)
+        assert entered.wait(timeout=5)
+        command(studio, studio.get(state["id"]), "cancel")
+        release.set(); job.result(timeout=5)
+    state = studio.get(state["id"])
+    assert state["intake"]["questions"] == []
+    assert state["documents"]["prd"]["head"] is None
+
+
+def test_initial_prd_cannot_save_new_unanswered_questions(studio):
+    result = generated(questions=[{"id":"unexpected", "question":"Who is this for?", "why":"Audience", "blocking":False}])
+    state = finish(studio, create(studio), result=result)
+    assert state["documents"]["prd"]["head"] is None
+    assert "unanswered questions" in state["operations"][-1]["error"]
+
+
+def test_generator_uses_clarification_schema_and_all_saved_answers(studio, monkeypatch):
+    from dashboard.backend import llm
+    from lib.authoring_studio.generator import Generator
+    from lib.authoring_studio.models import InitialPRD
+    import json
+    calls = []
+    monkeypatch.setattr(llm, "read_model_config", lambda _: {"provider":"claude-code", "support_model":"sonnet"})
+    def complete(**kwargs):
+        calls.append(kwargs)
+        return clarification(1) if kwargs["response_model"] is Clarification else generated()
+    monkeypatch.setattr(llm, "llm_complete", complete)
+    state = finish(studio, create(studio), generator=Generator(studio.root))
+    state = command(studio, state, "answer_clarification", question_id="q-0", choice="custom", text="Only invited editors, no public access.")
+    state = finish(studio, state, generator=Generator(studio.root))
+    assert [c["response_model"] for c in calls] == [Clarification, InitialPRD]
+    payload = json.loads(calls[1]["messages"][1]["content"])
+    evidence = next(s for s in payload["evidence"] if s["label"] == "Author's clarification answers")
+    assert "Only invited editors, no public access." in evidence["text"]
+    assert any(s["id"] == evidence["id"] for s in state["documents"]["prd"]["snapshot"]["sources"])

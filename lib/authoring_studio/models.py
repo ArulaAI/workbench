@@ -73,9 +73,33 @@ class Generation(StrictModel):
     coverage: list[Coverage] = Field(default_factory=list, max_length=10)
 
 
+class InitialPRD(Generation):
+    questions: list[Question] = Field(default_factory=list, max_length=0,
+                                     description="Clarification is complete. Use the author's saved answers.")
+
+
+class SuggestedAnswer(StrictModel):
+    label: str = Field(min_length=1, max_length=160)
+    description: str = Field(min_length=1, max_length=1000)
+
+
+class ClarificationQuestion(StrictModel):
+    id: str = Field(min_length=1, max_length=80)
+    question: str = Field(min_length=1, max_length=2000)
+    why: str = Field(min_length=1, max_length=2000)
+    options: list[SuggestedAnswer] = Field(min_length=3, max_length=3,
+        description="Three distinct, concrete answers. The application adds Write my own as the fourth option.")
+
+
+class Clarification(StrictModel):
+    summary: str = Field(min_length=1, max_length=2500)
+    questions: list[ClarificationQuestion] = Field(default_factory=list, max_length=6,
+        description="Only unanswered decisions necessary for a responsible PRD; empty when the brief is sufficient.")
+
+
 class Command(StrictModel):
     action: Literal["generate", "revise", "reconcile", "edit", "comment", "resolve", "dismiss",
-                    "reopen", "publish", "cancel", "retry", "restore", "review_section"]
+                    "reopen", "publish", "cancel", "retry", "restore", "review_section", "answer_clarification"]
     expected_revision: int = Field(ge=0)
     request_id: str = Field(min_length=8, max_length=100)
     kind: Kind = "prd"
@@ -86,6 +110,8 @@ class Command(StrictModel):
     quote: str = Field(default="", max_length=4000)
     blocking: bool = False
     items: list[Item] | None = None
+    question_id: str | None = None
+    choice: Literal["option-1", "option-2", "option-3", "custom"] | None = None
 
 
 class CreateFeature(StrictModel):

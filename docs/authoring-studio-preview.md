@@ -26,7 +26,11 @@ Stopping the preview retains saved work. Logs and the local SQLite database are 
 
 Give the feature a name and describe the desired behavior. Add research, constraints or decisions in the optional context field. The application uses the provider configured in `speed.toml`; this branch has been exercised with `claude-code/sonnet` through the existing authenticated Claude CLI. Generation makes real model calls.
 
-The first PRD appears without an interview gate. Assumptions and open decisions stay visible. Answer a question in chat or ask for a change in your own words. The studio foregrounds one question at a time and asks at most three in the first draft.
+Select **Continue with brief** to check whether any product decisions need clarification. A complete brief proceeds directly to PRD generation. If questions are needed, the studio shows one at a time with three suggested answers and **Write my own** as the fourth option. Nothing is preselected.
+
+**Next** saves the answer and advances. Use **Back** to review or change a saved answer before finishing. The last question has a **Generate PRD** button: generation starts only after every question has a saved answer. Returning to the workspace resumes at the first unanswered question. A failed save retains your typed answer; a failed generation retains all submitted decisions.
+
+After the PRD appears, use chat, section edits or comments to refine it. Later revisions can introduce new open decisions. Existing documents remain available with their original version history.
 
 The current local preview contains **Saved views for the Define workspace**, with actual model-generated content and review history. Runtime data belongs to this checkout; a fresh clone starts empty. **Use an example** fills a brief for a fresh generation.
 
@@ -87,7 +91,7 @@ SPEED_TYPESCRIPT_CONFIG=tsconfig.app.json SPEED_NEXT_DIST_DIR=.next-studio-build
 
 The application typecheck covers production sources. Legacy test fixtures have existing TypeScript errors under the root frontend config, so `tsconfig.app.json` excludes test files from the production build. Guided and studio tests still run through Vitest. Existing lint warnings and CodeMirror/jsdom geometry warnings are not studio failures.
 
-Validation for this branch: 85 selected backend tests and 62 guided/studio frontend tests passed, and the production build succeeded. Browser checks used real model generations and covered section editing, addressing and resolving comments, publication, history comparison, upstream reconciliation, and desktop/mobile layouts. This is targeted validation, not a claim that every repository test was run.
+The clarification revision passed 35 studio backend tests, 66 guided/studio frontend tests and the production build. Checks cover blocking generation before answers, suggested and custom answers, resuming saved responses, Back navigation, duplicate submission, cancellation and retry. A real browser/provider walkthrough confirmed zero PRD versions while questions remained unanswered and a first PRD using all submitted decisions afterward. Desktop and mobile layouts were checked. This is targeted validation, not a claim that every repository test was run.
 
 This branch updates the inherited Next.js 15.1.6 dependency to 15.5.24, the patched maintenance release identified in the [August 2026 security advisory](https://nextjs.org/blog/august-2026-security-release). The original worktree's dependencies and manifests are unchanged.
 

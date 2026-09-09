@@ -1,6 +1,6 @@
 # Guided authoring studio: architecture experiment
 
-Start with a feature brief, get a provisional PRD, and refine it in the same workspace. Publishing a PRD makes it an explicit input to Design and RFC. The experiment tests that experience and the persistence rules beneath it. This document covers the branch agenda, document contracts, architecture, and adoption boundaries.
+Start with a feature brief, clarify the product decisions it leaves open, then generate and refine a PRD in the same workspace. Publishing a PRD makes it an explicit input to Design and RFC. The experiment tests that experience and the persistence rules beneath it. This document covers the branch agenda, document contracts, architecture, and adoption boundaries.
 
 ## Branch agenda
 
@@ -8,7 +8,7 @@ Start with a feature brief, get a provisional PRD, and refine it in the same wor
 
 | Deliverable | Acceptance |
 | --- | --- |
-| Brief to PRD | One brief produces a visible, useful draft; missing evidence is explicit. No questionnaire gates the preview. |
+| Brief to PRD | Check the brief first. If clarification is needed, save every answer before generation; otherwise generate directly. Each question has three suggestions and a custom-answer option. |
 | Conversation and direct editing | A request can change the whole document or one stable section. Every applied change creates an immutable version. |
 | Review comments | Comments retain their section, source version and optional quotation. Addressing a comment links the resulting revision; resolution remains a human action. |
 | Connected documents | Design and RFC reference exact published upstream snapshots. Later upstream changes produce a visible stale state and an explicit reconciliation action. |
@@ -19,7 +19,11 @@ Start with a feature brief, get a provisional PRD, and refine it in the same wor
 
 ```mermaid
 flowchart LR
-  B[Simple feature brief] --> P[Provisional PRD]
+  B[Simple feature brief] --> BC[Check for missing decisions]
+  BC -->|Questions needed| Q[One question at a time: choose or write]
+  Q --> A[Save all answers]
+  A --> P[Generate PRD]
+  BC -->|No questions| P
   P <--> E[Chat / section edits / comments]
   E --> V[Immutable revisions and comparison]
   P --> PP[Publish PRD snapshot]
@@ -33,7 +37,9 @@ flowchart LR
   S --> C[Reconcile and review new revision]
 ```
 
-The left side is the conversation and open decisions. The main canvas contains the actual document, with a section outline and version comparison. PRD, Design and RFC stay in one feature workspace. History is available without leaving the document. Only the first unresolved question is foregrounded; the initial generation can ask at most three.
+Before drafting, the workspace shows the clarification step beside the saved brief. Each question offers three concrete suggestions plus **Write my own**, with no preselected answer. **Next** persists the answer and advances; **Back** lets the author revisit saved answers. The last submission starts generation. The brief check asks only necessary product decisions (up to six), and skips questions when the supplied information is sufficient.
+
+Once the PRD exists, the left side becomes the conversation and later open decisions. The main canvas contains the document, with a section outline and version comparison. PRD, Design and RFC stay in one feature workspace. History is available without leaving the document.
 
 Saving a revision, publishing a snapshot and approving a package are distinct concepts. This experiment implements the first two. Publishing means “use these exact bytes as a shared input,” subject to structural checks and unresolved blocking decisions. It does not claim organizational approval, valid ADR/evaluation coverage, or readiness for Plan.
 
@@ -74,6 +80,8 @@ SQLite transactions provide a small, testable canonical store for the local expe
 
 Operations persist the user request before contacting the model. A background worker uses the captured feature revision and upstream pins. Applying the candidate snapshot and completing the operation happen in one transaction. Model failure leaves the request and current document intact. Restarted operations become interrupted and can be retried; the prototype runs one API process. Cancellation invalidates the operation so late provider output cannot commit. Repeated delivery of the same request ID returns its existing operation.
 
+New features begin with a `clarify` operation whose structured response contains questions and suggested answers, never document sections. The feature's durable `intake` state moves from `checking` to `awaiting_answers` or `ready`. An `answer_clarification` command saves the canonical answer with optimistic revision checking. The final answer and queued generation commit together; duplicate submissions cannot enqueue a second draft. With zero questions, the completed brief check queues generation atomically and the worker continues directly. Generation checks intake readiness again before calling the provider. The first PRD response contract permits no unanswered questions. Saved answers become a named, hashed source in the generated document.
+
 Each comment stores its source snapshot, stable section ID, quotation when supplied, state, and any addressing revision. Applying a suggested change does not silently resolve a reviewer's objection. A quote that no longer occurs in the current section is visibly outdated.
 
 Section edits replace only the targeted section. Direct edits mark that section protected from whole-document AI rewrites. A deliberately scoped revision can change it. Reconciliation preserves protected text and requires human review of those sections before publication. Historical revisions retain their original content and sources.
@@ -92,7 +100,7 @@ Publishing checks the exact stored candidate for required content, unanswered bl
 
 | Reviewed gap | Experiment behavior | Remaining work |
 | --- | --- | --- |
-| Preview hidden behind the interview | A provisional draft appears after generation; questions improve it in place. | Measure first-draft usefulness with feature authors. |
+| Initial draft written before required clarification | Following prototype feedback, necessary decisions are collected before drafting through a short choice-based flow. | Measure completion and first-draft usefulness; avoid unnecessary questions. |
 | Artifact content separated from manual overrides | Section edits become canonical content for all three artifacts. | Migrate old override/checkpoint formats. |
 | Published history pruned after 20 versions | Append-only snapshots have no rolling retention window. | Add archive/backup policy without breaking pins. |
 | Answers lost when generation fails | Requests commit before provider calls; failure and interruption are retryable. | Distributed worker leases for multiple API processes. |

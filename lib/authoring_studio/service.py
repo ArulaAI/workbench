@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from .models import Command, CreateFeature, Generation, PREFIXES, RFC_MODULES, TEMPLATES
+from .models import Clarification, Command, CreateFeature, Generation, PREFIXES, RFC_MODULES, TEMPLATES
 from .store import Store
 
 
@@ -71,8 +71,9 @@ class Studio:
                 "create_request_id": request.request_id, "documents": {
                     k: {"head": None, "published": None, "versions": [], "publications": []} for k in TEMPLATES},
                 "messages": [], "comments": [], "operations": [], "requests": [], "counters": {},
+                "intake": self._new_intake(),
             }
-            self._enqueue(state, "prd", "generate", request.brief.strip(), request.request_id, {})
+            self._enqueue(state, "prd", "clarify", request.brief.strip(), request.request_id, {})
             self._save(conn, state)
             return self._view(conn, state)
 
@@ -80,6 +81,15 @@ class Studio:
         state["revision"] += 1
         state["updated_at"] = now()
         self.store.save(conn, state)
+
+    @staticmethod
+    def _new_intake():
+        return {"status": "checking", "summary": "", "questions": [], "answers": {}, "sources": [], "model": None}
+
+    @staticmethod
+    def _intake_ready(state):
+        intake = state.get("intake", {})
+        return intake.get("status") == "ready" and all(q["id"] in intake["answers"] for q in intake["questions"])
 
     @staticmethod
     def _active(state):
@@ -139,6 +149,9 @@ class Studio:
 
     def _view(self, conn, state, compact=False):
         view = copy.deepcopy(state)
+        # Intake evidence stays durable for the worker; the UI only needs questions and answers.
+        if view.get("intake"):
+            view["intake"].pop("sources", None)
         for kind, doc in view["documents"].items():
             snapshot = self._head(conn, state, kind)
             doc["stale"] = self._stale(state, snapshot)
@@ -193,6 +206,17 @@ class Studio:
                     if not failed:
                         raise StudioError("There is no failed request to retry.")
                     text, scoped, comment_id, actual_action = failed["text"], failed["section_id"], failed["comment_id"], failed["action"]
+                if actual_action == "clarify" and (kind != "prd" or head):
+                    raise StudioError("Brief clarification is only available before the first PRD.")
+                if kind == "prd" and not head:
+                    # Older workspaces without a draft also enter the new intake gate.
+                    if "intake" not in state:
+                        state["intake"] = self._new_intake()
+                        actual_action = "clarify"
+                    if actual_action == "generate" and not self._intake_ready(state):
+                        raise StudioError("Answer every clarification before generating the PRD.")
+                    if actual_action == "clarify" and state["intake"]["status"] != "checking":
+                        raise StudioError("Clarification is already complete. Continue with the saved questions.")
                 if comment_id:
                     comment = self._comment(state, comment_id, kind)
                     if comment["status"] not in ("open", "addressed"):
@@ -209,6 +233,27 @@ class Studio:
                     raise StudioError("Describe the change you want.")
                 pins = self._pins(conn, state, kind) if actual_action in ("generate", "reconcile") else (head or {}).get("pins", {})
                 self._enqueue(state, kind, actual_action, text, command.request_id, pins, scoped, comment_id)
+            elif action == "answer_clarification":
+                intake = state.get("intake")
+                if kind != "prd" or head or not intake or intake["status"] != "awaiting_answers":
+                    raise StudioError("This workspace is not awaiting PRD clarification.")
+                question = next((q for q in intake["questions"] if q["id"] == command.question_id), None)
+                if not question or not command.choice:
+                    raise StudioError("Choose a current clarification question and an answer.")
+                if command.choice == "custom":
+                    answer = command.text.strip()
+                    if not answer or len(answer) > 4000:
+                        raise StudioError("Write your answer using 1 to 4,000 characters.")
+                else:
+                    option = question["options"][int(command.choice[-1]) - 1]
+                    answer = option["label"] + ": " + option["description"]
+                intake["answers"][question["id"]] = {"choice": command.choice, "text": answer, "saved_at": now()}
+                state["messages"].append({"id": uid(), "role": "user", "kind": "prd", "text": question["question"] + "\n" + answer,
+                    "section_id": None, "operation_id": None, "question_id": question["id"], "created_at": now()})
+                if all(q["id"] in intake["answers"] for q in intake["questions"]):
+                    intake["status"] = "ready"
+                    self._enqueue(state, "prd", "generate", "Generate the PRD using my brief and all saved clarification answers.",
+                                  command.request_id, {})
             elif action == "cancel":
                 if not active:
                     raise StudioError("No revision is running.")
@@ -345,9 +390,12 @@ class Studio:
             self._save(conn, state)
             head = self._head(conn, state, operation["kind"])
             upstream = {k: self.store.load_snapshot(conn, v) for k, v in operation["pins"].items()}
+        follow_up = None
         try:
+            if operation["kind"] == "prd" and head is None and operation["action"] != "clarify" and not self._intake_ready(state):
+                raise StudioError("Answer every clarification before generating the PRD.")
             generated, sources, model = generator(copy.deepcopy(state), copy.deepcopy(operation), head, upstream)
-            generated = Generation.model_validate(generated)
+            generated = (Clarification if operation["action"] == "clarify" else Generation).model_validate(generated)
             with self.store.transaction() as conn:
                 current = self._read(conn, feature_id)
                 active = next(o for o in current["operations"] if o["id"] == operation_id)
@@ -355,16 +403,31 @@ class Studio:
                     return
                 if current["documents"][operation["kind"]]["head"] != operation["base_version"]:
                     raise StudioError("The base version changed during generation. Retry against the current document.")
-                candidate = self._candidate(conn, current, operation, head, generated, sources, model)
-                applied_summary = candidate.pop("applied_summary")
-                snap = self._snapshot(conn, current, operation["kind"], candidate, "assistant", applied_summary, operation_id)
-                active.update(status="completed", version_id=snap["id"])
-                if operation["comment_id"]:
-                    comment = self._comment(current, operation["comment_id"], operation["kind"])
-                    comment.update(status="addressed", addressed_version=snap["id"])
+                if operation["action"] == "clarify":
+                    questions = [q.model_dump() for q in generated.questions]
+                    if len({q["id"] for q in questions}) != len(questions):
+                        raise StudioError("Clarification questions need unique identifiers. Retry the brief check.")
+                    for question in questions:
+                        if len({o["label"].strip().casefold() for o in question["options"]}) != 3 or any(not o["label"].strip() or not o["description"].strip() for o in question["options"]):
+                            raise StudioError("Each question needs three distinct suggested answers. Retry the brief check.")
+                    current["intake"].update(status="awaiting_answers" if questions else "ready", summary=generated.summary,
+                                            questions=questions, answers={}, sources=sources, model=model)
+                    applied_summary, version_id = generated.summary, None
+                    active.update(status="completed")
+                    if not questions:
+                        follow_up = self._enqueue(current, "prd", "generate", "The brief needs no clarification. Generate the PRD.", uid(), {})["id"]
+                else:
+                    candidate = self._candidate(conn, current, operation, head, generated, sources, model)
+                    applied_summary = candidate.pop("applied_summary")
+                    snap = self._snapshot(conn, current, operation["kind"], candidate, "assistant", applied_summary, operation_id)
+                    version_id = snap["id"]
+                    active.update(status="completed", version_id=version_id)
+                    if operation["comment_id"]:
+                        comment = self._comment(current, operation["comment_id"], operation["kind"])
+                        comment.update(status="addressed", addressed_version=version_id)
                 current["messages"].append({"id": uid(), "role": "assistant", "kind": operation["kind"],
                     "text": applied_summary, "section_id": operation["section_id"], "operation_id": operation_id,
-                    "version_id": snap["id"], "created_at": now()})
+                    "version_id": version_id, "created_at": now()})
                 self._save(conn, current)
         except Exception as error:
             detail = "The model did not finish in time. Your request and current document are saved. Retry to continue." if isinstance(error, (subprocess.TimeoutExpired, TimeoutError)) else (str(error)[:800] or type(error).__name__)
@@ -374,9 +437,14 @@ class Studio:
                 if operation["status"] == "running":
                     operation.update(status="failed", error=detail)
                     self._save(conn, state)
+            return
+        if follow_up:
+            self.run(feature_id, follow_up, generator)
 
     def _candidate(self, conn, state, operation, head, generated, sources, model):
         kind = operation["kind"]
+        if kind == "prd" and head is None and generated.questions:
+            raise StudioError("The first PRD still contains unanswered questions. No draft was saved; retry using the saved clarification answers.")
         titles = dict(TEMPLATES[kind])
         patches = {s.id: s.model_dump() for s in generated.sections}
         if len(patches) != len(generated.sections) or set(patches) - set(titles):
