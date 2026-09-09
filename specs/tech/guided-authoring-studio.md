@@ -11,6 +11,7 @@ Start with a feature brief, clarify the product decisions it leaves open, then g
 | Brief to PRD | Check the brief first. If clarification is needed, save every answer before generation; otherwise generate directly. Each question has three suggestions and a custom-answer option. |
 | Conversation and direct editing | A request can change the whole document or one stable section. Every applied change creates an immutable version. |
 | Review comments | Comments retain their section, source version and optional quotation. Addressing a comment links the resulting revision; resolution remains a human action. |
+| Publication review | Authors confirm Success and Open questions or acknowledge unresolved details with a note. Reviews apply to one exact version and cannot bypass structural blockers. |
 | Connected documents | Design and RFC reference exact published upstream snapshots. Later upstream changes produce a visible stale state and an explicit reconciliation action. |
 | Honest recovery | User inputs survive model failures. Pending work is recoverable after restart; retry is explicit. Concurrent writes cannot silently overwrite each other. |
 | Playable handoff | A local launcher, regression tests, browser verification and seeded example make the branch independently testable. |
@@ -26,7 +27,8 @@ flowchart LR
   BC -->|No questions| P
   P <--> E[Chat / section edits / comments]
   E --> V[Immutable revisions and comparison]
-  P --> PP[Publish PRD snapshot]
+  P --> AR[Author reviews Success and Open questions]
+  AR --> PP[Publish PRD snapshot]
   PP --> D[Design draft]
   PP --> R[RFC draft]
   D --> PD[Publish Design snapshot]
@@ -41,7 +43,7 @@ Before drafting, the workspace shows the clarification step beside the saved bri
 
 Once the PRD exists, the left side becomes the conversation and later open decisions. The main canvas contains the document, with a section outline and version comparison. PRD, Design and RFC stay in one feature workspace. History is available without leaving the document.
 
-Saving a revision, publishing a snapshot and approving a package are distinct concepts. This experiment implements the first two. Publishing means “use these exact bytes as a shared input,” subject to structural checks and unresolved blocking decisions. It does not claim organizational approval, valid ADR/evaluation coverage, or readiness for Plan.
+Saving a revision, publishing a snapshot and approving a package are distinct concepts. This experiment implements the first two. Publishing means “use these exact bytes as a shared input,” subject to structural checks and explicit author review. Unresolved questions can be acknowledged with a recorded reason while remaining open. Publication does not claim organizational approval, valid ADR/evaluation coverage, or readiness for Plan.
 
 ## Document contracts
 
@@ -59,7 +61,7 @@ Capture experience intent, users and entry points, end-to-end journeys, interact
 
 Follow `RFC Proposal 2.docx`: Metadata; Decision summary and approval ask; Context and constraints; Proposed design; Contracts and impact; Alternatives and tradeoffs; Delivery and verification; Open decisions and ownership. The RFC makes an engineering decision and shows its consequences.
 
-Assess API/events/CLI, persistence, compatibility, migration, security, privacy, reliability, rollout/rollback/observability, performance/cost, and AI/evaluation. Record each as material, not material (with a reason), or unresolved. Include detail in the relevant core section instead of filling every conditional module with boilerplate. An unresolved material decision blocks publication but never hides the preview. ADR extraction and a separate evaluation artifact remain policy work after the experiment.
+Assess API/events/CLI, persistence, compatibility, migration, security, privacy, reliability, rollout/rollback/observability, performance/cost, and AI/evaluation. Record each as material, not material (with a reason), or unresolved. Include detail in the relevant core section instead of filling every conditional module with boilerplate. Unresolved material coverage blocks publication even with an author acknowledgement and never hides the preview. ADR extraction and a separate evaluation artifact remain policy work after the experiment.
 
 ## Architecture and authority
 
@@ -86,13 +88,17 @@ Each comment stores its source snapshot, stable section ID, quotation when suppl
 
 Section edits replace only the targeted section. Direct edits mark that section protected from whole-document AI rewrites. A deliberately scoped revision can change it. Reconciliation preserves protected text and requires human review of those sections before publication. Historical revisions retain their original content and sources.
 
+`reviews.py` derives the Success and Open questions reviews from canonical snapshot content. PRDs require both; Design and RFC require Open questions. The latter covers both the risks/decisions section and structured questions, including an explicit confirmation when no questions remain. Case-insensitive text checks locate unfinished values by section, row and field. These checks help navigation; they cannot determine whether every natural-language decision is settled.
+
+`acknowledge_publication` records a confirmed or deferred assessment, exact snapshot ID, timestamp and author note in the document's review history under the same transaction/CAS rules as other commands. Detected unresolved details cannot be confirmed as settled; deferral requires a nonempty note. Revocation appends a new event. Reviews do not create document versions, and new snapshot IDs invalidate prior acknowledgements even when a restore reproduces earlier content. Publication freezes a copy of its review records. Markdown exports and published upstream evidence include those notes. The model cannot create acknowledgements or treat deferred questions as answered. Existing published versions are grandfathered; no review is invented for them.
+
 ## Generation and evidence
 
 The generator uses the existing provider settings in `speed.toml`. Its structured response contains section patches, typed requirement rows, assumptions and open questions. Validation rejects unknown section IDs, duplicate entity IDs and missing required first-draft sections. Unsupported evidence references remain visible on a provisional draft and block publication; they never appear in the verified source list. The server allocates new entity IDs and never recycles retired IDs.
 
 Repository context is bounded, recorded with path and content hash, and passed as evidence rather than instructions. User-provided context and upstream documents are separately identified. Truncation is visible in source metadata. The model has no write tools. A failed generation produces a clear retry state, never a success-shaped placeholder.
 
-Publishing checks the exact stored candidate for required content, unanswered blocking questions, unresolved RFC coverage, unresolved blocking comments, protected sections awaiting reconciliation review, and stale source pins. Those checks provide a structural guard; semantic quality still needs review. Multi-reviewer permissions and approval identity are not implemented in this local experiment.
+Publishing checks the exact stored candidate for current author acknowledgements, required content, unfinished placeholders outside reviewed Success/open-question sections, unresolved RFC coverage, unresolved blocking comments, protected sections awaiting reconciliation review, unavailable source references, and stale source pins. Review notes preserve accepted uncertainty without altering source text or clearing question flags. Multi-reviewer permissions and authenticated approval identity are not implemented in this local experiment.
 
 ## Adoption boundaries and later work
 

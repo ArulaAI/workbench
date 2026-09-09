@@ -99,7 +99,8 @@ class Clarification(StrictModel):
 
 class Command(StrictModel):
     action: Literal["generate", "revise", "reconcile", "edit", "comment", "resolve", "dismiss",
-                    "reopen", "publish", "cancel", "retry", "restore", "review_section", "answer_clarification"]
+                    "reopen", "publish", "cancel", "retry", "restore", "review_section", "answer_clarification",
+                    "acknowledge_publication", "revoke_publication_review"]
     expected_revision: int = Field(ge=0)
     request_id: str = Field(min_length=8, max_length=100)
     kind: Kind = "prd"
@@ -112,6 +113,8 @@ class Command(StrictModel):
     items: list[Item] | None = None
     question_id: str | None = None
     choice: Literal["option-1", "option-2", "option-3", "custom"] | None = None
+    review_group: Literal["success", "open_questions"] | None = None
+    disposition: Literal["confirmed", "deferred"] | None = None
 
 
 class CreateFeature(StrictModel):

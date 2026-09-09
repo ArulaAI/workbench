@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import Studio from "./Studio";
 import { SectionEditor } from "./Editors";
 import type { Feature, Section, Snapshot } from "./types";
@@ -37,6 +37,39 @@ beforeEach(() => {
 afterEach(() => {vi.unstubAllGlobals();});
 
 describe("Authoring studio workflow", () => {
+  it("holds publication until both reviews are saved, including when no separate questions exist", async () => {
+    let state = fixture();
+    state.documents.prd.snapshot = {...snapshot,sections:[section,{...section,id:"success",title:"Success",body:"Review the agreed success criteria."}]};
+    state.documents.prd.publication_review = [
+      {id:"success",title:"Success",sections:[{id:"success",title:"Success"}],findings:[],requires_deferral:false,acknowledgement:null},
+      {id:"open_questions",title:"Open questions",sections:[],findings:[],requires_deferral:false,acknowledgement:null},
+    ];
+    state.documents.prd.blockers=["Review and acknowledge Success for this version.","Review and acknowledge Open questions for this version."];
+    const commands: Record<string,unknown>[]=[];
+    vi.stubGlobal("fetch",vi.fn(async (url:string,init?:RequestInit) => {
+      if (init?.method === "POST") {
+        const payload=JSON.parse(init.body as string); commands.push(payload);
+        const doc=state.documents.prd;
+        const reviews=doc.publication_review!.map(r => r.id === payload.review_group ? {...r,acknowledgement:{version_id:payload.version_id,disposition:payload.disposition,note:payload.text,created_at:"now"}} : r);
+        state={...state,revision:state.revision+1,documents:{...state.documents,prd:{...doc,publication_review:reviews,blockers:reviews.filter(r => !r.acknowledgement).map(r => `Review and acknowledge ${r.title} for this version.`)}}};
+      }
+      return {ok:true,json:async () => url.endsWith("/health") ? {contract:1} : url.endsWith("/features") ? [state] : state};
+    }));
+    render(<Studio />);
+    const success=await screen.findByRole("region",{name:"Review Success before publishing"});
+    expect(screen.getByRole("button",{name:"Publish snapshot",exact:true})).toBeDisabled();
+    fireEvent.click(within(success).getByRole("radio",{name:"I confirm these success criteria"}));
+    fireEvent.click(within(success).getByRole("button",{name:"Save Success acknowledgement"}));
+    await within(success).findByText("You confirmed this content for this version.");
+    expect(screen.getByRole("button",{name:"Publish snapshot",exact:true})).toBeDisabled();
+    const questions=screen.getByRole("region",{name:"Review Open questions before publishing"});
+    fireEvent.click(within(questions).getByRole("radio",{name:"I confirm there are no unresolved questions"}));
+    fireEvent.click(within(questions).getByRole("button",{name:"Save Open questions acknowledgement"}));
+    await waitFor(() => expect(screen.getByRole("button",{name:"Publish snapshot",exact:true})).toBeEnabled());
+    expect(commands.map(c => c.review_group)).toEqual(["success","open_questions"]);
+    expect(commands.every(c => c.version_id === "v1")).toBe(true);
+  });
+
   it("preserves an existing draft while a later blocking decision remains", async () => {
     const state = fixture(); state.documents.prd.snapshot = {...snapshot, questions:[{id:"storage",question:"Where should views be stored?",why:"Affects persistence",blocking:true}]};
     state.documents.prd.blockers = ["Choose storage"];

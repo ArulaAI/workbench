@@ -10,6 +10,7 @@ from uuid import uuid4
 
 from .models import Clarification, Command, CreateFeature, Generation, PREFIXES, RFC_MODULES, TEMPLATES
 from .store import Store
+from .reviews import publication_review, saved_reviews, section_findings
 
 
 def now() -> str:
@@ -125,7 +126,10 @@ class Studio:
     def _blockers(self, state, snapshot):
         if not snapshot:
             return ["Generate a draft first."]
-        blocks = [q["question"] for q in snapshot["questions"] if q["blocking"]]
+        reviews = publication_review(state, snapshot)
+        blocks = [f"Review and acknowledge {group['title']} for this version." for group in reviews
+                  if not group['acknowledgement'] and not group['legacy_published']]
+        review_sections = {s['id'] for group in reviews for s in group['sections']}
         if self._stale(state, snapshot):
             blocks.append("Reconcile this document with the latest published upstream versions.")
         for section in snapshot["sections"]:
@@ -135,8 +139,9 @@ class Studio:
                 blocks.append(f"Review protected section after upstream change: {section['title']}.")
             if section.get("unverified_source_ids"):
                 blocks.append(f"Verify unavailable evidence references in {section['title']}: " + ", ".join(section["unverified_source_ids"]))
-            if re.search(r"\b(?:TBD|TODO|FIXME)\b", section["body"] + " " + " ".join(i["statement"] + " " + i["verification"] for i in section["items"])):
-                blocks.append(f"Replace unfinished placeholders in {section['title']} with a decision or an explicit open question.")
+            if section['id'] not in review_sections:
+                blocks.extend(f"Replace unfinished placeholders in {section['title']} / {finding['location']}: “{finding['excerpt']}”"
+                              for finding in section_findings(section))
         blocks.extend(f"Resolve blocking comment: {c['text']}" for c in state["comments"]
                       if c["kind"] == snapshot["kind"] and c["blocking"] and c["status"] in ("open", "addressed"))
         blocks.extend(f"Decide RFC coverage: {c['module']} ({c['rationale']})"
@@ -156,6 +161,7 @@ class Studio:
             snapshot = self._head(conn, state, kind)
             doc["stale"] = self._stale(state, snapshot)
             doc["blockers"] = self._blockers(state, snapshot)
+            doc["publication_review"] = publication_review(state, snapshot)
             if not compact:
                 doc["snapshot"] = snapshot
         for comment in view["comments"]:
@@ -259,14 +265,36 @@ class Studio:
                     raise StudioError("No revision is running.")
                 active["status"] = "cancelled"
                 active["error"] = "Cancelled by author. The saved request remains in the conversation."
+            elif action in ("acknowledge_publication", "revoke_publication_review"):
+                if not head or command.version_id != head['id']:
+                    raise StudioError("Review the current document version before acknowledging it.", 409)
+                if doc['published'] == head['id']:
+                    raise StudioError("Published acknowledgements are fixed. Edit the document to start a new review.")
+                group = next((g for g in publication_review(state, head) if g['id'] == command.review_group), None)
+                if not group:
+                    raise StudioError("Choose a publication review for this document.")
+                disposition = 'revoked' if action == 'revoke_publication_review' else command.disposition
+                note = command.text.strip()
+                if disposition not in ('confirmed', 'deferred', 'revoked'):
+                    raise StudioError("Confirm the content or acknowledge the unresolved details.")
+                if disposition == 'confirmed' and group['requires_deferral']:
+                    raise StudioError("Unresolved details remain. Edit them or acknowledge them as unresolved with a note.")
+                if disposition == 'deferred' and not note:
+                    raise StudioError("Explain what remains open and why it can wait, including the owner or follow-up when known.")
+                if len(note) > 4000:
+                    raise StudioError("Keep the acknowledgement note within 4,000 characters.")
+                doc.setdefault('review_history', []).append({'group': group['id'], 'title': group['title'],
+                    'version_id': head['id'], 'disposition': disposition, 'note': note, 'created_at': now(), 'author': 'author'})
             elif action == "publish":
                 if not head or command.version_id != head["id"]:
                     raise StudioError("Only the exact current revision can be published.", 409)
                 blockers = self._blockers(state, head)
                 if blockers:
                     raise StudioError("Publication needs attention: " + " ".join(blockers))
-                doc["published"] = head["id"]
-                doc["publications"].append({"version_id": head["id"], "created_at": now()})
+                if doc['published'] != head['id']:
+                    reviews = copy.deepcopy(saved_reviews(doc, head['id']))
+                    doc["published"] = head["id"]
+                    doc["publications"].append({"version_id": head["id"], "created_at": now(), 'reviews': reviews})
             elif action in ("edit", "review_section"):
                 if not section:
                     raise StudioError("Choose a section to edit.")
@@ -515,7 +543,7 @@ class Studio:
             for item in section["items"]:
                 if set(item["references"]) - allowed_refs:
                     raise StudioError(f"{item['id']} references an unavailable entity or source.")
-def markdown(snapshot: dict, title: str) -> str:
+def markdown(snapshot: dict, title: str, reviews: list | None = None) -> str:
     lines = [f"# {title}: {snapshot['kind'].upper()}", "", f"Version {snapshot['number']} • {snapshot['created_at']}", ""]
     if snapshot["pins"]:
         lines += ["Sources: " + ", ".join(f"{k.upper()} snapshot `{v}`" for k, v in snapshot["pins"].items()), ""]
@@ -533,7 +561,15 @@ def markdown(snapshot: dict, title: str) -> str:
     if snapshot["assumptions"]:
         lines += ["## Proposed assumptions", ""] + [f"- {a}" for a in snapshot["assumptions"]] + [""]
     if snapshot["questions"]:
-        lines += ["## Open decisions", ""] + [f"- {'[Blocks publication] ' if q['blocking'] else ''}{q['question']} {q['why']}" for q in snapshot["questions"]] + [""]
+        deferred = any(r['group'] == 'open_questions' and r['disposition'] == 'deferred' for r in reviews or [])
+        lines += ["## Open decisions", ""] + [f"- {'[Acknowledged as unresolved] ' if deferred else '[Needs author review] ' if q['blocking'] else ''}{q['question']} {q['why']}" for q in snapshot["questions"]] + [""]
+    if reviews:
+        lines += ["## Author publication review", "", "Acknowledgements apply only to this document version. Unresolved details remain open; acknowledgement does not turn a proposal into validated evidence.", ""]
+        for review in reviews:
+            status = 'Confirmed' if review['disposition'] == 'confirmed' else 'Unresolved details acknowledged'
+            lines += [f"### {review['title']}: {status}", "", f"Reviewed by the author at {review['created_at']}.", ""]
+            if review['note']:
+                lines += [review['note'], ""]
     if snapshot["coverage"]:
         lines += ["## RFC coverage assessment", "", "| Area | Status | Rationale |", "| --- | --- | --- |"]
         lines += [f"| {c['module']} | {c['status']} | {cell(c['rationale'])} |" for c in snapshot["coverage"]] + [""]

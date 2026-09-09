@@ -12,6 +12,7 @@ from lib.authoring_studio import Studio, StudioError
 from lib.authoring_studio.generator import source
 from lib.authoring_studio.models import Clarification, Command, CreateFeature, Generation, Item, RFC_MODULES, TEMPLATES
 from lib.authoring_studio.service import markdown
+from lib.authoring_studio.reviews import saved_reviews
 
 
 @pytest.fixture
@@ -55,7 +56,17 @@ def draft(studio):
 
 
 def publish(studio, state, kind="prd"):
+    if any(not b.startswith('Review and acknowledge') for b in state['documents'][kind]['blockers']):
+        return command(studio, state, "publish", kind=kind, version_id=state['documents'][kind]['head'])
+    for review in state['documents'][kind]['publication_review']:
+        if not review['acknowledgement'] and not review['requires_deferral'] and not review['legacy_published']:
+            state = acknowledge(studio, state, review['id'], kind=kind)
     return command(studio, state, "publish", kind=kind, version_id=state["documents"][kind]["head"])
+
+
+def acknowledge(studio, state, group, disposition='confirmed', text='', kind='prd'):
+    return command(studio, state, 'acknowledge_publication', kind=kind,
+                   version_id=state['documents'][kind]['head'], review_group=group, disposition=disposition, text=text)
 
 
 def test_request_is_durable_on_failure_and_retry(studio):
@@ -469,3 +480,144 @@ def test_generator_uses_clarification_schema_and_all_saved_answers(studio, monke
     evidence = next(s for s in payload["evidence"] if s["label"] == "Author's clarification answers")
     assert "Only invited editors, no public access." in evidence["text"]
     assert any(s["id"] == evidence["id"] for s in state["documents"]["prd"]["snapshot"]["sources"])
+
+
+def test_publication_requires_both_author_reviews_even_with_complete_content(studio):
+    state = draft(studio)
+    version = state['documents']['prd']['head']
+    with pytest.raises(StudioError, match='Success.*Open questions'):
+        command(studio, state, 'publish', version_id=version)
+    state = acknowledge(studio, state, 'success')
+    with pytest.raises(StudioError, match='Open questions'):
+        command(studio, state, 'publish', version_id=version)
+    state = acknowledge(studio, state, 'open_questions')
+    assert state['documents']['prd']['head'] == version
+    assert len(state['documents']['prd']['versions']) == 1
+    assert not state['documents']['prd']['blockers']
+    state = command(studio, state, 'publish', version_id=version)
+    assert len(state['documents']['prd']['publications'][0]['reviews']) == 2
+
+
+def test_success_identifies_exact_row_and_requires_explicit_deferral(studio):
+    payload = generated()
+    payload.sections[9].items[0].verification = 'Target and measurement method are unknown/TBD; owner unknown.'
+    state = finish(studio, create(studio), result=payload)
+    review = state['documents']['prd']['publication_review'][0]
+    assert review['requires_deferral']
+    assert review['findings'][0]['location'] == 'SM-1 · Verification / outcome'
+    assert review['findings'][0]['anchor'] == 'item-SM-1'
+    assert 'unknown/TBD' in review['findings'][0]['excerpt']
+    with pytest.raises(StudioError, match='Unresolved details remain'):
+        acknowledge(studio, state, 'success')
+    with pytest.raises(StudioError, match='Explain what remains open'):
+        acknowledge(studio, state, 'success', 'deferred', '  ')
+    state = acknowledge(studio, state, 'success', 'deferred', 'The product owner will set a target after two weeks of baseline data.')
+    state = publish(studio, state)
+    doc = state['documents']['prd']
+    assert 'unknown/TBD' in doc['snapshot']['sections'][9]['items'][0]['verification']
+    exported = markdown(doc['snapshot'], state['title'], saved_reviews(doc, doc['head']))
+    assert 'Unresolved details acknowledged' in exported
+    assert 'two weeks of baseline data' in exported
+
+
+def test_open_question_acknowledgement_keeps_question_and_survives_restart(studio):
+    state = draft(studio)
+    result = generated(head=state['documents']['prd']['snapshot'], questions=[{
+        'id':'q-owner', 'question':'Who owns rollout?', 'why':'Follow-up responsibility.', 'blocking':True, 'section_id':'risks'}])
+    state = finish(studio, command(studio, state, 'revise', text='Record the remaining question'), result=result)
+    with pytest.raises(StudioError, match='Unresolved details remain'):
+        acknowledge(studio, state, 'open_questions')
+    state = acknowledge(studio, state, 'open_questions', 'deferred', 'Assign rollout ownership at the planning meeting before delivery starts.')
+    reloaded = Studio(studio.root).get(state['id'])
+    assert reloaded['documents']['prd']['publication_review'][1]['acknowledgement']['note'].startswith('Assign rollout')
+    state = publish(studio, reloaded)
+    assert state['documents']['prd']['snapshot']['questions'][0]['blocking'] is True
+    output = markdown(state['documents']['prd']['snapshot'], state['title'], saved_reviews(state['documents']['prd'], state['documents']['prd']['head']))
+    assert '[Acknowledged as unresolved] Who owns rollout?' in output
+
+
+def test_edit_restore_and_ai_revision_each_require_fresh_reviews(studio):
+    state = publish(studio, draft(studio))
+    original_version = state['documents']['prd']['head']
+    frozen_reviews = copy.deepcopy(state['documents']['prd']['publications'][0]['reviews'])
+    state = command(studio, state, 'edit', section_id='scope', version_id=original_version, text='Updated scope')
+    assert all(r['acknowledgement'] is None for r in state['documents']['prd']['publication_review'])
+    with pytest.raises(StudioError, match='current document version'):
+        command(studio, state, 'acknowledge_publication', review_group='success', disposition='confirmed', version_id=original_version)
+    state = publish(studio, state)
+    state = command(studio, state, 'restore', version_id=original_version)
+    assert all(r['acknowledgement'] is None for r in state['documents']['prd']['publication_review'])
+    state = publish(studio, state)
+    state = finish(studio, command(studio, state, 'revise', section_id='summary', text='Shorten summary'))
+    assert all(r['acknowledgement'] is None for r in state['documents']['prd']['publication_review'])
+    assert saved_reviews(state['documents']['prd'], original_version) == frozen_reviews
+
+
+def test_reviews_are_idempotent_revocable_and_fixed_at_publication(studio):
+    state = draft(studio)
+    req = Command(action='acknowledge_publication', expected_revision=state['revision'], request_id=uuid4().hex,
+                  version_id=state['documents']['prd']['head'], review_group='success', disposition='confirmed')
+    state = studio.command(state['id'], req)
+    assert studio.command(state['id'], req)['revision'] == state['revision']
+    assert len(state['documents']['prd']['review_history']) == 1
+    state = command(studio, state, 'revoke_publication_review', version_id=state['documents']['prd']['head'], review_group='success')
+    assert state['documents']['prd']['publication_review'][0]['acknowledgement'] is None
+    state = publish(studio, state)
+    with pytest.raises(StudioError, match='Published acknowledgements are fixed'):
+        command(studio, state, 'revoke_publication_review', version_id=state['documents']['prd']['head'], review_group='success')
+
+
+def test_acknowledgements_do_not_override_content_or_comment_blockers(studio):
+    state = draft(studio)
+    state = command(studio, state, 'edit', section_id='requirements', version_id=state['documents']['prd']['head'], text='todo: define the behavior')
+    state = acknowledge(studio, state, 'success')
+    state = acknowledge(studio, state, 'open_questions')
+    state = command(studio, state, 'comment', section_id='scope', version_id=state['documents']['prd']['head'], text='Scope needs review', blocking=True)
+    with pytest.raises(StudioError, match='Requirements and acceptance / Section text.*todo.*Resolve blocking comment'):
+        command(studio, state, 'publish', version_id=state['documents']['prd']['head'])
+
+
+def test_plain_unknown_success_and_prose_open_decisions_are_reviewable(studio):
+    payload = generated()
+    payload.sections[9].items[0].verification = 'No target defined; owner unassigned.'
+    payload.sections[8].body = 'Rollout ownership is not yet assigned.'
+    state = finish(studio, create(studio), result=payload)
+    assert all(g['requires_deferral'] for g in state['documents']['prd']['publication_review'])
+    assert state['documents']['prd']['snapshot']['questions'] == []
+
+
+def test_legacy_published_snapshot_remains_valid_but_next_version_requires_review(studio):
+    state = draft(studio)
+    with studio.store.transaction() as conn:
+        old = studio._read(conn, state['id'])
+        doc = old['documents']['prd']
+        doc['published'] = doc['head']
+        doc['publications'] = [{'version_id':doc['head'], 'created_at':'before-review-feature'}]
+        studio._save(conn, old)
+    state = studio.get(state['id'])
+    assert all(g['legacy_published'] for g in state['documents']['prd']['publication_review'])
+    assert state['documents']['prd']['blockers'] == []
+    state = command(studio, state, 'edit', section_id='scope', version_id=state['documents']['prd']['head'], text='New scope')
+    assert all(not g['legacy_published'] for g in state['documents']['prd']['publication_review'])
+    assert len(state['documents']['prd']['blockers']) == 2
+
+
+def test_downstream_generation_receives_frozen_author_review_notes(studio, monkeypatch):
+    import json
+    from dashboard.backend import llm
+    from lib.authoring_studio.generator import Generator
+    state = draft(studio)
+    state = acknowledge(studio, state, 'success', 'deferred', 'Measure the baseline before agreeing a target with the product owner.')
+    state = publish(studio, state)
+    calls = []
+    monkeypatch.setattr(llm, 'read_model_config', lambda _: {'provider':'claude-code', 'support_model':'sonnet'})
+    def complete(**kwargs):
+        calls.append(kwargs)
+        return generated('design')
+    monkeypatch.setattr(llm, 'llm_complete', complete)
+    state = finish(studio, command(studio, state, 'generate', kind='design'), generator=Generator(studio.root))
+    payload = json.loads(calls[0]['messages'][1]['content'])
+    upstream = next(s for s in payload['evidence'] if s['label'].startswith('Published PRD'))
+    assert 'Measure the baseline before agreeing a target' in upstream['text']
+    assert 'Unresolved details acknowledged' in upstream['text']
+    assert [r['id'] for r in state['documents']['design']['publication_review']] == ['open_questions']

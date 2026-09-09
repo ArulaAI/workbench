@@ -54,11 +54,17 @@ After a save conflict, your editor text remains available. Copy it if needed, cl
 
 Publish a PRD snapshot when its direction is ready to serve as an input. Design and RFC use that exact version. RFC also uses published Design when one exists; an existing Design draft must be published first.
 
-Publishing checks required content, blocking open decisions, RFC coverage, blocking comments and upstream changes. A snapshot may still contain labeled non-blocking questions. Publication fixes a version for downstream use; it is separate from team approval and Plan readiness.
+Before publishing a PRD, review **Success** and **Open questions** using the links beside the Publish button. Design and RFC also require an Open questions review. Each review lets you confirm the content or explicitly acknowledge unresolved details. The latter requires a note explaining what remains open and why it can wait, with an owner or follow-up when known.
+
+Missing targets or owners are shown with the exact text and a link to the affected metric row. For example, `unknown/TBD` in SM-1's verification column appears in the Success review. You can edit that row or acknowledge the pending details. Open questions review includes the document's risks/decisions section even when there are no separately generated questions.
+
+Acknowledgements are saved for the exact version without creating extra document revisions. Any edit, AI revision, reconciliation or restore requires a fresh review. Before publishing, **Change review** lets you revise an acknowledgement. Publication preserves the review notes in its record, Markdown export and downstream generation context. An acknowledged question remains open; missing metrics do not become validated evidence.
+
+Required content, unfinished placeholders outside these review areas, unresolved RFC coverage, blocking comments, unavailable evidence, protected sections awaiting review and upstream changes still block publication. Publication fixes a version for downstream use; it is separate from team approval and Plan readiness. Previously published snapshots remain valid; their next revision uses the new review checks.
 
 When a newer upstream version is published, the downstream document shows an **Upstream changed** notice. **Reconcile changes** creates a revision using the latest published sources. Old versions keep their original pins. Protected sections retain your text and require explicit review before republishing.
 
-The RFC follows the supplied eight-section proposal and assesses its conditional engineering concerns. Material unknowns block publication rather than hiding the draft.
+The RFC follows the supplied eight-section proposal and assesses its conditional engineering concerns. Unresolved material coverage blocks publication without hiding the draft; an Open questions acknowledgement cannot override that check.
 
 ## Recover interrupted work
 
@@ -91,7 +97,7 @@ SPEED_TYPESCRIPT_CONFIG=tsconfig.app.json SPEED_NEXT_DIST_DIR=.next-studio-build
 
 The application typecheck covers production sources. Legacy test fixtures have existing TypeScript errors under the root frontend config, so `tsconfig.app.json` excludes test files from the production build. Guided and studio tests still run through Vitest. Existing lint warnings and CodeMirror/jsdom geometry warnings are not studio failures.
 
-The clarification revision passed 35 studio backend tests, 66 guided/studio frontend tests and the production build. Checks cover blocking generation before answers, suggested and custom answers, resuming saved responses, Back navigation, duplicate submission, cancellation and retry. A real browser/provider walkthrough confirmed zero PRD versions while questions remained unanswered and a first PRD using all submitted decisions afterward. Desktop and mobile layouts were checked. This is targeted validation, not a claim that every repository test was run.
+The publication review revision passed 44 studio backend tests, 72 guided/studio frontend tests and the production build. Checks include clarification before generation, exact row locations, required author acknowledgements, saved notes, immutable publication records, fresh reviews after changes, and downstream propagation. A browser walkthrough published a separate test draft after both acknowledgements, then verified an edit required both reviews again. Desktop and mobile layouts were checked. Earlier provider testing confirmed the first PRD uses all saved clarification answers. Validation is targeted; the entire repository suite was not run.
 
 This branch updates the inherited Next.js 15.1.6 dependency to 15.5.24, the patched maintenance release identified in the [August 2026 security advisory](https://nextjs.org/blog/august-2026-security-release). The original worktree's dependencies and manifests are unchanged.
 

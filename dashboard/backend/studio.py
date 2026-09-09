@@ -9,6 +9,7 @@ from lib.authoring_studio import Studio, StudioError
 from lib.authoring_studio.generator import Generator
 from lib.authoring_studio.models import Command, CreateFeature
 from lib.authoring_studio.service import markdown
+from lib.authoring_studio.reviews import saved_reviews
 
 
 class StudioAPI:
@@ -66,5 +67,5 @@ class StudioAPI:
         def export(feature_id: str, version_id: str):
             state = self._call(self.studio.get, feature_id)
             snapshot = self._call(self.studio.version, feature_id, version_id)
-            return Response(markdown(snapshot, state["title"]), media_type="text/markdown",
+            return Response(markdown(snapshot, state["title"], saved_reviews(state['documents'][snapshot['kind']], version_id)), media_type="text/markdown",
                             headers={"Content-Disposition": f'attachment; filename="{snapshot["kind"]}-v{snapshot["number"]}.md"'})

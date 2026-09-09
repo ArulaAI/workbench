@@ -3,14 +3,15 @@
 import { LockKeyhole, MessageSquare, Pencil, Sparkles } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { Section, Snapshot } from "./types";
+import type { Command, PublicationReview, Section, Snapshot } from "./types";
+import { PublicationReviewCard } from "./PublicationReview";
 
-export function SectionContent({ section }: { section: Section }) {
+export function SectionContent({ section, anchors = false }: { section: Section; anchors?: boolean }) {
   return <div className="studio-prose">
     <ReactMarkdown remarkPlugins={[remarkGfm]} disallowedElements={["img"]}>{section.body}</ReactMarkdown>
     {section.items.length > 0 && <div className="studio-table-scroll"><table>
       <thead><tr><th>ID</th><th>{section.id === "stories" ? "User outcome" : "Statement"}</th><th>{section.id === "requirements" ? "Acceptance criterion" : "Verification / outcome"}</th></tr></thead>
-      <tbody>{section.items.map(item => <tr key={item.id}>
+      <tbody>{section.items.map(item => <tr key={item.id} id={anchors ? `item-${item.id}` : undefined}>
         <td><code>{item.id}</code>{item.references.length > 0 && <small>{item.references.join(", ")}</small>}</td>
         <td>{item.statement}</td><td>{item.verification}</td>
       </tr>)}</tbody>
@@ -18,11 +19,14 @@ export function SectionContent({ section }: { section: Section }) {
   </div>;
 }
 
-export function DocumentCanvas({ snapshot, busy, historical, onEdit, onComment, onScope, onReview }: {
+export function DocumentCanvas({ snapshot, busy, historical, onEdit, onComment, onScope, onReview, publicationReviews = [], published = false, onAcknowledge }: {
   snapshot: Snapshot; busy: boolean; historical: boolean;
   onEdit: (section: Section) => void; onComment: (section: Section, quote: string) => void;
   onScope: (id: string) => void; onReview: (id: string) => void;
+  publicationReviews?: PublicationReview[]; published?: boolean; onAcknowledge?: (command: Command) => Promise<boolean>;
 }) {
+  const successReview = publicationReviews.find(r => r.id === "success");
+  const questionsReview = publicationReviews.find(r => r.id === "open_questions");
   return <div className="studio-document">
     <p className="studio-document-note">{historical ? "Immutable saved version" : "Working document"} <span>·</span> {snapshot.sections.length} sections <span>·</span> v{snapshot.number}</p>
     {snapshot.sections.map((section, index) => <section className="studio-section" key={section.id} id={`section-${section.id}`}>
@@ -39,12 +43,16 @@ export function DocumentCanvas({ snapshot, busy, historical, onEdit, onComment, 
       </div>
       {section.needs_review && <div className="studio-notice">Your text was preserved after an upstream change. Review it against the new sources.
         {!historical && <button disabled={busy} onClick={() => onReview(section.id)}>Mark section reviewed</button>}</div>}
-      <SectionContent section={section} />
+      <SectionContent section={section} anchors />
+      {!historical && section.id === "success" && successReview && onAcknowledge && <PublicationReviewCard key={`${snapshot.id}-success`} review={successReview} version={snapshot.id} busy={busy} published={published} onSave={onAcknowledge} />}
       {Boolean(section.unverified_source_ids?.length) && <div className="studio-notice">Evidence references need verification: {section.unverified_source_ids!.join(", ")}. Ask for a revision using the available sources before publishing.</div>}
       {section.source_ids.length > 0 && <div className="studio-citations">Based on {section.source_ids.map(id => <a key={id} href={`#source-${id}`}>{snapshot.sources.find(s => s.id === id)?.label || id}</a>)}</div>}
     </section>)}
     {snapshot.assumptions.length > 0 && <section className="studio-section" id="section-assumptions"><h2>Proposed assumptions</h2><p className="studio-muted">Review these before treating them as settled decisions.</p><ul>{snapshot.assumptions.map((a, i) => <li key={i}>{a}</li>)}</ul></section>}
-    {snapshot.questions.length > 0 && <section className="studio-section" id="section-open-decisions"><h2>Open decisions</h2>{snapshot.questions.map(q => <div key={q.id} className="studio-decision"><strong>{q.question}</strong><p>{q.why}</p><small>{q.blocking ? "Answer before publishing" : "Can remain open in a published draft"}</small></div>)}</section>}
+    {(snapshot.questions.length > 0 || !historical && questionsReview) && <section className="studio-section" id="section-open-decisions"><h2>Open questions review</h2>{snapshot.questions.map(q => <div key={q.id} id={`question-${q.id}`} className="studio-decision"><strong>{q.question}</strong><p>{q.why}</p><small>{questionsReview?.acknowledgement?.disposition === "deferred" ? "Acknowledged for publication; remains open" : "Answer in chat, or explicitly acknowledge this question in your publication review."}</small></div>)}
+      {!snapshot.questions.length && <p className="studio-muted">There are no separate questions. Check the open decisions in the document before confirming.</p>}
+      {!historical && questionsReview && onAcknowledge && <PublicationReviewCard key={`${snapshot.id}-open-questions`} review={questionsReview} version={snapshot.id} busy={busy} published={published} onSave={onAcknowledge} />}
+    </section>}
     {snapshot.coverage.length > 0 && <section className="studio-section" id="section-rfc-coverage"><h2>RFC coverage</h2><div className="studio-coverage">{snapshot.coverage.map(c => <div key={c.module}><div><strong>{c.module.replaceAll("_", " ")}</strong><span className={`studio-pill ${c.status === "unresolved" ? "amber" : ""}`}>{c.status.replaceAll("_", " ")}</span></div><p>{c.rationale}</p></div>)}</div></section>}
     <section className="studio-section" id="section-sources"><h2>Sources and provenance</h2><p className="studio-muted">Repository excerpts support technical context. Customer evidence comes from the author. Generated proposals still need review.</p>
       {snapshot.sources.map(s => <details className="studio-source" id={`source-${s.id}`} key={s.id}><summary>{s.label}<span>{s.truncated ? "Excerpt" : "Full source"}</span></summary><code>{s.sha256}</code><pre>{s.text}</pre></details>)}

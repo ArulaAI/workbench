@@ -11,7 +11,12 @@ export type Snapshot = Version & {
   coverage: { module: string; status: "material" | "not_material" | "unresolved"; rationale: string }[];
   sources: Source[]; model: string; protected_sections_kept: string[];
 };
-export type Document = { head: string | null; published: string | null; versions: Version[]; snapshot: Snapshot | null; stale: Kind[]; blockers: string[] };
+export type PublicationReview = {
+  id: "success" | "open_questions"; title: string; sections: {id: string; title: string}[];
+  findings: {location: string; anchor: string; excerpt: string}[]; requires_deferral: boolean; legacy_published?: boolean;
+  acknowledgement: {version_id: string; disposition: "confirmed" | "deferred"; note: string; created_at: string} | null;
+};
+export type Document = { head: string | null; published: string | null; versions: Version[]; snapshot: Snapshot | null; stale: Kind[]; blockers: string[]; publication_review?: PublicationReview[] };
 export type Operation = { id: string; kind: Kind; action?: string; status: "queued" | "running" | "completed" | "failed" | "interrupted" | "cancelled"; text: string; error: string | null; version_id: string | null };
 export type ClarificationAnswer = { choice: "option-1" | "option-2" | "option-3" | "custom"; text: string; saved_at: string };
 export type ClarificationQuestion = { id: string; question: string; why: string; options: {label: string; description: string}[] };
@@ -23,4 +28,4 @@ export type Feature = {
   intake?: Intake;
   messages: { id: string; role: string; kind: Kind; text: string; section_id: string | null; operation_id: string; version_id?: string }[];
 };
-export type Command = { action: string; kind?: Kind; text?: string; section_id?: string; version_id?: string; comment_id?: string; quote?: string; blocking?: boolean; items?: Item[]; question_id?: string; choice?: ClarificationAnswer["choice"] };
+export type Command = { action: string; kind?: Kind; text?: string; section_id?: string; version_id?: string; comment_id?: string; quote?: string; blocking?: boolean; items?: Item[]; question_id?: string; choice?: ClarificationAnswer["choice"]; review_group?: PublicationReview["id"]; disposition?: "confirmed" | "deferred" };
