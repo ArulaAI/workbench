@@ -11,6 +11,7 @@ from uuid import uuid4
 from .models import Clarification, Command, CreateFeature, Generation, PREFIXES, RFC_MODULES, TEMPLATES
 from .store import Store
 from .reviews import publication_review, saved_reviews, section_findings
+from .workflow import LABELS, SOURCE_KINDS, intake_for, mode_for, set_intake
 
 
 def now() -> str:
@@ -72,9 +73,10 @@ class Studio:
                 "create_request_id": request.request_id, "documents": {
                     k: {"head": None, "published": None, "versions": [], "publications": []} for k in TEMPLATES},
                 "messages": [], "comments": [], "operations": [], "requests": [], "counters": {},
-                "intake": self._new_intake(),
+                "initial_kind": request.kind,
             }
-            self._enqueue(state, "prd", "clarify", request.brief.strip(), request.request_id, {})
+            set_intake(state, request.kind, self._new_intake())
+            self._enqueue(state, request.kind, "clarify", request.brief.strip(), request.request_id, {})
             self._save(conn, state)
             return self._view(conn, state)
 
@@ -84,44 +86,53 @@ class Studio:
         self.store.save(conn, state)
 
     @staticmethod
-    def _new_intake():
-        return {"status": "checking", "summary": "", "questions": [], "answers": {}, "sources": [], "model": None}
+    def _new_intake(pins=None, text=""):
+        return {"status": "checking", "summary": "", "questions": [], "answers": {}, "sources": [], "model": None,
+                "pins": pins or {}, "request": text}
 
     @staticmethod
-    def _intake_ready(state):
-        intake = state.get("intake", {})
+    def _intake_ready(state, kind="prd"):
+        intake = intake_for(state, kind) or {}
         return intake.get("status") == "ready" and all(q["id"] in intake["answers"] for q in intake["questions"])
 
     @staticmethod
     def _active(state):
         return next((o for o in state["operations"] if o["status"] in ("queued", "running")), None)
 
-    def _pins(self, conn, state, kind):
-        if kind == "prd":
-            return {}
-        prd = state["documents"]["prd"]["published"]
-        if not prd:
-            raise StudioError("Publish a PRD snapshot before generating Design or RFC.")
-        pins = {"prd": prd}
-        design = state["documents"]["design"]
-        if kind == "rfc" and design["head"]:
-            if not design["published"]:
-                raise StudioError("Publish the Design draft before using it in the RFC.")
-            pinned_design = self.store.load_snapshot(conn, design["published"])
-            if self._stale(state, pinned_design):
-                raise StudioError("Reconcile and publish Design against the latest PRD before generating RFC.")
-            pins["design"] = design["published"]
+    def _pins(self, conn, state, kind, source_mode=None):
+        mode = source_mode or ("prd" if kind != "prd" and state["documents"]["prd"]["published"] else "brief")
+        if (kind == "prd" and mode != "brief") or (kind == "design" and mode not in ("brief", "prd")):
+            raise StudioError("Choose sources supported by this document type.")
+        pins = {}
+        for source_kind in SOURCE_KINDS[mode]:
+            published = state["documents"][source_kind]["published"]
+            if not published:
+                raise StudioError(f"Publish the {LABELS[source_kind]} before using it as a source, or choose a different source.")
+            snapshot = self.store.load_snapshot(conn, published)
+            if self._stale(state, snapshot):
+                raise StudioError(f"Reconcile and publish {LABELS[source_kind]} against its latest sources before using it.")
+            pins[source_kind] = published
+        if "prd" in pins and "design" in pins:
+            design = self.store.load_snapshot(conn, pins["design"])
+            if design["pins"].get("prd") not in (None, pins["prd"]):
+                raise StudioError("The selected Design and PRD versions are inconsistent. Reconcile Design first.")
         return pins
 
     @staticmethod
     def _stale(state, snapshot):
         if not snapshot:
             return []
-        changes = [kind for kind, version in snapshot["pins"].items()
-                   if state["documents"][kind]["published"] != version]
-        if snapshot["kind"] == "rfc" and "design" not in snapshot["pins"] and state["documents"]["design"]["published"]:
-            changes.append("design")
-        return changes
+        def outdated(kind, version, seen):
+            doc = state["documents"][kind]
+            if doc["published"] != version:
+                return True
+            if version in seen:
+                return False
+            saved = next((v for v in doc["versions"] if v["id"] == version), None)
+            return bool(saved and any(outdated(k, v, seen | {version}) for k, v in saved["pins"].items()))
+        # A selected Design still carries its own PRD dependencies. Unselected
+        # documents never become dependencies just because they now exist.
+        return [kind for kind, version in snapshot["pins"].items() if outdated(kind, version, set())]
 
     def _blockers(self, state, snapshot):
         if not snapshot:
@@ -155,11 +166,16 @@ class Studio:
     def _view(self, conn, state, compact=False):
         view = copy.deepcopy(state)
         # Intake evidence stays durable for the worker; the UI only needs questions and answers.
+        view["intakes"] = {kind: copy.deepcopy(intake_for(state, kind)) for kind in TEMPLATES if intake_for(state, kind)}
+        for intake in view["intakes"].values():
+            intake.pop("sources", None)
         if view.get("intake"):
             view["intake"].pop("sources", None)
         for kind, doc in view["documents"].items():
             snapshot = self._head(conn, state, kind)
             doc["stale"] = self._stale(state, snapshot)
+            published = snapshot if doc["published"] == doc["head"] else self.store.load_snapshot(conn, doc["published"]) if doc["published"] else None
+            doc["published_stale"] = self._stale(state, published)
             doc["blockers"] = self._blockers(state, snapshot)
             doc["publication_review"] = publication_review(state, snapshot)
             if not compact:
@@ -175,7 +191,7 @@ class Studio:
 
     def _enqueue(self, state, kind, action, text, request_id, pins, section_id=None, comment_id=None):
         operation = {"id": uid(), "request_id": request_id, "kind": kind, "action": action, "text": text,
-                     "section_id": section_id, "comment_id": comment_id, "pins": pins,
+                     "section_id": section_id, "comment_id": comment_id, "pins": pins, "source_mode": mode_for(pins),
                      "base_version": state["documents"][kind]["head"], "status": "queued", "created_at": now(),
                      "error": None, "version_id": None}
         state["operations"].append(operation)
@@ -212,17 +228,8 @@ class Studio:
                     if not failed:
                         raise StudioError("There is no failed request to retry.")
                     text, scoped, comment_id, actual_action = failed["text"], failed["section_id"], failed["comment_id"], failed["action"]
-                if actual_action == "clarify" and (kind != "prd" or head):
-                    raise StudioError("Brief clarification is only available before the first PRD.")
-                if kind == "prd" and not head:
-                    # Older workspaces without a draft also enter the new intake gate.
-                    if "intake" not in state:
-                        state["intake"] = self._new_intake()
-                        actual_action = "clarify"
-                    if actual_action == "generate" and not self._intake_ready(state):
-                        raise StudioError("Answer every clarification before generating the PRD.")
-                    if actual_action == "clarify" and state["intake"]["status"] != "checking":
-                        raise StudioError("Clarification is already complete. Continue with the saved questions.")
+                if actual_action == "clarify" and head:
+                    raise StudioError("Brief clarification is only available before the first document draft.")
                 if comment_id:
                     comment = self._comment(state, comment_id, kind)
                     if comment["status"] not in ("open", "addressed"):
@@ -232,17 +239,37 @@ class Studio:
                         raise StudioError("The quoted text changed. Review the comment and use a new section request.")
                     text = f"Address this reviewer comment in its section: {comment['text']}\nQuoted text: {comment['quote']}"
                 if action == "generate":
-                    text = text or f"Generate a {kind.upper()} using the published upstream documents."
+                    text = text or f"Generate the {LABELS[kind]} using my brief and selected sources."
                 if action == "reconcile":
                     text = "Reconcile this document with the latest published upstream versions. Preserve unaffected decisions and existing IDs. Explain what changed."
                 if not text:
                     raise StudioError("Describe the change you want.")
-                pins = self._pins(conn, state, kind) if actual_action in ("generate", "reconcile") else (head or {}).get("pins", {})
+                if action == "retry":
+                    # Retrying reuses the captured source versions, including an intentional skip.
+                    pins = failed["pins"]
+                elif action == "reconcile":
+                    pins = self._pins(conn, state, kind, command.source_mode or mode_for(head["pins"]))
+                elif action == "generate":
+                    pins = self._pins(conn, state, kind, command.source_mode)
+                else:
+                    pins = (head or {}).get("pins", {})
+                if head is None:
+                    intake = intake_for(state, kind)
+                    if not intake:
+                        intake = self._new_intake(pins, text)
+                        set_intake(state, kind, intake)
+                        actual_action = "clarify"
+                    elif actual_action == "generate" and not self._intake_ready(state, kind):
+                        raise StudioError(f"Answer every clarification before generating the {LABELS[kind]}.")
+                    elif actual_action == "clarify" and intake["status"] != "checking":
+                        raise StudioError("Clarification is already complete. Continue with the saved questions.")
+                    if action == "generate" and intake["status"] == "ready":
+                        pins = intake.get("pins", {})
                 self._enqueue(state, kind, actual_action, text, command.request_id, pins, scoped, comment_id)
             elif action == "answer_clarification":
-                intake = state.get("intake")
-                if kind != "prd" or head or not intake or intake["status"] != "awaiting_answers":
-                    raise StudioError("This workspace is not awaiting PRD clarification.")
+                intake = intake_for(state, kind)
+                if head or not intake or intake["status"] != "awaiting_answers":
+                    raise StudioError(f"This workspace is not awaiting {LABELS[kind]} clarification.")
                 question = next((q for q in intake["questions"] if q["id"] == command.question_id), None)
                 if not question or not command.choice:
                     raise StudioError("Choose a current clarification question and an answer.")
@@ -254,12 +281,12 @@ class Studio:
                     option = question["options"][int(command.choice[-1]) - 1]
                     answer = option["label"] + ": " + option["description"]
                 intake["answers"][question["id"]] = {"choice": command.choice, "text": answer, "saved_at": now()}
-                state["messages"].append({"id": uid(), "role": "user", "kind": "prd", "text": question["question"] + "\n" + answer,
+                state["messages"].append({"id": uid(), "role": "user", "kind": kind, "text": question["question"] + "\n" + answer,
                     "section_id": None, "operation_id": None, "question_id": question["id"], "created_at": now()})
                 if all(q["id"] in intake["answers"] for q in intake["questions"]):
                     intake["status"] = "ready"
-                    self._enqueue(state, "prd", "generate", "Generate the PRD using my brief and all saved clarification answers.",
-                                  command.request_id, {})
+                    self._enqueue(state, kind, "generate", f"Generate the {LABELS[kind]} using my brief and all saved clarification answers.",
+                                  command.request_id, intake.get("pins", {}))
             elif action == "cancel":
                 if not active:
                     raise StudioError("No revision is running.")
@@ -420,8 +447,8 @@ class Studio:
             upstream = {k: self.store.load_snapshot(conn, v) for k, v in operation["pins"].items()}
         follow_up = None
         try:
-            if operation["kind"] == "prd" and head is None and operation["action"] != "clarify" and not self._intake_ready(state):
-                raise StudioError("Answer every clarification before generating the PRD.")
+            if head is None and operation["action"] != "clarify" and not self._intake_ready(state, operation["kind"]):
+                raise StudioError(f"Answer every clarification before generating the {LABELS[operation['kind']]}. ")
             generated, sources, model = generator(copy.deepcopy(state), copy.deepcopy(operation), head, upstream)
             generated = (Clarification if operation["action"] == "clarify" else Generation).model_validate(generated)
             with self.store.transaction() as conn:
@@ -438,12 +465,12 @@ class Studio:
                     for question in questions:
                         if len({o["label"].strip().casefold() for o in question["options"]}) != 3 or any(not o["label"].strip() or not o["description"].strip() for o in question["options"]):
                             raise StudioError("Each question needs three distinct suggested answers. Retry the brief check.")
-                    current["intake"].update(status="awaiting_answers" if questions else "ready", summary=generated.summary,
-                                            questions=questions, answers={}, sources=sources, model=model)
+                    intake_for(current, operation["kind"]).update(status="awaiting_answers" if questions else "ready", summary=generated.summary,
+                                            questions=questions, answers={}, sources=sources, model=model, pins=operation["pins"])
                     applied_summary, version_id = generated.summary, None
                     active.update(status="completed")
                     if not questions:
-                        follow_up = self._enqueue(current, "prd", "generate", "The brief needs no clarification. Generate the PRD.", uid(), {})["id"]
+                        follow_up = self._enqueue(current, operation["kind"], "generate", f"The context needs no clarification. Generate the {LABELS[operation['kind']]}. ", uid(), operation["pins"])["id"]
                 else:
                     candidate = self._candidate(conn, current, operation, head, generated, sources, model)
                     applied_summary = candidate.pop("applied_summary")
@@ -471,14 +498,15 @@ class Studio:
 
     def _candidate(self, conn, state, operation, head, generated, sources, model):
         kind = operation["kind"]
-        if kind == "prd" and head is None and generated.questions:
-            raise StudioError("The first PRD still contains unanswered questions. No draft was saved; retry using the saved clarification answers.")
+        if head is None and generated.questions:
+            raise StudioError(f"The first {LABELS[kind]} still contains unanswered questions. No draft was saved; retry using the saved clarification answers.")
         titles = dict(TEMPLATES[kind])
         patches = {s.id: s.model_dump() for s in generated.sections}
         if len(patches) != len(generated.sections) or set(patches) - set(titles):
             raise StudioError("The generated response contains duplicate or unknown sections.")
         if head is None and set(patches) != set(titles):
-            raise StudioError("The first draft is missing required sections. Retry generation.")
+            missing = ", ".join(title for key, title in TEMPLATES[kind] if key not in patches)
+            raise StudioError(f"The first draft is missing required sections: {missing}. Retry generation.")
         scoped = operation["section_id"]
         if scoped and set(patches) != {scoped}:
             raise StudioError("A section request attempted to change another section. No changes were applied.")
@@ -520,7 +548,7 @@ class Studio:
             raise StudioError("The RFC must assess every conditional coverage area.")
         if len({q.id for q in generated.questions}) != len(generated.questions):
             raise StudioError("Open decisions need unique stable IDs.")
-        candidate = {"kind": kind, "sections": sections, "pins": operation["pins"], "applied_summary": generated.summary,
+        candidate = {"kind": kind, "sections": sections, "pins": operation["pins"], "source_mode": mode_for(operation["pins"]), "applied_summary": generated.summary,
                      "questions": questions,
                      "assumptions": assumptions, "coverage": coverage,
                      "sources": list(merged_sources.values()), "model": model, "protected_sections_kept": held}

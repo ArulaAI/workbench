@@ -23,6 +23,7 @@ function mockApi(state: Feature, failure?: string) {
     let ok = true;
     if (init?.method === "POST") {
       commands.push(JSON.parse(init.body as string));
+      value = state;
       if (failure) {value = {detail:failure}; ok = false;}
     }
     return {ok, json:async () => value};
@@ -119,12 +120,12 @@ describe("Authoring studio workflow", () => {
     expect(commands[0].request_id).toEqual(commands[1].request_id);
   });
 
-  it("requires a published PRD before offering Design generation", async () => {
+  it("allows Design generation from the brief when the PRD is unpublished", async () => {
     mockApi(fixture()); render(<Studio />);
     await screen.findByText("Personal saved views only.");
     fireEvent.click(screen.getByRole("tab",{name:/Design spec/}));
-    expect(screen.getByRole("button",{name:"Generate Design spec"})).toBeDisabled();
-    expect(screen.getByText("Publish your PRD to continue.")).toBeInTheDocument();
+    expect(screen.getByRole("button",{name:"Generate Design spec"})).toBeEnabled();
+    expect(screen.getByLabelText("Start from")).toHaveValue("brief");
   });
 
   it("keeps the direct editor open with author text after a failed save", async () => {
@@ -223,4 +224,71 @@ describe("Clarification before the first PRD", () => {
     expect(screen.queryByRole("button",{name:"Generate PRD",exact:true})).not.toBeInTheDocument();
     expect(screen.queryByRole("radio")).not.toBeInTheDocument();
   });
+});
+
+describe("Flexible document entry points", () => {
+  it.each([['design','Design spec'], ['rfc','RFC']] as const)("starts directly with %s and opens its own clarification", async (kind, label) => {
+    window.history.replaceState(null, '', '/define/studio');
+    const state=fixture(); state.initial_kind=kind;
+    state.documents.prd={head:null,published:null,versions:[],snapshot:null,stale:[],blockers:[]};
+    state.intakes={[kind]:{status:'checking',summary:'',questions:[],answers:{}}};
+    state.operations=[{id:'initial-check',kind,action:'clarify',status:'queued',text:'Check context',error:null,version_id:null}];
+    const commands=mockApi(state); render(<Studio />);
+    await screen.findByRole('button',{name:'Continue with brief'});
+    fireEvent.click(screen.getByRole('radio',{name:new RegExp(`^${label}`)}));
+    fireEvent.change(screen.getByLabelText('Feature name'),{target:{value:'Saved views'}});
+    fireEvent.change(screen.getByLabelText('What should people be able to do?'),{target:{value:'Save and reopen personal filter views.'}});
+    await waitFor(() => expect(screen.getByRole('button',{name:'Continue with brief'})).toBeEnabled());
+    fireEvent.click(screen.getByRole('button',{name:'Continue with brief'}));
+    await screen.findByRole('region',{name:`${label} clarification`});
+    expect(commands[0]).toMatchObject({kind,brief:'Save and reopen personal filter views.'});
+    expect(screen.getByRole('tab',{name:new RegExp(label)})).toHaveAttribute('aria-selected','true');
+    expect(window.location.search).toContain(`document=${kind}`);
+  });
+
+  it('offers PRD-only RFC generation even with an unpublished Design draft', async () => {
+    const state=fixture(); state.documents.prd.published='v1';
+    state.documents.design={...state.documents.prd,published:null,snapshot:{...snapshot,kind:'design'}};
+    const commands=mockApi(state); render(<Studio />);
+    await screen.findByText('Personal saved views only.');
+    fireEvent.click(screen.getByRole('tab',{name:/RFC/}));
+    expect(screen.getByLabelText('Start from')).toHaveValue('prd');
+    expect(screen.getByRole('option',{name:'Published PRD only (skip Design spec)'})).toBeEnabled();
+    expect(screen.getByRole('option',{name:/Published PRD and Design spec/})).toBeDisabled();
+    fireEvent.click(screen.getByRole('button',{name:'Generate RFC',exact:true}));
+    await waitFor(() => expect(commands[0]).toMatchObject({action:'generate',kind:'rfc',source_mode:'prd'}));
+  });
+
+  it('allows an explicit brief-only RFC even when a published PRD exists', async () => {
+    const state=fixture(); state.documents.prd.published='v1';
+    const commands=mockApi(state); render(<Studio />);
+    await screen.findByText('Personal saved views only.');
+    fireEvent.click(screen.getByRole('tab',{name:/RFC/}));
+    fireEvent.change(screen.getByLabelText('Start from'),{target:{value:'brief'}});
+    fireEvent.click(screen.getByRole('button',{name:'Generate RFC',exact:true}));
+    await waitFor(() => expect(commands[0]).toMatchObject({action:'generate',kind:'rfc',source_mode:'brief'}));
+  });
+
+  it('saves an RFC clarification answer to the RFC intake', async () => {
+    window.history.replaceState(null,'','/define/studio?feature=feature-1&document=rfc');
+    const state=intakeFixture();
+    state.intakes={rfc:{...state.intake!,questions:[state.intake!.questions[0]]}};delete state.intake;
+    state.initial_kind='rfc';
+    const commands=mockApi(state);render(<Studio />);
+    await screen.findByRole('region',{name:'RFC clarification'});
+    fireEvent.click(screen.getByRole('radio',{name:/Only me/}));
+    fireEvent.click(screen.getByRole('button',{name:'Generate RFC',exact:true}));
+    await waitFor(() => expect(commands[0]).toMatchObject({action:'answer_clarification',kind:'rfc',question_id:'audience',choice:'option-1'}));
+  });
+});
+
+it('keeps stale published Design unavailable even when its latest draft is reconciled', async () => {
+  const state=fixture(); state.documents.prd.published='v1';
+  state.documents.design={...state.documents.prd,head:'design-v2',published:'design-v1',stale:[],published_stale:['prd'],snapshot:{...snapshot,id:'design-v2',kind:'design'}};
+  mockApi(state); render(<Studio />);
+  await screen.findByText('Personal saved views only.');
+  fireEvent.click(screen.getByRole('tab',{name:/RFC/}));
+  expect(screen.getByRole('option',{name:/Published PRD and Design spec/})).toBeDisabled();
+  expect(screen.getByRole('option',{name:/Published Design spec only/})).toBeDisabled();
+  expect(screen.getByRole('button',{name:'Generate RFC',exact:true})).toBeEnabled();
 });

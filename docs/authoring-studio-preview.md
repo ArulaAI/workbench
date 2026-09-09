@@ -1,6 +1,6 @@
 # Try the authoring studio
 
-The studio turns a feature brief into a PRD, then uses published versions to generate Design and RFC. This guide covers running the independent branch, trying revisions and comments, and the experiment's boundaries.
+The studio turns a feature brief into a PRD, Design spec or RFC. Start with whichever document you need, then use selected published versions for connected work. This guide covers running the independent branch, trying revisions and comments, and the experiment's boundaries.
 
 ## Open the preview
 
@@ -24,13 +24,13 @@ Stopping the preview retains saved work. Logs and the local SQLite database are 
 
 ## Try a feature
 
-Give the feature a name and describe the desired behavior. Add research, constraints or decisions in the optional context field. The application uses the provider configured in `speed.toml`; this branch has been exercised with `claude-code/sonnet` through the existing authenticated Claude CLI. Generation makes real model calls.
+Choose **PRD**, **Design spec** or **RFC**, give the feature a name, and describe the desired behavior. Starting with Design or RFC does not create a PRD. Add research, constraints or decisions in the optional context field. The application uses the provider configured in `speed.toml`; this branch has been exercised with `claude-code/sonnet` through the existing authenticated Claude CLI. Generation makes real model calls.
 
-Select **Continue with brief** to check whether any product decisions need clarification. A complete brief proceeds directly to PRD generation. If questions are needed, the studio shows one at a time with three suggested answers and **Write my own** as the fourth option. Nothing is preselected.
+Select **Continue with brief** to check whether any product decisions need clarification. A complete brief proceeds directly to generation of the selected document. If questions are needed, the studio shows one at a time with three suggested answers and **Write my own** as the fourth option. Nothing is preselected.
 
-**Next** saves the answer and advances. Use **Back** to review or change a saved answer before finishing. The last question has a **Generate PRD** button: generation starts only after every question has a saved answer. Returning to the workspace resumes at the first unanswered question. A failed save retains your typed answer; a failed generation retains all submitted decisions.
+**Next** saves the answer and advances. Use **Back** to review or change a saved answer before finishing. The last question has a **Generate PRD**, **Generate Design spec** or **Generate RFC** button: generation starts only after every question has a saved answer. Returning to the workspace resumes at the first unanswered question. A failed save retains your typed answer; a failed generation retains all submitted decisions.
 
-After the PRD appears, use chat, section edits or comments to refine it. Later revisions can introduce new open decisions. Existing documents remain available with their original version history.
+After the document appears, use chat, section edits or comments to refine it. Later revisions can introduce new open decisions. Existing documents remain available with their original version history.
 
 The current local preview contains **Saved views for the Define workspace**, with actual model-generated content and review history. Runtime data belongs to this checkout; a fresh clone starts empty. **Use an example** fills a brief for a fresh generation.
 
@@ -52,7 +52,17 @@ After a save conflict, your editor text remains available. Copy it if needed, cl
 
 ## Publish and continue downstream
 
-Publish a PRD snapshot when its direction is ready to serve as an input. Design and RFC use that exact version. RFC also uses published Design when one exists; an existing Design draft must be published first.
+All documents can start from the brief and supporting context. When you add a document to an existing workspace, **Start from** makes its sources explicit:
+
+| Document | Available starting points |
+| --- | --- |
+| PRD | Brief and supporting context. |
+| Design spec | Brief and supporting context, or a published PRD. |
+| RFC | Brief and supporting context, published PRD only, published Design only, or both published documents. |
+
+For **PRD → RFC**, publish the PRD, select **Continue to RFC**, and use **Published PRD only (skip Design spec)**. An unfinished or stale Design draft does not block that path. To include Design, publish a current Design version and select it as a source. Generation uses the exact published versions shown; drafts are not silently included.
+
+Each new document checks its own context and saves its own clarification answers before drafting. A standalone Design or RFC uses the same editing, version history, comments and publication reviews as a document derived from a PRD.
 
 Before publishing a PRD, review **Success** and **Open questions** using the links beside the Publish button. Design and RFC also require an Open questions review. Each review lets you confirm the content or explicitly acknowledge unresolved details. The latter requires a note explaining what remains open and why it can wait, with an owner or follow-up when known.
 
@@ -62,7 +72,7 @@ Acknowledgements are saved for the exact version without creating extra document
 
 Required content, unfinished placeholders outside these review areas, unresolved RFC coverage, blocking comments, unavailable evidence, protected sections awaiting review and upstream changes still block publication. Publication fixes a version for downstream use; it is separate from team approval and Plan readiness. Previously published snapshots remain valid; their next revision uses the new review checks.
 
-When a newer upstream version is published, the downstream document shows an **Upstream changed** notice. **Reconcile changes** creates a revision using the latest published sources. Old versions keep their original pins. Protected sections retain your text and require explicit review before republishing.
+When a newer version of a selected upstream document is published, the downstream document shows an **Upstream changed** notice. **Reconcile changes** creates a revision using the latest published sources. Old versions keep their original pins. Publishing a document that was deliberately skipped does not make the draft stale. Retries keep the original selected versions; reconciliation advances only those existing source relationships. Protected sections retain your text and require explicit review before republishing.
 
 The RFC follows the supplied eight-section proposal and assesses its conditional engineering concerns. Unresolved material coverage blocks publication without hiding the draft; an Open questions acknowledgement cannot override that check.
 
@@ -97,7 +107,7 @@ SPEED_TYPESCRIPT_CONFIG=tsconfig.app.json SPEED_NEXT_DIST_DIR=.next-studio-build
 
 The application typecheck covers production sources. Legacy test fixtures have existing TypeScript errors under the root frontend config, so `tsconfig.app.json` excludes test files from the production build. Guided and studio tests still run through Vitest. Existing lint warnings and CodeMirror/jsdom geometry warnings are not studio failures.
 
-The publication review revision passed 44 studio backend tests, 72 guided/studio frontend tests and the production build. Checks include clarification before generation, exact row locations, required author acknowledgements, saved notes, immutable publication records, fresh reviews after changes, and downstream propagation. A browser walkthrough published a separate test draft after both acknowledgements, then verified an edit required both reviews again. Desktop and mobile layouts were checked. Earlier provider testing confirmed the first PRD uses all saved clarification answers. Validation is targeted; the entire repository suite was not run.
+The flexible-entry revision passed 58 studio backend tests, 78 guided/studio frontend tests and the production build. Checks include direct Design/RFC creation, skipping Design in any state, independent clarification answers, source selection retained through retries, clarification before generation, exact row locations, required author acknowledgements, saved notes, immutable publication records, fresh reviews after changes, and downstream propagation. Real browser/provider runs created complete standalone Design and RFC drafts with no PRD; the preview keeps them as **Direct Design demo: task due dates** and **Direct RFC demo: personal saved views**. Initial incomplete/provider responses were rejected and the saved decisions were retained for successful retries. Browser checks also confirmed the PRD-only RFC option stays available with an unpublished Design draft. Earlier review testing published a separate draft after both acknowledgements, then verified an edit required both reviews again. Desktop and mobile layouts were checked. Earlier provider testing confirmed the first PRD uses all saved clarification answers. Validation is targeted; the entire repository suite was not run.
 
 This branch updates the inherited Next.js 15.1.6 dependency to 15.5.24, the patched maintenance release identified in the [August 2026 security advisory](https://nextjs.org/blog/august-2026-security-release). The original worktree's dependencies and manifests are unchanged.
 

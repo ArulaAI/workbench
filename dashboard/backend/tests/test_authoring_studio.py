@@ -174,16 +174,16 @@ def test_source_reconciliation_keeps_old_pins_and_reviews_protected_text(studio)
     assert publish(studio, state, "design")["documents"]["design"]["published"]
 
 
-def test_rfc_requires_a_current_published_design_when_design_exists(studio):
+def test_rfc_requires_a_current_published_design_only_when_selected(studio):
     state = publish(studio, draft(studio))
     state = finish(studio, command(studio, state, "generate", kind="design"))
     with pytest.raises(StudioError, match="Publish the Design"):
-        command(studio, state, "generate", kind="rfc")
+        command(studio, state, "generate", kind="rfc", source_mode="prd_design")
     state = publish(studio, state, "design")
     state = command(studio, state, "edit", section_id="scope", version_id=state["documents"]["prd"]["head"], text="New scope")
     state = publish(studio, state)
     with pytest.raises(StudioError, match="Reconcile and publish Design"):
-        command(studio, state, "generate", kind="rfc")
+        command(studio, state, "generate", kind="rfc", source_mode="prd_design")
 
 
 def test_addressing_comment_does_not_resolve_it(studio):
@@ -613,7 +613,7 @@ def test_downstream_generation_receives_frozen_author_review_notes(studio, monke
     monkeypatch.setattr(llm, 'read_model_config', lambda _: {'provider':'claude-code', 'support_model':'sonnet'})
     def complete(**kwargs):
         calls.append(kwargs)
-        return generated('design')
+        return Clarification(summary='The published PRD provides enough context.') if kwargs['response_model'] is Clarification else generated('design')
     monkeypatch.setattr(llm, 'llm_complete', complete)
     state = finish(studio, command(studio, state, 'generate', kind='design'), generator=Generator(studio.root))
     payload = json.loads(calls[0]['messages'][1]['content'])
@@ -621,3 +621,155 @@ def test_downstream_generation_receives_frozen_author_review_notes(studio, monke
     assert 'Measure the baseline before agreeing a target' in upstream['text']
     assert 'Unresolved details acknowledged' in upstream['text']
     assert [r['id'] for r in state['documents']['design']['publication_review']] == ['open_questions']
+
+
+@pytest.mark.parametrize('kind', ['design', 'rfc'])
+def test_start_directly_with_any_document_and_clarify_before_drafting(studio, kind):
+    state = studio.create(CreateFeature(kind=kind, title='Task reminders', brief='Remind owners before a personal task is due.', request_id=uuid4().hex))
+    assert state['initial_kind'] == kind
+    assert state['operations'][0]['kind'] == kind
+    state = finish(studio, state, generator=lambda *_: (clarification(1), [], 'test'))
+    assert state['intakes'][kind]['status'] == 'awaiting_answers'
+    assert all(d['head'] is None for d in state['documents'].values())
+    with pytest.raises(StudioError, match='Answer every clarification'):
+        command(studio, state, 'generate', kind=kind, source_mode='brief')
+    state = command(studio, state, 'answer_clarification', kind=kind, question_id='q-0', choice='custom', text='Personal reminders only; no team sharing.')
+    state = finish(studio, state, result=generated(kind))
+    assert state['documents'][kind]['snapshot']['source_mode'] == 'brief'
+    assert state['documents'][kind]['snapshot']['pins'] == {}
+    assert state['documents']['prd']['head'] is None
+    state = publish(studio, state, kind)
+    assert state['documents'][kind]['published']
+    assert state['documents']['prd']['published'] is None
+
+
+@pytest.mark.parametrize('design_status', ['draft', 'published', 'stale'])
+def test_prd_to_rfc_can_skip_design_in_any_state(studio, design_status):
+    state = publish(studio, draft(studio))
+    state = finish(studio, command(studio, state, 'generate', kind='design'))
+    if design_status != 'draft':
+        state = publish(studio, state, 'design')
+    if design_status == 'stale':
+        state = command(studio, state, 'edit', section_id='scope', version_id=state['documents']['prd']['head'], text='Add a new product constraint.')
+        state = publish(studio, state)
+    design_head = state['documents']['design']['head']
+    state = finish(studio, command(studio, state, 'generate', kind='rfc', source_mode='prd'))
+    assert state['documents']['rfc']['snapshot']['pins'] == {'prd':state['documents']['prd']['published']}
+    assert state['documents']['rfc']['snapshot']['source_mode'] == 'prd'
+    assert state['documents']['design']['head'] == design_head
+    assert state['documents']['rfc']['stale'] == []
+    if design_status == 'draft':
+        state = publish(studio, state, 'design')
+        assert state['documents']['rfc']['stale'] == []
+
+
+def test_standalone_documents_do_not_gain_implicit_upstream_dependencies(studio):
+    state = studio.create(CreateFeature(kind='rfc', title='Storage proposal', brief='Persist personal views locally with safe recovery.', request_id=uuid4().hex))
+    state = finish(studio, state)
+    rfc_head = state['documents']['rfc']['head']
+    state = publish(studio, finish(studio, command(studio, state, 'generate', kind='prd')))
+    state = publish(studio, finish(studio, command(studio, state, 'generate', kind='design')), 'design')
+    assert state['documents']['rfc']['head'] == rfc_head
+    assert state['documents']['rfc']['snapshot']['pins'] == {}
+    assert state['documents']['rfc']['stale'] == []
+    state = finish(studio, command(studio, state, 'reconcile', kind='rfc'))
+    assert state['documents']['rfc']['snapshot']['source_mode'] == 'brief'
+
+
+def test_intakes_and_saved_answers_are_independent_per_document(studio):
+    state = studio.create(CreateFeature(kind='design', title='Saved views', brief='Reopen personal saved filters quickly.', request_id=uuid4().hex))
+    state = finish(studio, state, generator=lambda *_: (clarification(1), [], 'test'))
+    state = finish(studio, command(studio, state, 'generate', kind='prd'))
+    assert state['intakes']['design']['status'] == 'awaiting_answers'
+    assert state['intakes']['prd']['status'] == 'ready'
+    state = command(studio, state, 'answer_clarification', kind='design', question_id='q-0', choice='option-2')
+    state = finish(studio, state)
+    assert state['documents']['design']['head'] and state['documents']['prd']['head']
+    assert state['intakes']['prd']['answers'] == {}
+    assert state['intakes']['design']['answers']['q-0']['choice'] == 'option-2'
+    assert next(m for m in state['messages'] if m.get('question_id') == 'q-0')['kind'] == 'design'
+
+
+def test_rfc_can_use_a_standalone_published_design_without_a_prd(studio):
+    state = studio.create(CreateFeature(kind='design', title='Saved views', brief='Reopen personal saved filters quickly.', request_id=uuid4().hex))
+    state = publish(studio, finish(studio, state), 'design')
+    state = finish(studio, command(studio, state, 'generate', kind='rfc', source_mode='design'))
+    assert state['documents']['rfc']['snapshot']['pins'] == {'design':state['documents']['design']['published']}
+    assert state['documents']['prd']['head'] is None
+
+
+def test_retry_preserves_selected_sources_while_other_documents_are_published(studio):
+    state = publish(studio, draft(studio))
+    old_prd = state['documents']['prd']['published']
+    state = command(studio, state, 'generate', kind='rfc', source_mode='prd')
+    def fail_generation(s, o, h, u):
+        if o['action'] == 'clarify':
+            return Clarification(summary='Ready to draft.'), [], 'test'
+        raise RuntimeError('provider disconnected')
+    state = finish(studio, state, generator=fail_generation)
+    assert state['operations'][-1]['status'] == 'failed'
+    state = publish(studio, finish(studio, command(studio, state, 'generate', kind='design')), 'design')
+    state = command(studio, state, 'edit', section_id='scope', version_id=old_prd, text='A revised constraint')
+    state = publish(studio, state)
+    state = finish(studio, command(studio, state, 'retry', kind='rfc'))
+    assert state['documents']['rfc']['snapshot']['pins'] == {'prd':old_prd}
+    assert state['documents']['rfc']['stale'] == ['prd']
+    state = finish(studio, command(studio, state, 'reconcile', kind='rfc'))
+    assert state['documents']['rfc']['snapshot']['pins'] == {'prd':state['documents']['prd']['published']}
+    assert state['documents']['rfc']['stale'] == []
+
+
+@pytest.mark.parametrize('kind', ['design', 'rfc'])
+def test_direct_generation_provider_receives_correct_contract_without_invented_prd(studio, monkeypatch, kind):
+    import json
+    from dashboard.backend import llm
+    from lib.authoring_studio.generator import Generator
+    from lib.authoring_studio.models import INITIAL_DOCUMENT_MODELS
+    calls = []
+    monkeypatch.setattr(llm, 'read_model_config', lambda _: {'provider':'claude-code', 'support_model':'sonnet'})
+    def complete(**kwargs):
+        calls.append(kwargs)
+        return Clarification(summary='The brief is complete.') if kwargs['response_model'] is Clarification else generated(kind)
+    monkeypatch.setattr(llm, 'llm_complete', complete)
+    state = studio.create(CreateFeature(kind=kind,title='Saved views',brief='Persist personal named filter views locally.',request_id=uuid4().hex))
+    state = finish(studio, state, generator=Generator(studio.root))
+    assert [c['response_model'] for c in calls] == [Clarification, INITIAL_DOCUMENT_MODELS[kind]]
+    payload = json.loads(calls[-1]['messages'][1]['content'])
+    assert payload['document_kind'] == kind and payload['upstream'] == {}
+    assert payload['source_mode'] == 'brief'
+    assert all(not s['label'].startswith('Published PRD') for s in payload['evidence'])
+    assert state['documents'][kind]['head']
+
+
+def test_selected_document_sources_must_be_published_and_acyclic(studio):
+    state = draft(studio)
+    with pytest.raises(StudioError, match='Publish the PRD'):
+        command(studio, state, 'generate', kind='rfc', source_mode='prd')
+    with pytest.raises(StudioError, match='Choose sources supported'):
+        command(studio, state, 'generate', kind='design', source_mode='design')
+    state = finish(studio, command(studio, state, 'generate', kind='rfc', source_mode='brief'))
+    assert state['documents']['rfc']['head']
+
+
+def test_design_only_rfc_tracks_the_selected_designs_own_prd_dependency(studio):
+    state = publish(studio, draft(studio))
+    state = publish(studio, finish(studio, command(studio, state, 'generate', kind='design')), 'design')
+    state = finish(studio, command(studio, state, 'generate', kind='rfc', source_mode='design'))
+    state = command(studio, state, 'edit', section_id='scope', version_id=state['documents']['prd']['head'], text='A new product requirement')
+    state = publish(studio, state)
+    assert state['documents']['design']['stale'] == ['prd']
+    assert state['documents']['rfc']['stale'] == ['design']
+    with pytest.raises(StudioError, match='Reconcile and publish Design spec'):
+        command(studio, state, 'reconcile', kind='rfc')
+
+
+def test_source_availability_checks_published_design_not_its_reconciled_draft(studio):
+    state = publish(studio, draft(studio))
+    state = publish(studio, finish(studio, command(studio, state, 'generate', kind='design')), 'design')
+    state = command(studio, state, 'edit', section_id='scope', version_id=state['documents']['prd']['head'], text='A new product requirement')
+    state = publish(studio, state)
+    state = finish(studio, command(studio, state, 'reconcile', kind='design'))
+    assert state['documents']['design']['stale'] == []
+    assert state['documents']['design']['published_stale'] == ['prd']
+    with pytest.raises(StudioError, match='Reconcile and publish Design spec'):
+        command(studio, state, 'generate', kind='rfc', source_mode='prd_design')

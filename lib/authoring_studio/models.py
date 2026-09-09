@@ -4,6 +4,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 Kind = Literal["prd", "design", "rfc"]
+SourceMode = Literal["brief", "prd", "design", "prd_design"]
 
 TEMPLATES = {
     "prd": [
@@ -73,9 +74,24 @@ class Generation(StrictModel):
     coverage: list[Coverage] = Field(default_factory=list, max_length=10)
 
 
-class InitialPRD(Generation):
+class InitialDocument(Generation):
     questions: list[Question] = Field(default_factory=list, max_length=0,
                                      description="Clarification is complete. Use the author's saved answers.")
+
+
+class InitialPRD(InitialDocument):
+    sections: list[Section] = Field(min_length=11, max_length=11)
+
+
+class InitialDesign(InitialDocument):
+    sections: list[Section] = Field(min_length=8, max_length=8)
+
+
+class InitialRFC(InitialDocument):
+    sections: list[Section] = Field(min_length=8, max_length=8)
+
+
+INITIAL_DOCUMENT_MODELS = {"prd": InitialPRD, "design": InitialDesign, "rfc": InitialRFC}
 
 
 class SuggestedAnswer(StrictModel):
@@ -94,7 +110,7 @@ class ClarificationQuestion(StrictModel):
 class Clarification(StrictModel):
     summary: str = Field(min_length=1, max_length=2500)
     questions: list[ClarificationQuestion] = Field(default_factory=list, max_length=6,
-        description="Only unanswered decisions necessary for a responsible PRD; empty when the brief is sufficient.")
+        description="Only unanswered decisions necessary for the requested document; empty when the supplied context is sufficient.")
 
 
 class Command(StrictModel):
@@ -115,9 +131,11 @@ class Command(StrictModel):
     choice: Literal["option-1", "option-2", "option-3", "custom"] | None = None
     review_group: Literal["success", "open_questions"] | None = None
     disposition: Literal["confirmed", "deferred"] | None = None
+    source_mode: SourceMode | None = None
 
 
 class CreateFeature(StrictModel):
+    kind: Kind = "prd"
     title: str = Field(min_length=1, max_length=160)
     brief: str = Field(min_length=12, max_length=20000)
     context: str = Field(default="", max_length=20000)

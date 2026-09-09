@@ -1,6 +1,6 @@
 # Guided authoring studio: architecture experiment
 
-Start with a feature brief, clarify the product decisions it leaves open, then generate and refine a PRD in the same workspace. Publishing a PRD makes it an explicit input to Design and RFC. The experiment tests that experience and the persistence rules beneath it. This document covers the branch agenda, document contracts, architecture, and adoption boundaries.
+Choose PRD, Design spec or RFC, clarify the decisions the supplied context leaves open, then generate and refine that document in the same workspace. Published documents become optional inputs to other documents. The experiment tests that experience and the persistence rules beneath it. This document covers the branch agenda, document contracts, architecture, and adoption boundaries.
 
 ## Branch agenda
 
@@ -8,11 +8,11 @@ Start with a feature brief, clarify the product decisions it leaves open, then g
 
 | Deliverable | Acceptance |
 | --- | --- |
-| Brief to PRD | Check the brief first. If clarification is needed, save every answer before generation; otherwise generate directly. Each question has three suggestions and a custom-answer option. |
+| Brief to any document | Start directly with PRD, Design or RFC. Check the selected context first. If clarification is needed, save every answer before generation; otherwise generate directly. Each question has three suggestions and a custom-answer option. |
 | Conversation and direct editing | A request can change the whole document or one stable section. Every applied change creates an immutable version. |
 | Review comments | Comments retain their section, source version and optional quotation. Addressing a comment links the resulting revision; resolution remains a human action. |
 | Publication review | Authors confirm Success and Open questions or acknowledge unresolved details with a note. Reviews apply to one exact version and cannot bypass structural blockers. |
-| Connected documents | Design and RFC reference exact published upstream snapshots. Later upstream changes produce a visible stale state and an explicit reconciliation action. |
+| Connected documents | Authors select the published documents to use. PRD can lead directly to RFC with Design skipped; standalone Design and RFC are also supported. Selected sources reference exact published upstream snapshots. Later upstream changes produce a visible stale state and an explicit reconciliation action. |
 | Honest recovery | User inputs survive model failures. Pending work is recoverable after restart; retry is explicit. Concurrent writes cannot silently overwrite each other. |
 | Playable handoff | A local launcher, regression tests, browser verification and seeded example make the branch independently testable. |
 
@@ -20,28 +20,23 @@ Start with a feature brief, clarify the product decisions it leaves open, then g
 
 ```mermaid
 flowchart LR
-  B[Simple feature brief] --> BC[Check for missing decisions]
-  BC -->|Questions needed| Q[One question at a time: choose or write]
+  B[Brief and context] --> K[Choose PRD, Design or RFC]
+  K --> Q[Clarify necessary decisions]
   Q --> A[Save all answers]
-  A --> P[Generate PRD]
-  BC -->|No questions| P
-  P <--> E[Chat / section edits / comments]
-  E --> V[Immutable revisions and comparison]
-  P --> AR[Author reviews Success and Open questions]
-  AR --> PP[Publish PRD snapshot]
-  PP --> D[Design draft]
-  PP --> R[RFC draft]
-  D --> PD[Publish Design snapshot]
-  PD --> R
-  D & R <--> E
-  PP --> U[New PRD published]
-  U --> S[Downstream change notice]
-  S --> C[Reconcile and review new revision]
+  A --> D[Generate selected document]
+  D <--> E[Chat, direct edits, comments]
+  E --> V[Immutable versions]
+  D --> AR[Author publication review]
+  AR --> P[Publish snapshot]
+  P --> S[Choose another document and its sources]
+  S --> Q
+  P --> PR[PRD only to RFC: skip Design]
+  PR --> Q
 ```
 
 Before drafting, the workspace shows the clarification step beside the saved brief. Each question offers three concrete suggestions plus **Write my own**, with no preselected answer. **Next** persists the answer and advances; **Back** lets the author revisit saved answers. The last submission starts generation. The brief check asks only necessary product decisions (up to six), and skips questions when the supplied information is sufficient.
 
-Once the PRD exists, the left side becomes the conversation and later open decisions. The main canvas contains the document, with a section outline and version comparison. PRD, Design and RFC stay in one feature workspace. History is available without leaving the document.
+Once the selected document exists, the left side becomes the conversation and later open decisions. The main canvas contains the document, with a section outline and version comparison. PRD, Design and RFC stay in one feature workspace and are optional until the author chooses to create them. History is available without leaving the document.
 
 Saving a revision, publishing a snapshot and approving a package are distinct concepts. This experiment implements the first two. Publishing means “use these exact bytes as a shared input,” subject to structural checks and explicit author review. Unresolved questions can be acknowledged with a recorded reason while remaining open. Publication does not claim organizational approval, valid ADR/evaluation coverage, or readiness for Plan.
 
@@ -55,11 +50,11 @@ Depth follows uncertainty and scope. Avoid asking the author to choose an intern
 
 ### Design
 
-Capture experience intent, users and entry points, end-to-end journeys, interaction/state behavior, accessibility and content, requirement coverage, validation, and unresolved decisions. Tie journeys to PRD requirement identifiers. Include empty, loading, failure, permissions and recovery states when relevant. Keep engineering task decomposition in Plan.
+Capture experience intent, users and entry points, end-to-end journeys, interaction/state behavior, accessibility and content, requirement coverage, validation, and unresolved decisions. Tie journeys to real PRD requirement identifiers when a PRD is selected. Otherwise describe coverage against the brief and saved decisions without inventing a PRD or its IDs. Include empty, loading, failure, permissions and recovery states when relevant. Keep engineering task decomposition in Plan.
 
 ### RFC
 
-Follow `RFC Proposal 2.docx`: Metadata; Decision summary and approval ask; Context and constraints; Proposed design; Contracts and impact; Alternatives and tradeoffs; Delivery and verification; Open decisions and ownership. The RFC makes an engineering decision and shows its consequences.
+Follow `RFC Proposal 2.docx`: Metadata; Decision summary and approval ask; Context and constraints; Proposed design; Contracts and impact; Alternatives and tradeoffs; Delivery and verification; Open decisions and ownership. The RFC makes an engineering decision and shows its consequences. PRD and Design are optional sources; when omitted, the RFC derives its product context from the brief and saved answers.
 
 Assess API/events/CLI, persistence, compatibility, migration, security, privacy, reliability, rollout/rollback/observability, performance/cost, and AI/evaluation. Record each as material, not material (with a reason), or unresolved. Include detail in the relevant core section instead of filling every conditional module with boilerplate. Unresolved material coverage blocks publication even with an author acknowledgement and never hides the preview. ADR extraction and a separate evaluation artifact remain policy work after the experiment.
 
@@ -82,7 +77,9 @@ SQLite transactions provide a small, testable canonical store for the local expe
 
 Operations persist the user request before contacting the model. A background worker uses the captured feature revision and upstream pins. Applying the candidate snapshot and completing the operation happen in one transaction. Model failure leaves the request and current document intact. Restarted operations become interrupted and can be retried; the prototype runs one API process. Cancellation invalidates the operation so late provider output cannot commit. Repeated delivery of the same request ID returns its existing operation.
 
-New features begin with a `clarify` operation whose structured response contains questions and suggested answers, never document sections. The feature's durable `intake` state moves from `checking` to `awaiting_answers` or `ready`. An `answer_clarification` command saves the canonical answer with optimistic revision checking. The final answer and queued generation commit together; duplicate submissions cannot enqueue a second draft. With zero questions, the completed brief check queues generation atomically and the worker continues directly. Generation checks intake readiness again before calling the provider. The first PRD response contract permits no unanswered questions. Saved answers become a named, hashed source in the generated document.
+New features record `initial_kind` and begin with a `clarify` operation for that document whose structured response contains questions and suggested answers, never document sections. Each document's durable intake state moves from `checking` to `awaiting_answers` or `ready`. An `answer_clarification` command saves the canonical answer with optimistic revision checking. The final answer and queued generation commit together; duplicate submissions cannot enqueue a second draft. With zero questions, the completed brief check queues generation atomically and the worker continues directly. Generation checks intake readiness again before calling the provider. The first-document response contract permits no unanswered questions for all three document kinds and fixes the template length (eleven PRD sections; eight Design or RFC sections). Initial-generation prompts explicitly distinguish preceding clarification from a draft revision. The existing PRD intake remains readable; `intakes` exposes separate saved state for each kind, preventing answers from leaking across document flows. Saved answers become a named, hashed source in the generated document.
+
+Source selection is explicit (`brief`, `prd`, `design`, or `prd_design` as applicable). `source_mode` and immutable `pins` travel with each operation and generated snapshot. Clarification uses the selected source versions, and its final submission keeps those same pins. Retry never picks up a newly available document implicitly. Reconciliation advances the versions of the selected sources. Staleness follows pinned documents and their existing upstream dependencies; a new Design publication cannot invalidate an RFC that skipped Design. Selected sources must be published and current. The allowed direction (PRD to Design/RFC, Design to RFC) prevents cycles.
 
 Each comment stores its source snapshot, stable section ID, quotation when supplied, state, and any addressing revision. Applying a suggested change does not silently resolve a reviewer's objection. A quote that no longer occurs in the current section is visibly outdated.
 
