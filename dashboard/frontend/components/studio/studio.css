@@ -330,3 +330,6 @@
 
 .studio-generation-progress { max-width:440px; }
 .studio-generation-progress p { font-size:12px; font-weight:400; color:var(--color-text-secondary); line-height:1.7; margin-top:8px; }
+
+.studio-review-section-links > div { display:flex; align-items:center; flex-wrap:wrap; gap:12px; margin:12px 0; }
+.studio-review-section-links > div > button { margin-top:0; }

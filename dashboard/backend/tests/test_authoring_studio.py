@@ -763,6 +763,21 @@ def test_open_question_acknowledgement_keeps_question_and_survives_restart(studi
     assert '[Acknowledged as unresolved] Who owns rollout?' in output
 
 
+def test_review_answers_revise_the_reviewed_version_and_still_require_confirmation(studio):
+    state = finish(studio, create(studio), result=generated())
+    original = state['documents']['prd']['snapshot']
+    state = acknowledge(studio, state, 'open_questions', 'deferred', 'Review ownership before publication.')
+    state = command(studio, state, 'revise', version_id=original['id'], text='Product owns the follow-up.')
+    assert state['documents']['prd']['head'] == original['id']
+    state = finish(studio, state, result=generated(head=original))
+    assert state['documents']['prd']['head'] != original['id']
+    assert studio.version(state['id'], original['id']) == original
+    assert state['documents']['prd']['published'] is None
+    assert all(r['acknowledgement'] is None for r in state['documents']['prd']['publication_review'])
+    with pytest.raises(StudioError, match='document changed'):
+        command(studio, state, 'revise', version_id=original['id'], text='These answers refer to the older document.')
+
+
 def test_edit_restore_and_ai_revision_each_require_fresh_reviews(studio):
     state = publish(studio, draft(studio))
     original_version = state['documents']['prd']['head']

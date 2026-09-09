@@ -83,12 +83,12 @@ describe("Authoring studio workflow", () => {
     const success=await screen.findByRole("region",{name:"Review Success before publishing"});
     expect(screen.getByRole("button",{name:"Publish snapshot",exact:true})).toBeDisabled();
     fireEvent.click(within(success).getByRole("radio",{name:"I confirm these success criteria"}));
-    fireEvent.click(within(success).getByRole("button",{name:"Save Success acknowledgement"}));
+    fireEvent.click(within(success).getByRole("button",{name:"Save Success confirmation"}));
     await within(success).findByText("You confirmed this content for this version.");
     expect(screen.getByRole("button",{name:"Publish snapshot",exact:true})).toBeDisabled();
     const questions=screen.getByRole("region",{name:"Review Open questions before publishing"});
     fireEvent.click(within(questions).getByRole("radio",{name:"I confirm there are no unresolved questions"}));
-    fireEvent.click(within(questions).getByRole("button",{name:"Save Open questions acknowledgement"}));
+    fireEvent.click(within(questions).getByRole("button",{name:"Save Open questions confirmation"}));
     await waitFor(() => expect(screen.getByRole("button",{name:"Publish snapshot",exact:true})).toBeEnabled());
     expect(commands.map(c => c.review_group)).toEqual(["success","open_questions"]);
     expect(commands.every(c => c.version_id === "v1")).toBe(true);

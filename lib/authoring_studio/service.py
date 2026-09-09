@@ -251,6 +251,8 @@ class Studio:
                     raise StudioError("A draft already exists. Use a revision request.")
                 if action in ("revise", "reconcile") and not head:
                     raise StudioError("Generate a draft first.")
+                if action == "revise" and command.version_id and command.version_id != head["id"]:
+                    raise StudioError("The document changed. Review the current version before submitting these answers.", 409)
                 if action == "retry":
                     failed = next((o for o in reversed(state["operations"]) if o["kind"] == kind and o["status"] in ("failed", "interrupted", "cancelled")), None)
                     if not failed:
