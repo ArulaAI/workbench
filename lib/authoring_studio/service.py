@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from .models import Clarification, Command, CreateFeature, Generation, PREFIXES, RFC_MODULES, TEMPLATES
+from .models import Clarification, NamedClarification, Command, CreateFeature, Generation, PREFIXES, RFC_MODULES, TEMPLATES
 from .store import Store
 from .reviews import publication_review, saved_reviews, section_findings
 from .workflow import LABELS, SOURCE_KINDS, intake_for, mode_for, set_intake
@@ -20,6 +20,17 @@ def now() -> str:
 
 def uid() -> str:
     return uuid4().hex
+
+
+def brief_title(brief: str) -> str:
+    """Readable description preview until the existing brief check derives a title."""
+    text = " ".join(brief.split())
+    if len(text) <= 80:
+        return text
+    excerpt = text[:79]
+    if " " in excerpt:
+        excerpt = excerpt.rsplit(" ", 1)[0]
+    return excerpt.rstrip(".,;:") + "…"
 
 
 class StudioError(Exception):
@@ -36,7 +47,7 @@ class Studio:
     def _read(self, conn, feature_id):
         state = self.store.read(conn, feature_id)
         if state is None:
-            raise StudioError("Feature not found", 404)
+            raise StudioError("Workspace not found", 404)
         return state
 
     def version(self, feature_id, version_id):
@@ -64,14 +75,15 @@ class Studio:
     def create(self, request: CreateFeature):
         with self.store.transaction() as conn:
             if conn.execute("SELECT 1 FROM deleted_features WHERE create_request_id=?", (request.request_id,)).fetchone():
-                raise StudioError("This workspace was deleted. Start a new feature to create another workspace.", 410)
+                raise StudioError("This workspace was deleted. Start a new workspace to continue.", 410)
             for row in conn.execute("SELECT state FROM features").fetchall():
                 import json
                 old = json.loads(row[0])
                 if old.get("create_request_id") == request.request_id:
                     return self._view(conn, old)
             state = {
-                "id": uid(), "title": request.title.strip(), "brief": request.brief.strip(),
+                "id": uid(), "title": request.title or brief_title(request.brief), "brief": request.brief,
+                "title_source": "author" if request.title else "description",
                 "context": request.context.strip(), "revision": 0, "created_at": now(), "updated_at": now(),
                 "create_request_id": request.request_id, "documents": {
                     k: {"head": None, "published": None, "versions": [], "publications": []} for k in TEMPLATES},
@@ -479,6 +491,10 @@ class Studio:
                 if current["documents"][operation["kind"]]["head"] != operation["base_version"]:
                     raise StudioError("The base version changed during generation. Retry against the current document.")
                 if operation["action"] == "clarify":
+                    if current.get("title_source") == "description":
+                        named = NamedClarification.model_validate(generated.model_dump())
+                        current["title"] = " ".join(named.workspace_title.split())
+                        current["title_source"] = "generated"
                     questions = [q.model_dump() for q in generated.questions]
                     if len({q["id"] for q in questions}) != len(questions):
                         raise StudioError("Clarification questions need unique identifiers. Retry the brief check.")

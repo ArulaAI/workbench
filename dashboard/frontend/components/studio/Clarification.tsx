@@ -79,7 +79,7 @@ function QuestionStep({question, answer, index, total, busy, label, onBack, onNe
         <input type="radio" name="clarification-answer" value="custom" checked={choice === "custom"} onChange={() => setChoice("custom")} />
         <span><strong>Write my own</strong><span>Describe the direction you want in your own words.</span></span>
       </label>
-      {choice === "custom" && <div className="studio-custom-answer"><label htmlFor="clarification-custom">Your answer</label><textarea id="clarification-custom" ref={customInput} rows={4} maxLength={4000} value={custom} onChange={e => setCustom(e.target.value)} placeholder="Tell us what works for this feature…" required /></div>}
+      {choice === "custom" && <div className="studio-custom-answer"><label htmlFor="clarification-custom">Your answer</label><textarea id="clarification-custom" ref={customInput} rows={4} maxLength={4000} value={custom} onChange={e => setCustom(e.target.value)} placeholder="Describe the decision that fits your needs…" required /></div>}
     </fieldset>
     <footer><button type="button" disabled={busy || index === 0} onClick={onBack}><ArrowLeft size={14} /> Back</button>
       <button className="primary" type="submit" disabled={busy || !choice || (choice === "custom" && !custom.trim())}>{busy ? <Loader2 className="studio-spin" size={14} /> : last ? <Sparkles size={14} /> : null}{last ? `Generate ${label}` : "Next"}{!last && <ArrowRight size={14} />}</button>

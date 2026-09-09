@@ -1,7 +1,7 @@
 """Small, provider-independent document contracts."""
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 Kind = Literal["prd", "design", "rfc"]
 SourceMode = Literal["brief", "prd", "design", "prd_design"]
@@ -109,8 +109,14 @@ class ClarificationQuestion(StrictModel):
 
 class Clarification(StrictModel):
     summary: str = Field(min_length=1, max_length=2500)
+    workspace_title: str | None = Field(default=None, min_length=1, max_length=160, pattern=r"\S")
     questions: list[ClarificationQuestion] = Field(default_factory=list, max_length=6,
         description="Only unanswered decisions necessary for the requested document; empty when the supplied context is sufficient.")
+
+
+class NamedClarification(Clarification):
+    workspace_title: str = Field(min_length=1, max_length=160, pattern=r"\S",
+        description="A concise, descriptive title derived from the author's problem or intended outcome. No document-type prefix, invented solution or generic feature label.")
 
 
 class Command(StrictModel):
@@ -140,7 +146,12 @@ class DeleteFeature(StrictModel):
 
 class CreateFeature(StrictModel):
     kind: Kind = "prd"
-    title: str = Field(min_length=1, max_length=160)
+    title: str = Field(default="", max_length=160)
     brief: str = Field(min_length=12, max_length=20000)
     context: str = Field(default="", max_length=20000)
     request_id: str = Field(min_length=8, max_length=100)
+
+    @field_validator("title", "brief", mode="before")
+    @classmethod
+    def trim_input(cls, value):
+        return value.strip() if isinstance(value, str) else value

@@ -93,6 +93,72 @@ def test_create_and_commands_are_idempotent(studio):
     assert len(same["operations"]) == 3
 
 
+@pytest.mark.parametrize("kind", ["prd", "design", "rfc"])
+def test_description_gets_a_saved_title_in_the_existing_brief_check(studio, monkeypatch, kind):
+    import json
+    from dashboard.backend import llm
+    from lib.authoring_studio.generator import Generator
+    from lib.authoring_studio.models import NamedClarification
+
+    request = CreateFeature(brief="People miss time-sensitive tasks buried beneath newly added tasks.", kind=kind, request_id=uuid4().hex)
+    state = studio.create(request)
+    assert state["title"] and len(state["title"]) <= 80
+    assert all(doc["head"] is None for doc in state["documents"].values())
+    calls = []
+    monkeypatch.setattr(llm, "read_model_config", lambda _: {"provider": "claude-code", "support_model": "sonnet"})
+    def complete(**kwargs):
+        calls.append(kwargs)
+        if kwargs["response_model"] is NamedClarification:
+            return NamedClarification(**clarification(1).model_dump(exclude={"workspace_title"}), workspace_title="  Preventing missed task deadlines  ")
+        if kwargs["response_model"] is Clarification:
+            return Clarification(summary="Ready to draft.", workspace_title="Do not rename the workspace")
+        return generated(json.loads(kwargs["messages"][1]["content"])["document_kind"])
+    monkeypatch.setattr(llm, "llm_complete", complete)
+    state = finish(studio, state, generator=Generator(studio.root))
+    assert len(calls) == 1  # Naming shares clarification; it is not a separate model call.
+    assert state["title"] == "Preventing missed task deadlines"
+    assert state["documents"][kind]["head"] is None
+    assert studio.create(request)["id"] == state["id"]
+    assert studio.list()[0]["title"] == state["title"]
+    state = command(studio, state, "answer_clarification", kind=kind, question_id="q-0", choice="option-1")
+    state = finish(studio, state, generator=Generator(studio.root))
+    assert json.loads(calls[-1]["messages"][1]["content"])["workspace_title"] == state["title"]
+    first = state["documents"][kind]["snapshot"]
+    assert markdown(first, state["title"]).startswith("# Preventing missed task deadlines:")
+    other = "design" if kind == "prd" else "prd"
+    state = finish(studio, command(studio, state, "generate", kind=other, source_mode="brief"), generator=Generator(studio.root))
+    assert state["title"] == "Preventing missed task deadlines"
+    assert studio.version(state["id"], first["id"]) == first
+
+
+def test_automatic_title_survives_failure_and_empty_question_generation(studio):
+    request = CreateFeature(brief="A" * 120, request_id=uuid4().hex)
+    state = studio.create(request)
+    preview = state["title"]
+    assert len(preview) <= 80
+    state = finish(studio, state, generator=lambda *_: (_ for _ in ()).throw(RuntimeError("provider offline")))
+    assert state["title"] == preview
+    assert state["brief"] == request.brief
+    state = finish(studio, command(studio, state, "retry"), generator=lambda s, o, h, u: (
+        Clarification(summary="Ready to draft.", workspace_title="Investigating task deadlines") if o["action"] == "clarify" else generated(), [], "test-provider"))
+    assert state["title"] == "Investigating task deadlines"
+    assert state["documents"]["prd"]["head"]
+    assert studio.create(request)["title"] == state["title"]
+
+
+def test_explicit_titles_remain_unchanged_by_clarification(studio):
+    state = finish(studio, create(studio), generator=lambda s, o, h, u: (
+        Clarification(summary="Ready.", workspace_title="A different title") if o["action"] == "clarify" else generated(), [], "test-provider"))
+    assert state["title"] == "Saved views"
+
+
+def test_description_validation_rejects_blank_or_padded_short_briefs():
+    from pydantic import ValidationError
+    for brief in (" " * 20, "    too short    "):
+        with pytest.raises(ValidationError):
+            CreateFeature(brief=brief, request_id=uuid4().hex)
+
+
 def test_delete_removes_only_the_selected_workspace_and_all_its_history(studio):
     state = publish(studio, draft(studio))
     state = finish(studio, command(studio, state, "generate", kind="design"))

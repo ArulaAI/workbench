@@ -51,7 +51,7 @@ describe("Workspace deletion", () => {
     expect(fetch).toHaveBeenCalledWith(expect.stringContaining("/features/feature-1"), expect.objectContaining({method:"DELETE",body:JSON.stringify({expected_revision:3})}));
     expect(screen.queryByRole("button", {name:"Open workspace: Saved views"})).not.toBeInTheDocument();
     expect(screen.getByRole("button", {name:"Open workspace: Task dates"})).toBeInTheDocument();
-    expect(screen.getByRole("heading", {name:"Your feature workspaces 1"})).toHaveFocus();
+    expect(screen.getByRole("heading", {name:"Your workspaces 1"})).toHaveFocus();
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
   });
 
@@ -60,8 +60,8 @@ describe("Workspace deletion", () => {
     setup();
     fireEvent.click(screen.getByRole("button", {name:"Delete workspace: Saved views"}));
     fireEvent.click(screen.getByRole("button", {name:"Delete workspace",exact:true}));
-    await screen.findByText(/Your features will appear here/);
-    expect(screen.getByRole("heading", {name:"Your feature workspaces 0"})).toBeInTheDocument();
+    await screen.findByText(/Your workspaces will appear here/);
+    expect(screen.getByRole("heading", {name:"Your workspaces 0"})).toBeInTheDocument();
   });
 
   it("keeps the workspace on a conflict and uses a fresh revision only after reopening confirmation", async () => {

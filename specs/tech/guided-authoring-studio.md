@@ -34,9 +34,11 @@ flowchart LR
   PR --> Q
 ```
 
+The entry form asks for a description, with optional supporting context and a choice of document. It accepts problems and investigations as well as feature requests. New workspaces initially use a short description excerpt; the existing clarification response derives and saves a concise title before any document is generated. That title stays stable across later documents and revisions. Explicit titles from older API clients and existing workspaces are preserved; no migration or extra model call is required.
+
 Before drafting, the workspace shows the clarification step beside the saved brief. Each question offers three concrete suggestions plus **Write my own**, with no preselected answer. **Next** persists the answer and advances; **Back** lets the author revisit saved answers. The last submission starts generation. The brief check asks only necessary product decisions (up to six), and skips questions when the supplied information is sufficient.
 
-Once the selected document exists, the left side becomes the conversation and later open decisions. The main canvas contains the document, with a section outline and version comparison. PRD, Design and RFC stay in one feature workspace and are optional until the author chooses to create them. History is available without leaving the document.
+Once the selected document exists, the left side becomes the conversation and later open decisions. The main canvas contains the document, with a section outline and version comparison. PRD, Design and RFC stay in one workspace and are optional until the author chooses to create them. History is available without leaving the document.
 
 Saving a revision, publishing a snapshot and approving a package are distinct concepts. This experiment implements the first two. Publishing means “use these exact bytes as a shared input,” subject to structural checks and explicit author review. Unresolved questions can be acknowledged with a recorded reason while remaining open. Publication does not claim organizational approval, valid ADR/evaluation coverage, or readiness for Plan.
 

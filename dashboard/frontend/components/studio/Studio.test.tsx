@@ -38,6 +38,17 @@ beforeEach(() => {
 afterEach(() => {vi.unstubAllGlobals();});
 
 describe("Authoring studio workflow", () => {
+  it("replaces a temporary description title in the workspace picker after the brief check", async () => {
+    const state = fixture(); state.title = "Reducing missed deadlines";
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => ({ok:true, json:async () =>
+      url.endsWith("/health") ? {contract:1} : url.endsWith("/features") ? [{...state,title:"People keep missing time-sensitive tasks…",revision:1}] : state,
+    })));
+    render(<Studio />);
+    fireEvent.click(await screen.findByRole("button", {name:"Reducing missed deadlines",exact:true}));
+    expect(screen.getAllByRole("button", {name:"Reducing missed deadlines",exact:true})).toHaveLength(2);
+    expect(screen.queryByRole("button", {name:"People keep missing time-sensitive tasks…",exact:true})).not.toBeInTheDocument();
+  });
+
   it("returns a deleted workspace link to the list instead of leaving an endless loading screen", async () => {
     vi.stubGlobal("fetch", vi.fn(async (url: string) => ({
       ok: !url.endsWith("/features/feature-1"), status: url.endsWith("/features/feature-1") ? 404 : 200,
@@ -45,8 +56,8 @@ describe("Authoring studio workflow", () => {
     })));
     render(<Studio />);
     await screen.findByText("This workspace is no longer available. It may have been deleted.");
-    expect(screen.getByRole("heading", {name:"Your feature workspaces 0"})).toBeInTheDocument();
-    expect(screen.queryByText("Opening your feature workspace…")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", {name:"Your workspaces 0"})).toBeInTheDocument();
+    expect(screen.queryByText("Opening your workspace…")).not.toBeInTheDocument();
     expect(window.location.search).toBe("");
   });
 
@@ -239,7 +250,7 @@ describe("Clarification before the first PRD", () => {
 });
 
 describe("Flexible document entry points", () => {
-  it.each([['design','Design spec'], ['rfc','RFC']] as const)("starts directly with %s and opens its own clarification", async (kind, label) => {
+  it.each([['prd','PRD'], ['design','Design spec'], ['rfc','RFC']] as const)("starts %s from a description without requesting a title", async (kind, label) => {
     window.history.replaceState(null, '', '/define/studio');
     const state=fixture(); state.initial_kind=kind;
     state.documents.prd={head:null,published:null,versions:[],snapshot:null,stale:[],blockers:[]};
@@ -247,13 +258,15 @@ describe("Flexible document entry points", () => {
     state.operations=[{id:'initial-check',kind,action:'clarify',status:'queued',text:'Check context',error:null,version_id:null}];
     const commands=mockApi(state); render(<Studio />);
     await screen.findByRole('button',{name:'Continue with brief'});
+    expect(screen.queryByRole('textbox', {name:/name|title/i})).not.toBeInTheDocument();
+    expect(screen.getByRole('button',{name:'Continue with brief'})).toBeDisabled();
     fireEvent.click(screen.getByRole('radio',{name:new RegExp(`^${label}`)}));
-    fireEvent.change(screen.getByLabelText('Feature name'),{target:{value:'Saved views'}});
-    fireEvent.change(screen.getByLabelText('What should people be able to do?'),{target:{value:'Save and reopen personal filter views.'}});
+    fireEvent.change(screen.getByLabelText('Describe what you want to solve'),{target:{value:'Save and reopen personal filter views.'}});
     await waitFor(() => expect(screen.getByRole('button',{name:'Continue with brief'})).toBeEnabled());
     fireEvent.click(screen.getByRole('button',{name:'Continue with brief'}));
     await screen.findByRole('region',{name:`${label} clarification`});
     expect(commands[0]).toMatchObject({kind,brief:'Save and reopen personal filter views.'});
+    expect(commands[0]).not.toHaveProperty('title');
     expect(screen.getByRole('tab',{name:new RegExp(label)})).toHaveAttribute('aria-selected','true');
     expect(window.location.search).toContain(`document=${kind}`);
   });

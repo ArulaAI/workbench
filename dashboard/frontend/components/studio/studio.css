@@ -58,7 +58,7 @@
 .studio-next-documents button { width:100%; justify-content:space-between; font-size:11px; }
 .studio-next-documents small { display:block; margin-top:8px; }
 @media (max-width:600px) { .studio-document-choice { grid-template-columns:1fr; } .studio-document-choice small { margin-top:4px; } }
-.studio-brief > input { margin-bottom:24px; }
+.studio-brief > .studio-muted { margin-bottom:20px; }
 .studio-brief > textarea { margin-bottom:16px; }
 .studio-brief details > summary { display:flex; gap:8px; align-items:center; cursor:pointer; color:var(--color-text-secondary); font-size:12px; font-weight:400; }
 .studio-brief details textarea { margin-top:12px; }

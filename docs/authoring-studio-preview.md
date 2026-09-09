@@ -1,6 +1,6 @@
 # Try the authoring studio
 
-The studio turns a feature brief into a PRD, Design spec or RFC. Start with whichever document you need, then use selected published versions for connected work. This guide covers running the independent branch, trying revisions and comments, and the experiment's boundaries.
+The studio turns a problem statement or description into a PRD, Design spec or RFC. Start with whichever document you need, then use selected published versions for connected work. This guide covers running the independent branch, trying revisions and comments, and the experiment's boundaries.
 
 ## Open the preview
 
@@ -22,9 +22,9 @@ The launcher runs this worktree's frontend on port 3011 and API on 4451. It conf
 
 Stopping the preview retains saved work. Logs and the local SQLite database are under `.speed/studio/`, which is ignored by Git. Run one API process per studio database.
 
-## Try a feature
+## Start with a description
 
-Choose **PRD**, **Design spec** or **RFC**, give the feature a name, and describe the desired behavior. Starting with Design or RFC does not create a PRD. Add research, constraints or decisions in the optional context field. The application uses the provider configured in `speed.toml`; this branch has been exercised with `claude-code/sonnet` through the existing authenticated Claude CLI. Generation makes real model calls.
+Choose **PRD**, **Design spec** or **RFC**, then describe the problem, idea or improvement. No title is required: the brief check derives one from your description and saves it for the workspace and its documents. Starting with Design or RFC does not create a PRD. Add research, constraints or decisions in the optional context field. The application uses the provider configured in `speed.toml`; this branch has been exercised with `claude-code/sonnet` through the existing authenticated Claude CLI. Generation makes real model calls.
 
 Select **Continue with brief** to check whether any product decisions need clarification. A complete brief proceeds directly to generation of the selected document. If questions are needed, the studio shows one at a time with three suggested answers and **Write my own** as the fourth option. Nothing is preselected.
 
@@ -78,7 +78,7 @@ The RFC follows **RFC Proposal 1** and its eight-section decision core, with via
 
 ## Recover interrupted work
 
-To remove a feature, use the trash button on its card under **Your feature workspaces**. The confirmation names the workspace and explains that its documents, all versions, chat and comments will be permanently deleted. **Cancel** or Escape closes the confirmation without deleting anything. Deletion cannot be undone; download any versions you need first. Other workspaces are unaffected.
+To remove a workspace, use the trash button on its card under **Your workspaces**. The confirmation names the workspace and explains that its documents, all versions, chat and comments will be permanently deleted. **Cancel** or Escape closes the confirmation without deleting anything. Deletion cannot be undone; download any versions you need first. Other workspaces are unaffected.
 
 If the workspace changes while you are confirming, deletion is rejected. Close the dialog, review the updated workspace, and reopen its delete confirmation. Deleting discards pending generation results, including results that arrive after the workspace is gone.
 

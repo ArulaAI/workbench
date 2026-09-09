@@ -21,7 +21,7 @@ export default function Studio() {
   const [connected, setConnected] = useState(false), [error, setError] = useState(""), [saving, setSaving] = useState(false);
   const [listOpen, setListOpen] = useState(false), [panel, setPanel] = useState<"outline" | "review">("outline");
   const [startKind, setStartKind] = useState<Kind>("prd");
-  const [title, setTitle] = useState(""), [brief, setBrief] = useState(""), [context, setContext] = useState("");
+  const [brief, setBrief] = useState(""), [context, setContext] = useState("");
   const [message, setMessage] = useState(""), [scope, setScope] = useState("");
   const [viewId, setViewId] = useState(""), [historical, setHistorical] = useState<Snapshot | null>(null);
   const [compare, setCompare] = useState(false), [before, setBefore] = useState<Snapshot | null>(null);
@@ -81,6 +81,11 @@ export default function Studio() {
   }, [selected, generating, loadList]);
 
   useEffect(() => {
+    if (feature) setFeatures(current => current.map(saved =>
+      saved.id === feature.id && feature.revision >= saved.revision ? feature : saved));
+  }, [feature]);
+
+  useEffect(() => {
     conversation.current?.scrollTo({top: conversation.current.scrollHeight, behavior: "smooth"});
   }, [messages.length, active?.id]);
 
@@ -137,31 +142,31 @@ export default function Studio() {
   async function create() {
     setSaving(true); setError("");
     try {
-      const data = {title:title.trim(), brief:brief.trim(), context:context.trim(), kind:startKind};
+      const data = {brief:brief.trim(), context:context.trim(), kind:startKind};
       const fingerprint = JSON.stringify(data);
       if (pendingCreate.current?.fingerprint !== fingerprint) pendingCreate.current = {fingerprint, id:crypto.randomUUID()};
       const next = await api<Feature>("/features", {...data, request_id: pendingCreate.current.id});
       pendingCreate.current = null;
-      choose(next.id, next.initial_kind || startKind); setFeature(next); setTitle(""); setBrief(""); setContext("");
+      choose(next.id, next.initial_kind || startKind); setFeature(next); setBrief(""); setContext("");
     } catch (e) {setError((e as Error).message);} finally {setSaving(false);}
   }
 
   return <div className="studio-app"><IconRail /><div className="studio-shell">
     <header className="studio-topbar"><div className="studio-brand"><Link href="/define" aria-label="Back to Define"><ArrowLeft size={16} /></Link><span>Define</span><span className="studio-slash">/</span><strong>Authoring studio</strong><span className="studio-pill">Preview</span></div>
-      <div className="studio-top-actions"><span className={`studio-connection ${connected ? "online" : ""}`} role="status"><i />{connected ? "Workspace connected" : "Connecting to workspace"}</span><button onClick={() => choose(null)}><Plus size={14} /> New feature</button></div></header>
+      <div className="studio-top-actions"><span className={`studio-connection ${connected ? "online" : ""}`} role="status"><i />{connected ? "Workspace connected" : "Connecting to workspace"}</span><button onClick={() => choose(null)}><Plus size={14} /> New workspace</button></div></header>
     {error && <div className="studio-global-error" role="alert"><span>{error}</span><button onClick={() => {setError(""); void loadList().catch(e => setError(e.message));}}>Retry connection</button><button aria-label="Dismiss error" onClick={() => setError("")}><X size={16} /></button></div>}
     {notice && <div className="studio-success" role="status"><Check size={16} />{notice}<button aria-label="Dismiss notice" onClick={() => setNotice("")}><X size={14} /></button></div>}
     {!selected ? <main className="studio-start">
-      <div className="studio-start-main"><div className="studio-eyebrow"><Layers size={16} /> GUIDED AUTHORING</div><h1>Start with the feature.<br /><span>Shape it together.</span></h1><p className="studio-intro">Start with a PRD, Design spec or RFC. Describe what you need, refine it together, and create the other documents when they help.</p>
-        <form className="studio-brief surface" onSubmit={e => {e.preventDefault(); void create();}}><fieldset className="studio-document-choice" disabled={saving}><legend>What would you like to create?</legend>{kinds.map(k => <label className={`surface ${startKind === k ? "selected" : ""}`} key={k}><input type="radio" name="starting-document" checked={startKind === k} onChange={() => setStartKind(k)} /><span><strong>{labels[k]}</strong><small>{k === "prd" ? "Define the product direction" : k === "design" ? "Shape the user experience" : "Propose the engineering approach"}</small></span></label>)}</fieldset><label htmlFor="feature-title">Feature name</label><input id="feature-title" maxLength={160} required value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. Saved views for Define" />
-          <label htmlFor="feature-brief">What should people be able to do?</label><textarea id="feature-brief" minLength={12} maxLength={20000} required rows={5} value={brief} onChange={e => setBrief(e.target.value)} placeholder="Who is it for? What changes for them? Include anything that should stay out of scope." />
-          <details><summary>Have research, constraints or decisions? Add context <Plus size={12} /></summary><label htmlFor="feature-context" className="sr-only">Supporting context</label><textarea id="feature-context" maxLength={20000} rows={5} value={context} onChange={e => setContext(e.target.value)} placeholder="Paste supporting notes. We'll distinguish your evidence from proposed assumptions." /></details>
-          <div className="studio-brief-footer"><button type="button" onClick={() => {setTitle("Saved views for Define"); setBrief(EXAMPLE);}}>Use an example</button><button className="primary" type="submit" disabled={saving || !connected || !title.trim() || brief.trim().length < 12}>{saving ? <Loader2 className="studio-spin" size={16} /> : <ArrowRight size={16} />} Continue with brief</button></div></form>
+      <div className="studio-start-main"><div className="studio-eyebrow"><Layers size={16} /> GUIDED AUTHORING</div><h1>Start with a problem.<br /><span>Shape it together.</span></h1><p className="studio-intro">Start with a PRD, Design spec or RFC. Describe what you need, refine it together, and create the other documents when they help.</p>
+        <form className="studio-brief surface" onSubmit={e => {e.preventDefault(); void create();}}><fieldset className="studio-document-choice" disabled={saving}><legend>What would you like to create?</legend>{kinds.map(k => <label className={`surface ${startKind === k ? "selected" : ""}`} key={k}><input type="radio" name="starting-document" checked={startKind === k} onChange={() => setStartKind(k)} /><span><strong>{labels[k]}</strong><small>{k === "prd" ? "Define the product direction" : k === "design" ? "Shape the user experience" : "Propose the engineering approach"}</small></span></label>)}</fieldset>
+          <label htmlFor="workspace-description">Describe what you want to solve</label><textarea id="workspace-description" aria-describedby="workspace-title-hint" minLength={12} maxLength={20000} required rows={5} value={brief} onChange={e => setBrief(e.target.value)} placeholder="Describe the problem, idea or improvement. Who is affected, what happens today, and what would a better outcome look like?" />
+          <p id="workspace-title-hint" className="studio-muted">We’ll create a title from your description.</p><details><summary>Have research, constraints or decisions? Add context <Plus size={12} /></summary><label htmlFor="feature-context" className="sr-only">Supporting context</label><textarea id="feature-context" maxLength={20000} rows={5} value={context} onChange={e => setContext(e.target.value)} placeholder="Paste supporting notes. We'll distinguish your evidence from proposed assumptions." /></details>
+          <div className="studio-brief-footer"><button type="button" onClick={() => setBrief(EXAMPLE)}>Use an example</button><button className="primary" type="submit" disabled={saving || !connected || brief.trim().length < 12}>{saving ? <Loader2 className="studio-spin" size={16} /> : <ArrowRight size={16} />} Continue with brief</button></div></form>
         <p className="studio-start-note">We’ll clarify any missing decisions, then generate your {labels[startKind]}. You can start with any document; the others are optional.</p>
       </div><WorkspaceList features={features} onOpen={choose} onDeleted={id => setFeatures(current => current.filter(f => f.id !== id))} onRefresh={loadList} />
-    </main> : !feature ? <div className="studio-loading"><Loader2 className="studio-spin" size={24} /><p>Opening your feature workspace…</p></div> : <>
-      <div className="studio-feature-header"><div className="studio-feature-picker"><button aria-expanded={listOpen} onClick={() => setListOpen(!listOpen)}><h1>{feature.title}</h1><ChevronDown size={16} /></button>{listOpen && <div className="studio-feature-menu surface">{features.map(f => <button key={f.id} onClick={() => choose(f.id, f.initial_kind || "prd")}>{f.title}{f.id === feature.id && <Check size={14} />}</button>)}<button onClick={() => choose(null)}><Plus size={14} /> New feature</button></div>}<p>One feature. Connected documents. A clear history of decisions.</p></div>
-        <div className="studio-stage-tabs" role="tablist" aria-label="Feature documents">{kinds.map(stage => {const d = feature.documents[stage]; return <button key={stage} role="tab" aria-selected={kind === stage} disabled={needsIntake && stage !== kind} onClick={() => switchKind(stage)}><span className="studio-stage-number">{d.published ? <Check size={12} /> : <FileText size={12} />}</span><span>{labels[stage]}<small>{needsIntake && stage === kind ? intake?.status === "ready" ? "Preparing draft" : "Clarifying brief" : d.stale.length ? "Upstream changed" : d.head ? `v${d.versions.length} · ${d.head === d.published ? "Published" : "Draft"}` : intakeFor(feature, stage) ? "Clarification started" : "Optional"}</small></span></button>;})}</div>
+    </main> : !feature ? <div className="studio-loading"><Loader2 className="studio-spin" size={24} /><p>Opening your workspace…</p></div> : <>
+      <div className="studio-feature-header"><div className="studio-feature-picker"><button aria-expanded={listOpen} onClick={() => setListOpen(!listOpen)}><h1>{feature.title}</h1><ChevronDown size={16} /></button>{listOpen && <div className="studio-feature-menu surface">{features.map(f => <button key={f.id} onClick={() => choose(f.id, f.initial_kind || "prd")}>{f.title}{f.id === feature.id && <Check size={14} />}</button>)}<button onClick={() => choose(null)}><Plus size={14} /> New workspace</button></div>}<p>Connected documents and a clear history of decisions.</p></div>
+        <div className="studio-stage-tabs" role="tablist" aria-label="Workspace documents">{kinds.map(stage => {const d = feature.documents[stage]; return <button key={stage} role="tab" aria-selected={kind === stage} disabled={needsIntake && stage !== kind} onClick={() => switchKind(stage)}><span className="studio-stage-number">{d.published ? <Check size={12} /> : <FileText size={12} />}</span><span>{labels[stage]}<small>{needsIntake && stage === kind ? intake?.status === "ready" ? "Preparing draft" : "Clarifying brief" : d.stale.length ? "Upstream changed" : d.head ? `v${d.versions.length} · ${d.head === d.published ? "Published" : "Draft"}` : intakeFor(feature, stage) ? "Clarification started" : "Optional"}</small></span></button>;})}</div>
       </div>
       {needsIntake ? <ClarificationFlow key={`${feature.id}-${kind}`} feature={feature} kind={kind} active={active?.kind === kind ? active : undefined} failed={failed} busy={busy} saving={saving} onCommand={command} /> : <>
       <nav className="studio-mobile-nav" aria-label="Workspace panels"><a href="#studio-conversation">Conversation</a><a href="#studio-document">Document</a><a href="#studio-review" onClick={() => setPanel("review")}>Review</a></nav>
