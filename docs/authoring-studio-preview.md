@@ -78,6 +78,10 @@ The RFC follows the supplied eight-section proposal and assesses its conditional
 
 ## Recover interrupted work
 
+To remove a feature, use the trash button on its card under **Your feature workspaces**. The confirmation names the workspace and explains that its documents, all versions, chat and comments will be permanently deleted. **Cancel** or Escape closes the confirmation without deleting anything. Deletion cannot be undone; download any versions you need first. Other workspaces are unaffected.
+
+If the workspace changes while you are confirming, deletion is rejected. Close the dialog, review the updated workspace, and reopen its delete confirmation. Deleting discards pending generation results, including results that arrive after the workspace is gone.
+
 Requests are saved before generation begins. A failed call keeps the document and submitted request; use **Retry saved request**. Server restarts mark unfinished requests interrupted. Cancelling prevents a late result from being applied; the provider may still finish its in-flight call, so cancellation does not promise immediate provider termination.
 
 Generation receives complete current and upstream document content, with source excerpts identified separately. Oversized context fails with an explanation instead of silently omitting requirements. Large workspaces need a future retrieval/compaction strategy.
@@ -110,6 +114,8 @@ The application typecheck covers production sources. Legacy test fixtures have e
 The flexible-entry revision passed 58 studio backend tests, 78 guided/studio frontend tests and the production build. Checks include direct Design/RFC creation, skipping Design in any state, independent clarification answers, source selection retained through retries, clarification before generation, exact row locations, required author acknowledgements, saved notes, immutable publication records, fresh reviews after changes, and downstream propagation. Real browser/provider runs created complete standalone Design and RFC drafts with no PRD; the preview keeps them as **Direct Design demo: task due dates** and **Direct RFC demo: personal saved views**. Initial incomplete/provider responses were rejected and the saved decisions were retained for successful retries. Browser checks also confirmed the PRD-only RFC option stays available with an unpublished Design draft. Earlier review testing published a separate draft after both acknowledgements, then verified an edit required both reviews again. Desktop and mobile layouts were checked. Earlier provider testing confirmed the first PRD uses all saved clarification answers. Validation is targeted; the entire repository suite was not run.
 
 This branch updates the inherited Next.js 15.1.6 dependency to 15.5.24, the patched maintenance release identified in the [August 2026 security advisory](https://nextjs.org/blog/august-2026-security-release). The original worktree's dependencies and manifests are unchanged.
+
+Workspace deletion passed 66 backend tests, 85 guided/studio frontend tests and the production build. Checks cover confirmation and cancellation, stale revisions, repeated deletion, permanent version removal, transaction rollback, late worker results and unavailable workspace links. Browser testing deleted a temporary workspace with all three document types and verified that the eight existing workspaces were unchanged.
 
 ## Experiment boundaries
 

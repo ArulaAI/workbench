@@ -38,6 +38,18 @@ beforeEach(() => {
 afterEach(() => {vi.unstubAllGlobals();});
 
 describe("Authoring studio workflow", () => {
+  it("returns a deleted workspace link to the list instead of leaving an endless loading screen", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => ({
+      ok: !url.endsWith("/features/feature-1"), status: url.endsWith("/features/feature-1") ? 404 : 200,
+      json: async () => url.endsWith("/health") ? {contract:1} : url.endsWith("/features") ? [] : {detail:"Feature not found"},
+    })));
+    render(<Studio />);
+    await screen.findByText("This workspace is no longer available. It may have been deleted.");
+    expect(screen.getByRole("heading", {name:"Your feature workspaces 0"})).toBeInTheDocument();
+    expect(screen.queryByText("Opening your feature workspace…")).not.toBeInTheDocument();
+    expect(window.location.search).toBe("");
+  });
+
   it("holds publication until both reviews are saved, including when no separate questions exist", async () => {
     let state = fixture();
     state.documents.prd.snapshot = {...snapshot,sections:[section,{...section,id:"success",title:"Success",body:"Review the agreed success criteria."}]};

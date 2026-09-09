@@ -41,6 +41,7 @@ class Studio:
 
     def version(self, feature_id, version_id):
         with self.store.transaction() as conn:
+            self._read(conn, feature_id)
             result = self.store.load_snapshot(conn, version_id)
             if not result or result["feature_id"] != feature_id:
                 raise StudioError("Version not found", 404)
@@ -62,6 +63,8 @@ class Studio:
 
     def create(self, request: CreateFeature):
         with self.store.transaction() as conn:
+            if conn.execute("SELECT 1 FROM deleted_features WHERE create_request_id=?", (request.request_id,)).fetchone():
+                raise StudioError("This workspace was deleted. Start a new feature to create another workspace.", 410)
             for row in conn.execute("SELECT state FROM features").fetchall():
                 import json
                 old = json.loads(row[0])
@@ -79,6 +82,19 @@ class Studio:
             self._enqueue(state, request.kind, "clarify", request.brief.strip(), request.request_id, {})
             self._save(conn, state)
             return self._view(conn, state)
+
+    def delete(self, feature_id, expected_revision):
+        with self.store.transaction() as conn:
+            if conn.execute("SELECT 1 FROM deleted_features WHERE id=?", (feature_id,)).fetchone():
+                return {"id": feature_id, "deleted": True}
+            state = self._read(conn, feature_id)
+            if state["revision"] != expected_revision:
+                raise StudioError("This workspace changed. Close this dialog and review the latest workspace before deleting it.", 409)
+            # Keep only opaque IDs so delayed create retries cannot recreate deleted content.
+            conn.execute("INSERT INTO deleted_features VALUES(?,?)", (feature_id, state["create_request_id"]))
+            # The parent-delete trigger removes its immutable snapshots in this transaction.
+            conn.execute("DELETE FROM features WHERE id=?", (feature_id,))
+            return {"id": feature_id, "deleted": True}
 
     def _save(self, conn, state):
         state["revision"] += 1
@@ -437,7 +453,9 @@ class Studio:
     def run(self, feature_id, operation_id, generator):
         """Claim, generate outside the DB transaction, then atomically apply if still current."""
         with self.store.transaction() as conn:
-            state = self._read(conn, feature_id)
+            state = self.store.read(conn, feature_id)
+            if state is None:
+                return
             operation = next((o for o in state["operations"] if o["id"] == operation_id), None)
             if not operation or operation["status"] != "queued":
                 return
@@ -452,7 +470,9 @@ class Studio:
             generated, sources, model = generator(copy.deepcopy(state), copy.deepcopy(operation), head, upstream)
             generated = (Clarification if operation["action"] == "clarify" else Generation).model_validate(generated)
             with self.store.transaction() as conn:
-                current = self._read(conn, feature_id)
+                current = self.store.read(conn, feature_id)
+                if current is None:
+                    return
                 active = next(o for o in current["operations"] if o["id"] == operation_id)
                 if active["status"] != "running":
                     return
@@ -487,7 +507,9 @@ class Studio:
         except Exception as error:
             detail = "The model did not finish in time. Your request and current document are saved. Retry to continue." if isinstance(error, (subprocess.TimeoutExpired, TimeoutError)) else (str(error)[:800] or type(error).__name__)
             with self.store.transaction() as conn:
-                state = self._read(conn, feature_id)
+                state = self.store.read(conn, feature_id)
+                if state is None:
+                    return
                 operation = next(o for o in state["operations"] if o["id"] == operation_id)
                 if operation["status"] == "running":
                     operation.update(status="failed", error=detail)

@@ -4,11 +4,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, ArrowRight, Check, ChevronDown, Download, FileText, GitCompareArrows, History, Layers, Loader2, MessageSquare, Plus, Send, Sparkles, X } from "lucide-react";
 import { IconRail } from "@/components/landing/IconRail";
-import { api, studioUrl } from "./api";
+import { api, StudioAPIError, studioUrl } from "./api";
 import { DocumentCanvas, VersionComparison } from "./Document";
 import { CommentEditor, SectionEditor } from "./Editors";
 import { ClarificationFlow } from "./Clarification";
 import { GenerationSetup } from "./GenerationSetup";
+import { WorkspaceList } from "./WorkspaceList";
 import { intakeFor, kinds, labels, type Command, type Feature, type Kind, type Section, type Snapshot } from "./types";
 import "./studio.css";
 
@@ -66,11 +67,18 @@ export default function Studio() {
       setConnected(true);
       if (!new URLSearchParams(window.location.search).get("document")) setKind(value.initial_kind || "prd");
       setFeature(old => !old || old.id !== value.id || value.revision >= old.revision ? value : old);
-    }).catch(e => { if (e.name !== "AbortError") {setConnected(false); setError(e.message);} });
+    }).catch(e => {
+      if (e instanceof StudioAPIError && e.status === 404) {
+        setSelected(null); setFeature(null); setViewId(""); setCompare(false); setError("");
+        setNotice("This workspace is no longer available. It may have been deleted.");
+        window.history.replaceState(null, "", window.location.pathname);
+        void loadList().catch(error => setError(error.message));
+      } else if (e.name !== "AbortError") {setConnected(false); setError(e.message);}
+    });
     void load();
     const interval = setInterval(load, generating ? 1500 : 5000);
     return () => {controller.abort(); clearInterval(interval);};
-  }, [selected, generating]);
+  }, [selected, generating, loadList]);
 
   useEffect(() => {
     conversation.current?.scrollTo({top: conversation.current.scrollHeight, behavior: "smooth"});
@@ -150,7 +158,7 @@ export default function Studio() {
           <details><summary>Have research, constraints or decisions? Add context <Plus size={12} /></summary><label htmlFor="feature-context" className="sr-only">Supporting context</label><textarea id="feature-context" maxLength={20000} rows={5} value={context} onChange={e => setContext(e.target.value)} placeholder="Paste supporting notes. We'll distinguish your evidence from proposed assumptions." /></details>
           <div className="studio-brief-footer"><button type="button" onClick={() => {setTitle("Saved views for Define"); setBrief(EXAMPLE);}}>Use an example</button><button className="primary" type="submit" disabled={saving || !connected || !title.trim() || brief.trim().length < 12}>{saving ? <Loader2 className="studio-spin" size={16} /> : <ArrowRight size={16} />} Continue with brief</button></div></form>
         <p className="studio-start-note">We’ll clarify any missing decisions, then generate your {labels[startKind]}. You can start with any document; the others are optional.</p>
-      </div><aside className="studio-recent"><h2>Your feature workspaces <span>{features.length}</span></h2>{features.length === 0 ? <div className="studio-empty-small"><History size={24} /><p>Your features will appear here.<br />Come back to any draft, any time.</p></div> : features.map(f => <button className="studio-feature-card surface" key={f.id} onClick={() => choose(f.id, f.initial_kind || "prd")}><strong>{f.title}</strong><p>{f.brief}</p><div>{kinds.map(k => <span key={k} className={f.documents[k].published ? "published" : ""}>{labels[k]} {f.documents[k].head ? `v${f.documents[k].versions.length}` : "·"}</span>)}</div><small>Open workspace <ArrowRight size={12} /></small></button>)}</aside>
+      </div><WorkspaceList features={features} onOpen={choose} onDeleted={id => setFeatures(current => current.filter(f => f.id !== id))} onRefresh={loadList} />
     </main> : !feature ? <div className="studio-loading"><Loader2 className="studio-spin" size={24} /><p>Opening your feature workspace…</p></div> : <>
       <div className="studio-feature-header"><div className="studio-feature-picker"><button aria-expanded={listOpen} onClick={() => setListOpen(!listOpen)}><h1>{feature.title}</h1><ChevronDown size={16} /></button>{listOpen && <div className="studio-feature-menu surface">{features.map(f => <button key={f.id} onClick={() => choose(f.id, f.initial_kind || "prd")}>{f.title}{f.id === feature.id && <Check size={14} />}</button>)}<button onClick={() => choose(null)}><Plus size={14} /> New feature</button></div>}<p>One feature. Connected documents. A clear history of decisions.</p></div>
         <div className="studio-stage-tabs" role="tablist" aria-label="Feature documents">{kinds.map(stage => {const d = feature.documents[stage]; return <button key={stage} role="tab" aria-selected={kind === stage} disabled={needsIntake && stage !== kind} onClick={() => switchKind(stage)}><span className="studio-stage-number">{d.published ? <Check size={12} /> : <FileText size={12} />}</span><span>{labels[stage]}<small>{needsIntake && stage === kind ? intake?.status === "ready" ? "Preparing draft" : "Clarifying brief" : d.stale.length ? "Upstream changed" : d.head ? `v${d.versions.length} · ${d.head === d.published ? "Published" : "Draft"}` : intakeFor(feature, stage) ? "Clarification started" : "Optional"}</small></span></button>;})}</div>

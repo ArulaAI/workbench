@@ -134,6 +134,10 @@ class Command(StrictModel):
     source_mode: SourceMode | None = None
 
 
+class DeleteFeature(StrictModel):
+    expected_revision: int = Field(ge=0)
+
+
 class CreateFeature(StrictModel):
     kind: Kind = "prd"
     title: str = Field(min_length=1, max_length=160)

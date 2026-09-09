@@ -7,7 +7,7 @@ from fastapi.responses import Response
 
 from lib.authoring_studio import Studio, StudioError
 from lib.authoring_studio.generator import Generator
-from lib.authoring_studio.models import Command, CreateFeature
+from lib.authoring_studio.models import Command, CreateFeature, DeleteFeature
 from lib.authoring_studio.service import markdown
 from lib.authoring_studio.reviews import saved_reviews
 
@@ -54,6 +54,10 @@ class StudioAPI:
         @self.router.get("/features/{feature_id}")
         def get(feature_id: str):
             return self._call(self.studio.get, feature_id)
+
+        @self.router.delete("/features/{feature_id}")
+        def delete(feature_id: str, request: DeleteFeature):
+            return self._call(self.studio.delete, feature_id, request.expected_revision)
 
         @self.router.post("/features/{feature_id}/commands")
         def command(feature_id: str, request: Command):

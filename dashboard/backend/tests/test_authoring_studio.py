@@ -93,6 +93,137 @@ def test_create_and_commands_are_idempotent(studio):
     assert len(same["operations"]) == 3
 
 
+def test_delete_removes_only_the_selected_workspace_and_all_its_history(studio):
+    state = publish(studio, draft(studio))
+    state = finish(studio, command(studio, state, "generate", kind="design"))
+    state = finish(studio, command(studio, state, "generate", kind="rfc"))
+    state = command(studio, state, "comment", section_id="scope", version_id=state["documents"]["prd"]["head"], text="A review note")
+    other = draft(studio)
+    versions = [v["id"] for doc in state["documents"].values() for v in doc["versions"]]
+    assert studio.delete(state["id"], state["revision"]) == {"id": state["id"], "deleted": True}
+    assert [f["id"] for f in studio.list()] == [other["id"]]
+    assert studio.get(other["id"]) == other
+    with pytest.raises(StudioError) as error:
+        studio.get(state["id"])
+    assert error.value.status == 404
+    for version in versions:
+        with pytest.raises(StudioError):
+            studio.version(state["id"], version)
+    with studio.store.transaction() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM snapshots WHERE feature_id=?", (state["id"],)).fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM features WHERE id=?", (state["id"],)).fetchone()[0] == 0
+    assert Studio(studio.root).list()[0]["id"] == other["id"]
+
+
+def test_delete_requires_current_revision_and_retries_do_not_recreate_content(studio):
+    request = CreateFeature(title="Disposable feature", brief="Save and restore personal filters.", request_id=uuid4().hex)
+    old = studio.create(request)
+    state = finish(studio, old)
+    with pytest.raises(StudioError) as error:
+        studio.delete(state["id"], old["revision"])
+    assert error.value.status == 409
+    assert studio.get(state["id"]) == state
+    studio.delete(state["id"], state["revision"])
+    assert studio.delete(state["id"], state["revision"])["deleted"]
+    with pytest.raises(StudioError) as error:
+        studio.create(request)
+    assert error.value.status == 410
+    with pytest.raises(StudioError) as error:
+        studio.delete("unknown", 0)
+    assert error.value.status == 404
+
+
+def test_deleting_a_queued_workspace_prevents_generation(studio):
+    state = create(studio)
+    studio.delete(state["id"], state["revision"])
+    def must_not_run(*_):
+        pytest.fail("Deleted work must not call the model")
+    studio.run(state["id"], state["operations"][0]["id"], must_not_run)
+    assert studio.list() == []
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_deleting_during_generation_discards_late_results_and_errors(studio, fails):
+    state = draft(studio)
+    state = command(studio, state, "revise", text="Tighten the scope")
+    op = state["operations"][-1]
+    entered, release = Event(), Event()
+    def delayed(s, o, head, upstream):
+        entered.set()
+        assert release.wait(timeout=5)
+        if fails:
+            raise RuntimeError("A late provider failure")
+        return generated(head=head), [], "test-provider"
+    with ThreadPoolExecutor() as pool:
+        job = pool.submit(studio.run, state["id"], op["id"], delayed)
+        assert entered.wait(timeout=5)
+        try:
+            running = studio.get(state["id"])
+            studio.delete(state["id"], running["revision"])
+        finally:
+            release.set()
+        job.result(timeout=5)
+    assert studio.list() == []
+    with studio.store.transaction() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM snapshots").fetchone()[0] == 0
+
+
+def test_snapshot_immutability_migrates_without_losing_existing_versions(studio):
+    state = draft(studio)
+    version = state["documents"]["prd"]["head"]
+    with studio.store.transaction() as conn:
+        conn.execute("DROP TRIGGER immutable_snapshot_delete_v2")
+        conn.execute("CREATE TRIGGER immutable_snapshot_delete BEFORE DELETE ON snapshots BEGIN SELECT RAISE(ABORT, 'Immutable snapshot'); END")
+    upgraded = Studio(studio.root)
+    assert upgraded.version(state["id"], version)["id"] == version
+    with upgraded.store.transaction() as conn:
+        with pytest.raises(sqlite3.IntegrityError, match="Immutable snapshot"):
+            conn.execute("DELETE FROM snapshots WHERE id=?", (version,))
+    upgraded.delete(state["id"], state["revision"])
+    with upgraded.store.transaction() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM snapshots").fetchone()[0] == 0
+
+
+def test_delete_rolls_back_the_whole_workspace_if_snapshot_removal_fails(studio):
+    state = draft(studio)
+    with studio.store.transaction() as conn:
+        conn.execute("CREATE TRIGGER simulate_delete_failure BEFORE DELETE ON snapshots BEGIN SELECT RAISE(ABORT, 'disk error'); END")
+    with pytest.raises(sqlite3.IntegrityError, match="disk error"):
+        studio.delete(state["id"], state["revision"])
+    assert studio.get(state["id"]) == state
+    with studio.store.transaction() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM deleted_features").fetchone()[0] == 0
+
+
+def test_delete_http_contract_and_removed_version_exports(tmp_path):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from dashboard.backend.studio import StudioAPI
+
+    api = StudioAPI(tmp_path)
+    app = FastAPI()
+    app.include_router(api.router)
+    state = draft(api.studio)
+    path = f"/studio/features/{state['id']}"
+    version = state["documents"]["prd"]["head"]
+    try:
+        with TestClient(app) as client:
+            assert client.request("DELETE", path, json={}).status_code == 422
+            assert client.request("DELETE", path, json={"expected_revision":0}).status_code == 409
+            assert client.get(f"{path}/versions/{version}/markdown").status_code == 200
+            for _ in range(2):
+                response = client.request("DELETE", path, json={"expected_revision":state["revision"]})
+                assert response.status_code == 200
+                assert response.json() == {"id":state["id"],"deleted":True}
+            assert client.get("/studio/features").json() == []
+            for url in (path, f"{path}/versions/{version}", f"{path}/versions/{version}/markdown"):
+                assert client.get(url).status_code == 404
+            response = client.post(f"{path}/commands", json={"action":"revise","text":"Bring it back","request_id":uuid4().hex,"expected_revision":state["revision"]})
+            assert response.status_code == 404
+    finally:
+        api.close()
+
+
 def test_compare_and_swap_prevents_stale_writer(studio):
     state = draft(studio)
     command(studio, state, "comment", section_id="scope", version_id=state["documents"]["prd"]["head"], text="Clarify scope")

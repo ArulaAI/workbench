@@ -66,11 +66,20 @@
 .studio-start-note { margin-top:16px !important; text-align:center; font-size:11px; font-weight:400; color:var(--color-text-secondary); }
 .studio-recent { padding-top:8px; }
 .studio-recent h2 { font-size:13px; color:var(--color-text-secondary); font-weight:500; margin-bottom:20px; display:flex; justify-content:space-between; }
-.studio-feature-card { text-align:left; width:100%; display:block !important; margin-bottom:12px; padding:20px !important; border-color:var(--color-border) !important; }
+.studio-feature-card { position:relative; text-align:left; width:100%; margin-bottom:12px; border-color:var(--color-border); }
 .studio-app .studio-feature-card { background:var(--color-bg-elevated); }
+.studio-app .studio-feature-open { display:block; width:100%; text-align:left; padding:20px; border-radius:inherit; }
+.studio-feature-open strong { padding-right:32px; overflow-wrap:anywhere; }
+.studio-app .studio-feature-delete { position:absolute; top:12px; right:8px; width:40px; height:40px; padding:8px; }
+.studio-app .studio-feature-delete:hover:not(:disabled) { background:#ef446418; color:#f2acb8; }
+.studio-app button.studio-danger { background:#a92340; color:var(--color-text); border-color:#ef446444; box-shadow:0 2px 8px #0003; }
+.studio-app button.studio-danger:hover:not(:disabled) { background:#c52c4c; color:var(--color-text); }
+.studio-dialog.studio-delete-dialog { width:min(480px,100%); }
+.studio-delete-title { font-size:15px; font-weight:600; color:var(--color-text); overflow-wrap:anywhere; }
+.studio-workspace-notice { margin-bottom:16px !important; font-size:12px; font-weight:400; color:#a6d9b8; line-height:1.7; }
 .studio-feature-card strong { display:block; color:var(--color-text); font-weight:500; line-height:1.6; }
 .studio-feature-card p { font-size:12px; color:var(--color-text-secondary); font-weight:400; margin:8px 0 16px; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
-.studio-feature-card > div { display:flex; gap:12px; margin-bottom:12px; font-size:10px; font-weight:500; color:var(--color-text-secondary); }
+.studio-feature-versions { display:flex; flex-wrap:wrap; gap:12px; margin-bottom:12px; font-size:10px; font-weight:500; color:var(--color-text-secondary); }
 .studio-feature-card .published { color:#a6d9b8; }
 .studio-feature-card small { display:flex; gap:8px; align-items:center; }
 .studio-empty-small { padding:32px 8px; display:flex; flex-direction:column; gap:12px; align-items:center; text-align:center; color:var(--color-text-secondary); line-height:1.8; }

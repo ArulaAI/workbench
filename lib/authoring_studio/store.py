@@ -17,13 +17,19 @@ class Store:
         with self.transaction() as conn:
             conn.executescript("""
                 CREATE TABLE IF NOT EXISTS features(id TEXT PRIMARY KEY, state TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS deleted_features(id TEXT PRIMARY KEY, create_request_id TEXT UNIQUE NOT NULL);
                 CREATE TABLE IF NOT EXISTS snapshots(
                     id TEXT PRIMARY KEY, feature_id TEXT NOT NULL, kind TEXT NOT NULL,
                     payload TEXT NOT NULL, sha256 TEXT NOT NULL);
                 CREATE TRIGGER IF NOT EXISTS immutable_snapshot_update
                     BEFORE UPDATE ON snapshots BEGIN SELECT RAISE(ABORT, 'Immutable snapshot'); END;
-                CREATE TRIGGER IF NOT EXISTS immutable_snapshot_delete
-                    BEFORE DELETE ON snapshots BEGIN SELECT RAISE(ABORT, 'Immutable snapshot'); END;
+                CREATE TRIGGER IF NOT EXISTS immutable_snapshot_delete_v2
+                    BEFORE DELETE ON snapshots
+                    WHEN EXISTS (SELECT 1 FROM features WHERE id=OLD.feature_id)
+                    BEGIN SELECT RAISE(ABORT, 'Immutable snapshot'); END;
+                DROP TRIGGER IF EXISTS immutable_snapshot_delete;
+                CREATE TRIGGER IF NOT EXISTS delete_feature_snapshots
+                    AFTER DELETE ON features BEGIN DELETE FROM snapshots WHERE feature_id=OLD.id; END;
             """)
 
     @contextmanager

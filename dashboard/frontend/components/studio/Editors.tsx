@@ -4,16 +4,18 @@ import { useEffect, useRef, useState } from "react";
 import { Plus, Trash2, X } from "lucide-react";
 import type { Item, Section } from "./types";
 
-function Dialog({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
+export function Dialog({ title, onClose, children, busy = false, descriptionId, role = "dialog", className = "" }: { title: string; onClose: () => void; children: React.ReactNode; busy?: boolean; descriptionId?: string; role?: "dialog" | "alertdialog"; className?: string }) {
   const ref = useRef<HTMLDivElement>(null);
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
     (ref.current?.querySelector<HTMLElement>("textarea, input") || ref.current?.querySelector<HTMLElement>("button"))?.focus();
     const handler = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape" && !busyRef.current) onClose();
       if (event.key !== "Tab") return;
       const focusable = ref.current?.querySelectorAll<HTMLElement>('button:not(:disabled), textarea:not(:disabled), input:not(:disabled), select:not(:disabled), [tabindex="0"]');
-      if (!focusable?.length) return;
+      if (!focusable?.length) {event.preventDefault(); ref.current?.focus(); return;}
       const first = focusable[0], last = focusable[focusable.length - 1];
       if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
       else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
@@ -21,7 +23,7 @@ function Dialog({ title, onClose, children }: { title: string; onClose: () => vo
     document.addEventListener("keydown", handler);
     return () => { document.removeEventListener("keydown", handler); previous?.focus(); };
   }, [onClose]);
-  return <div className="studio-overlay"><div ref={ref} className="studio-dialog surface" role="dialog" aria-modal="true" aria-label={title}><header><h2>{title}</h2><button onClick={onClose} aria-label="Close dialog"><X size={18} /></button></header>{children}</div></div>;
+  return <div className="studio-overlay"><div ref={ref} tabIndex={-1} className={`studio-dialog surface ${className}`} role={role} aria-modal="true" aria-label={title} aria-describedby={descriptionId} aria-busy={busy}><header><h2>{title}</h2><button onClick={onClose} disabled={busy} aria-label="Close dialog"><X size={18} /></button></header>{children}</div></div>;
 }
 
 export function SectionEditor({ section, onClose, onSave }: { section: Section; onClose: () => void; onSave: (body: string, items: Item[]) => Promise<boolean> }) {
