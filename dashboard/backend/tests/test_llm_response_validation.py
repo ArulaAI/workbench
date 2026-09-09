@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 import json
+import pytest
 
 from pydantic import BaseModel
 
@@ -13,6 +14,19 @@ from dashboard.backend.llm import _cache_key, _validate_cli_response
 
 class RevisionPayload(BaseModel):
     body: str
+
+
+def test_cli_zero_retries_does_not_silently_repeat_a_long_generation(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(llm, "_is_cli_model", lambda *_: True)
+    def complete(*args, **kwargs):
+        calls.append(kwargs)
+        return '{"wrong_field":"incomplete draft"}', 0, 180000
+    monkeypatch.setattr(llm, "_cli_complete", complete)
+    with pytest.raises(ValueError, match="required format"):
+        llm.llm_complete([{"role":"user","content":"Generate"}], RevisionPayload,
+                         "claude-code/sonnet", project_root=tmp_path, max_retries=0, timeout=360)
+    assert len(calls) == 1
 
 
 def test_cli_error_details_prefer_errors_over_usage_envelope() -> None:

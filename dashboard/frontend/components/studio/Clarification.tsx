@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, Check, FileText, Loader2, Sparkles } from "lucide-react";
 import { intakeFor, labels, type Kind, type ClarificationAnswer, type ClarificationQuestion, type Command, type Feature, type Operation } from "./types";
 
+import { GenerationProgress } from "./GenerationProgress";
+
 type Props = {
   feature: Feature;
   kind?: Kind;
@@ -37,6 +39,7 @@ export function ClarificationFlow({feature, kind = "prd", active, failed, busy, 
         <div className="studio-empty-icon">{active ? <Loader2 className="studio-spin" size={28} /> : <FileText size={28} />}</div>
         <h2>{failed ? (writing ? `${label} generation needs attention` : "Brief review needs attention") : writing ? `Creating your first ${label}` : "Reviewing your brief"}</h2>
         <p role="status">{failed ? failed.error : writing ? `Your brief and saved decisions are ready. We’re using them to write your ${label}.` : "We’re checking for decisions that need your input before drafting. If your brief is complete, generation starts directly."}</p>
+        {active && <GenerationProgress operation={active} />}
         {active && <button disabled={saving} onClick={() => void onCommand({action:"cancel", kind})}>Cancel {writing ? "generation" : "brief review"}</button>}
         {failed && <button className="primary" disabled={busy} onClick={() => void onCommand({action:"retry", kind})}>Retry saved request <ArrowRight size={14} /></button>}
         {writing && intake.questions.length > 0 && <div className="studio-intake-decisions"><h3>Your saved decisions</h3>{intake.questions.map(q => <div key={q.id}><strong>{q.question}</strong><p>{intake.answers[q.id]?.text}</p></div>)}</div>}

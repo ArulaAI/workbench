@@ -4,6 +4,10 @@ LABELS = {"prd": "PRD", "design": "Design spec", "rfc": "RFC"}
 SOURCE_KINDS = {"brief": (), "prd": ("prd",), "design": ("design",), "prd_design": ("prd", "design")}
 
 
+def response_timeout(action):
+    return 180 if action == "clarify" else 360
+
+
 def intake_for(state, kind):
     # Keep the original PRD intake readable without rewriting saved workspaces.
     return state.get("intake") if kind == "prd" else state.get("intakes", {}).get(kind)

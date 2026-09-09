@@ -8,6 +8,7 @@ import { api, StudioAPIError, studioUrl } from "./api";
 import { DocumentCanvas, VersionComparison } from "./Document";
 import { CommentEditor, SectionEditor } from "./Editors";
 import { ClarificationFlow } from "./Clarification";
+import { GenerationProgress } from "./GenerationProgress";
 import { GenerationSetup } from "./GenerationSetup";
 import { WorkspaceList } from "./WorkspaceList";
 import { intakeFor, kinds, labels, type Command, type Feature, type Kind, type Section, type Snapshot } from "./types";
@@ -174,7 +175,7 @@ export default function Studio() {
         <div className="studio-conversation" ref={conversation} aria-live="polite" aria-relevant="additions">
           {messages.length === 0 && <div className="studio-chat-intro"><p>{kind === "design" ? "Translate the agreed product direction into a usable experience." : "Turn product intent into an engineering decision your team can review."}</p><p>Your brief and selected sources provide the foundation. Add constraints or refine a particular section as you go.</p></div>}
           {messages.map(m => <div className={`studio-message ${m.role}`} key={m.id}><div className="studio-message-author">{m.role === "user" ? "You" : "Workbench"}{m.section_id && <span> · {m.section_id}</span>}</div><p>{m.text}</p>{m.version_id && <button onClick={() => {setViewId(m.version_id === doc?.head ? "" : m.version_id!); setCompare(true);}}><GitCompareArrows size={12} /> Review changes</button>}</div>)}
-          {active && <div className="studio-generating" role="status"><Loader2 className="studio-spin" size={16} /><div><strong>Writing {labels[active.kind]}…</strong><p>Your request is saved. You can leave and return.</p><button disabled={saving} onClick={() => void command({action: "cancel"})}>Cancel generation</button></div></div>}
+          {active && <div className="studio-generating" role="status"><Loader2 className="studio-spin" size={16} /><div><strong>Writing {labels[active.kind]}…</strong><GenerationProgress operation={active} /><button disabled={saving} onClick={() => void command({action: "cancel"})}>Cancel generation</button></div></div>}
           {failed && <div className="studio-generation-error"><strong>{failed.status === "cancelled" ? "Generation cancelled" : "Draft generation needs attention"}</strong><p>{failed.error}</p><button disabled={busy} onClick={() => void command({action: "retry"})}>Retry saved request</button></div>}
           {!busy && currentQuestion && <div className="studio-question surface"><div><span className="studio-pill amber">{doc?.publication_review?.find(r => r.id === "open_questions")?.acknowledgement?.disposition === "deferred" ? "Acknowledged · still open" : currentQuestion.blocking ? "Decision needed" : "Worth clarifying"}</span><small>1 of {doc?.snapshot?.questions.length}</small></div><h3>{currentQuestion.question}</h3><p>{currentQuestion.why}</p><button onClick={() => {setScope(""); setMessage(`Regarding “${currentQuestion.question}”: `); composer.current?.focus();}}>Answer in chat <ArrowRight size={14} /></button></div>}
         </div>

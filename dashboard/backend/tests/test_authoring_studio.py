@@ -673,6 +673,10 @@ def test_generator_uses_clarification_schema_and_all_saved_answers(studio, monke
     state = command(studio, state, "answer_clarification", question_id="q-0", choice="custom", text="Only invited editors, no public access.")
     state = finish(studio, state, generator=Generator(studio.root))
     assert [c["response_model"] for c in calls] == [Clarification, InitialPRD]
+    assert all(c["max_retries"] == 0 for c in calls)
+    assert [c["timeout"] for c in calls] == [180, 360]
+    assert all(o["started_at"] >= o["created_at"] for o in state["operations"])
+    assert [o["timeout_seconds"] for o in state["operations"]] == [180, 360]
     payload = json.loads(calls[1]["messages"][1]["content"])
     evidence = next(s for s in payload["evidence"] if s["label"] == "Author's clarification answers")
     assert "Only invited editors, no public access." in evidence["text"]

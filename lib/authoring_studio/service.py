@@ -11,7 +11,7 @@ from uuid import uuid4
 from .models import Clarification, NamedClarification, Command, CreateFeature, Generation, PREFIXES, RFC_MODULES, TEMPLATES
 from .store import Store
 from .reviews import publication_review, saved_reviews, section_findings
-from .workflow import LABELS, SOURCE_KINDS, intake_for, mode_for, set_intake
+from .workflow import LABELS, SOURCE_KINDS, intake_for, mode_for, set_intake, response_timeout
 
 
 def now() -> str:
@@ -221,7 +221,7 @@ class Studio:
         operation = {"id": uid(), "request_id": request_id, "kind": kind, "action": action, "text": text,
                      "section_id": section_id, "comment_id": comment_id, "pins": pins, "source_mode": mode_for(pins),
                      "base_version": state["documents"][kind]["head"], "status": "queued", "created_at": now(),
-                     "error": None, "version_id": None}
+                     "error": None, "version_id": None, "timeout_seconds": response_timeout(action)}
         state["operations"].append(operation)
         state["messages"].append({"id": uid(), "role": "user", "kind": kind, "text": text,
                                   "section_id": section_id, "operation_id": operation["id"], "created_at": now()})
@@ -471,7 +471,7 @@ class Studio:
             operation = next((o for o in state["operations"] if o["id"] == operation_id), None)
             if not operation or operation["status"] != "queued":
                 return
-            operation["status"] = "running"
+            operation.update(status="running", started_at=now())
             self._save(conn, state)
             head = self._head(conn, state, operation["kind"])
             upstream = {k: self.store.load_snapshot(conn, v) for k, v in operation["pins"].items()}

@@ -19,7 +19,7 @@ export type PublicationReview = {
   acknowledgement: {version_id: string; disposition: "confirmed" | "deferred"; note: string; created_at: string} | null;
 };
 export type Document = { head: string | null; published: string | null; versions: Version[]; snapshot: Snapshot | null; stale: Kind[]; published_stale?: Kind[]; blockers: string[]; publication_review?: PublicationReview[] };
-export type Operation = { id: string; kind: Kind; action?: string; status: "queued" | "running" | "completed" | "failed" | "interrupted" | "cancelled"; text: string; error: string | null; version_id: string | null };
+export type Operation = { created_at?: string; started_at?: string; timeout_seconds?: number; id: string; kind: Kind; action?: string; status: "queued" | "running" | "completed" | "failed" | "interrupted" | "cancelled"; text: string; error: string | null; version_id: string | null };
 export type ClarificationAnswer = { choice: "option-1" | "option-2" | "option-3" | "custom"; text: string; saved_at: string };
 export type ClarificationQuestion = { id: string; question: string; why: string; options: {label: string; description: string}[] };
 export type Intake = { status: "checking" | "awaiting_answers" | "ready"; summary: string; questions: ClarificationQuestion[]; answers: Record<string, ClarificationAnswer>; pins?: Partial<Record<Kind, string>> };

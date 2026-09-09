@@ -601,6 +601,8 @@ def llm_complete(
         try:
             result = _validate_cli_response(text, response_model)
         except Exception:
+            if max_retries <= 0:
+                raise ValueError("The model response did not match the required format. Try again.") from None
             # Retry once with a nudge
             retry_msgs = messages + [
                 {"role": "assistant", "content": text},

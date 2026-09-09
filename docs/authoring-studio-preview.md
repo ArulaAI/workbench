@@ -82,6 +82,8 @@ To remove a workspace, use the trash button on its card under **Your workspaces*
 
 If the workspace changes while you are confirming, deletion is rejected. Close the dialog, review the updated workspace, and reopen its delete confirmation. Deleting discards pending generation results, including results that arrive after the workspace is gone.
 
+While a request runs, the studio shows elapsed time from its saved start time, distinguishes queueing from generation, and explains waits longer than two minutes. Model responses have a three-minute limit for clarification and six minutes for document generation. The complete document appears after validation; the timer does not imply section-by-section progress. Invalid output requires an explicit retry instead of an additional hidden application-level model call.
+
 Requests are saved before generation begins. A failed call keeps the document and submitted request; use **Retry saved request**. Server restarts mark unfinished requests interrupted. Cancelling prevents a late result from being applied; the provider may still finish its in-flight call, so cancellation does not promise immediate provider termination.
 
 Generation receives complete current and upstream document content, with source excerpts identified separately. Oversized context fails with an explanation instead of silently omitting requirements. Large workspaces need a future retrieval/compaction strategy.
