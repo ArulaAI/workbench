@@ -74,7 +74,7 @@ Required content, unfinished placeholders outside these review areas, unresolved
 
 When a newer version of a selected upstream document is published, the downstream document shows an **Upstream changed** notice. **Reconcile changes** creates a revision using the latest published sources. Old versions keep their original pins. Publishing a document that was deliberately skipped does not make the draft stale. Retries keep the original selected versions; reconciliation advances only those existing source relationships. Protected sections retain your text and require explicit review before republishing.
 
-The RFC follows the supplied eight-section proposal and assesses its conditional engineering concerns. Unresolved material coverage blocks publication without hiding the draft; an Open questions acknowledgement cannot override that check.
+The RFC follows **RFC Proposal 1** and its eight-section decision core, with viable alternatives, contracts and compatibility, delivery safety, ownership and conditional engineering coverage. It uses the latest proposal's operational and AI evaluation guidance. Clarification still happens before drafting, as requested for this guided flow. Unresolved material coverage blocks publication without hiding the draft; an Open questions acknowledgement cannot override that check.
 
 ## Recover interrupted work
 

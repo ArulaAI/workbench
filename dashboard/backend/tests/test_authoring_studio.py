@@ -613,6 +613,32 @@ def test_generator_uses_clarification_schema_and_all_saved_answers(studio, monke
     assert any(s["id"] == evidence["id"] for s in state["documents"]["prd"]["snapshot"]["sources"])
 
 
+def test_revision_provider_schema_rejects_invented_ids_and_preserves_allocated_ids(studio):
+    from pydantic import ValidationError
+    from lib.authoring_studio.generator import revision_model
+    state = draft(studio)
+    head = state['documents']['prd']['snapshot']
+    contract = revision_model(head)
+    assert r'\-' not in contract.model_json_schema()['$defs']['RevisionItem']['properties']['id']['pattern']
+    payload = generated(head=head).model_dump()
+    requirements = next(s for s in payload['sections'] if s['id'] == 'requirements')
+    requirements['items'].append({'id':'new-hex-color', 'statement':'Return a hex color.',
+                                 'verification':'The API returns a six-digit hex color.', 'references':[]})
+    output = contract.model_validate(payload)
+    state = finish(studio, command(studio, state, 'revise', text='Return highlight colors from the backend.'), result=output)
+    ids = [i['id'] for s in state['documents']['prd']['snapshot']['sections'] if s['id'] == 'requirements' for i in s['items']]
+    assert ids == ['REQ-1', 'REQ-2']
+    assert studio.version(state['id'], head['id']) == head
+    requirements['items'][-1]['id'] = 'REQ-7'
+    with pytest.raises(ValidationError, match='pattern'):
+        contract.model_validate(payload)
+    # A scoped request may retain its own IDs, not import another section's rows.
+    scoped = generated(head=head, scoped='requirements').model_dump()
+    scoped['sections'][0]['items'][0]['id'] = 'US-1'
+    with pytest.raises(ValidationError, match='pattern'):
+        revision_model(head, 'requirements').model_validate(scoped)
+
+
 def test_publication_requires_both_author_reviews_even_with_complete_content(studio):
     state = draft(studio)
     version = state['documents']['prd']['head']

@@ -23,7 +23,7 @@ TEMPLATES = {
         ("decisions", "Open decisions"),
     ],
     "rfc": [
-        ("metadata", "Metadata"), ("decision", "Decision summary and approval ask"),
+        ("metadata", "Metadata and status"), ("decision", "Decision summary and approval ask"),
         ("context", "Context and constraints"), ("design", "Proposed design"),
         ("contracts", "Contracts and impact"), ("alternatives", "Alternatives and tradeoffs"),
         ("delivery", "Delivery and verification"), ("decisions", "Open decisions and ownership"),

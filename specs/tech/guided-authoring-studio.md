@@ -54,7 +54,9 @@ Capture experience intent, users and entry points, end-to-end journeys, interact
 
 ### RFC
 
-Follow `RFC Proposal 2.docx`: Metadata; Decision summary and approval ask; Context and constraints; Proposed design; Contracts and impact; Alternatives and tradeoffs; Delivery and verification; Open decisions and ownership. The RFC makes an engineering decision and shows its consequences. PRD and Design are optional sources; when omitted, the RFC derives its product context from the brief and saved answers.
+Follow `RFC Proposal 1.docx`: Metadata and status; Decision summary and approval ask; Context and constraints; Proposed design; Contracts and impact; Alternatives and tradeoffs; Delivery and verification; Open decisions and ownership. The RFC makes an engineering decision and shows its consequences. PRD and Design are optional sources; when omitted, the RFC derives its product context from the brief and saved answers.
+
+The updated proposal adds driver-based comparisons of viable alternatives, a connected compatibility/migration/rollout/rollback/observability argument, artifact boundaries and conditional AI evaluation guidance. The generation contract carries these instructions, a stable RFC ID and operation date. Unknown owners and unvalidated thresholds remain explicit. RFC clarification asks at most three material questions. The author's requested clarification-before-generation interaction takes precedence over the document's suggested draft-first workflow.
 
 Assess API/events/CLI, persistence, compatibility, migration, security, privacy, reliability, rollout/rollback/observability, performance/cost, and AI/evaluation. Record each as material, not material (with a reason), or unresolved. Include detail in the relevant core section instead of filling every conditional module with boilerplate. Unresolved material coverage blocks publication even with an author acknowledgement and never hides the preview. ADR extraction and a separate evaluation artifact remain policy work after the experiment.
 
@@ -93,7 +95,7 @@ Section edits replace only the targeted section. Direct edits mark that section 
 
 ## Generation and evidence
 
-The generator uses the existing provider settings in `speed.toml`. Its structured response contains section patches, typed requirement rows, assumptions and open questions. Validation rejects unknown section IDs, duplicate entity IDs and missing required first-draft sections. Unsupported evidence references remain visible on a provisional draft and block publication; they never appear in the verified source list. The server allocates new entity IDs and never recycles retired IDs.
+The generator uses the existing provider settings in `speed.toml`. Its structured response contains section patches, typed requirement rows, assumptions and open questions. Revision response schemas constrain entity IDs to the current document's IDs (or the selected section's IDs for a scoped revision) and unique `new-*` placeholders. Validation rejects unknown section IDs, duplicate entity IDs and missing required first-draft sections. Unsupported evidence references remain visible on a provisional draft and block publication; they never appear in the verified source list. The server allocates new entity IDs and never recycles retired IDs.
 
 Repository context is bounded, recorded with path and content hash, and passed as evidence rather than instructions. User-provided context and upstream documents are separately identified. Truncation is visible in source metadata. The model has no write tools. A failed generation produces a clear retry state, never a success-shaped placeholder.
 
@@ -122,6 +124,6 @@ An adoption review should measure time to first useful draft, manual corrections
 
 ## Reference decisions
 
-The supplied implementation guide, initial Define PRD, PRD Proposal and RFC Proposal 2 are the primary product references. The internal review in `working-docs/guided-authoring-review-2026-09-08/` contains the earlier reproducers and evidence.
+The supplied implementation guide, initial Define PRD, PRD Proposal and RFC Proposal 1 are the primary product references. RFC Proposal 1 supersedes Proposal 2 for this experiment. The internal review in `working-docs/guided-authoring-review-2026-09-08/` contains the earlier reproducers and evidence.
 
 [Atlassian's PRD guidance](https://www.atlassian.com/agile/product-management/requirements/) supports keeping shared product intent concise and customer-oriented. [Rust's RFC template](https://github.com/rust-lang/rfcs/blob/master/0000-template.md) makes motivation, alternatives and unresolved questions explicit. [Kubernetes' KEP template](https://github.com/kubernetes/enhancements/blob/master/keps/NNNN-kep-template/README.md) separates production readiness concerns so an RFC can expose operational risk. The conditional coverage model here is our application of those ideas to the supplied proposal, not a claim that every feature needs a Kubernetes-sized process.
