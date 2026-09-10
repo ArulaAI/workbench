@@ -1,0 +1,180 @@
+{
+  "summary": "Prepared the due-date PRD from the saved example and your clarification answers.",
+  "sections": [
+    {
+      "id": "metadata",
+      "body": "Status: draft for author review. This is a saved due-date example for demonstrating document authoring; its sample targets and roles are proposals.",
+      "items": [],
+      "source_ids": []
+    },
+    {
+      "id": "summary",
+      "body": "People add tasks they plan to do later, such as canceling a subscription next week. New tasks can bury those deadlines. Add an optional due date, order active dated tasks soonest first, and return urgency and highlight colors from the backend. The saved decisions below define overdue, editing and completion behavior.",
+      "items": [],
+      "source_ids": []
+    },
+    {
+      "id": "problem",
+      "body": "A time-sensitive task can be forgotten when newer tasks push it down the list. The example is based on the author\u2019s problem description, not measured research. Users need a clear way to find deadlines without relying on memory.",
+      "items": [],
+      "source_ids": []
+    },
+    {
+      "id": "hypothesis",
+      "body": "Making deadlines visible through list order and urgency labels should help users act before tasks become overdue. The Success section proposes how to check this; it does not claim that the outcome has already been achieved.",
+      "items": [],
+      "source_ids": []
+    },
+    {
+      "id": "stories",
+      "body": "The following stories connect the task owner\u2019s needs to observable outcomes.",
+      "items": [
+        {
+          "id": "new-US-1",
+          "references": [],
+          "statement": "As a user adding a task, I want to optionally set a due date so that time-sensitive tasks are distinguishable from tasks with no urgency.",
+          "verification": "User can create a task with no due date (current behavior unchanged) or with a due date selected from a date picker; the due date is saved and displayed on the task."
+        },
+        {
+          "id": "new-US-2",
+          "references": [],
+          "statement": "As a user viewing my task list, I want tasks with the soonest due dates shown first so that upcoming deadlines are not buried under newer, undated tasks.",
+          "verification": "Creating tasks with due dates of varying distance results in the list ordering them soonest-first, independent of creation order."
+        },
+        {
+          "id": "new-US-3",
+          "references": [],
+          "statement": "As a user viewing my task list, I want tasks due today, tomorrow, or the day after tomorrow to be visually highlighted so I notice them without having to read every due date.",
+          "verification": "Tasks due within that 3-day window render with a distinct highlight style not applied to tasks due further out or with no due date."
+        }
+      ],
+      "source_ids": []
+    },
+    {
+      "id": "requirements",
+      "body": "The backend supplies the due date, urgency label and highlight color. Today, tomorrow and the day after tomorrow form the near-due window. Later or undated tasks receive no highlight. Overdue, editing and completion behavior follows the author\u2019s saved decisions.",
+      "items": [
+        {
+          "id": "new-REQ-1",
+          "references": [
+            "new-US-1"
+          ],
+          "statement": "Allow an optional date-only due_date when creating a task. An omitted date preserves existing behavior.",
+          "verification": "Create tasks with and without a date, reload them, and check that the date or absence of a date is preserved."
+        },
+        {
+          "id": "new-REQ-2",
+          "references": [
+            "new-US-2"
+          ],
+          "statement": "Apply the author\u2019s saved overdue-task decision, then sort remaining active dated tasks by due date ascending.",
+          "verification": "Use the saved overdue decision below as the expected result for past dates; check ascending order for other active dated tasks."
+        },
+        {
+          "id": "new-REQ-3",
+          "references": [
+            "new-US-2"
+          ],
+          "statement": "Tasks with no due date retain their existing relative order (manual/creation order) and are always listed after every dated active task.",
+          "verification": "Pass: adding several undated tasks interspersed with dated tasks results in undated tasks keeping their original relative sequence, all placed after dated tasks."
+        },
+        {
+          "id": "new-REQ-4",
+          "references": [
+            "new-US-3"
+          ],
+          "statement": "Active tasks due today, tomorrow, or the day after tomorrow receive a distinct visual highlight; overdue active tasks receive a different, distinct visual highlight; tasks due further out or with no due date receive no highlight.",
+          "verification": "Pass: a task due today/tomorrow/day-after shows the near-due highlight; a task with a past due date shows the overdue highlight (visually distinguishable from the near-due one); a task due in 5+ days or with no date shows neither."
+        },
+        {
+          "id": "new-REQ-5",
+          "statement": "Apply the saved completed-task decision below.",
+          "verification": "Complete a dated task and check its position and highlighting against the saved decision.",
+          "references": []
+        },
+        {
+          "id": "new-REQ-6",
+          "statement": "Apply the saved decision about changing or clearing due dates after task creation.",
+          "verification": "Attempt to change and clear a saved due date and check the result against the saved decision.",
+          "references": [
+            "new-US-1"
+          ]
+        },
+        {
+          "id": "new-REQ-7",
+          "statement": "The backend returns highlight_color as a six-digit hex string (#RRGGBB), or null when no highlight applies. It also returns an urgency label; clients do not compute their own colors.",
+          "verification": "Read tasks across date boundaries and check the returned hex format, urgency label and null fallback. Frontend implementation is outside this demo\u2019s delivery scope.",
+          "references": [
+            "new-US-3"
+          ]
+        }
+      ],
+      "source_ids": []
+    },
+    {
+      "id": "scope",
+      "body": "In scope: optional date-only due dates; saved overdue, edit and completion rules; stable ordering; backend urgency labels and hex colors. Out of scope: notifications, recurring tasks, time-of-day scheduling and frontend implementation. The client can use the returned color in a later UI change.",
+      "items": [],
+      "source_ids": []
+    },
+    {
+      "id": "guardrails",
+      "body": "Preserve existing task behavior when no due date is supplied. Missing color metadata must have a safe display fallback.",
+      "items": [
+        {
+          "id": "new-GR-1",
+          "references": [],
+          "statement": "Tasks created without a due date continue to behave exactly as before this feature (creation, editing, completion, deletion all unaffected).",
+          "verification": "Regression check: full task lifecycle test on an undated task shows no behavior change versus pre-feature behavior."
+        },
+        {
+          "id": "new-GR-2",
+          "references": [],
+          "statement": "Existing manual/creation ordering among undated tasks is preserved; the new sort must not silently reorder undated tasks relative to each other.",
+          "verification": "Regression check: a list of only undated tasks retains identical ordering before and after the feature ships."
+        },
+        {
+          "id": "new-GR-4",
+          "references": [],
+          "statement": "If the backend fails to return a color/tier value for a dated task (e.g. during rollout or a data gap), the frontend must not crash or silently mis-highlight the task; it should fall back to no highlight rather than guessing a color client-side.",
+          "verification": "Regression check: a task record missing the color field renders in the list without a highlight and without a client-side error."
+        }
+      ],
+      "source_ids": []
+    },
+    {
+      "id": "risks",
+      "body": "Delivery risk: many old overdue tasks can crowd the list; check this in the proposed usability review.\n\nOpen question: who will review the proposed color palette and contrast before the frontend uses the API colors? Owner is unassigned. This is a follow-up review decision, not a blocker to defining the backend contract.",
+      "items": [],
+      "source_ids": []
+    },
+    {
+      "id": "success",
+      "body": "Review these proposed success criteria before publishing. The targets and role-based ownership are part of the demo proposal and have not been validated with real usage.",
+      "items": [
+        {
+          "id": "new-SM-1",
+          "statement": "Users can identify the next time-sensitive task without searching through newer tasks.",
+          "verification": "Proposed review: in a five-person usability check, at least four people identify the earliest due task within ten seconds. Product owner runs the check before rollout. This is a proposed target, not a measured result.",
+          "references": []
+        },
+        {
+          "id": "new-SM-2",
+          "statement": "Due-date adoption and missed tasks can be checked after release.",
+          "verification": "Proposed review: the product owner compares the share of tasks completed by their due date over the first two weeks with a two-week pilot baseline. Review adoption alongside the result; do not claim improvement before measuring it.",
+          "references": []
+        }
+      ],
+      "source_ids": []
+    },
+    {
+      "id": "references",
+      "body": "Based on the previously saved \u201cDue dates for tasks with sorting and highlighting\u201d PRD and RFC, adapted into a repeatable example. The current brief and clarification answers are attached as sources. No live repository discovery or model generation takes place in example mode.",
+      "items": [],
+      "source_ids": []
+    }
+  ],
+  "questions": [],
+  "assumptions": [],
+  "coverage": []
+}

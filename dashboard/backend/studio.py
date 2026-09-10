@@ -9,6 +9,7 @@ from lib.authoring_studio import Studio, StudioError
 from lib.authoring_studio.generator import Generator
 from lib.authoring_studio.models import Command, CreateFeature, DeleteFeature
 from lib.authoring_studio.service import markdown
+from lib.authoring_studio.editable_markdown import editable_markdown
 from lib.authoring_studio.reviews import saved_reviews
 
 
@@ -73,3 +74,8 @@ class StudioAPI:
             snapshot = self._call(self.studio.version, feature_id, version_id)
             return Response(markdown(snapshot, state["title"], saved_reviews(state['documents'][snapshot['kind']], version_id)), media_type="text/markdown",
                             headers={"Content-Disposition": f'attachment; filename="{snapshot["kind"]}-v{snapshot["number"]}.md"'})
+
+        @self.router.get("/features/{feature_id}/versions/{version_id}/editable")
+        def editable(feature_id: str, version_id: str):
+            snapshot = self._call(self.studio.version, feature_id, version_id)
+            return {"markdown": editable_markdown(snapshot)}

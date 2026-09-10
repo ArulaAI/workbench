@@ -193,6 +193,7 @@ export interface EditorSelection {
 }
 
 interface SpecEditorProps {
+  ariaLabel?: string;
   content: string;
   specType: string;
   onChange: (content: string) => void;
@@ -204,7 +205,7 @@ interface SpecEditorProps {
 }
 
 export const SpecEditor = forwardRef<SpecEditorHandle, SpecEditorProps>(
-  function SpecEditor({ content, specType, onChange, onCursorChange, onSelectionChange, readOnly = false, showLineNumbers = true, autoHeight = false }, ref) {
+  function SpecEditor({ content, specType, onChange, onCursorChange, onSelectionChange, readOnly = false, showLineNumbers = true, autoHeight = false, ariaLabel = "Markdown editor" }, ref) {
     const containerRef = useRef<HTMLDivElement>(null);
     const viewRef = useRef<EditorView | null>(null);
     const onChangeRef = useRef(onChange);
@@ -406,6 +407,7 @@ export const SpecEditor = forwardRef<SpecEditorHandle, SpecEditorProps>(
       const state = EditorState.create({
         doc: content,
         extensions: [
+          EditorView.contentAttributes.of({"aria-label": ariaLabel}),
           history(),
           drawSelection(),
           EditorState.allowMultipleSelections.of(true),

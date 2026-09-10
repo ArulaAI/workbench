@@ -1,0 +1,107 @@
+{
+  "summary": "Prepared the saved RFC example using the selected sources; Design spec is optional.",
+  "sections": [
+    {
+      "id": "metadata",
+      "body": "Status: draft engineering proposal. Template: RFC Proposal 1, with eight core sections and conditional technical coverage. This saved example demonstrates PRD-to-RFC authoring without a Design spec. Proposed roles, thresholds and implementation choices below need review before real delivery.",
+      "items": [],
+      "source_ids": []
+    },
+    {
+      "id": "decision",
+      "body": "Propose a nullable date-only due_date on each task. The backend owns urgency classification, stable ordering and highlight_color selection. Derive urgency and color at read time so a stored task cannot retain yesterday\u2019s color. Approval sought: agree on this authority and additive contract before implementation. No frontend implementation is included.",
+      "items": [],
+      "source_ids": []
+    },
+    {
+      "id": "context",
+      "body": "The brief describes missed deadlines caused by tasks being buried. No actual task schema or API has been supplied for this example, so the architecture below is a proposal. Use the selected published PRD requirements included below as the product authority. Manual PRD changes are copied into this section for review; a saved example does not reason about their architecture implications.",
+      "items": [],
+      "source_ids": []
+    },
+    {
+      "id": "design",
+      "body": "Proposed flow: task create/update \u2192 existing task authorization and date validation \u2192 task storage \u2192 list read \u2192 date classification and stable sorting \u2192 API response. Persist due_date as a nullable date. Derive urgency and highlight_color on every read; do not store a color that would require a nightly refresh job.\n\nUse the task owner\u2019s configured timezone for date boundaries, with an explicit UTC fallback if no preference exists. Compare calendar dates, including DST boundaries. Classify overdue, today, tomorrow, day_after_tomorrow and none. Apply the selected PRD\u2019s overdue and completed-task rules. Preserve the current relative order for undated tasks. Invalid legacy dates degrade to no highlight and a diagnostic event; invalid new inputs are rejected.",
+      "items": [],
+      "source_ids": []
+    },
+    {
+      "id": "contracts",
+      "body": "Proposed additive contract:\n\n```json\n{\"due_date\":\"2026-09-17\",\"urgency\":\"tomorrow\",\"highlight_color\":\"#B45309\"}\n```\n\nA task without a relevant highlight returns highlight_color: null. Validate colors as #RRGGBB; the concrete palette remains subject to contrast review. The urgency label supplies meaning without depending on color alone. Clients render the supplied value and never receive CSS or HTML. Preserve existing task IDs, permissions, response fields and undated-task behavior. Reject invalid dates with a field-specific validation error. Existing clients can omit due_date. Confirm unknown-field handling before rollout.",
+      "items": [],
+      "source_ids": []
+    },
+    {
+      "id": "alternatives",
+      "body": "The real decision is where tier computation lives, since the PRD already fixes the behavioral rules. Two viable placements exist:\n\n1. Backend-computed tier at read time (recommended). The server derives the tier fresh on every list fetch. Pros: single source of truth, no drift, no migration needed for existing data, satisfies REQ-7 directly. Cons: adds a small per-request computation; tier correctness depends on server-side date/timezone handling being consistent.\n\n2. Backend-computed tier stored/materialized at write time, refreshed by a scheduled job. Pros: read path does no computation. Cons: requires a recurring job to advance tiers as days pass (a task 'due tomorrow' must become 'due today' with no write occurring), adding an operational dependency and a new failure mode (missed job run -> stale/wrong highlight) that the read-time approach avoids entirely. This does not fit the low apparent scale and lack of infrastructure evidence for a background scheduler.\n\nClient-side computation (the PRD's rejected status quo direction) is not a viable alternative: the author's explicit requirement (US-6/REQ-7) is that tier logic live in one place on the backend, specifically to avoid duplicated, drifting logic between multiple frontend surfaces. It is documented here only to explain why it is excluded, not evaluated as a live option.\n\nRecommendation: option 1. It has no operational moving parts beyond the existing request path, matches the explicit product requirement, and avoids inventing a scheduler for a feature where no scale or infra evidence justifies one.",
+      "items": [],
+      "source_ids": []
+    },
+    {
+      "id": "delivery",
+      "body": "Proposed change-safety plan: add nullable storage without changing existing records; deploy compatible reads before new writes; treat missing due_date as undated. Verify create, edit, clear, complete and read operations against the published PRD. Test stable ordering, invalid dates, null metadata, midnight and DST boundaries, ownership checks, and older clients.\n\nSecurity and privacy: reuse task read/write authorization, validate date inputs, restrict colors to the approved palette and avoid raw task content in logs. Due dates follow the task\u2019s retention and deletion policy. Verify these conditions against the real backend before rollout.\n\nProposed rollout: the engineering owner enables an internal pilot, observes it for one working day, then reviews date-classification errors, API failures and p95 latency before expansion. Pause for any ordering regression, authorization failure, or a proposed p95 increase over 10%. These are proposed thresholds, not measured baselines. Disable the new classification response path to roll back; retain due_date writes so they can be read after repair. Audit schema compatibility before any destructive rollback.",
+      "items": [],
+      "source_ids": []
+    },
+    {
+      "id": "decisions",
+      "body": "Open question: who owns the final palette and contrast review before a frontend client uses highlight_color? Owner is unassigned. The backend can return the proposed metadata while that UI review is tracked separately.\n\nThe engineering owner must validate the proposed schema compatibility, timezone fallback, retention behavior and rollout thresholds against the actual system before delivery. This RFC does not claim completed tests or launch approval.",
+      "items": [],
+      "source_ids": []
+    }
+  ],
+  "questions": [],
+  "assumptions": [],
+  "coverage": [
+    {
+      "module": "api",
+      "status": "material",
+      "rationale": "Additive due_date, urgency and hex-color contract with validation and null fallback is proposed in Contracts and impact."
+    },
+    {
+      "module": "persistence",
+      "status": "material",
+      "rationale": "Store only the nullable date and derive display metadata on reads; retain writes when disabling the new response path."
+    },
+    {
+      "module": "compatibility",
+      "status": "material",
+      "rationale": "Preserve older clients and undated behavior; verify unknown-field handling before exposure."
+    },
+    {
+      "module": "migration",
+      "status": "material",
+      "rationale": "Add nullable storage and tolerate missing fields; deploy readers before new writers and validate real schema constraints."
+    },
+    {
+      "module": "security",
+      "status": "material",
+      "rationale": "Reuse ownership checks, validate input dates and restrict colors to a palette instead of executable style content."
+    },
+    {
+      "module": "privacy",
+      "status": "material",
+      "rationale": "Apply task access, retention and deletion policy to dates; exclude task content from diagnostics and verify policy before rollout."
+    },
+    {
+      "module": "reliability",
+      "status": "material",
+      "rationale": "Invalid legacy dates degrade to no highlight; new invalid inputs fail clearly; test midnight and DST behavior."
+    },
+    {
+      "module": "rollout",
+      "status": "material",
+      "rationale": "Proposed internal pilot, review period, thresholds and disablement preserve newly written dates."
+    },
+    {
+      "module": "performance",
+      "status": "material",
+      "rationale": "Measure p95 list latency and stable-sort overhead with representative task volumes before expanding the pilot."
+    },
+    {
+      "module": "ai_evaluation",
+      "status": "not_material",
+      "rationale": "Due-date behavior uses deterministic date logic. AI is not part of the proposed task feature."
+    }
+  ]
+}

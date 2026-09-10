@@ -135,7 +135,7 @@ class Generator:
             "source_mode": mode_for(operation["pins"]),
             "generation_phase": "initial_document" if head is None else "revision",
             "operation": operation["action"],
-            "section_contract": TEMPLATES[operation["kind"]],
+            "section_contract": [(s["id"], s["title"]) for s in head["sections"]] if head else TEMPLATES[operation["kind"]],
             "available_source_ids": [{"id": s["id"], "label": s["label"]} for s in sources],
             "RFC_MODULES": RFC_MODULES if operation["kind"] == "rfc" else [],
             "request": operation["text"], "scope": operation["section_id"] or "whole_document",

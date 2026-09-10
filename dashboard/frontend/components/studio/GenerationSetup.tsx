@@ -24,6 +24,7 @@ export function GenerationSetup({feature, kind, busy, onCommand, includeBrief = 
   const sourceKinds: Kind[] = mode === "brief" ? [] : mode === "prd_design" ? ["prd", "design"] : [mode];
   const sourceLabels = sourceKinds.map(k => `${labels[k]} v${feature.documents[k].versions.find(v => v.id === feature.documents[k].published)?.number || "?"}`);
   const newerDrafts = sourceKinds.filter(k => feature.documents[k].head !== feature.documents[k].published).map(k => labels[k]);
+  if (feature.demo && kind === "design") return <p>This recording example includes a PRD and RFC. Choose the RFC tab to skip Design, or start a regular workspace to generate a Design spec.</p>;
   return <form className="studio-generation-setup" onSubmit={e => {e.preventDefault(); if (selected.available && !busy) void onCommand({action:"generate",kind,source_mode:mode,...(extra.trim() ? {text:extra.trim()} : {})});}}>
     <label htmlFor={`generation-source-${kind}`}>Start from</label>
     <select id={`generation-source-${kind}`} value={mode} onChange={e => setMode(e.target.value as SourceMode)} disabled={busy}>

@@ -1,6 +1,6 @@
 "use client";
 
-import { LockKeyhole, MessageSquare, Pencil, Sparkles } from "lucide-react";
+import { LockKeyhole, MessageSquare, Sparkles } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Command, PublicationReview, Section, Snapshot } from "./types";
@@ -19,8 +19,8 @@ export function SectionContent({ section, anchors = false }: { section: Section;
   </div>;
 }
 
-export function DocumentCanvas({ snapshot, busy, historical, onEdit, onComment, onScope, onReview, publicationReviews = [], published = false, onAcknowledge }: {
-  snapshot: Snapshot; busy: boolean; historical: boolean;
+export function DocumentCanvas({ snapshot, busy, historical, onEdit, onComment, onScope, onReview, publicationReviews = [], published = false, onAcknowledge, demo = false }: {
+  demo?: boolean; snapshot: Snapshot; busy: boolean; historical: boolean;
   onEdit: (section: Section) => void; onComment: (section: Section, quote: string) => void;
   onScope: (id: string) => void; onReview: (id: string) => void;
   publicationReviews?: PublicationReview[]; published?: boolean; onAcknowledge?: (command: Command) => Promise<boolean>;
@@ -33,8 +33,8 @@ export function DocumentCanvas({ snapshot, busy, historical, onEdit, onComment, 
       <div className="studio-section-heading"><h2><span>{String(index + 1).padStart(2, "0")}</span>{section.title}</h2>
         <div className="studio-section-actions">
           {section.protected && <span title="Directly edited. Whole-document AI requests preserve this section." className="studio-protected"><LockKeyhole size={12} /> Protected</span>}
-          {!historical && <><button disabled={busy} title={`Revise ${section.title} in chat`} aria-label={`Revise ${section.title} in chat`} onClick={() => onScope(section.id)}><Sparkles size={14} /></button>
-            <button disabled={busy} title={`Edit ${section.title}`} aria-label={`Edit ${section.title}`} onClick={() => onEdit(section)}><Pencil size={14} /></button></>}
+          {!historical && !demo && <><button disabled={busy} title={`Revise ${section.title} in chat`} aria-label={`Revise ${section.title} in chat`} onClick={() => onScope(section.id)}><Sparkles size={14} /></button>
+            </>}
           <button disabled={busy} title={`Comment on ${section.title}`} aria-label={`Comment on ${section.title}`} onClick={() => {
             const selected = window.getSelection()?.toString() || "";
             onComment(section, selected && section.body.includes(selected) ? selected : "");
@@ -44,14 +44,13 @@ export function DocumentCanvas({ snapshot, busy, historical, onEdit, onComment, 
       {section.needs_review && <div className="studio-notice">Your text was preserved after an upstream change. Review it against the new sources.
         {!historical && <button disabled={busy} onClick={() => onReview(section.id)}>Mark section reviewed</button>}</div>}
       <SectionContent section={section} anchors />
-      {!historical && section.id === "success" && successReview && onAcknowledge && <PublicationReviewCard key={`${snapshot.id}-success`} review={successReview} version={snapshot.id} busy={busy} published={published} onSave={onAcknowledge} onEditSection={id => {const section = snapshot.sections.find(s => s.id === id); if (section) onEdit(section);}} />}
+      {!historical && section.id === "success" && successReview && onAcknowledge && <PublicationReviewCard demo={demo} key={`${snapshot.id}-success`} review={successReview} version={snapshot.id} busy={busy} published={published} onSave={onAcknowledge} onEditSection={id => {const section = snapshot.sections.find(s => s.id === id); if (section) onEdit(section);}} />}
       {Boolean(section.unverified_source_ids?.length) && <div className="studio-notice">Evidence references need verification: {section.unverified_source_ids!.join(", ")}. Ask for a revision using the available sources before publishing.</div>}
       {section.source_ids.length > 0 && <div className="studio-citations">Based on {section.source_ids.map(id => <a key={id} href={`#source-${id}`}>{snapshot.sources.find(s => s.id === id)?.label || id}</a>)}</div>}
     </section>)}
     {snapshot.assumptions.length > 0 && <section className="studio-section" id="section-assumptions"><h2>Proposed assumptions</h2><p className="studio-muted">Review these before treating them as settled decisions.</p><ul>{snapshot.assumptions.map((a, i) => <li key={i}>{a}</li>)}</ul></section>}
-    {(snapshot.questions.length > 0 || !historical && questionsReview) && <section className="studio-section" id="section-open-decisions"><h2>Open questions review</h2>{snapshot.questions.map(q => <div key={q.id} id={`question-${q.id}`} className="studio-decision"><strong>{q.question}</strong><p>{q.why}</p><small>{questionsReview?.acknowledgement?.disposition === "deferred" ? "Deferred for follow-up; remains open" : "Answer below to update the document, or leave this question open with a follow-up decision."}</small></div>)}
-      {!snapshot.questions.length && <p className="studio-muted">There are no separate questions. Check the open decisions in the document before confirming.</p>}
-      {!historical && questionsReview && onAcknowledge && <PublicationReviewCard key={`${snapshot.id}-open-questions`} review={questionsReview} version={snapshot.id} busy={busy} published={published} onSave={onAcknowledge} onEditSection={id => {const section = snapshot.sections.find(s => s.id === id); if (section) onEdit(section);}} />}
+    {(snapshot.questions.length > 0 || !historical && questionsReview) && <section className="studio-section" id="section-open-decisions"><h2>Open questions</h2>{snapshot.questions.map(q => <div key={q.id} id={`question-${q.id}`} className="studio-decision"><strong>{q.question}</strong><p>{q.why}</p><small>{questionsReview?.acknowledgement?.disposition === "deferred" ? "Deferred for follow-up; remains open" : "Answer below to update the document, or leave this question open with a follow-up decision."}</small></div>)}
+      {!historical && questionsReview && onAcknowledge && <PublicationReviewCard demo={demo} key={`${snapshot.id}-open-questions`} review={questionsReview} version={snapshot.id} busy={busy} published={published} onSave={onAcknowledge} onEditSection={id => {const section = snapshot.sections.find(s => s.id === id); if (section) onEdit(section);}} />}
     </section>}
     {snapshot.coverage.length > 0 && <section className="studio-section" id="section-rfc-coverage"><h2>RFC coverage</h2><div className="studio-coverage">{snapshot.coverage.map(c => <div key={c.module}><div><strong>{c.module.replaceAll("_", " ")}</strong><span className={`studio-pill ${c.status === "unresolved" ? "amber" : ""}`}>{c.status.replaceAll("_", " ")}</span></div><p>{c.rationale}</p></div>)}</div></section>}
     <section className="studio-section" id="section-sources"><h2>Sources and provenance</h2><p className="studio-muted">Repository excerpts support technical context. Customer evidence comes from the author. Generated proposals still need review.</p>
@@ -63,13 +62,16 @@ export function DocumentCanvas({ snapshot, busy, historical, onEdit, onComment, 
 
 export function VersionComparison({ before, after, versionLabels = {} }: { before: Snapshot | null; after: Snapshot; versionLabels?: Record<string, string> }) {
   const changed = after.sections.filter(s => JSON.stringify(before?.sections.find(old => old.id === s.id)) !== JSON.stringify(s));
+  const removed = before?.sections.filter(s => !after.sections.some(current => current.id === s.id)) || [];
+  const changeCount = changed.length + removed.length;
   return <div className="studio-comparison">
-    <div className="studio-comparison-heading"><h2>{changed.length} changed section{changed.length !== 1 ? "s" : ""}</h2><p>v{before?.number || 0} → v{after.number} · {after.summary}</p></div>
+    <div className="studio-comparison-heading"><h2>{changeCount} changed section{changeCount !== 1 ? "s" : ""}</h2><p>v{before?.number || 0} → v{after.number} · {after.summary}</p></div>
     {changed.map(section => {
       const old = before?.sections.find(s => s.id === section.id);
       return <section key={section.id}><h3>{section.title}</h3><div className="studio-compare-columns"><div><p className="studio-diff-label">Before · v{before?.number || 0}</p>{old ? <SectionContent section={old} /> : <p className="studio-muted">Section added</p>}</div><div><p className="studio-diff-label">After · v{after.number}</p><SectionContent section={section} /></div></div></section>;
     })}
-    {changed.length === 0 && <p className="studio-muted">The section text is unchanged. Review the decision, assumption and source changes below.</p>}
+    {removed.map(section => <section key={section.id}><h3>{section.title}</h3><div className="studio-compare-columns"><div><p className="studio-diff-label">Before · v{before?.number}</p><SectionContent section={section} /></div><div><p className="studio-diff-label">After · v{after.number}</p><p className="studio-muted">Section removed</p></div></div></section>)}
+    {changeCount === 0 && <p className="studio-muted">The section text is unchanged. Review the decision, assumption and source changes below.</p>}
     <details className="studio-source"><summary>Decision, assumption and source changes</summary><div className="studio-compare-columns">{[before, after].map((version, index) => <div key={index} className="studio-prose"><p className="studio-diff-label">{index ? "After" : "Before"} · v{version?.number || 0}</p><h3>Open decisions</h3>{version?.questions.length ? <ul>{version.questions.map(q => <li key={q.id}>{q.question} {q.blocking && "(Blocks publication)"}</li>)}</ul> : <p>None</p>}<h3>Assumptions</h3>{version?.assumptions.length ? <ul>{version.assumptions.map((a, i) => <li key={i}>{a}</li>)}</ul> : <p>None</p>}<h3>Published sources</h3><p>{Object.values(version?.pins || {}).map(id => versionLabels[id] || "Published source").join(", ") || "Author brief and supporting context"}</p>{version?.coverage.length ? <><h3>RFC coverage</h3><ul>{version.coverage.map(c => <li key={c.module}>{c.module.replaceAll("_", " ")}: {c.status.replaceAll("_", " ")}. {c.rationale}</li>)}</ul></> : null}</div>)}</div></details>
   </div>;
 }

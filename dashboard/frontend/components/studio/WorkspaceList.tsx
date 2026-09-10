@@ -38,7 +38,7 @@ export function WorkspaceList({ features, onOpen, onDeleted, onRefresh }: {
     {notice && <p className="studio-workspace-notice" role="status">{notice}</p>}
     {features.length === 0 ? <div className="studio-empty-small"><History size={24} /><p>Your workspaces will appear here.<br />Come back to any draft, any time.</p></div> : features.map(f => <article className="studio-feature-card surface" key={f.id} aria-label={f.title}>
       <button className="studio-feature-open" onClick={() => onOpen(f.id, f.initial_kind || "prd")} aria-label={`Open workspace: ${f.title}`}>
-        <strong>{f.title}</strong><p>{f.brief}</p>
+        <strong>{f.title}</strong>{f.demo && <span className="studio-pill">Saved example · no AI</span>}<p>{f.brief}</p>
         <div className="studio-feature-versions">{kinds.map(k => <span key={k} className={f.documents[k].published ? "published" : ""}>{labels[k]} {f.documents[k].head ? `v${f.documents[k].versions.length}` : "·"}</span>)}</div>
         <small>Open workspace <ArrowRight size={12} /></small>
       </button>

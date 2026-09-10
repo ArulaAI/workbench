@@ -13,11 +13,11 @@ export function GenerationProgress({operation}: {operation: Operation}) {
   const elapsed = seconds === null ? null : `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
   const queued = operation.status === "queued";
   return <div className="studio-generation-progress">
-    <p role="status">{queued ? "Waiting for an available generation slot." : seconds !== null && seconds >= 120
+    <p role="status">{operation.demo ? "Loading the saved example · about 5 seconds. No AI request is being made." : queued ? "Waiting for an available generation slot." : seconds !== null && seconds >= 120
       ? "This is taking a while. We’re still waiting for the complete response."
       : operation.action === "clarify" ? "Checking the brief and preparing any necessary questions."
       : "A complete draft can take several minutes. It appears after validation."}</p>
-    {elapsed && <p aria-live="off"><span>{queued ? "Time in queue" : "Elapsed"}: {elapsed}</span>{!queued && operation.timeout_seconds && <span> · Model response limit: {Math.ceil(operation.timeout_seconds / 60)} min</span>}</p>}
+    {elapsed && <p aria-live="off"><span>{queued ? "Time in queue" : "Elapsed"}: {elapsed}</span>{!operation.demo && !queued && operation.timeout_seconds && <span> · Model response limit: {Math.ceil(operation.timeout_seconds / 60)} min</span>}</p>}
     <p>Your inputs are saved. You can leave this workspace and return.</p>
   </div>;
 }

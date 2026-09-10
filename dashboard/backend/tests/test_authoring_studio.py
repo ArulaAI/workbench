@@ -59,9 +59,9 @@ def publish(studio, state, kind="prd"):
     if any(not b.startswith('Review and acknowledge') for b in state['documents'][kind]['blockers']):
         return command(studio, state, "publish", kind=kind, version_id=state['documents'][kind]['head'])
     for review in state['documents'][kind]['publication_review']:
-        if not review['acknowledgement'] and not review['requires_deferral'] and not review['legacy_published']:
+        if review['id'] == 'success' and not review['acknowledgement'] and not review['requires_deferral'] and not review['legacy_published']:
             state = acknowledge(studio, state, review['id'], kind=kind)
-    return command(studio, state, "publish", kind=kind, version_id=state["documents"][kind]["head"])
+    return command(studio, state, "publish", kind=kind, version_id=state["documents"][kind]["head"], reviewed=True)
 
 
 def acknowledge(studio, state, group, disposition='confirmed', text='', kind='prd'):
@@ -709,20 +709,42 @@ def test_revision_provider_schema_rejects_invented_ids_and_preserves_allocated_i
         revision_model(head, 'requirements').model_validate(scoped)
 
 
-def test_publication_requires_both_author_reviews_even_with_complete_content(studio):
+def test_complete_prd_requires_success_and_document_review_but_no_empty_question_confirmation(studio):
     state = draft(studio)
     version = state['documents']['prd']['head']
-    with pytest.raises(StudioError, match='Success.*Open questions'):
+    assert state['documents']['prd']['blockers'] == ['Review and acknowledge Success for this version.']
+    with pytest.raises(StudioError, match='Success'):
         command(studio, state, 'publish', version_id=version)
     state = acknowledge(studio, state, 'success')
-    with pytest.raises(StudioError, match='Open questions'):
+    with pytest.raises(StudioError, match='reviewed this version'):
         command(studio, state, 'publish', version_id=version)
-    state = acknowledge(studio, state, 'open_questions')
     assert state['documents']['prd']['head'] == version
     assert len(state['documents']['prd']['versions']) == 1
     assert not state['documents']['prd']['blockers']
-    state = command(studio, state, 'publish', version_id=version)
-    assert len(state['documents']['prd']['publications'][0]['reviews']) == 2
+    state = command(studio, state, 'publish', version_id=version, reviewed=True)
+    publication = state['documents']['prd']['publications'][0]
+    assert [r['group'] for r in publication['reviews']] == ['success']
+    assert publication['document_review']['version_id'] == version
+    assert publication['document_review']['author'] == 'author'
+    assert publication['document_review']['created_at']
+
+
+@pytest.mark.parametrize('kind', ['design', 'rfc'])
+def test_complete_standalone_documents_need_only_final_document_review(studio, kind):
+    state = studio.create(CreateFeature(title='Saved views', kind=kind, brief='Save personal filters and restore them later.', request_id=uuid4().hex))
+    state = finish(studio, state)
+    version = state['documents'][kind]['head']
+    assert state['documents'][kind]['blockers'] == []
+    with pytest.raises(StudioError, match='reviewed this version'):
+        command(studio, state, 'publish', kind=kind, version_id=version)
+    state = command(studio, state, 'publish', kind=kind, version_id=version, reviewed=True)
+    assert state['documents'][kind]['publications'][0]['reviews'] == []
+    state = command(studio, state, 'edit', kind=kind, version_id=version,
+                    section_id=state['documents'][kind]['snapshot']['sections'][0]['id'], text='Updated direction.')
+    with pytest.raises(StudioError, match='exact current revision'):
+        command(studio, state, 'publish', kind=kind, version_id=version, reviewed=True)
+    with pytest.raises(StudioError, match='reviewed this version'):
+        command(studio, state, 'publish', kind=kind, version_id=state['documents'][kind]['head'])
 
 
 def test_success_identifies_exact_row_and_requires_explicit_deferral(studio):
@@ -816,7 +838,7 @@ def test_acknowledgements_do_not_override_content_or_comment_blockers(studio):
     state = acknowledge(studio, state, 'open_questions')
     state = command(studio, state, 'comment', section_id='scope', version_id=state['documents']['prd']['head'], text='Scope needs review', blocking=True)
     with pytest.raises(StudioError, match='Requirements and acceptance / Section text.*todo.*Resolve blocking comment'):
-        command(studio, state, 'publish', version_id=state['documents']['prd']['head'])
+        command(studio, state, 'publish', version_id=state['documents']['prd']['head'], reviewed=True)
 
 
 def test_plain_unknown_success_and_prose_open_decisions_are_reviewable(studio):
@@ -826,6 +848,7 @@ def test_plain_unknown_success_and_prose_open_decisions_are_reviewable(studio):
     state = finish(studio, create(studio), result=payload)
     assert all(g['requires_deferral'] for g in state['documents']['prd']['publication_review'])
     assert state['documents']['prd']['snapshot']['questions'] == []
+    assert 'Review and acknowledge Open questions for this version.' in state['documents']['prd']['blockers']
 
 
 def test_legacy_published_snapshot_remains_valid_but_next_version_requires_review(studio):
@@ -841,7 +864,7 @@ def test_legacy_published_snapshot_remains_valid_but_next_version_requires_revie
     assert state['documents']['prd']['blockers'] == []
     state = command(studio, state, 'edit', section_id='scope', version_id=state['documents']['prd']['head'], text='New scope')
     assert all(not g['legacy_published'] for g in state['documents']['prd']['publication_review'])
-    assert len(state['documents']['prd']['blockers']) == 2
+    assert state['documents']['prd']['blockers'] == ['Review and acknowledge Success for this version.']
 
 
 def test_downstream_generation_receives_frozen_author_review_notes(studio, monkeypatch):

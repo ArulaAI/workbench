@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Plus, Trash2, X } from "lucide-react";
-import type { Item, Section } from "./types";
+import { X } from "lucide-react";
+import type { Section } from "./types";
 
 export function Dialog({ title, onClose, children, busy = false, descriptionId, role = "dialog", className = "" }: { title: string; onClose: () => void; children: React.ReactNode; busy?: boolean; descriptionId?: string; role?: "dialog" | "alertdialog"; className?: string }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -24,27 +24,6 @@ export function Dialog({ title, onClose, children, busy = false, descriptionId, 
     return () => { document.removeEventListener("keydown", handler); previous?.focus(); };
   }, [onClose]);
   return <div className="studio-overlay"><div ref={ref} tabIndex={-1} className={`studio-dialog surface ${className}`} role={role} aria-modal="true" aria-label={title} aria-describedby={descriptionId} aria-busy={busy}><header><h2>{title}</h2><button onClick={onClose} disabled={busy} aria-label="Close dialog"><X size={18} /></button></header>{children}</div></div>;
-}
-
-export function SectionEditor({ section, onClose, onSave }: { section: Section; onClose: () => void; onSave: (body: string, items: Item[]) => Promise<boolean> }) {
-  const [body, setBody] = useState(section.body), [items, setItems] = useState(section.items);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-  function update(index: number, patch: Partial<Item>) { setItems(items.map((item, i) => i === index ? {...item, ...patch} : item)); }
-  return <Dialog title={`Edit ${section.title}`} onClose={onClose}><form onSubmit={async e => {
-    e.preventDefault(); setSaving(true); setError("");
-    if (await onSave(body, items)) onClose();
-    else setError("Your text is still here. If this section changed elsewhere, close and reopen it after copying your edits.");
-    setSaving(false);
-  }}><div className="studio-dialog-body">
-    <p className="studio-muted">Saving creates a new version and protects this section from whole-document AI revisions. A targeted chat request can still revise it.</p>
-    <label htmlFor="section-body">Section text · Markdown supported</label><textarea id="section-body" rows={12} value={body} onChange={e => setBody(e.target.value)} />
-    {(items.length > 0 || ["stories", "requirements", "guardrails", "success"].includes(section.id)) && <div className="studio-item-editor"><h3>Structured entries</h3>{items.map((item, index) => <fieldset key={item.id}><legend>{item.id.startsWith("new-") ? "New entry" : item.id}</legend><div className="studio-row"><label htmlFor={`statement-${index}`}>Statement</label><button type="button" onClick={() => setItems(items.filter((_, i) => i !== index))} aria-label={`Remove ${item.id}`}><Trash2 size={14} /></button></div><textarea id={`statement-${index}`} required rows={3} value={item.statement} onChange={e => update(index, {statement: e.target.value})} />
-      <label htmlFor={`verification-${index}`}>Verification or outcome</label><textarea id={`verification-${index}`} required rows={3} value={item.verification} onChange={e => update(index, {verification: e.target.value})} />
-      <label htmlFor={`references-${index}`}>Related IDs · comma separated</label><input id={`references-${index}`} value={item.references.join(", ")} onChange={e => update(index, {references: e.target.value.split(",").map(v => v.trim()).filter(Boolean)})} />
-    </fieldset>)}<button type="button" onClick={() => setItems([...items, {id: `new-${crypto.randomUUID()}`, statement: "", verification: "", references: []}])}><Plus size={14} /> Add entry</button></div>}
-    {error && <p role="alert" className="studio-error-text">{error}</p>}
-  </div><footer><button type="button" onClick={onClose}>Cancel</button><button className="primary" disabled={saving} type="submit">{saving ? "Saving…" : "Save new version"}</button></footer></form></Dialog>;
 }
 
 export function CommentEditor({ section, quote, onClose, onSave }: { section: Section; quote: string; onClose: () => void; onSave: (text: string, blocking: boolean) => Promise<boolean> }) {

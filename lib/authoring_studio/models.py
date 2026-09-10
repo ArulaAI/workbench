@@ -122,11 +122,12 @@ class NamedClarification(Clarification):
 class Command(StrictModel):
     action: Literal["generate", "revise", "reconcile", "edit", "comment", "resolve", "dismiss",
                     "reopen", "publish", "cancel", "retry", "restore", "review_section", "answer_clarification",
-                    "acknowledge_publication", "revoke_publication_review"]
+                    "acknowledge_publication", "revoke_publication_review", "edit_document"]
     expected_revision: int = Field(ge=0)
     request_id: str = Field(min_length=8, max_length=100)
     kind: Kind = "prd"
     text: str = Field(default="", max_length=20000)
+    markdown: str | None = Field(default=None, max_length=600000)
     section_id: str | None = None
     version_id: str | None = None
     comment_id: str | None = None
@@ -137,6 +138,7 @@ class Command(StrictModel):
     choice: Literal["option-1", "option-2", "option-3", "custom"] | None = None
     review_group: Literal["success", "open_questions"] | None = None
     disposition: Literal["confirmed", "deferred"] | None = None
+    reviewed: bool = False
     source_mode: SourceMode | None = None
 
 
@@ -145,6 +147,7 @@ class DeleteFeature(StrictModel):
 
 
 class CreateFeature(StrictModel):
+    demo: Literal["task-due-dates"] | None = None
     kind: Kind = "prd"
     title: str = Field(default="", max_length=160)
     brief: str = Field(min_length=12, max_length=20000)

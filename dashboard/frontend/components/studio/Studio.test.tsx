@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import Studio from "./Studio";
-import { SectionEditor } from "./Editors";
 import type { Feature, Section, Snapshot } from "./types";
 
+vi.mock("@/components/editor/SpecEditor", () => ({SpecEditor: ({content, onChange, ariaLabel}: {content:string; onChange:(value:string)=>void; ariaLabel:string}) => <textarea aria-label={ariaLabel} value={content} onChange={e => onChange(e.target.value)} />}));
 vi.mock("@/components/landing/IconRail", () => ({IconRail: () => null}));
 vi.mock("next/link", () => ({default: ({children, href, ...props}: React.AnchorHTMLAttributes<HTMLAnchorElement>) => <a href={href} {...props}>{children}</a>}));
 
@@ -19,7 +19,7 @@ function fixture(): Feature {
 function mockApi(state: Feature, failure?: string) {
   const commands: Record<string, unknown>[] = [];
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
-    let value: unknown = url.endsWith("/health") ? {contract:1} : url.endsWith("/features") ? [state] : state;
+    let value: unknown = url.endsWith("/editable") ? {markdown:"# Scope\n\nPersonal saved views only.\n"} : url.endsWith("/health") ? {contract:1} : url.endsWith("/features") ? [state] : state;
     let ok = true;
     if (init?.method === "POST") {
       commands.push(JSON.parse(init.body as string));
@@ -32,6 +32,7 @@ function mockApi(state: Feature, failure?: string) {
 }
 
 beforeEach(() => {
+  sessionStorage.clear();
   window.history.replaceState(null, "", "/define/studio?feature=feature-1");
   Element.prototype.scrollTo = vi.fn();
 });
@@ -61,37 +62,71 @@ describe("Authoring studio workflow", () => {
     expect(window.location.search).toBe("");
   });
 
-  it("holds publication until both reviews are saved, including when no separate questions exist", async () => {
+  it("requires Success and a final document review without asking to confirm an empty question list", async () => {
     let state = fixture();
     state.documents.prd.snapshot = {...snapshot,sections:[section,{...section,id:"success",title:"Success",body:"Review the agreed success criteria."}]};
     state.documents.prd.publication_review = [
       {id:"success",title:"Success",sections:[{id:"success",title:"Success"}],findings:[],requires_deferral:false,acknowledgement:null},
       {id:"open_questions",title:"Open questions",sections:[],findings:[],requires_deferral:false,acknowledgement:null},
     ];
-    state.documents.prd.blockers=["Review and acknowledge Success for this version.","Review and acknowledge Open questions for this version."];
+    state.documents.prd.blockers=["Review and acknowledge Success for this version."];
     const commands: Record<string,unknown>[]=[];
     vi.stubGlobal("fetch",vi.fn(async (url:string,init?:RequestInit) => {
       if (init?.method === "POST") {
         const payload=JSON.parse(init.body as string); commands.push(payload);
         const doc=state.documents.prd;
         const reviews=doc.publication_review!.map(r => r.id === payload.review_group ? {...r,acknowledgement:{version_id:payload.version_id,disposition:payload.disposition,note:payload.text,created_at:"now"}} : r);
-        state={...state,revision:state.revision+1,documents:{...state.documents,prd:{...doc,publication_review:reviews,blockers:reviews.filter(r => !r.acknowledgement).map(r => `Review and acknowledge ${r.title} for this version.`)}}};
+        state={...state,revision:state.revision+1,documents:{...state.documents,prd:{...doc,published:payload.action === "publish" ? doc.head : null,publication_review:reviews,blockers:reviews.filter(r => (r.id === "success" || r.requires_deferral) && !r.acknowledgement).map(r => `Review and acknowledge ${r.title} for this version.`)}}};
       }
       return {ok:true,json:async () => url.endsWith("/health") ? {contract:1} : url.endsWith("/features") ? [state] : state};
     }));
     render(<Studio />);
     const success=await screen.findByRole("region",{name:"Review Success before publishing"});
     expect(screen.getByRole("button",{name:"Publish snapshot",exact:true})).toBeDisabled();
+    expect(screen.getByRole("checkbox",{name:"I’ve reviewed this version"})).toBeDisabled();
+    expect(screen.getByText("No open questions found.")).toBeInTheDocument();
+    expect(screen.queryByRole("radio",{name:"I confirm there are no unresolved questions"})).not.toBeInTheDocument();
     fireEvent.click(within(success).getByRole("radio",{name:"I confirm these success criteria"}));
     fireEvent.click(within(success).getByRole("button",{name:"Save Success confirmation"}));
     await within(success).findByText("You confirmed this content for this version.");
     expect(screen.getByRole("button",{name:"Publish snapshot",exact:true})).toBeDisabled();
-    const questions=screen.getByRole("region",{name:"Review Open questions before publishing"});
-    fireEvent.click(within(questions).getByRole("radio",{name:"I confirm there are no unresolved questions"}));
-    fireEvent.click(within(questions).getByRole("button",{name:"Save Open questions confirmation"}));
+    expect(screen.getByRole("button",{name:"Review before publishing"})).toBeEnabled();
+    fireEvent.click(screen.getByRole("checkbox",{name:"I’ve reviewed this version"}));
     await waitFor(() => expect(screen.getByRole("button",{name:"Publish snapshot",exact:true})).toBeEnabled());
-    expect(commands.map(c => c.review_group)).toEqual(["success","open_questions"]);
+    fireEvent.click(screen.getByRole("button",{name:"Publish snapshot",exact:true}));
+    await waitFor(() => expect(screen.getByRole("button",{name:"Published",exact:true})).toBeDisabled());
+    expect(commands.map(c => c.action)).toEqual(["acknowledge_publication","publish"]);
+    expect(commands[1]).toMatchObject({reviewed:true,version_id:"v1"});
     expect(commands.every(c => c.version_id === "v1")).toBe(true);
+  });
+
+  it("clears the final review when an edit saves a new version and gates the toolbar too", async () => {
+    let state = fixture();
+    const commands: Record<string,unknown>[] = [];
+    vi.stubGlobal("fetch",vi.fn(async (url:string,init?:RequestInit) => {
+      if (init?.method === "POST") {
+        const payload = JSON.parse(init.body as string); commands.push(payload);
+        if (payload.action === "edit_document") {
+          const updated = {...snapshot,id:"v2",number:2,sections:[{...section,body:"Updated scope."}]};
+          state = {...state,revision:4,documents:{...state.documents,prd:{...state.documents.prd,head:"v2",snapshot:updated,versions:[snapshot,updated]}}};
+        }
+      }
+      return {ok:true,json:async () => url.endsWith("/editable") ? {markdown:"# Scope\n\nPersonal saved views only."} : url.endsWith("/health") ? {contract:1} : url.endsWith("/features") ? [state] : state};
+    }));
+    render(<Studio />);
+    fireEvent.click(await screen.findByRole("checkbox",{name:"I’ve reviewed this version"}));
+    expect(screen.getByRole("button",{name:"Publish current snapshot"})).toBeEnabled();
+    fireEvent.click(screen.getByRole("button",{name:"Edit document"}));
+    fireEvent.change(await screen.findByLabelText("Document Markdown"),{target:{value:"# Scope\n\nUpdated scope."}});
+    fireEvent.click(screen.getByRole("button",{name:"Save and view"}));
+    await screen.findByText("Updated scope.");
+    expect(screen.getByRole("checkbox",{name:"I’ve reviewed this version"})).not.toBeChecked();
+    expect(screen.getByRole("button",{name:"Publish snapshot",exact:true})).toBeDisabled();
+    expect(screen.queryByRole("button",{name:"Publish current snapshot"})).not.toBeInTheDocument();
+    expect(screen.getByRole("button",{name:"Review before publishing"})).toBeEnabled();
+    fireEvent.click(screen.getByRole("checkbox",{name:"I’ve reviewed this version"}));
+    fireEvent.click(screen.getByRole("button",{name:"Publish current snapshot"}));
+    await waitFor(() => expect(commands.at(-1)).toMatchObject({action:"publish",version_id:"v2",reviewed:true,expected_revision:4}));
   });
 
   it("preserves an existing draft while a later blocking decision remains", async () => {
@@ -126,7 +161,7 @@ describe("Authoring studio workflow", () => {
     const state=fixture(); state.operations=[{id:"op1",kind:"prd",status:"running",text:"Update scope",error:null,version_id:null}];
     const commands=mockApi(state); render(<Studio />);
     expect(await screen.findByRole("button",{name:"Cancel generation"})).toBeEnabled();
-    expect(screen.getByRole("button",{name:"Edit Scope"})).toBeDisabled();
+    expect(screen.getByRole("button",{name:"Edit document"})).toBeDisabled();
     fireEvent.click(screen.getByRole("button",{name:"Cancel generation"}));
     await waitFor(() => expect(commands[0]).toMatchObject({action:"cancel",expected_revision:3}));
   });
@@ -151,14 +186,18 @@ describe("Authoring studio workflow", () => {
     expect(screen.getByLabelText("Start from")).toHaveValue("brief");
   });
 
-  it("keeps the direct editor open with author text after a failed save", async () => {
-    const save=vi.fn().mockResolvedValue(false), close=vi.fn();
-    render(<SectionEditor section={section} onClose={close} onSave={save} />);
-    fireEvent.change(screen.getByLabelText("Section text · Markdown supported"),{target:{value:"My manual scope decision"}});
-    fireEvent.click(screen.getByRole("button",{name:"Save new version"}));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Your text is still here");
-    expect(screen.getByLabelText("Section text · Markdown supported")).toHaveValue("My manual scope decision");
-    expect(close).not.toHaveBeenCalled();
+  it("edits all Markdown in place and keeps the draft after a failed save", async () => {
+    const commands = mockApi(fixture(), "This workspace changed. Review the latest version."); render(<Studio />);
+    fireEvent.click(await screen.findByRole("button", {name:"Edit document"}));
+    const input = await screen.findByLabelText("Document Markdown");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", {name:/Design spec/})).toBeDisabled();
+    fireEvent.change(input, {target:{value:"# Scope\n\nMy manual scope decision\n\n# Notes\n\nNew context."}});
+    fireEvent.click(screen.getByRole("button", {name:"Save and view"}));
+    await waitFor(() => expect(commands[0]).toMatchObject({action:"edit_document",version_id:"v1",expected_revision:3,markdown:expect.stringContaining("# Notes")}));
+    expect(await screen.findByText(/Your changes have not been saved/)).toBeInTheDocument();
+    expect((screen.getByLabelText("Document Markdown") as HTMLTextAreaElement).value).toContain("My manual scope decision");
+    expect(screen.queryByRole("button", {name:"Edit Scope"})).not.toBeInTheDocument();
   });
 });
 
@@ -371,4 +410,42 @@ it('keeps stale published Design unavailable even when its latest draft is recon
   expect(screen.getByRole('option',{name:/Published PRD and Design spec/})).toBeDisabled();
   expect(screen.getByRole('option',{name:/Published Design spec only/})).toBeDisabled();
   expect(screen.getByRole('button',{name:'Generate RFC',exact:true})).toBeEnabled();
+});
+
+describe('Saved recording example', () => {
+  it('fills the due-date brief and explicitly requests a fresh offline demo', async () => {
+    window.history.replaceState(null,'','/define/studio');
+    const commands=mockApi(fixture());
+    render(<Studio />);
+    fireEvent.click(await screen.findByRole('button',{name:'Use example',exact:true}));
+    expect((screen.getByLabelText('Describe what you want to solve') as HTMLTextAreaElement).value).toContain('cancel a subscription');
+    expect(screen.getByText(/Saved due-date example · no AI calls/)).toBeInTheDocument();
+    const generate=screen.getByRole('button',{name:'Generate PRD',exact:true});
+    await waitFor(() => expect(generate).toBeEnabled());
+    fireEvent.click(generate);
+    await waitFor(() => expect(commands).toHaveLength(1));
+    expect(commands[0]).toMatchObject({demo:'task-due-dates',kind:'prd',context:''});
+  });
+
+  it('returns to live generation when the example brief is changed', async () => {
+    window.history.replaceState(null,'','/define/studio');
+    const commands=mockApi(fixture());
+    render(<Studio />);
+    fireEvent.click(await screen.findByRole('button',{name:'Use example',exact:true}));
+    fireEvent.change(screen.getByLabelText('Describe what you want to solve'),{target:{value:'A new problem with different constraints.'}});
+    expect(screen.queryByText(/Saved due-date example · no AI calls/)).not.toBeInTheDocument();
+    const submit=screen.getByRole('button',{name:'Continue with brief'});
+    await waitFor(() => expect(submit).toBeEnabled());
+    fireEvent.click(submit);
+    await waitFor(() => expect(commands).toHaveLength(1));
+    expect(commands[0]).not.toHaveProperty('demo');
+  });
+
+  it('keeps manual editing available but explains that demo chat does not call AI', async () => {
+    const state=fixture(); state.demo='task-due-dates';
+    mockApi(state); render(<Studio />);
+    expect(await screen.findByRole('button',{name:'Edit document'})).toBeEnabled();
+    expect(screen.getByRole('textbox',{name:'Revision request'})).toBeDisabled();
+    expect(screen.getByText(/Example mode · saved content, no AI calls/)).toBeInTheDocument();
+  });
 });

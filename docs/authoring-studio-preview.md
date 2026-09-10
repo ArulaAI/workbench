@@ -38,19 +38,27 @@ The current local preview contains **Saved views for the Define workspace**, wit
 
 In that example, PRD v5 and Design v2 are published. RFC v2 is deliberately left as a draft using older sources, with a blocking review comment about its proposed data record and corruption recovery. Try **Reconcile changes**, inspect **Changes**, and address the comment to exercise the review loop. The published PRD's duplicate-name requirement already flowed into Design v2 through reconciliation.
 
+## Edit the whole document
+
+Use **Edit** in the document toolbar to open the PRD, Design spec or RFC in one full-page Markdown editor. The section pencil icons and edit dialog are removed. **Preview** renders the unsaved draft; **Edit** returns to the same text with undo history intact. **Save and view** saves all changes as one author version and returns to the rendered document. Opening and closing an unchanged editor does not add a version.
+
+Required headings stay in place. Add sections with `# Heading` and subsections with `## Heading`. Structured entries appear as Markdown tables: retain existing IDs and use `new` for an added row. The server checks headings, IDs, references and RFC coverage before saving anything. Only changed sections become protected from broad AI revisions; custom sections support scoped chat revisions. Publication reviews must be repeated for the new version. Source records and published snapshots stay attached to their original versions.
+
+Navigation to other documents is disabled during editing. Cancel asks whether to discard unsaved changes; preview does not save them. The current tab retains an unsaved draft for recovery, and failed or conflicting saves leave the editor open. **Download draft** provides a local Markdown copy. Review-card shortcuts open the same full editor at the relevant section.
+
 ## Revise and review
 
 | Action | Result |
 | --- | --- |
 | Chat about the whole document | Creates a new version; directly edited sections stay protected. |
 | Choose a section in the chat selector | Changes only that section. A response that tries to change another section is rejected. |
-| Use a section's pencil button | Edit prose and structured rows. Saving creates a version and protects that section from broad AI rewrites. |
+| Use Edit in the document toolbar | Edit the complete Markdown document, preview it and save all changes as one version. |
 | Use a section's comment button | Anchors feedback to its section and source version. Selected text is quoted when it matches that section. |
 | Address a comment | Generates a scoped revision and links it to the comment. Review the change, then resolve or dismiss the comment yourself. |
 | Open Changes or Version history | Compare a version with its predecessor, inspect an older version, or restore it as a new revision. |
 | Download Markdown | Exports the selected version with assumptions, open decisions and source provenance. |
 
-After a save conflict, your editor text remains available. Copy it if needed, close the editor, review the latest section and reopen it before saving. Network retries of an unchanged request reuse its request ID during the current page session.
+After a save conflict, your editor text remains available. Download the draft if needed, close the editor, review the latest document and reopen it before saving. Network retries of an unchanged request reuse its request ID during the current page session.
 
 ## Publish and continue downstream
 
@@ -66,7 +74,9 @@ For **PRD → RFC**, publish the PRD, select **Continue to RFC**, and use **Publ
 
 Each new document checks its own context and saves its own clarification answers before drafting. A standalone Design or RFC uses the same editing, version history, comments and publication reviews as a document derived from a PRD.
 
-Before publishing a PRD, review **Success** and **Open questions** using the links beside the Publish button. Design and RFC also require an Open questions review. **Answer and update the document** accepts answers directly in the review and creates a new version for you to inspect. Success has an equivalent **Update the success criteria** option scoped to that section. **Leave these items open for follow-up** saves a reason for deferring them; its note does not answer the questions or change document content. Confirmation becomes available once the current document has no detected unresolved items. The review explains what prevents confirmation and provides a direct section-edit button.
+Before publishing, handle any **Open questions** using **Answer and update the document** or **Leave these items open for follow-up**. Answers create a new version to inspect. Leaving an item open saves a reason and follow-up plan without answering it or changing the document. When no unresolved items are detected, the page shows **No open questions found**, with no extra question confirmation. PRDs also require a **Success** review: confirm complete criteria, update missing details, or save a follow-up plan.
+
+Once the publication checks are clear, select **I’ve reviewed this version** beside **Publish snapshot**. This is the final review of the document and its saved follow-up plans. Changes clear that selection. The toolbar leads to this review before allowing publication, and the server records it against the exact published version.
 
 Missing targets or owners are shown with the exact text and a link to the affected metric row. For example, `unknown/TBD` in SM-1's verification column appears in the Success review. You can supply the missing detail, edit the row directly, or record a follow-up decision. Open questions review includes the document's risks/decisions section even when there are no separately generated questions.
 
@@ -124,3 +134,27 @@ Workspace deletion passed 66 backend tests, 85 guided/studio frontend tests and 
 ## Experiment boundaries
 
 The [architecture and branch agenda](../specs/tech/guided-authoring-studio.md) explains the domain model and adoption work. The experiment does not migrate old sessions, write production feature packages, enforce authenticated reviewer roles, produce ADR/evaluation artifacts, or claim readiness for Plan. Structural checks cannot prove semantic correctness or evidence quality; comparison and human review remain essential.
+
+
+## Record the due-date example without AI waits
+
+Open the start screen and click **Use example**. This fills the due-date description and turns on a clearly labelled saved example. Each **Use example → Generate PRD** creates a separate workspace; existing documents are not changed. Editing the brief or supporting context, choosing Design, or clicking **Use live generation** turns this opt-in mode off before creation.
+
+Recording sequence:
+
+1. Click **Use example**, then **Generate PRD**. The normal brief-review loader runs for five seconds.
+2. Pick the first answer to each of the three questions: keep overdue tasks at the top, allow changing/removing dates, and keep the existing completed-task view. Click **Next**, then **Generate PRD** on the last question. The draft loader runs for five seconds and shows PRD v1. Other suggestions and custom answers are saved into the requirements too.
+3. Click **Edit**, add the Markdown below at the bottom, then **Save and view**. This creates v2 immediately. Open **Changes** to show the new section, then return to **Document**.
+
+   ```markdown
+   # API example
+
+   The backend returns `highlight_color` as `#RRGGBB`. It returns `null` when no highlight applies.
+   ```
+
+4. In **Open questions**, choose **Answer and update the document**. Paste: “The design owner will review the palette and contrast before frontend rollout. The backend can ship its metadata contract first.” Click **Update document with answers**. After five seconds, v3 contains the answer. This demo action stores the text verbatim as a replacement for the linked review section; it does not use AI to interpret it. Include every decision you want to keep. Separately listed questions remain until edited explicitly.
+5. In **Success**, choose **I confirm these success criteria** and save the confirmation. Then check **I’ve reviewed this version** and click **Publish snapshot**. Review evidence applies to this exact version; later edits need a fresh review.
+6. Click **Continue to RFC**, keep **Published PRD only (skip Design spec)**, and generate. Brief checking and RFC loading each take five seconds. The saved RFC follows the RFC Proposal 1 section structure and includes the selected published PRD requirements and scope for review.
+7. To record again, click **New workspace → Use example**. Each recording starts at v1. Demo workspaces are labelled in the list and can be deleted normally.
+
+The fixture content is adapted from the saved “Due dates for tasks with sorting and highlighting” PRD and RFC, with a consistent three-day highlight window, an explicit hex-color contract and proposed review criteria. It is a recording scenario, not a fresh model response or proof of real-world success targets. The RFC architecture is a fixed example: copied PRD changes are available for review but are not interpreted by AI. General chat revisions, reconciliation and Design generation are unavailable in this example; use the Markdown editor for changes. Ordinary workspaces keep their existing AI flow. All example operations retain normal cancellation, retries, versioning, review and publication gates.

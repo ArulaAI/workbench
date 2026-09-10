@@ -11,6 +11,8 @@ describe("Author publication review", () => {
     const save = vi.fn().mockResolvedValue(true);
     const openReview: PublicationReview = {...review,id:"open_questions",title:"Open questions",sections:[{id:"decisions",title:"Open decisions and ownership"}]};
     render(<PublicationReviewCard review={openReview} version="rfc-v2" busy={false} published={false} onSave={save} />);
+    expect(screen.getAllByRole("radio")).toHaveLength(2);
+    expect(screen.queryByText(/Confirmation is unavailable/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("radio",{name:"Answer and update the document"}));
     expect(screen.getByRole("button",{name:"Update document with answers"})).toBeDisabled();
     fireEvent.change(screen.getByLabelText("Your answers or decisions"),{target:{value:"The platform team owns the rollout. Keep the schema question open."}});
@@ -25,7 +27,7 @@ describe("Author publication review", () => {
   it("keeps success answers separate from the deferral note and scopes their revision", async () => {
     const save = vi.fn().mockResolvedValue(false), edit = vi.fn();
     render(<PublicationReviewCard review={review} version="v2" busy={false} published={false} onSave={save} onEditSection={edit} />);
-    fireEvent.click(screen.getByRole("button",{name:"Edit Success directly"}));
+    fireEvent.click(screen.getByRole("button",{name:"Open Success in editor"}));
     expect(edit).toHaveBeenCalledWith("success");
     fireEvent.click(screen.getByRole("radio",{name:"Leave these items open for follow-up"}));
     fireEvent.change(screen.getByLabelText("Reason for deferring and follow-up plan"),{target:{value:"Wait for baseline collection."}});
@@ -46,7 +48,7 @@ describe("Author publication review", () => {
     expect(screen.getByText("Target is unknown/TBD; owner unknown.")).toBeInTheDocument();
     expect(screen.queryByRole("radio",{name:"I confirm these success criteria"})).not.toBeInTheDocument();
     expect(screen.getByRole("radio",{name:"Update the success criteria"})).toBeEnabled();
-    expect(screen.getByRole("button",{name:"Save Success confirmation"})).toBeDisabled();
+    expect(screen.getByRole("button",{name:"Choose an action"})).toBeDisabled();
     fireEvent.click(screen.getByRole("radio",{name:"Leave these items open for follow-up"}));
     const submit = screen.getByRole("button",{name:"Save follow-up decision"});
     fireEvent.change(screen.getByLabelText("Reason for deferring and follow-up plan"),{target:{value:"   "}});
@@ -62,6 +64,18 @@ describe("Author publication review", () => {
     fireEvent.click(screen.getByRole("radio",{name:"I confirm these success criteria"}));
     fireEvent.click(screen.getByRole("button",{name:"Save Success confirmation"}));
     await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({disposition:"confirmed",version_id:"v1"})));
+  });
+  it("shows an empty status without requiring another confirmation after questions are resolved", () => {
+    const save = vi.fn();
+    const openReview: PublicationReview = {...review,id:"open_questions",title:"Open questions"};
+    const {rerender} = render(<PublicationReviewCard review={openReview} version="v1" busy={false} published={false} onSave={save} />);
+    fireEvent.click(screen.getByRole("radio",{name:"Answer and update the document"}));
+    rerender(<PublicationReviewCard review={{...openReview,requires_deferral:false,findings:[]}} version="v2" busy={false} published={false} onSave={save} />);
+    expect(screen.getByRole("region",{name:"Open questions status"})).toHaveTextContent("No open questions found.");
+    expect(screen.queryByRole("radio")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(save).not.toHaveBeenCalled();
   });
   it("retains the author's note after a failed save", async () => {
     render(<PublicationReviewCard review={review} version="v2" busy={false} published={false} onSave={vi.fn().mockResolvedValue(false)} />);

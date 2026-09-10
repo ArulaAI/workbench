@@ -9,6 +9,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from .models import Clarification, NamedClarification, Command, CreateFeature, Generation, PREFIXES, RFC_MODULES, TEMPLATES
+from .editable_markdown import parse_edit
 from .store import Store
 from .reviews import publication_review, saved_reviews, section_findings
 from .workflow import LABELS, SOURCE_KINDS, intake_for, mode_for, set_intake, response_timeout
@@ -73,6 +74,10 @@ class Studio:
             return self._view(conn, self._read(conn, feature_id))
 
     def create(self, request: CreateFeature):
+        if request.demo:
+            from .demo import DEMO_BRIEF
+            if request.kind not in ("prd", "rfc") or request.brief != DEMO_BRIEF or request.context.strip():
+                raise StudioError("The saved example uses its original due-date brief and supports PRD or RFC. Turn off example mode to use a different description or context.")
         with self.store.transaction() as conn:
             if conn.execute("SELECT 1 FROM deleted_features WHERE create_request_id=?", (request.request_id,)).fetchone():
                 raise StudioError("This workspace was deleted. Start a new workspace to continue.", 410)
@@ -89,6 +94,7 @@ class Studio:
                     k: {"head": None, "published": None, "versions": [], "publications": []} for k in TEMPLATES},
                 "messages": [], "comments": [], "operations": [], "requests": [], "counters": {},
                 "initial_kind": request.kind,
+                **({"demo": request.demo} if request.demo else {}),
             }
             set_intake(state, request.kind, self._new_intake())
             self._enqueue(state, request.kind, "clarify", request.brief.strip(), request.request_id, {})
@@ -167,7 +173,8 @@ class Studio:
             return ["Generate a draft first."]
         reviews = publication_review(state, snapshot)
         blocks = [f"Review and acknowledge {group['title']} for this version." for group in reviews
-                  if not group['acknowledgement'] and not group['legacy_published']]
+                  if (group['id'] == 'success' or group['requires_deferral'])
+                  and not group['acknowledgement'] and not group['legacy_published']]
         review_sections = {s['id'] for group in reviews for s in group['sections']}
         if self._stale(state, snapshot):
             blocks.append("Reconcile this document with the latest published upstream versions.")
@@ -221,7 +228,8 @@ class Studio:
         operation = {"id": uid(), "request_id": request_id, "kind": kind, "action": action, "text": text,
                      "section_id": section_id, "comment_id": comment_id, "pins": pins, "source_mode": mode_for(pins),
                      "base_version": state["documents"][kind]["head"], "status": "queued", "created_at": now(),
-                     "error": None, "version_id": None, "timeout_seconds": response_timeout(action)}
+                     "error": None, "version_id": None, "timeout_seconds": response_timeout(action),
+                     **({"demo": True} if state.get("demo") else {})}
         state["operations"].append(operation)
         state["messages"].append({"id": uid(), "role": "user", "kind": kind, "text": text,
                                   "section_id": section_id, "operation_id": operation["id"], "created_at": now()})
@@ -295,6 +303,15 @@ class Studio:
                         raise StudioError("Clarification is already complete. Continue with the saved questions.")
                     if action == "generate" and intake["status"] == "ready":
                         pins = intake.get("pins", {})
+                if state.get("demo"):
+                    from .demo import review_target
+                    if kind == "design":
+                        raise StudioError("This saved example includes PRD and RFC. Start a regular workspace to generate a Design spec.")
+                    if head:
+                        target = review_target(text, kind)
+                        if actual_action != "revise" or not target or comment_id:
+                            raise StudioError("This example does not use AI for chat changes. Use Edit for document changes, or enter an answer in the publication review.")
+                        scoped = target
                 self._enqueue(state, kind, actual_action, text, command.request_id, pins, scoped, comment_id)
             elif action == "answer_clarification":
                 intake = intake_for(state, kind)
@@ -349,9 +366,25 @@ class Studio:
                 if blockers:
                     raise StudioError("Publication needs attention: " + " ".join(blockers))
                 if doc['published'] != head['id']:
+                    if not command.reviewed:
+                        raise StudioError("Confirm that you have reviewed this version before publishing.")
                     reviews = copy.deepcopy(saved_reviews(doc, head['id']))
                     doc["published"] = head["id"]
-                    doc["publications"].append({"version_id": head["id"], "created_at": now(), 'reviews': reviews})
+                    doc["publications"].append({"version_id": head["id"], "created_at": now(), 'reviews': reviews,
+                                                'document_review': {'version_id': head['id'], 'author': 'author', 'created_at': now()}})
+            elif action == "edit_document":
+                if not head or command.version_id != head["id"]:
+                    raise StudioError("The document changed after you opened the editor. Your draft is still in the editor. Download it before opening the latest version and applying your changes.", 409)
+                if command.markdown is None:
+                    raise StudioError("Provide the document Markdown to save.")
+                try:
+                    candidate = parse_edit(command.markdown, head)
+                except ValueError as error:
+                    raise StudioError(str(error)) from error
+                self._assign_ids(state, head, candidate)
+                self._validate_refs(conn, candidate)
+                if any(candidate[key] != head[key] for key in ("sections", "assumptions", "questions", "coverage")):
+                    self._snapshot(conn, state, kind, candidate, "author", "Edited document in Markdown")
             elif action in ("edit", "review_section"):
                 if not section:
                     raise StudioError("Choose a section to edit.")
@@ -481,6 +514,9 @@ class Studio:
         try:
             if head is None and operation["action"] != "clarify" and not self._intake_ready(state, operation["kind"]):
                 raise StudioError(f"Answer every clarification before generating the {LABELS[operation['kind']]}. ")
+            if state.get("demo"):
+                from .demo import DemoGenerator
+                generator = DemoGenerator()
             generated, sources, model = generator(copy.deepcopy(state), copy.deepcopy(operation), head, upstream)
             generated = (Clarification if operation["action"] == "clarify" else Generation).model_validate(generated)
             with self.store.transaction() as conn:
@@ -541,6 +577,8 @@ class Studio:
         if head is None and generated.questions:
             raise StudioError(f"The first {LABELS[kind]} still contains unanswered questions. No draft was saved; retry using the saved clarification answers.")
         titles = dict(TEMPLATES[kind])
+        if head:
+            titles.update({s["id"]: s["title"] for s in head["sections"]})
         patches = {s.id: s.model_dump() for s in generated.sections}
         if len(patches) != len(generated.sections) or set(patches) - set(titles):
             raise StudioError("The generated response contains duplicate or unknown sections.")
@@ -552,7 +590,7 @@ class Studio:
             raise StudioError("A section request attempted to change another section. No changes were applied.")
         sections = copy.deepcopy(head["sections"]) if head else []
         held = []
-        for section_id, title in TEMPLATES[kind]:
+        for section_id, title in titles.items():
             old = next((s for s in sections if s["id"] == section_id), None)
             if old and old.get("protected") and not scoped:
                 if operation["action"] == "reconcile":

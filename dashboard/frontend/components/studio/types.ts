@@ -19,17 +19,18 @@ export type PublicationReview = {
   acknowledgement: {version_id: string; disposition: "confirmed" | "deferred"; note: string; created_at: string} | null;
 };
 export type Document = { head: string | null; published: string | null; versions: Version[]; snapshot: Snapshot | null; stale: Kind[]; published_stale?: Kind[]; blockers: string[]; publication_review?: PublicationReview[] };
-export type Operation = { created_at?: string; started_at?: string; timeout_seconds?: number; id: string; kind: Kind; action?: string; status: "queued" | "running" | "completed" | "failed" | "interrupted" | "cancelled"; text: string; error: string | null; version_id: string | null };
+export type Operation = { demo?: boolean; created_at?: string; started_at?: string; timeout_seconds?: number; id: string; kind: Kind; action?: string; status: "queued" | "running" | "completed" | "failed" | "interrupted" | "cancelled"; text: string; error: string | null; version_id: string | null };
 export type ClarificationAnswer = { choice: "option-1" | "option-2" | "option-3" | "custom"; text: string; saved_at: string };
 export type ClarificationQuestion = { id: string; question: string; why: string; options: {label: string; description: string}[] };
 export type Intake = { status: "checking" | "awaiting_answers" | "ready"; summary: string; questions: ClarificationQuestion[]; answers: Record<string, ClarificationAnswer>; pins?: Partial<Record<Kind, string>> };
 export type Comment = { id: string; kind: Kind; section_id: string; version_id: string; text: string; quote: string; blocking: boolean; status: "open" | "addressed" | "resolved" | "dismissed"; outdated: boolean; addressed_version: string | null; dispositions: {status: string; reason: string}[] };
 export type Feature = {
+  demo?: "task-due-dates";
   id: string; title: string; brief: string; context: string; revision: number; updated_at: string;
   documents: Record<Kind, Document>; operations: Operation[]; comments: Comment[];
   intake?: Intake;
   initial_kind?: Kind; intakes?: Partial<Record<Kind, Intake>>;
   messages: { id: string; role: string; kind: Kind; text: string; section_id: string | null; operation_id: string; version_id?: string }[];
 };
-export type Command = { action: string; kind?: Kind; text?: string; section_id?: string; version_id?: string; comment_id?: string; quote?: string; blocking?: boolean; items?: Item[]; question_id?: string; choice?: ClarificationAnswer["choice"]; review_group?: PublicationReview["id"]; disposition?: "confirmed" | "deferred"; source_mode?: SourceMode };
+export type Command = { action: string; markdown?: string; kind?: Kind; text?: string; section_id?: string; version_id?: string; comment_id?: string; quote?: string; blocking?: boolean; items?: Item[]; question_id?: string; choice?: ClarificationAnswer["choice"]; review_group?: PublicationReview["id"]; disposition?: "confirmed" | "deferred"; reviewed?: boolean; source_mode?: SourceMode };
 export const intakeFor = (feature: Feature, kind: Kind) => feature.intakes?.[kind] || (kind === "prd" ? feature.intake : undefined);
