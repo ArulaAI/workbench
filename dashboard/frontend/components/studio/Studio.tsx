@@ -10,6 +10,7 @@ import { CommentEditor, SectionEditor } from "./Editors";
 import { ClarificationFlow } from "./Clarification";
 import { GenerationProgress } from "./GenerationProgress";
 import { GenerationSetup } from "./GenerationSetup";
+import { ExistingDocumentStart } from "./ExistingDocumentStart";
 import { WorkspaceList } from "./WorkspaceList";
 import { intakeFor, kinds, labels, type Command, type Feature, type Kind, type Section, type Snapshot } from "./types";
 import "./studio.css";
@@ -22,6 +23,7 @@ export default function Studio() {
   const [connected, setConnected] = useState(false), [error, setError] = useState(""), [saving, setSaving] = useState(false);
   const [listOpen, setListOpen] = useState(false), [panel, setPanel] = useState<"outline" | "review">("outline");
   const [startKind, setStartKind] = useState<Kind>("prd");
+  const [startFromExisting, setStartFromExisting] = useState(false);
   const [brief, setBrief] = useState(""), [context, setContext] = useState("");
   const [message, setMessage] = useState(""), [scope, setScope] = useState("");
   const [viewId, setViewId] = useState(""), [historical, setHistorical] = useState<Snapshot | null>(null);
@@ -159,10 +161,15 @@ export default function Studio() {
     {notice && <div className="studio-success" role="status"><Check size={16} />{notice}<button aria-label="Dismiss notice" onClick={() => setNotice("")}><X size={14} /></button></div>}
     {!selected ? <main className="studio-start">
       <div className="studio-start-main"><div className="studio-eyebrow"><Layers size={16} /> GUIDED AUTHORING</div><h1>Start with a problem.<br /><span>Shape it together.</span></h1><p className="studio-intro">Start with a PRD, Design spec or RFC. Describe what you need, refine it together, and create the other documents when they help.</p>
-        <form className="studio-brief surface" onSubmit={e => {e.preventDefault(); void create();}}><fieldset className="studio-document-choice" disabled={saving}><legend>What would you like to create?</legend>{kinds.map(k => <label className={`surface ${startKind === k ? "selected" : ""}`} key={k}><input type="radio" name="starting-document" checked={startKind === k} onChange={() => setStartKind(k)} /><span><strong>{labels[k]}</strong><small>{k === "prd" ? "Define the product direction" : k === "design" ? "Shape the user experience" : "Propose the engineering approach"}</small></span></label>)}</fieldset>
+        <div className="studio-brief surface"><fieldset className="studio-document-choice" disabled={saving}><legend>What would you like to create?</legend>{kinds.map(k => <label className={`surface ${startKind === k ? "selected" : ""}`} key={k}><input type="radio" name="starting-document" checked={startKind === k} onChange={() => setStartKind(k)} /><span><strong>{labels[k]}</strong><small>{k === "prd" ? "Define the product direction" : k === "design" ? "Shape the user experience" : "Propose the engineering approach"}</small></span></label>)}</fieldset>
+          {startKind !== "prd" && <fieldset className="studio-entry-source" disabled={saving}><legend>What would you like to start from?</legend>
+            <label><input type="radio" name="entry-source" checked={!startFromExisting} onChange={() => setStartFromExisting(false)} /> A new description</label>
+            <label><input type="radio" name="entry-source" checked={startFromExisting} onChange={() => setStartFromExisting(true)} /> {startKind === "design" ? "An existing PRD" : "An existing PRD or Design spec"}</label>
+          </fieldset>}
+          {startKind !== "prd" && startFromExisting ? <ExistingDocumentStart key={startKind} features={features} kind={startKind} onOpen={choose} onStarted={(next, stage) => {choose(next.id, stage); setFeature(next);}} onSavingChange={setSaving} onNewDescription={() => setStartFromExisting(false)} /> : <form className="studio-new-brief" onSubmit={e => {e.preventDefault(); void create();}}>
           <label htmlFor="workspace-description">Describe what you want to solve</label><textarea id="workspace-description" aria-describedby="workspace-title-hint" minLength={12} maxLength={20000} required rows={5} value={brief} onChange={e => setBrief(e.target.value)} placeholder="Describe the problem, idea or improvement. Who is affected, what happens today, and what would a better outcome look like?" />
           <p id="workspace-title-hint" className="studio-muted">We’ll create a title from your description.</p><details><summary>Have research, constraints or decisions? Add context <Plus size={12} /></summary><label htmlFor="feature-context" className="sr-only">Supporting context</label><textarea id="feature-context" maxLength={20000} rows={5} value={context} onChange={e => setContext(e.target.value)} placeholder="Paste supporting notes. We'll distinguish your evidence from proposed assumptions." /></details>
-          <div className="studio-brief-footer"><button type="button" onClick={() => setBrief(EXAMPLE)}>Use an example</button><button className="primary" type="submit" disabled={saving || !connected || brief.trim().length < 12}>{saving ? <Loader2 className="studio-spin" size={16} /> : <ArrowRight size={16} />} Continue with brief</button></div></form>
+          <div className="studio-brief-footer"><button type="button" onClick={() => setBrief(EXAMPLE)}>Use an example</button><button className="primary" type="submit" disabled={saving || !connected || brief.trim().length < 12}>{saving ? <Loader2 className="studio-spin" size={16} /> : <ArrowRight size={16} />} Continue with brief</button></div></form>}</div>
         <p className="studio-start-note">We’ll clarify any missing decisions, then generate your {labels[startKind]}. You can start with any document; the others are optional.</p>
       </div><WorkspaceList features={features} onOpen={choose} onDeleted={id => setFeatures(current => current.filter(f => f.id !== id))} onRefresh={loadList} />
     </main> : !feature ? <div className="studio-loading"><Loader2 className="studio-spin" size={24} /><p>Opening your workspace…</p></div> : <>

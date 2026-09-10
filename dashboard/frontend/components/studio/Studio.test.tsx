@@ -250,6 +250,61 @@ describe("Clarification before the first PRD", () => {
 });
 
 describe("Flexible document entry points", () => {
+  it.each([['design','Design spec','prd'], ['rfc','RFC','prd'], ['rfc','RFC','design'], ['rfc','RFC','prd_design']] as const)("starts %s from saved %s sources on the first screen", async (kind, label, mode) => {
+    window.history.replaceState(null, '', '/define/studio');
+    let state = fixture(); state.documents.prd.published='v1';
+    if (kind === 'rfc') state.documents.design={...state.documents.prd,head:'design-v2',published:'design-v2',versions:[{...snapshot,id:'design-v2',number:2,pins:{prd:'v1'}}],snapshot:{...snapshot,id:'design-v2',number:2,kind:'design'}};
+    const posts: {url:string;body:Record<string,unknown>}[]=[];
+    vi.stubGlobal('fetch',vi.fn(async (url:string, init?:RequestInit) => {
+      if (init?.method==='POST') {
+        posts.push({url,body:JSON.parse(init.body as string)});
+        state={...state,revision:4,intakes:{[kind]:{status:'checking',summary:'',questions:[],answers:{}}},operations:[{id:'check',action:'clarify',kind,status:'queued',text:'Check sources',error:null,version_id:null}]};
+      }
+      return {ok:true,json:async () => url.endsWith('/health') ? {contract:1} : url.endsWith('/features') ? [state] : state};
+    }));
+    render(<Studio />);
+    fireEvent.click(await screen.findByRole('radio',{name:new RegExp(`^${label} `)}));
+    fireEvent.click(screen.getByRole('radio',{name:kind==='design' ? 'An existing PRD' : 'An existing PRD or Design spec'}));
+    expect(screen.queryByRole('textbox',{name:'Describe what you want to solve'})).not.toBeInTheDocument();
+    fireEvent.change(await screen.findByLabelText('Workspace with source documents'),{target:{value:'feature-1'}});
+    fireEvent.change(await screen.findByLabelText('Start from'),{target:{value:mode}});
+    expect(screen.queryByRole('option',{name:'Brief and supporting context'})).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Anything to add? (optional)'),{target:{value:'Use the published decisions and keep sharing out of scope.'}});
+    fireEvent.click(screen.getByRole('button',{name:`Generate ${label}`,exact:true}));
+    await screen.findByRole('region',{name:`${label} clarification`});
+    expect(posts).toHaveLength(1);
+    expect(posts[0].url).toMatch(/\/features\/feature-1\/commands$/);
+    expect(posts[0].body).toMatchObject({action:'generate',kind,source_mode:mode,expected_revision:3,text:'Use the published decisions and keep sharing out of scope.'});
+    expect(window.location.search).toBe(`?feature=feature-1&document=${kind}`);
+  });
+
+  it('opens an existing RFC without generating another document', async () => {
+    window.history.replaceState(null, '', '/define/studio');
+    const state=fixture(); state.documents.prd.published='v1';
+    state.documents.rfc={...state.documents.prd,snapshot:{...snapshot,kind:'rfc'}};
+    const commands=mockApi(state); render(<Studio />);
+    fireEvent.click(await screen.findByRole('radio',{name:/^RFC /}));
+    fireEvent.click(screen.getByRole('radio',{name:'An existing PRD or Design spec'}));
+    fireEvent.change(await screen.findByLabelText('Workspace with source documents'),{target:{value:'feature-1'}});
+    fireEvent.click(await screen.findByRole('button',{name:'Open RFC',exact:true}));
+    await screen.findByText('Personal saved views only.');
+    expect(commands).toHaveLength(0);
+    expect(window.location.search).toBe('?feature=feature-1&document=rfc');
+  });
+
+  it('keeps a typed description when switching to existing sources and back', async () => {
+    window.history.replaceState(null, '', '/define/studio');
+    mockApi(fixture());render(<Studio />);
+    fireEvent.click(await screen.findByRole('radio',{name:/^Design spec /}));
+    fireEvent.change(screen.getByLabelText('Describe what you want to solve'),{target:{value:'Keep this unfinished description.'}});
+    fireEvent.click(screen.getByRole('radio',{name:'An existing PRD'}));
+    fireEvent.change(await screen.findByLabelText('Workspace with source documents'),{target:{value:'feature-1'}});
+    expect(await screen.findByRole('button',{name:'Generate Design spec',exact:true})).toBeDisabled();
+    expect(screen.getByRole('option',{name:/Published PRD/})).toBeDisabled();
+    fireEvent.click(screen.getByRole('radio',{name:'A new description'}));
+    expect(screen.getByLabelText('Describe what you want to solve')).toHaveValue('Keep this unfinished description.');
+  });
+
   it.each([['prd','PRD'], ['design','Design spec'], ['rfc','RFC']] as const)("starts %s from a description without requesting a title", async (kind, label) => {
     window.history.replaceState(null, '', '/define/studio');
     const state=fixture(); state.initial_kind=kind;
