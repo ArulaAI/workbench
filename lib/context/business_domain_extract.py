@@ -562,10 +562,16 @@ class Extractor:
                 require('capability', anchor['symbol_id'], anchor['resolution'], 'UNRESOLVED_ANCHOR',
                         anchor['reason'] or 'Entry-point identity is not resolved.')
 
-            def require_capabilities(unit):
+            def require_capabilities(unit, demonstrated=frozenset()):
                 for capability in unit.required_capabilities or ():
                     statuses = unit.source.capability_statuses.get(capability, set())
-                    available = bool(statuses & {'supported', 'partial'})
+                    # A capability this run exercised for this symbol is present,
+                    # whatever the adapter owning the declaring file declares. An
+                    # endpoint is anchored where it is declared, so a contract in
+                    # openapi.yml would otherwise be judged by the YAML reader for
+                    # work the Java enricher did.
+                    available = (bool(statuses & {'supported', 'partial'})
+                                 or capability in demonstrated)
                     require('capability', unit.symbol_id, 'satisfied' if available else 'unresolved',
                             'CAPABILITY_AVAILABLE' if available else 'CAPABILITY_UNAVAILABLE',
                             (f'The selected adapter provides {capability} for this evidenced source.' if available
@@ -573,8 +579,6 @@ class Extractor:
                             identity=capability)
                     if not available:
                         frontier.add(unit.symbol_id); reasons.add('capability_gap')
-
-            require_capabilities(start)
 
             # Implementation selection is a normalized obligation.  An
             # implementation may satisfy it itself only when its adapter has
@@ -636,6 +640,13 @@ class Extractor:
                 selection_reason = ('The entry point terminates at an explicit external implementation boundary.'
                     if role == 'external_boundary' else
                     'The adapter did not authorize this declaration as an executable implementation terminal.')
+
+            # Capability obligations are answered after the relationships they
+            # govern have been attempted, so an exercised capability can settle
+            # its own question.
+            require_capabilities(start, demonstrated=(
+                frozenset({'relationship_resolution'})
+                if selection_status == 'satisfied' else frozenset()))
 
             while queue:
                 symbol, depth = queue.pop(0)

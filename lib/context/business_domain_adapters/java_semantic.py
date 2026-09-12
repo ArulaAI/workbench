@@ -299,15 +299,55 @@ def _resolve_type(source, raw, types_by_fq, types_by_short):
     return "unresolved", []
 
 
+# The Java language definition, not a heuristic. Eight primitives, their
+# java.lang boxes, String and void; boxing in both directions and the widening
+# order from JLS 5.1.2. Closed by the specification, so it cannot drift. The
+# tree-sitter grammar already recognises the primitive halves as integral_type,
+# floating_point_type, boolean_type and void_type, used for node selection at
+# lines 93-94, 186-187 and 220-221; the boxes are ordinary type_identifier
+# nodes and only their names distinguish them.
+BOXED_PRIMITIVES = {
+    "Integer": "int", "Long": "long", "Double": "double", "Float": "float",
+    "Short": "short", "Byte": "byte", "Boolean": "boolean", "Character": "char",
+}
+WIDENING_ORDER = ("byte", "short", "int", "long", "float", "double")
+SCALAR_TYPES = (frozenset(BOXED_PRIMITIVES)
+                | frozenset(BOXED_PRIMITIVES.values())
+                | {"String", "void"})
+
+
+def _unboxed(name):
+    return BOXED_PRIMITIVES.get(name, name)
+
+
 def _assignable(argument, parameter):
+    """True when provably compatible, False when provably not, None when unknown.
+
+    Only the scalar types above are judged, and boxing is transparent in both
+    directions. Reference types need a type hierarchy this adapter does not
+    build, so they return None rather than a false negative that would veto an
+    otherwise unambiguous call.
+    """
+    # `_simple` erases array depth, so compare it before normalising. Without
+    # this, int[] and int look identical and an overload pair such as
+    # f(int) / f(int[]) both match.
+    if (argument or "").count("[]") != (parameter or "").count("[]"):
+        return False
     left, right = _simple(argument), _simple(parameter)
     if left in {"unknown", "null"}:
         return None
-    pairs = {("String", "String"), ("int", "int"), ("int", "Integer"),
-             ("long", "long"), ("long", "Long"), ("double", "double"),
-             ("double", "Double"), ("boolean", "boolean"), ("boolean", "Boolean"),
-             ("char", "char"), ("char", "Character")}
-    return left == right or (left, right) in pairs
+    if left not in SCALAR_TYPES or right not in SCALAR_TYPES:
+        return None
+    if left == right:
+        return True
+    left, right = _unboxed(left), _unboxed(right)
+    if left == right:
+        return True
+    if left in WIDENING_ORDER and right in WIDENING_ORDER:
+        return WIDENING_ORDER.index(left) <= WIDENING_ORDER.index(right)
+    if left == "char" and right in WIDENING_ORDER:
+        return WIDENING_ORDER.index("int") <= WIDENING_ORDER.index(right)
+    return False
 
 
 def prepare(sources, units, diagnostics=None):
@@ -399,11 +439,17 @@ def prepare(sources, units, diagnostics=None):
         for method in source.semantic["methods"]:
             for invocation in method["invocations"]:
                 receiver = invocation["receiver"]
+                # A receiver written `this.field` or `super.field` arrives as the
+                # whole expression, while `variables` is keyed by bare names. Strip
+                # the qualifier so field receivers resolve to their declared type.
+                bare = receiver
+                if receiver and receiver.split(".")[0] in {"this", "super"}:
+                    bare = receiver.split(".", 1)[1] if "." in receiver else None
                 owner_states = []
-                if receiver in (None, "this", "super") and method["owner"]:
+                if bare is None and method["owner"]:
                     owner_states = [("resolved", [method["owner"]])]
-                elif receiver:
-                    raw_type = invocation["variables"].get(receiver, receiver)
+                elif bare:
+                    raw_type = invocation["variables"].get(bare, bare)
                     owner_states = [_resolve_type(source, raw_type, types_by_fq, types_by_short)]
                 state, owners = owner_states[0] if owner_states else ("unresolved", [])
                 candidates = [candidate for owner in owners for candidate in methods_by_owner[owner["fqname"]]
@@ -412,16 +458,24 @@ def prepare(sources, units, diagnostics=None):
                 exact = [candidate for candidate in candidates if all(
                     _assignable(argument, parameter[1]) is True
                     for argument, parameter in zip(invocation["argument_types"], candidate["params"]))]
+                # A candidate is plausible when no argument is provably incompatible.
+                # `_assignable` returns None for pairs it cannot judge, which is the
+                # normal case for reference types, and None must not veto a match.
+                plausible = [candidate for candidate in candidates if not any(
+                    _assignable(argument, parameter[1]) is False
+                    for argument, parameter in zip(invocation["argument_types"], candidate["params"]))]
                 if len(exact) == 1:
                     candidates, state = exact, "resolved"
                 elif len(exact) > 1:
                     candidates, state = exact[:8], "ambiguous"
-                elif len(candidates) == 1 and all(argument != "unknown" for argument in invocation["argument_types"]):
-                    candidates, state = [], "unresolved"
+                elif len(plausible) == 1:
+                    candidates, state = plausible, "resolved"
+                elif len(plausible) > 1:
+                    candidates, state = sorted(plausible, key=lambda item:item["unit"].semantic_identity)[:8], "ambiguous"
                 elif len(candidates) > 1:
                     candidates, state = sorted(candidates, key=lambda item:item["unit"].semantic_identity)[:8], "ambiguous"
                 elif state == "resolved":
-                    state = "unresolved"
+                    candidates, state = [], "unresolved"
                 invocation["state"] = state
                 invocation["candidates"] = [candidate["unit"] for candidate in candidates]
                 call_reason = f"Java call {invocation['name']} is {state}; candidates: " + (
