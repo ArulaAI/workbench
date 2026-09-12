@@ -4,12 +4,13 @@ This adapter does not recognize language keywords, decorators or frameworks.
 Those decisions belong to the existing rules/{language} catalog.
 """
 import re
-from .base import (Unit, declare_anchor_registration,
+from .base import (SemanticResult, Unit, declare_anchor_registration,
                    declare_anchor_representation,
                    declare_operation_observation, declare_trace_contract,
                    http_identity)
 from . import CATALOG
 from ..csg import resolve_source_reference
+from ..language_registry import registry
 from ..treesitter_extract import (ExtractionResult, match_source,
     _parse_ast_grep_matches, normalize_rule_outputs)
 from ..business_domain_schema import record, identifier
@@ -180,6 +181,76 @@ def _implementation_target(unit, units):
     return renders[0] if len(renders) == 1 else unit
 
 
+def _import_bindings(source):
+    """Map every identifier this file imports to the module it came from."""
+    bindings = {}
+    for reference in source.references:
+        if reference.kind != 'import':
+            continue
+        module = (reference.module or '').strip('\'"')
+        if not module:
+            continue
+        for symbol in reference.symbols:
+            # One import statement matches several declarative patterns, and a
+            # clause may rename what it binds. The bound name is the one a call
+            # site can reach, so `browserHistory as history` binds `history`
+            # and `* as React` binds `React`.
+            for clause in symbol.strip().strip('{}').split(','):
+                bound = clause.strip().rsplit(' as ', 1)[-1].strip()
+                if re.fullmatch(r'[A-Za-z_$][\w$]*', bound):
+                    bindings[bound] = module
+    return bindings
+
+
+def _receiver_root(reference):
+    """Return the identifier a call is rooted at, or None if it is an expression.
+
+    A rule may elide an implicit receiver so lexical scoping still reaches a
+    sibling declaration, but the written text keeps it. Reading the root from
+    that text is what stops `this.location()` being taken for a call on the
+    ambient `location`.
+    """
+    if reference.receiver:
+        head = reference.receiver
+    elif '.' in (reference.name or ''):
+        head = reference.name
+    else:
+        head = reference.callee_name or ''
+    root = head.split('.', 1)[0].strip()
+    return root if re.fullmatch(r'[A-Za-z_$][\w$]*', root) else None
+
+
+def _ambient_boundaries(source, resolve_name):
+    """Index the calls reached through a name the language binds, not this tree.
+
+    A root the canonical resolver cannot place, that this file does not import,
+    and that the language binds ambiently, is a platform call: no repository
+    declares it because no repository ever declares one. Any other unplaceable
+    root is a local binding this extractor does not see -- a parameter, a
+    destructured prop, a lambda argument -- and stays unresolved, because an
+    unknown receiver is not evidence of a boundary.
+    """
+    ambient = registry.ambient_globals(source.language)
+    if not ambient:
+        return {}
+    bindings = _import_bindings(source)
+    boundaries = {}
+    for reference in source.references:
+        if reference.kind != 'call' or not reference.callee_name:
+            continue
+        root = _receiver_root(reference)
+        if root not in ambient or root in bindings or resolve_name(root) is not None:
+            continue
+        start, _end = span(source, {'range': reference.source_range})
+        boundaries[(start, reference.callee_name)] = (root,
+            f'{root} is a name {source.language} binds ambiently and this '
+            f'repository neither declares nor imports.' if root == reference.callee_name
+            else f'{reference.callee_name} is reached through {root}, a name '
+                 f'{source.language} binds ambiently and this repository '
+                 f'neither declares nor imports.')
+    return boundaries
+
+
 def prepare(sources, units, diagnostics=None):
     """Resolve normalized UI registrations/composition through the CSG owner."""
     relevant = [unit for unit in units if unit.source in sources]
@@ -206,6 +277,12 @@ def prepare(sources, units, diagnostics=None):
             target = by_id.get(target_id)
             if target:
                 source.resolved_call_targets[(start, reference.callee_name)] = target
+        # The same canonical resolver answers the complementary question: a root
+        # it cannot place, that the file never imports, and that the language
+        # binds ambiently, ends the path rather than breaking it.
+        source.ambient_call_boundaries = _ambient_boundaries(
+            source, lambda name: resolve_source_reference(
+                name, source.path, nodes, extractions))
 
     def resolve(name, source):
         if not name or not re.fullmatch(r'(?:this\.)?[A-Za-z_$][\w$]*', name):
@@ -421,6 +498,40 @@ def candidates(unit, receiver, name, available, position=None):
     if imported:
         return [imported]
     return []
+
+
+def resolve_call(unit, receiver, name, candidates, position, evidence_id=None):
+    """Separate a platform call from a call this repository fails to answer.
+
+    Lexical candidates still decide every call the repository does answer; the
+    boundary index is consulted only after they come back empty, so this can
+    never override a proven target.
+    """
+    evidence = (evidence_id or unit.evidence_id,)
+    if len(candidates) == 1:
+        return SemanticResult(capability='callable_resolution', outcome='exact',
+            subject_id=unit.symbol_id, target_id=candidates[0].symbol_id,
+            evidence_ids=evidence)
+    if candidates:
+        return SemanticResult(capability='callable_resolution', outcome='ambiguous',
+            subject_id=unit.symbol_id,
+            candidate_target_ids=tuple(sorted(c.symbol_id for c in candidates)),
+            evidence_ids=evidence, diagnostic_code='CALL_TARGET_AMBIGUOUS',
+            reason=f'Call target {name}: {len(candidates)} source candidates')
+    boundary = getattr(unit.source, 'ambient_call_boundaries', {}).get(
+        (unit.start + position, name))
+    if boundary:
+        root, reason = boundary
+        return SemanticResult(capability='callable_resolution', outcome='external',
+            subject_id=unit.symbol_id,
+            target_id=identifier('resource', 'ambient-call',
+                                 unit.source.language, root, name),
+            evidence_ids=evidence, diagnostic_code='RULES_AMBIENT_CALL',
+            reason=reason)
+    return SemanticResult(capability='callable_resolution', outcome='unresolved',
+        subject_id=unit.symbol_id, evidence_ids=evidence,
+        diagnostic_code='CALL_TARGET_UNRESOLVED',
+        reason=f'Call target {name}: 0 source candidates')
 
 
 def observations(unit):

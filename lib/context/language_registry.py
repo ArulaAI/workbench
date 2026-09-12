@@ -74,6 +74,7 @@ class Language:
     grammar_module: str          # "tree_sitter_python"
     grammar_func: str            # "language"
     extraction: str              # "rules" | "skeleton" | "none"
+    ambient_globals: tuple[str, ...] = ()  # bound by the language, never declared
 
 
 class LanguageRegistry:
@@ -235,6 +236,16 @@ class LanguageRegistry:
             fence_label = speed_cfg.get("fence_label", name)
             grammar_module = speed_cfg.get("grammar_module", f"tree_sitter_{name}")
             grammar_func = speed_cfg.get("grammar_func", "language")
+            ambient = speed_cfg.get("ambient_globals", [])
+            if isinstance(ambient, str):
+                ambient = extraction_config.get(
+                    "ambient_environments", {}).get(ambient)
+                if ambient is None:
+                    raise ValueError("Unknown ambient binding environment")
+            if not isinstance(ambient, list) or not all(
+                    isinstance(value, str) and re.fullmatch(r"[A-Za-z_$][\w$]*", value)
+                    for value in ambient):
+                raise ValueError("Ambient global bindings must be identifier strings")
 
             lang = Language(
                 name=name,
@@ -244,6 +255,7 @@ class LanguageRegistry:
                 grammar_module=grammar_module,
                 grammar_func=grammar_func,
                 extraction=extraction,
+                ambient_globals=tuple(sorted(set(ambient))),
             )
 
             self._by_name[name] = lang
@@ -318,6 +330,15 @@ class LanguageRegistry:
         if lang is None:
             return "none"
         return lang.extraction
+
+    def ambient_globals(self, name: str) -> frozenset[str]:
+        """Return the names this language binds without any declaration.
+
+        Empty for a language that declares none, so a caller can ask about any
+        language without knowing which ones have an ambient environment.
+        """
+        lang = self._by_name.get(name)
+        return frozenset(lang.ambient_globals) if lang else frozenset()
 
     def source_adapters(
         self,

@@ -1,5 +1,55 @@
 # lib/context/data/extraction.toml
 
+# ── Ambient binding environments ──
+# Names a language binds without any declaration in the repository being
+# scanned. Derivation cannot reach them: every other binding is proven by a
+# declaration or an import the rule catalog already extracts, but nothing in
+# any repository ever declares an ambient name. The set is ECMA-262's global
+# object (closed and standardized) plus the host globals every JavaScript
+# runtime provides.
+#
+# Deliberately absent, because the installed rule catalog already classifies
+# them and a second classification would lose what it knows:
+#   fetch    rules/{tsx,typescript}/business.yml -> external_action, http
+#   require  rules/{tsx,typescript,javascript}/references.yml -> ref_kind: import
+#
+# No prototype method appears here. `map`, `then` and `validate` are names a
+# repository declares too, and this file is consulted only for the identifier a
+# call is rooted at, never for the member being called.
+
+[ambient_environments]
+ecmascript = [
+  # ECMA-262 value and function properties of the global object
+  "globalThis", "Infinity", "NaN", "undefined",
+  "eval", "isFinite", "isNaN", "parseFloat", "parseInt",
+  "decodeURI", "decodeURIComponent", "encodeURI", "encodeURIComponent",
+  # Fundamental objects and errors
+  "Object", "Function", "Boolean", "Symbol",
+  "Error", "AggregateError", "EvalError", "RangeError", "ReferenceError",
+  "SyntaxError", "TypeError", "URIError",
+  # Numbers, dates, text
+  "Number", "BigInt", "Math", "Date", "String", "RegExp",
+  # Collections and structured data
+  "Array", "Map", "Set", "WeakMap", "WeakSet", "WeakRef", "FinalizationRegistry",
+  "ArrayBuffer", "SharedArrayBuffer", "DataView", "JSON", "Atomics", "Intl",
+  "Int8Array", "Uint8Array", "Uint8ClampedArray", "Int16Array", "Uint16Array",
+  "Int32Array", "Uint32Array", "Float32Array", "Float64Array",
+  "BigInt64Array", "BigUint64Array",
+  # Control abstraction
+  "Promise", "Proxy", "Reflect",
+  # Host globals: console and timers exist in every runtime
+  "console", "setTimeout", "clearTimeout", "setInterval", "clearInterval",
+  "queueMicrotask", "structuredClone",
+  # Host globals: the browser document/window surface
+  "window", "document", "navigator", "location", "history",
+  "localStorage", "sessionStorage", "alert", "confirm", "prompt",
+  "URL", "URLSearchParams", "TextEncoder", "TextDecoder",
+  "Blob", "FormData", "Headers", "Request", "Response", "AbortController",
+  "Event", "CustomEvent", "XMLHttpRequest", "WebSocket",
+  # Host globals: CommonJS/Node ambient bindings
+  "module", "exports", "process", "Buffer", "__dirname", "__filename",
+]
+
 # ── Source languages with ast-grep rules ──
 # Rule files in lib/context/rules/{language}/
 
@@ -8,16 +58,19 @@ extraction = "rules"
 
 [javascript]
 extraction = "rules"
+ambient_globals = "ecmascript"
 
 [typescript]
 extraction = "rules"
 grammar_module = "tree_sitter_typescript"
 grammar_func = "language_typescript"
+ambient_globals = "ecmascript"
 
 [tsx]
 extraction = "rules"
 grammar_module = "tree_sitter_typescript"
 grammar_func = "language_tsx"
+ambient_globals = "ecmascript"
 
 [go]
 extraction = "rules"
@@ -125,7 +178,7 @@ kind = "adapter"
 conformance = "declaration"
 extraction_level = "rules"
 fallback = true
-diagnostic_codes = ["SEMANTIC_RESOLUTION_UNAVAILABLE"]
+diagnostic_codes = ["SEMANTIC_RESOLUTION_UNAVAILABLE", "RULES_AMBIENT_CALL"]
 [source_adapters.rules.capabilities]
 parsing = "supported"
 declaration_extraction = "supported"
