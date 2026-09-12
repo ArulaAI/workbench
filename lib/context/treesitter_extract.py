@@ -47,6 +47,10 @@ class SymbolDef:
     parent: str | None = None     # parent symbol name (e.g. class for a method)
     base_classes: list[str] = field(default_factory=list)
     implements: list[str] = field(default_factory=list)
+    source_range: dict = field(default_factory=dict)
+    anchor_kind: str | None = None
+    structural_only: bool = False
+    executable_body: bool = False
 
 
 @dataclass
@@ -58,6 +62,9 @@ class Reference:
     line: int           # 1-indexed
     module: str | None = None  # for imports: the module path
     symbols: list[str] = field(default_factory=list)  # for imports: imported symbol names
+    source_range: dict = field(default_factory=dict)
+    receiver: str | None = None
+    callee_name: str | None = None
 
 
 @dataclass
@@ -78,6 +85,56 @@ class ExtractionResult:
     references: list[Reference] = field(default_factory=list)
     schema_annotations: dict[str, SchemaAnnotation] = field(default_factory=dict)
     skeleton_lines: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class RuleOutput:
+    """Validated, language-neutral projection of one declarative rule match."""
+    output_type: str
+    rule_id: str
+    text: str
+    source_range: dict
+    attributes: dict
+    captures: dict[str, str]
+
+
+# One admission vocabulary for installed declarative rules. Some normalized
+# records are projected only by business-domain consumers, but every match is
+# accepted or rejected here so new output types cannot disappear silently.
+RULE_OUTPUT_TYPES = frozenset({
+    "node", "edge", "reference", "binding", "business_anchor",
+    "receiver_binding", "rule_observation", "semantic_effect",
+    "semantic_relation", "ui_control", "ui_event", "ui_route",
+    "ui_validation", "entrypoint_implementation", "entrypoint_registration",
+    "component_composition", "dynamic_selection",
+})
+
+
+def normalize_rule_outputs(matches: list[dict]) -> list[RuleOutput]:
+    """Own raw ast-grep decoding for every declarative-rule consumer."""
+    outputs = []
+    for match in matches:
+        metadata = match.get("metadata", {})
+        output_type = metadata.get("produces", "")
+        rule_id = match.get("ruleId", "<unknown>")
+        if output_type and output_type not in RULE_OUTPUT_TYPES:
+            raise ValueError(f"Unsupported extraction output {output_type!r} from rule {rule_id}")
+        edge_type = metadata.get("edge_type", "")
+        if output_type == "edge" and edge_type and edge_type not in {"inherits", "implements"}:
+            raise ValueError(
+                f"Unsupported structural edge {edge_type!r} from rule {rule_id}")
+        captures = {}
+        variables = match.get("metaVariables", {})
+        for name, value in variables.get("single", {}).items():
+            if isinstance(value, dict) and isinstance(value.get("text"), str):
+                captures[name] = value["text"]
+        outputs.append(RuleOutput(
+            output_type=output_type, rule_id=rule_id,
+            text=match.get("text", ""), source_range=match.get("range", {}),
+            attributes={key: value for key, value in metadata.items() if key != "produces"},
+            captures=captures,
+        ))
+    return outputs
 
 
 # ── Language registry ─────────────────────────────────────────
@@ -200,6 +257,37 @@ def _run_ast_grep_stdin(sg: str, file_path: str, lang_rules_dir: Path) -> list[d
     return all_matches
 
 
+def match_source(source: str, language: str, max_output_bytes: int = 25_000_000) -> list[dict]:
+    """Run existing declarative rules on an already-contained source snapshot.
+
+    Unlike the legacy convenience functions, report adapter failures explicitly
+    so discovery cannot confuse missing tools or invalid rules with no matches.
+    No target configuration, imports or build scripts are executed.
+    """
+    import tempfile
+    sg = _find_sg()
+    if not sg:
+        raise RuntimeError('ast-grep executable unavailable')
+    rule_files = sorted((_RULES_DIR / language).glob('*.yml'))
+    if not rule_files:
+        raise RuntimeError('No declarative extraction rules registered')
+    matches = []
+    consumed = 0
+    for rule_file in rule_files:
+        with tempfile.TemporaryFile() as output:
+            result = subprocess.run([sg, 'scan', '--json', '--include-metadata',
+                '--stdin', '-r', str(rule_file)], input=source.encode(), stdout=output,
+                stderr=subprocess.DEVNULL, timeout=30, cwd=str(_SPEED_ROOT))
+            consumed += output.tell()
+            if result.returncode != 0:
+                raise RuntimeError('Declarative extraction rule failed')
+            if consumed > max_output_bytes:
+                raise RuntimeError('Extraction result exceeds byte budget')
+            output.seek(0)
+            matches.extend(json.load(output))
+    return matches
+
+
 def _parse_ast_grep_matches(
     matches: list[dict],
     file_path: str,
@@ -218,11 +306,11 @@ def _parse_ast_grep_matches(
     refs: list[Reference] = []
     schemas: dict[str, SchemaAnnotation] = {}
 
-    for match in matches:
-        metadata = match.get("metadata", {})
-        produces = metadata.get("produces", "")
-        text = match.get("text", "")
-        range_info = match.get("range", {})
+    for match, output in zip(matches, normalize_rule_outputs(matches)):
+        metadata = output.attributes
+        produces = output.output_type
+        text = output.text
+        range_info = output.source_range
         start = range_info.get("start", {})
         line = start.get("line", 0) + 1  # ast-grep is 0-indexed
         meta_vars = match.get("metaVariables", {})
@@ -231,6 +319,8 @@ def _parse_ast_grep_matches(
             kind = metadata.get("kind", "variable")
             # Extract name from metaVariables or from matched text
             name = _extract_name_from_match(match, kind)
+            if metadata.get('name_from') == 'path':
+                name = Path(rel_path).stem + '.default'
             if not name:
                 continue
 
@@ -239,6 +329,10 @@ def _parse_ast_grep_matches(
                 kind=kind,
                 file=rel_path,
                 line=line,
+                source_range=range_info,
+                anchor_kind=metadata.get('anchor_kind'),
+                executable_body=(metadata.get('executable_body') is True or bool(
+                    meta_vars.get('single', {}).get(metadata.get('executable_body_var'), {}).get('text'))),
             )
             defs.append(sym)
 
@@ -259,6 +353,8 @@ def _parse_ast_grep_matches(
                     kind="class",
                     file=rel_path,
                     line=line,
+                    source_range=range_info,
+                    structural_only=True,
                 )
                 if edge_type == "inherits":
                     target = _extract_edge_target(match)
@@ -301,6 +397,16 @@ def _parse_ast_grep_matches(
                     if isinstance(v, dict) and v.get("text"):
                         symbols = [v["text"]]
 
+            receiver = single.get(metadata.get('receiver_var'), {}).get('text')
+            callee_name = name
+            separator = metadata.get('callee_separator')
+            if separator and separator in name:
+                receiver, callee_name = name.rsplit(separator, 1)
+            if receiver and metadata.get('receiver_separator'):
+                receiver = receiver.rsplit(metadata['receiver_separator'], 1)[-1]
+            if receiver == metadata.get('implicit_receiver'):
+                receiver = None
+
             refs.append(Reference(
                 kind=ref_kind,
                 name=name,
@@ -308,6 +414,9 @@ def _parse_ast_grep_matches(
                 line=line,
                 module=module,
                 symbols=symbols,
+                source_range=range_info,
+                receiver=receiver,
+                callee_name=callee_name if ref_kind == 'call' else None,
             ))
 
     return defs, refs, schemas
@@ -333,7 +442,7 @@ def _extract_name_from_match(match: dict, kind: str) -> str | None:
         return None
 
     # For classes/functions: first identifier-like word after keyword
-    if kind in ("class", "type"):
+    if kind in ("class", "interface", "type"):
         m = re.search(r"(?:class|struct|interface|type|enum|model|trait|impl)\s+(\w+)", text)
         if m:
             return m.group(1)

@@ -81,7 +81,7 @@ describe("DigestArchitecturePage", () => {
     // pipeline has never produced anything else.
     const digestWithMixedEvidence = {
       ...baseDigest,
-      relationships: [
+      structuralRelationships: [
         { source: "cluster-ui", target: "cluster-core", weight: 12, evidenceType: "verified", sampleReferences: [] },
         { source: "cluster-core", target: "cluster-ui", weight: 2, evidenceType: "unknown", sampleReferences: [] },
       ],
@@ -117,7 +117,7 @@ describe("DigestArchitecturePage", () => {
           type: "high_blast_radius",
           description: "some_symbol is in the top 1% by blast radius.",
           severity: "high",
-          domainId: "cluster-core",
+          clusterId: "cluster-core",
           evidence: [
             { source: "semantic_graph", path: "lib/context/some_other_file.py", line: null, symbol: "some_symbol", artifactKey: null, description: "" },
           ],
@@ -139,7 +139,7 @@ describe("DigestArchitecturePage", () => {
           type: "high_blast_radius",
           description: "unrelated_symbol risk",
           severity: "high",
-          domainId: "cluster-ui",
+          clusterId: "cluster-ui",
           evidence: [{ source: "semantic_graph", path: "lib/context/repository_digest.py", line: null, symbol: "unrelated_symbol", artifactKey: null, description: "" }],
         },
       ],
@@ -149,32 +149,32 @@ describe("DigestArchitecturePage", () => {
     fireEvent.click(screen.getByTestId("architecture-node-cluster-core"));
     const panel = screen.getByTestId("architecture-detail-panel");
     expect(within(panel).queryByText(/unrelated_symbol risk/)).not.toBeInTheDocument();
-    expect(within(panel).getByText("No risks are associated with this domain.")).toBeInTheDocument();
+    expect(within(panel).getByText("No risks are associated with this structural group.")).toBeInTheDocument();
   });
 
   it("shows a placeholder detail panel before any selection", () => {
     setupUrqlHooks({ digest: baseDigest });
     renderDigestPage(<DigestArchitecturePage />);
-    expect(screen.getByText("Select a domain in the graph to see its details.")).toBeInTheDocument();
+    expect(screen.getByText("Select a structural group in the graph to see its details.")).toBeInTheDocument();
   });
 
   it("shows an honest empty-relationships state instead of fabricating edges", () => {
-    const digestNoRels = { ...baseDigest, relationships: [] };
+    const digestNoRels = { ...baseDigest, structuralRelationships: [] };
     setupUrqlHooks({ digest: digestNoRels });
     renderDigestPage(<DigestArchitecturePage />);
-    expect(screen.getByText("No cross-domain relationships were found among these domains.")).toBeInTheDocument();
+    expect(screen.getByText("No cross-group relationships were found among these structural groups.")).toBeInTheDocument();
   });
 
   it("shows a no-domains state when the digest has no domains at all", () => {
-    setupUrqlHooks({ digest: { ...baseDigest, domains: [] } });
+    setupUrqlHooks({ digest: { ...baseDigest, structuralGroups: [] } });
     renderDigestPage(<DigestArchitecturePage />);
-    expect(screen.getByText("No domains discovered yet")).toBeInTheDocument();
+    expect(screen.getByText("No structural groups discovered yet")).toBeInTheDocument();
   });
 
   it("handles a partial digest (no domains) without crashing", () => {
     setupUrqlHooks({ digest: partialDigest });
     renderDigestPage(<DigestArchitecturePage />);
-    expect(screen.getByText("No domains discovered yet")).toBeInTheDocument();
+    expect(screen.getByText("No structural groups discovered yet")).toBeInTheDocument();
   });
 
   it("shows the page-level empty state when the project map has no indexed files", () => {

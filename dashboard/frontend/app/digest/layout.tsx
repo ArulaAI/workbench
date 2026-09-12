@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import { DigestSidebar } from "@/components/digest/DigestSidebar";
 import { ConnectionStatus } from "@/components/layout/connection-status";
 import { RepositoryDigestProvider } from "@/lib/hooks/useRepositoryDigest";
@@ -39,27 +40,30 @@ const SCREEN_LABELS: Record<string, string> = {
 export default function DigestLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const screenLabel = SCREEN_LABELS[pathname ?? ""] ?? "";
+  const [navigationOpen,setNavigationOpen] = useState(false);
+  useEffect(()=>setNavigationOpen(false),[pathname]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
       <div
+        className="digest-topbar"
         style={{
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
           height: 56,
           flexShrink: 0,
-          padding: "0 24px",
           borderBottom: "1px solid var(--color-border)",
           background: "var(--color-bg-elevated)",
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <button className="digest-mobile-menu" aria-expanded={navigationOpen} aria-controls="digest-navigation" onClick={()=>setNavigationOpen(!navigationOpen)}>Sections</button>
           <Link href="/" className="digest-breadcrumb" style={{ textDecoration: "none" }}>
             Workbench
           </Link>
-          <span className="digest-breadcrumb">/</span>
-          <span className="digest-breadcrumb">Repository Digest</span>
+          <span className="digest-breadcrumb digest-product-breadcrumb">/</span>
+          <span className="digest-breadcrumb digest-product-breadcrumb">Repository Digest</span>
           {screenLabel && (
             <>
               <span className="digest-breadcrumb">/</span>
@@ -71,13 +75,14 @@ export default function DigestLayout({ children }: { children: React.ReactNode }
       </div>
 
       <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
-        <DigestSidebar />
+        <div id="digest-navigation" className={`digest-navigation${navigationOpen ? ' is-open' : ''}`}
+          onClick={event=>{if ((event.target as HTMLElement).closest('a')) setNavigationOpen(false);}}><DigestSidebar /></div>
         <main
+          className="digest-content"
           style={{
             flex: 1,
             minWidth: 0,
             overflowY: "auto",
-            padding: 28,
             display: "flex",
             flexDirection: "column",
             gap: 16,

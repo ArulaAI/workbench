@@ -1,0 +1,46 @@
+id: ts-exported-default-arrow-definition
+language: typescript
+metadata:
+  produces: node
+  kind: function
+  executable_body: true
+  name_from: path
+rule:
+  kind: arrow_function
+  inside:
+    kind: export_statement
+---
+id: ts-return-binding
+language: typescript
+metadata:
+  produces: binding
+  direction: output
+  expression_var: VALUE
+rule:
+  kind: return_statement
+  pattern: return $VALUE;
+---
+id: ts-fetch-effect-with-request
+language: typescript
+metadata:
+  produces: semantic_effect
+  effect_kind: external_action
+  resource_kind: service
+  protocol: http
+  target_var: URL
+  request_var: OPTIONS
+  target_pattern: '^["'']([^"'']*)["'']$'
+rule:
+  pattern: fetch($URL, $OPTIONS)
+---
+id: ts-fetch-effect
+language: typescript
+metadata:
+  produces: semantic_effect
+  effect_kind: external_action
+  resource_kind: service
+  protocol: http
+  target_var: URL
+  target_pattern: '^["'']([^"'']*)["'']$'
+rule:
+  pattern: fetch($URL)

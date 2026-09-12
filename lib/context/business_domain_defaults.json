@@ -1,0 +1,14 @@
+{
+  "max_trace_depth": 6,
+  "max_symbols_per_activity": 200,
+  "max_request_input_tokens": 2000000,
+  "max_request_output_tokens": 128000,
+  "max_build_input_tokens": 8000000,
+  "max_build_output_tokens": 512000,
+  "provider_concurrency": 2,
+  "deadline_seconds": 3600,
+  "max_source_bytes": 500000,
+  "max_artifact_bytes": 25000000,
+  "cache_retention_days": 30,
+  "snapshot_manifest": null
+}

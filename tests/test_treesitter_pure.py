@@ -708,8 +708,8 @@ class TestParseAstGrepMatches:
         assert len(refs) == 1
         assert defs[1].base_classes == ["Bar"]
 
-    def test_unknown_produces_ignored(self):
-        """Matches with an unrecognized 'produces' value are silently skipped."""
+    def test_unknown_produces_rejected(self):
+        """A registered output cannot disappear from normalized extraction."""
         matches = [{
             "ruleId": "test",
             "text": "something",
@@ -717,10 +717,8 @@ class TestParseAstGrepMatches:
             "metaVariables": {},
             "metadata": {"produces": "unknown_type"},
         }]
-        defs, refs, schemas = _parse_ast_grep_matches(matches, "f.py", "f.py")
-        assert defs == []
-        assert refs == []
-        assert schemas == {}
+        with pytest.raises(ValueError, match="Unsupported extraction output"):
+            _parse_ast_grep_matches(matches, "f.py", "f.py")
 
     def test_missing_metadata(self):
         """Match with no metadata is silently skipped (produces='')."""

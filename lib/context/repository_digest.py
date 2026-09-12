@@ -481,6 +481,16 @@ def load_repository_digest_with_status(
         return "malformed", None, "repository-digest.json does not contain a JSON object"
 
     stored_version = data.get("schema_version")
+    if stored_version == 1:
+        # Legacy clusters remain inspectable as structural groups. They never
+        # become business-domain proposals through a schema migration.
+        data['structural_groups'] = data.get('domains',[])
+        data['structural_relationships'] = data.get('relationships',[])
+        data['domains'] = []; data['relationships'] = []
+        data['schema_version'] = SCHEMA_VERSION
+        data.setdefault('warnings',[]).append('Legacy structural groups require business-domain discovery.')
+        data.get('footprint',{}).update(domain_count=None,cross_domain_relationship_count=None)
+        stored_version = SCHEMA_VERSION
     if stored_version != SCHEMA_VERSION:
         return (
             "malformed", None,
@@ -501,7 +511,53 @@ def load_repository_digest_with_status(
         data.setdefault("warnings", [])
         data["warnings"].extend(confidence_warnings)
 
+    _apply_business_projection(data, project_root)
+
     return "ok", data, None
+
+
+def _apply_business_projection(data: dict[str, Any], project_root: str) -> None:
+    """Apply only validated canonical domains, retaining a valid latest status."""
+    from .business_domains import paths as domain_paths, projection
+    from .business_domain_context import project_participation, read_business_model
+    from .business_domain_schema import (
+        DomainError, limits, read_status, record, settings, validate,
+    )
+
+    try:
+        projected = projection(project_root)
+        model = read_business_model(project_root)
+    except DomainError as exc:
+        model = None
+        status = None
+        # Model and status are independent artifacts. A stale malformed model
+        # must not hide a valid latest attempt status already on disk.
+        try:
+            candidate = read_status(domain_paths(project_root)['status'])
+            if candidate:
+                status = candidate
+        except DomainError:
+            pass
+        if status is None:
+            candidate = data.get('domain_status')
+            try:
+                if candidate:
+                    validate(candidate, 'StatusArtifact')
+                    status = candidate
+            except DomainError:
+                status = None
+        if status is None:
+            status = record('StatusArtifact', limits=limits(settings(None)))
+        projected = record('DigestDomainProjection', domain_status=status)
+        data.setdefault('warnings', []).append(
+            f'Canonical business-domain artifact unavailable ({exc.code}): {exc}')
+
+    data.update(projected)
+    data['footprint']['domain_count'] = (
+        len(data['domains']) if data['domain_build_id'] else None)
+    data['footprint']['cross_domain_relationship_count'] = (
+        len(data['relationships']) if data['domain_build_id'] else None)
+    project_participation(data, model)
 
 
 def build_repository_digest(
@@ -790,6 +846,12 @@ def build_repository_digest(
     digest["cicd"] = cicd
     digest["runtime_config"] = runtime_config
     digest["security"] = security
+
+    # Technical graph communities remain explicitly structural. Canonical
+    # domain records are the only source for the business-domain projection.
+    digest['structural_groups'] = domains
+    digest['structural_relationships'] = relationships
+    _apply_business_projection(digest, project_root)
 
     issues = validate_digest(digest)
     if issues:
@@ -1294,7 +1356,7 @@ def _derive_hotspots(
             continue
         reason = f"{dependents} dependent{'s' if dependents != 1 else ''}, blast radius {blast}"
         if impact.get("stability") == "bridge":
-            reason += " — crosses a domain boundary"
+            reason += " — crosses a structural cluster boundary"
         hotspots.append({
             "symbol_id": n["id"],
             "name": n.get("name", n["id"]),
@@ -1439,9 +1501,9 @@ def _derive_risks(
             if len(doms) >= 3:
                 n = nodes_by_id.get(symbol_id)
                 risks.append({
-                    "type": "cross_domain_hub",
-                    "description": f"{symbol_id} has edges touching {len(doms)} distinct domains.",
-                    "evidence": [make_evidence("semantic_graph", "Cross-domain hub symbol", symbol=symbol_id, path=n.get("file") if n else None)],
+                    "type": "cross_cluster_hub",
+                    "description": f"{symbol_id} has edges touching {len(doms)} distinct structural clusters.",
+                    "evidence": [make_evidence("semantic_graph", "Cross-cluster hub symbol", symbol=symbol_id, path=n.get("file") if n else None)],
                     "domain_id": symbol_to_domain.get(symbol_id, ""),
                 })
 
@@ -1588,12 +1650,13 @@ def project_digest_for_agent(digest: dict[str, Any], *, token_budget: int) -> st
         sections.append("## Domains\n\n")
         used += cost("## Domains\n\n")
         for domain in domains:
-            full = f"### {domain['label']}\n{domain.get('summary', '')} ({domain['file_count']} files, {domain['symbol_count']} symbols)\n\n"
+            label = domain.get('name',domain.get('label',''))
+            full = f"### {label}\n{domain.get('summary', '')} ({domain['file_count']} files, {domain['symbol_count']} symbols)\n\n"
             if used + cost(full) <= token_budget:
                 sections.append(full)
                 used += cost(full)
                 continue
-            brief = f"- {domain['label']} ({domain['file_count']} files)\n"
+            brief = f"- {label} ({domain['file_count']} files)\n"
             if used + cost(brief) <= token_budget:
                 sections.append(brief)
                 used += cost(brief)

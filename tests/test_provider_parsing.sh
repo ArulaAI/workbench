@@ -3,7 +3,7 @@
 #
 # Tests pure-logic functions from providers/claude-code.sh:
 #   _find_result_event, _detect_result_error, _result_metadata,
-#   _resolve_claude_effort, _count_lines
+#   _resolve_claude_effort, provider/model capabilities, _count_lines
 #
 # Usage: bash tests/test_provider_parsing.sh
 # Exit: 0 if all tests pass, 1 if any fail
@@ -12,6 +12,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROVIDER_FILE="${SCRIPT_DIR}/../providers/claude-code.sh"
+PROVIDER_OWNER="${SCRIPT_DIR}/../lib/provider.sh"
 PASS=0
 FAIL=0
 TEST_DIR=""
@@ -20,6 +21,7 @@ TEST_DIR=""
 
 setup() {
     TEST_DIR=$(mktemp -d)
+    unset SPEED_PROVIDER_CONTEXT_TOKENS SPEED_PROVIDER_MAX_OUTPUT_TOKENS 2>/dev/null || true
 
     # Color/symbol stubs
     COLOR_ERROR="" COLOR_WARN="" COLOR_DIM="" COLOR_SUCCESS="" COLOR_STEP=""
@@ -73,12 +75,15 @@ setup() {
     eval "$(sed -n '/^_result_metadata()/,/^}/p' "$PROVIDER_FILE")"
     eval "$(sed -n '/^_resolve_claude_effort()/,/^}/p' "$PROVIDER_FILE")"
     eval "$(sed -n '/^_count_lines()/,/^}/p' "$PROVIDER_FILE")"
+    eval "$(sed -n '/^provider_model_capabilities()/,/^}/p' "$PROVIDER_OWNER")"
+    eval "$(sed -n '/^_provider_model_capabilities()/,/^}/p' "$PROVIDER_FILE")"
 }
 
 teardown() {
     rm -rf "$TEST_DIR"
     # Clean up env vars that tests may have set
-    unset SPEED_CLAUDE_EFFORT SPEED_CLAUDE_EFFORT_ARCHITECT SPEED_CLAUDE_EFFORT_DEVELOPER 2>/dev/null || true
+    unset SPEED_CLAUDE_EFFORT SPEED_CLAUDE_EFFORT_ARCHITECT SPEED_CLAUDE_EFFORT_DEVELOPER \
+        SPEED_PROVIDER_CONTEXT_TOKENS SPEED_PROVIDER_MAX_OUTPUT_TOKENS 2>/dev/null || true
 }
 
 run_test() {
@@ -217,6 +222,15 @@ test_detect_error_is_error_true() {
     }
 }
 
+test_detect_error_flag_wins_over_success_subtype() {
+    local line='{"type":"result","subtype":"success","is_error":true,"result":"Prompt is too long"}'
+    local rc=0
+    local output
+    output=$(_detect_result_error "$line") || rc=$?
+    assert_exit_code "0" "$rc" "is_error:true must win over success subtype"
+    assert_eq "Prompt is too long" "$output" "native input-limit result is retained for adapter classification"
+}
+
 test_detect_error_empty_input() {
     local rc=0
     _detect_result_error "" >/dev/null 2>&1 || rc=$?
@@ -319,6 +333,35 @@ test_effort_label_normalization() {
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Provider/model capability tests
+# ══════════════════════════════════════════════════════════════════════════════
+
+test_model_capabilities_stable_alias() {
+    assert_eq \
+        '{"provider_context_tokens":1000000,"provider_max_output_tokens":128000,"output_limit_enforcement":"provider"}' \
+        "$(provider_model_capabilities sonnet)"
+}
+
+test_model_capabilities_unknown_explicit_id() {
+    assert_eq \
+        '{"provider_context_tokens":null,"provider_max_output_tokens":null,"output_limit_enforcement":"unknown"}' \
+        "$(provider_model_capabilities claude-explicit-version)"
+}
+
+test_model_capabilities_shared_override() {
+    assert_eq \
+        '{"provider_context_tokens":12000,"provider_max_output_tokens":1000,"output_limit_enforcement":"provider"}' \
+        "$(SPEED_PROVIDER_CONTEXT_TOKENS=12000 SPEED_PROVIDER_MAX_OUTPUT_TOKENS=1000 \
+            provider_model_capabilities haiku)"
+}
+
+test_model_capabilities_reject_invalid_override() {
+    local rc=0
+    SPEED_PROVIDER_CONTEXT_TOKENS=0 provider_model_capabilities sonnet >/dev/null || rc=$?
+    assert_exit_code 1 "$rc"
+}
+
+# ══════════════════════════════════════════════════════════════════════════════
 # _count_lines tests
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -361,6 +404,7 @@ run_test test_detect_error_max_turns
 run_test test_detect_error_tool_use
 run_test test_detect_error_generic
 run_test test_detect_error_is_error_true
+run_test test_detect_error_flag_wins_over_success_subtype
 run_test test_detect_error_empty_input
 run_test test_metadata_full
 run_test test_metadata_missing_fields
@@ -372,6 +416,10 @@ run_test test_effort_auto_opus_large_input
 run_test test_effort_auto_opus_small_input
 run_test test_effort_auto_sonnet_large_input
 run_test test_effort_label_normalization
+run_test test_model_capabilities_stable_alias
+run_test test_model_capabilities_unknown_explicit_id
+run_test test_model_capabilities_shared_override
+run_test test_model_capabilities_reject_invalid_override
 run_test test_count_lines_empty
 run_test test_count_lines_one
 run_test test_count_lines_multiple

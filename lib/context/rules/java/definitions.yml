@@ -48,11 +48,20 @@ language: java
 metadata:
   produces: node
   kind: method
+  executable_body_var: BODY
 rule:
   kind: method_declaration
   has:
     field: name
     pattern: $NAME
+  any:
+    - has:
+        field: body
+        pattern: $BODY
+    - not:
+        has:
+          field: body
+          kind: block
 
 ---
 id: java-constructor
@@ -60,6 +69,7 @@ language: java
 metadata:
   produces: node
   kind: method
+  executable_body: true
 rule:
   kind: constructor_declaration
   has:

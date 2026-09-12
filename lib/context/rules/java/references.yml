@@ -86,6 +86,9 @@ metadata:
   produces: reference
   ref_kind: call
   name_var: FUNC
+  receiver_var: OBJ
+  receiver_separator: '.'
+  implicit_receiver: this
 rule:
   # Java's method_invocation node has separate object/name/arguments
   # fields (unlike Python's call or TS's call_expression, where the

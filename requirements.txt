@@ -23,6 +23,7 @@ tree-sitter-lua
 tree-sitter-haskell
 tree-sitter-zig
 ast-grep-cli
+sqlglot==30.18.0
 scikit-learn
 networkx
 python-igraph
@@ -35,3 +36,6 @@ watchdog>=6.0
 mistune>=3.0,<4.0
 litellm>=1.80
 instructor>=1.14
+jsonschema>=4.23,<5.0
+PyYAML>=6.0,<7.0
+tiktoken>=0.8,<1.0

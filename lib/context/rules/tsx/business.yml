@@ -1,0 +1,335 @@
+id: tsx-exported-arrow-definition
+language: tsx
+metadata:
+  produces: node
+  kind: function
+  executable_body: true
+  name_from: path
+rule:
+  kind: arrow_function
+  inside:
+    kind: export_statement
+---
+id: tsx-class-method-definition
+language: tsx
+metadata:
+  produces: node
+  kind: method
+  executable_body: true
+rule:
+  kind: method_definition
+  has:
+    field: name
+    pattern: $NAME
+---
+id: tsx-jsx-implementation
+language: tsx
+metadata:
+  produces: entrypoint_implementation
+  role: implementation
+rule:
+  any:
+    - kind: function_declaration
+    - kind: arrow_function
+    - kind: method_definition
+      has:
+        field: name
+        regex: '^render$'
+  has:
+    any:
+      - kind: jsx_element
+      - kind: jsx_self_closing_element
+    stopBy: end
+---
+id: tsx-condition-observation
+language: tsx
+metadata:
+  produces: rule_observation
+  source_location_kind: ui
+rule:
+  kind: if_statement
+---
+id: tsx-return-binding
+language: tsx
+metadata:
+  produces: binding
+  direction: output
+  expression_var: VALUE
+rule:
+  kind: return_statement
+  pattern: return $VALUE;
+---
+id: tsx-ui-control
+language: tsx
+metadata:
+  produces: ui_control
+  label_var: TAG
+rule:
+  any:
+    - kind: jsx_self_closing_element
+      has:
+        field: name
+        pattern: $TAG
+    - kind: jsx_element
+      has:
+        kind: jsx_opening_element
+        has:
+          field: name
+          pattern: $TAG
+constraints:
+  TAG:
+    regex: '^(form|input|button|select|textarea)$'
+---
+id: tsx-ui-event
+language: tsx
+metadata:
+  produces: ui_event
+  trigger_var: EVENT
+  handler_var: HANDLER
+  handler_separator: '.'
+  implicit_receiver: this
+  also_relation: true
+  edge_kind: selects_implementation
+  to_var: HANDLER
+  target_separator: '.'
+rule:
+  kind: jsx_attribute
+  all:
+    - has:
+        kind: property_identifier
+        pattern: $EVENT
+    - has:
+        kind: jsx_expression
+        has:
+          pattern: $HANDLER
+constraints:
+  EVENT:
+    regex: '^on[A-Z]'
+---
+id: tsx-native-required
+language: tsx
+metadata:
+  produces: ui_validation
+  trigger: native constraint validation attempt
+  enforcement: native
+rule:
+  kind: jsx_attribute
+  regex: '^required(?:=\{true\})?$'
+---
+id: tsx-native-required-observation
+language: tsx
+metadata:
+  produces: rule_observation
+  source_location_kind: ui
+rule:
+  kind: jsx_attribute
+  regex: '^required(?:=\{true\})?$'
+---
+id: tsx-route-declaration
+language: tsx
+metadata:
+  produces: entrypoint_registration
+  anchor_kind: ui
+  registration_kind: route
+  role: registration
+  method: route
+  route_var: ROUTE
+  target_var: VIEW
+  edge_kind: selects_implementation
+  view_var: VIEW
+  route_pattern: '^["'']([^"'']*)["'']$'
+rule:
+  kind: jsx_self_closing_element
+  has:
+    field: name
+    regex: '^Route$'
+  all:
+    - has:
+        kind: jsx_attribute
+        regex: '^path='
+        has:
+          kind: string
+          pattern: $ROUTE
+    - has:
+        kind: jsx_attribute
+        regex: '^component='
+        has:
+          kind: jsx_expression
+          has:
+            kind: identifier
+            pattern: $VIEW
+---
+id: tsx-form-action-registration
+language: tsx
+metadata:
+  produces: entrypoint_registration
+  anchor_kind: ui
+  registration_kind: action
+  role: registration
+  method: onSubmit
+  target_var: HANDLER
+  edge_kind: selects_implementation
+  label_pattern: '(?s)<button(?:\s[^>]*)?>([^<{][^<]*)</button>'
+rule:
+  kind: jsx_element
+  has:
+    kind: jsx_opening_element
+    all:
+      - has:
+          field: name
+          regex: '^form$'
+      - has:
+          kind: jsx_attribute
+          all:
+            - has:
+                kind: property_identifier
+                regex: '^onSubmit$'
+            - has:
+                kind: jsx_expression
+                has:
+                  pattern: $HANDLER
+---
+id: tsx-route-declaration-dynamic
+language: tsx
+metadata:
+  produces: entrypoint_registration
+  anchor_kind: ui
+  registration_kind: route
+  role: registration
+  method: route
+  route_var: ROUTE
+  route_dynamic: true
+  target_var: VIEW
+  edge_kind: selects_implementation
+rule:
+  kind: jsx_self_closing_element
+  has:
+    field: name
+    regex: '^Route$'
+  all:
+    - has:
+        kind: jsx_attribute
+        regex: '^path='
+        has:
+          kind: jsx_expression
+          has:
+            pattern: $ROUTE
+    - has:
+        kind: jsx_attribute
+        regex: '^component='
+        has:
+          kind: jsx_expression
+          has:
+            pattern: $VIEW
+---
+id: tsx-button-action-registration
+language: tsx
+metadata:
+  produces: entrypoint_registration
+  anchor_kind: ui
+  registration_kind: action
+  role: registration
+  method: onClick
+  target_var: HANDLER
+  edge_kind: selects_implementation
+  label_pattern: '(?s)<button(?:\s[^>]*)?>([^<{][^<]*)</button>'
+rule:
+  kind: jsx_element
+  has:
+    kind: jsx_opening_element
+    all:
+      - has:
+          field: name
+          regex: '^button$'
+      - has:
+          kind: jsx_attribute
+          all:
+            - has:
+                kind: property_identifier
+                regex: '^onClick$'
+            - has:
+                kind: jsx_expression
+                has:
+                  pattern: $HANDLER
+---
+id: tsx-dynamic-component-selection
+language: tsx
+metadata:
+  produces: dynamic_selection
+  selector_var: SELECTED
+  candidate_vars:
+    - FIRST
+    - SECOND
+rule:
+  pattern: 'const $SELECTED = $CONDITION ? $FIRST : $SECOND'
+---
+id: tsx-component-composition-self-closing
+language: tsx
+metadata:
+  produces: component_composition
+  target_var: COMPONENT
+  edge_kind: composes
+rule:
+  kind: jsx_self_closing_element
+  has:
+    field: name
+    kind: identifier
+    pattern: $COMPONENT
+constraints:
+  COMPONENT:
+    regex: '^[A-Z]'
+---
+id: tsx-component-composition-element
+language: tsx
+metadata:
+  produces: component_composition
+  target_var: COMPONENT
+  edge_kind: composes
+rule:
+  kind: jsx_element
+  has:
+    kind: jsx_opening_element
+    has:
+      field: name
+      kind: identifier
+      pattern: $COMPONENT
+constraints:
+  COMPONENT:
+    regex: '^[A-Z]'
+---
+id: tsx-mounted-view-lifecycle
+language: tsx
+metadata:
+  produces: semantic_relation
+  route_activation: true
+  edge_kind: composes
+rule:
+  kind: method_definition
+  has:
+    field: name
+    regex: '^component(?:DidMount|WillReceiveProps)$'
+---
+id: tsx-fetch-effect-with-request
+language: tsx
+metadata:
+  produces: semantic_effect
+  effect_kind: external_action
+  resource_kind: service
+  protocol: http
+  target_var: URL
+  request_var: OPTIONS
+  target_pattern: '^["'']([^"'']*)["'']$'
+rule:
+  pattern: fetch($URL, $OPTIONS)
+---
+id: tsx-fetch-effect
+language: tsx
+metadata:
+  produces: semantic_effect
+  effect_kind: external_action
+  resource_kind: service
+  protocol: http
+  target_var: URL
+  target_pattern: '^["'']([^"'']*)["'']$'
+rule:
+  pattern: fetch($URL)

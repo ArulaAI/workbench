@@ -4,6 +4,7 @@ export const REPOSITORY_DIGEST_QUERY = gql`
   query RepositoryDigest {
     repositoryDigest {
       schemaVersion
+      domainBuildId
       status
       effectiveState
       generatedAt
@@ -29,6 +30,13 @@ export const REPOSITORY_DIGEST_QUERY = gql`
       }
       domains(limit: 100) {
         id
+        name
+        support
+        reviewState
+        activityCount
+        hasSharedCode
+        boundaryRationale
+        unresolvedQuestions
         label
         summary
         confidence
@@ -48,6 +56,11 @@ export const REPOSITORY_DIGEST_QUERY = gql`
         evidenceType
         sampleReferences { sourceSymbol targetSymbol }
       }
+      structuralGroups(limit:100) {
+        id label summary confidence fileCount symbolCount representativeFiles representativeSymbols dependsOn usedBy lane
+        evidence {source path line symbol artifactKey description}
+      }
+      structuralRelationships(limit:100) {source target weight evidenceType sampleReferences {sourceSymbol targetSymbol}}
       commands {
         purpose
         command
@@ -61,6 +74,7 @@ export const REPOSITORY_DIGEST_QUERY = gql`
         file
         line
         domainId
+        domainIds clusterId domainParticipation
         reason
         blastRadius
         dependents
@@ -76,6 +90,7 @@ export const REPOSITORY_DIGEST_QUERY = gql`
         description
         severity
         domainId
+        domainIds clusterId domainParticipation
         evidence { source path line symbol artifactKey description }
       }
       gaps {
@@ -103,6 +118,7 @@ export const REPOSITORY_DIGEST_QUERY = gql`
         kind
       }
       annotatedTree {
+        domainIds domainLabels sharedFileCount unassignedFileCount
         path
         fileCount
         totalLines
@@ -186,6 +202,16 @@ export const REPOSITORY_DIGEST_QUERY = gql`
 
 export const REPOSITORY_DIGEST_STATUS_QUERY = gql`
   query RepositoryDigestStatus {
+    domainDiscoveryStatus {
+      phase attemptBuildId publishedBuildId freshness
+      executionMode currentScopeId rootReconciled
+      coverage {anchorsTotal anchorsProcessed anchorsPending anchorsExcluded edgesUnresolved}
+      limits {requests elapsedMs}
+      warnings {code message subjectIds}
+      error {code message retryable providerFailure {
+        category scope retryable nativeStatus diagnosticLog
+      }}
+    }
     repositoryDigestStatus {
       state
       startedAt
@@ -246,6 +272,13 @@ export type DigestLane = "frontend" | "api" | "services" | "data" | "other";
 
 export interface DigestDomain {
   id: string;
+  name?: string;
+  support?: string;
+  reviewState?: string;
+  activityCount?: number;
+  hasSharedCode?: boolean;
+  boundaryRationale?: string;
+  unresolvedQuestions?: string[];
   label: string;
   summary: string;
   confidence: DigestConfidence;
@@ -257,6 +290,17 @@ export interface DigestDomain {
   usedBy: string[];
   evidence: DigestEvidence[];
   lane: DigestLane;
+}
+
+export interface DomainDiscoveryStatus {
+  phase:string; attemptBuildId:string|null; publishedBuildId:string|null; freshness:string;
+  executionMode:'whole_graph'|'hierarchical'|null; currentScopeId:string|null; rootReconciled:boolean;
+  coverage:{anchorsTotal:number; anchorsProcessed:number; anchorsPending:number; anchorsExcluded:number; edgesUnresolved:number};
+  warnings?:{code:string;message:string;subjectIds:string[]}[];
+  limits:{requests:number; elapsedMs:number}; error:{
+    code:string; message:string; retryable:boolean;
+    providerFailure:{category:string;scope:string;retryable:boolean;nativeStatus:string|null;diagnosticLog:string|null}|null;
+  }|null;
 }
 
 export interface DigestSymbolReference {
@@ -285,7 +329,10 @@ export interface DigestHotspot {
   name: string;
   file: string;
   line: number;
-  domainId: string;
+  domainId?: string;
+  domainIds?: string[];
+  clusterId?: string;
+  domainParticipation?: string;
   reason: string;
   blastRadius: number;
   dependents: number;
@@ -302,7 +349,10 @@ export interface DigestRisk {
   type: string;
   description: string;
   severity: string;
-  domainId: string;
+  domainId?: string;
+  domainIds?: string[];
+  clusterId?: string;
+  domainParticipation?: string;
   evidence: DigestEvidence[];
 }
 
@@ -334,6 +384,10 @@ export interface DigestCoverageStats {
 }
 
 export interface DigestAnnotatedDirectory {
+  domainIds?: string[];
+  domainLabels?: string[];
+  sharedFileCount?: number;
+  unassignedFileCount?: number;
   path: string;
   fileCount: number;
   totalLines: number;
@@ -560,6 +614,9 @@ export interface DigestChangesHistory {
 
 export interface RepositoryDigestData {
   schemaVersion: number;
+  domainBuildId?: string | null;
+  structuralGroups?: DigestDomain[];
+  structuralRelationships?: DigestRelationship[];
   status: "COMPLETE" | "PARTIAL" | "FAILED";
   effectiveState: DigestEffectiveState;
   generatedAt: string;

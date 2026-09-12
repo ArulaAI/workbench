@@ -146,7 +146,7 @@ _PROVIDERS_DIR="${SCRIPT_DIR}/providers"
 _PROVIDER_FILE="${_PROVIDERS_DIR}/${_PROVIDER_NAME}.sh"
 
 if [[ ! -f "$_PROVIDER_FILE" ]]; then
-    local _available=""
+    _available=""
     for f in "${_PROVIDERS_DIR}"/*.sh; do
         [[ -f "$f" ]] || continue
         _available+="  - $(basename "$f" .sh)"$'\n'
@@ -164,6 +164,106 @@ fi
 provider_diagnose_failure() {
     local raw_log="$2"
     log_warn "Check the raw log manually: ${raw_log}"
+}
+
+# ── Machine-readable failure contract ───────────────────────────
+# Provider adapters classify their own native output, then use this shared
+# owner to serialize one stable, provider-agnostic envelope.  The optional
+# file transport survives command substitutions without mixing diagnostics
+# into a successful provider response.
+PROVIDER_FAILURE_CONTRACT_VERSION=1
+
+provider_failure_clear() {
+    [[ -n "${SPEED_PROVIDER_FAILURE_FILE:-}" ]] || return 0
+    : > "$SPEED_PROVIDER_FAILURE_FILE"
+}
+
+provider_failure_record() {
+    local category="$1" scope="$2" retryable="$3" native_status="${4:-}"
+    local message="$5" diagnostic_log="${6:-}"
+    case "$category" in
+        authentication_required|authorization_denied|capability_unavailable|rate_limited|transport_unavailable|timeout|process_failed|response_incomplete|response_invalid|unknown) ;;
+        *) category="unknown" ;;
+    esac
+    case "$scope" in provider|request) ;; *) scope="provider" ;; esac
+    case "$retryable" in true|false) ;; *) retryable="false" ;; esac
+    native_status=$(printf '%s' "$native_status" | tr -cd '[:alnum:]_.:-' | cut -c1-64)
+    message=$(printf '%s' "$message" | tr '\r\n' '  ' | cut -c1-256)
+    diagnostic_log=$(printf '%s' "$diagnostic_log" | tr -cd '[:alnum:]_./:-' | cut -c1-512)
+    local envelope
+    envelope=$(jq -cn \
+        --argjson schema_version "$PROVIDER_FAILURE_CONTRACT_VERSION" \
+        --arg category "$category" --arg scope "$scope" \
+        --argjson retryable "$retryable" --arg native_status "$native_status" \
+        --arg message "$message" --arg diagnostic_log "$diagnostic_log" \
+        '{schema_version:$schema_version,category:$category,scope:$scope,retryable:$retryable,
+          native_status:(if $native_status=="" then null else $native_status end),
+          message:$message,diagnostic_log:(if $diagnostic_log=="" then null else $diagnostic_log end)}') || return 1
+    if [[ -n "${SPEED_PROVIDER_FAILURE_FILE:-}" ]]; then
+        printf '%s\n' "$envelope" > "$SPEED_PROVIDER_FAILURE_FILE"
+    fi
+}
+
+provider_failure_record_if_absent() {
+    if [[ -n "${SPEED_PROVIDER_FAILURE_FILE:-}" && -s "$SPEED_PROVIDER_FAILURE_FILE" ]]; then
+        return 0
+    fi
+    provider_failure_record "$@"
+}
+
+provider_failure_read() {
+    [[ -n "${SPEED_PROVIDER_FAILURE_FILE:-}" && -s "$SPEED_PROVIDER_FAILURE_FILE" ]] || return 1
+    jq -ce 'select(
+        .schema_version == 1 and
+        (.category | IN("authentication_required","authorization_denied","capability_unavailable",
+          "rate_limited","transport_unavailable","timeout","process_failed","response_incomplete",
+          "response_invalid","unknown")) and
+        (.scope | IN("provider","request")) and
+        (.retryable | type == "boolean") and
+        (.native_status == null or (.native_status | type == "string" and length <= 64)) and
+        (.message | type == "string" and length > 0 and length <= 256) and
+        (.diagnostic_log == null or (.diagnostic_log | type == "string" and length <= 512))
+    )' "$SPEED_PROVIDER_FAILURE_FILE" 2>/dev/null
+}
+
+# Provider/model limits share this owner with provider selection. Adapters may
+# override the hook for stable aliases; unknown explicit model IDs remain
+# unknown. Operators can supply authoritative caps without adding a discovery
+# configuration path or a provider-name branch to Python orchestration.
+_provider_model_capabilities() {
+    printf '%s\n' '{"provider_context_tokens":null,"provider_max_output_tokens":null,"output_limit_enforcement":"unknown"}'
+}
+
+provider_model_capabilities() {
+    local model="$1" capabilities context_override output_override
+    capabilities=$(_provider_model_capabilities "$model") || return 1
+    if ! printf '%s' "$capabilities" | jq -e '
+        (keys == ["output_limit_enforcement","provider_context_tokens","provider_max_output_tokens"]) and
+        (.provider_context_tokens == null or
+         (.provider_context_tokens | type == "number" and floor == . and . > 0)) and
+        (.provider_max_output_tokens == null or
+         (.provider_max_output_tokens | type == "number" and floor == . and . > 0)) and
+        (.output_limit_enforcement | IN("unknown","provider","local_estimate"))
+    ' >/dev/null 2>&1; then
+        log_error "Provider returned invalid model capability metadata"
+        return 1
+    fi
+    context_override="${SPEED_PROVIDER_CONTEXT_TOKENS:-}"
+    output_override="${SPEED_PROVIDER_MAX_OUTPUT_TOKENS:-}"
+    if [[ -n "$context_override" && ! "$context_override" =~ ^[1-9][0-9]*$ ]]; then
+        log_error "SPEED_PROVIDER_CONTEXT_TOKENS must be a positive integer"
+        return 1
+    fi
+    if [[ -n "$output_override" && ! "$output_override" =~ ^[1-9][0-9]*$ ]]; then
+        log_error "SPEED_PROVIDER_MAX_OUTPUT_TOKENS must be a positive integer"
+        return 1
+    fi
+    printf '%s' "$capabilities" | jq -c \
+        --arg context "$context_override" --arg output "$output_override" '
+        if $context != "" then .provider_context_tokens=($context|tonumber) else . end |
+        if $output != "" then
+          .provider_max_output_tokens=($output|tonumber) | .output_limit_enforcement="provider"
+        else . end'
 }
 
 # Default chat — providers override with their own implementation.

@@ -70,6 +70,8 @@ metadata:
   produces: reference
   ref_kind: call
   name_var: FUNC
+  callee_separator: '.'
+  implicit_receiver: this
 rule:
   kind: call_expression
   pattern: $FUNC($$$ARGS)

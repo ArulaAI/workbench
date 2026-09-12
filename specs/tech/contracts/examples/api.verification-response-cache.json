@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "kind": "response",
+  "key": "696a91cfbbb480cc4ce3d61eadad136625743199ba549aa152b8fe6bba368aa2",
+  "created_at": "2026-09-06T00:00:00Z",
+  "request_key": "6774feba6cd27eed6a2bf806c618d6a57bceb5c7dd09bced67d9b0a7a3ab0642",
+  "prompt_hash": "f1b34b63355f3fd3914e602ce0ca3a2c49cc065c1adc229154dc91412c3d501c",
+  "output_schema_hash": "8867df3547d60e8bfff62a582d1f25e831565e1201bbf9be1f4bc60d49a84f7e",
+  "provider_fingerprint": "ad86dd4ef6fcbdbe9f2466980df6b6e43d817b904f25868db1a4a2fbb4568d2f",
+  "validated_at": "2026-09-06T00:00:00Z",
+  "verification_response_key": null,
+  "response": {
+    "schema_version": 1,
+    "request_id": "35674acc-43d9-5b8a-888a-819b14d291b6",
+    "operation": "verify",
+    "input_fingerprint": "cc3ee2375c43edad0cef13764a214e3780e2a0e39bc4a7486c8a303088878497",
+    "candidate": null,
+    "verification_report": {
+      "scope_id": "scope:api-whole",
+      "input_fingerprint": "cc3ee2375c43edad0cef13764a214e3780e2a0e39bc4a7486c8a303088878497",
+      "verdict": "pass",
+      "findings": [],
+      "checked_subject_ids": []
+    },
+    "usage": {
+      "input_tokens": null,
+      "output_tokens": null
+    },
+    "provider_revision": null,
+    "warnings": []
+  }
+}

@@ -113,11 +113,20 @@ def get_repository_digest_status(project_root: str) -> dict[str, Any]:
 
     started_at = local_started_at
     recovered_stale_build = False
+    from lib.context.business_domains import paths as domain_paths
+    from lib.context.business_domain_schema import read_status, DomainError
+    try:
+        domain_status = read_status(domain_paths(project_root)['status']) or {}
+    except DomainError:
+        domain_status = {}
 
     if local_started_at is not None:
         # This process itself knows it's building — the strongest signal,
         # no need to consult the lock or the persisted file at all.
         state = "GENERATING"
+    elif domain_status.get('phase') in ('extracting','synthesizing','validating') and _is_repo_lock_held(project_root):
+        state = 'GENERATING'
+        started_at = domain_status.get('started_at')
     elif persisted_state == "GENERATING":
         if _is_repo_lock_held(project_root):
             # Confirmed: some other live process actually holds the
@@ -274,28 +283,19 @@ def _run_build(
     project_root: str, rebuild_discovery: bool, narrative: bool, started_at: str,
     sub_manager: Any, lock_handle: Any = None,
 ) -> None:
-    from lib.context.repository_digest import DigestInputError, build_repository_digest
+    from lib.context.repository_digest_build import refresh_digest
 
     key = _project_key(project_root)
     try:
-        if rebuild_discovery:
-            _rebuild_layer1(project_root)
-
-        config = _load_config(project_root)
-        build_repository_digest(project_root, config=config, narrative=narrative)
-
+        result = refresh_digest(project_root, rebuild_discovery=rebuild_discovery,
+            narrative=narrative, config=_load_config(project_root), _lease=lock_handle)
+        error = result.get('error')
         _write_status_file(project_root, {
-            "state": "COMPLETE", "started_at": started_at,
-            "completed_at": datetime.now(timezone.utc).isoformat(), "last_error": None,
-        })
-    except DigestInputError as e:
-        _write_status_file(project_root, {
-            "state": "ERROR", "started_at": started_at,
+            "state": "COMPLETE" if result['ok'] else "ERROR", "started_at": started_at,
             "completed_at": datetime.now(timezone.utc).isoformat(),
-            "last_error": _sanitize_error(str(e)),
+            "last_error": _sanitize_error(error['message']) if error else None,
         })
-        log.warning("Repository digest build failed for %s: %s", project_root, e)
-    except Exception as e:  # noqa: BLE001 — must never crash the background thread
+    except Exception as e:
         _write_status_file(project_root, {
             "state": "ERROR", "started_at": started_at,
             "completed_at": datetime.now(timezone.utc).isoformat(),
@@ -324,42 +324,17 @@ def _rebuild_layer1(project_root: str) -> None:
 
 
 def _acquire_repo_lock(project_root: str) -> Any:
-    """Best-effort cross-process lock on top of the in-memory _running_builds
-    check, using flock on a dedicated lock file. Returns an open file
-    handle to hold for the build's duration, or None if another process
-    already holds it (or fcntl isn't available, e.g. non-POSIX — in that
-    case the in-memory check remains the only guard, same as before this
-    was added).
-    """
-    if fcntl is None:
-        return "no-op"
-    from ..paths import get_paths
-    lock_path = get_paths(project_root).context_dir / ".repository-digest.lock"
+    from lib.context.repository_digest_build import reserve_digest_build
+    from lib.context.business_domain_schema import DomainError
     try:
-        lock_path.parent.mkdir(parents=True, exist_ok=True)
-        fh = open(lock_path, "w")
-        fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        return fh
-    except OSError:
-        try:
-            fh.close()
-        except Exception:
-            pass
+        return reserve_digest_build(project_root)
+    except DomainError:
         return None
 
 
 def _release_repo_lock(lock_handle: Any) -> None:
-    if lock_handle is None or lock_handle == "no-op" or fcntl is None:
-        return
-    try:
-        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
-    except OSError:
-        pass
-    finally:
-        try:
-            lock_handle.close()
-        except Exception:
-            pass
+    if lock_handle is not None:
+        lock_handle.close()
 
 
 _STACK_TRACE_LINE_RE = re.compile(r'^\s*File "[^"]*", line \d+.*$', re.MULTILINE)

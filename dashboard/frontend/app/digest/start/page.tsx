@@ -128,7 +128,8 @@ function AnnotatedTree({ tree }: { tree: DigestAnnotatedDirectory[] }) {
                 <tr key={d.path} style={{ borderTop: i > 0 ? "1px solid var(--color-border-light)" : undefined }}>
                   <td className="type-mono-value" style={{ padding: "10px 12px 10px 0", whiteSpace: "nowrap" }}>{d.path}/</td>
                   <td className="type-column-intent" style={{ padding: "10px 12px 10px 0" }}>
-                    {d.dominantDomainLabel ?? "—"}
+                    {d.domainLabels?.join(', ') || 'Unassigned'}
+                    <div className="type-caption">{d.sharedFileCount ?? 0} shared files · {d.unassignedFileCount ?? d.fileCount} unassigned</div>
                   </td>
                   <td className="type-caption" style={{ padding: "10px 0", textAlign: "right", whiteSpace: "nowrap" }}>
                     {d.fileCount.toLocaleString()} files · {d.totalLines.toLocaleString()} lines

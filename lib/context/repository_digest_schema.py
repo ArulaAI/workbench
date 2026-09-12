@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Generic, Literal, TypeVar
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # Filesystem boundaries shared by every discovery-time file reader in this
 # package (supplemental docs in repository_digest.py, command sources in
@@ -389,6 +389,13 @@ def _validate_digest_unsafe(digest: dict[str, Any]) -> list[str]:
                     issues.append(f"footprint.languages entry is malformed: {lang!r}")
 
     for domain in _dict_list(digest.get("domains")):
+        if 'activity_memberships' in domain:
+            from .business_domain_schema import validate, DomainError
+            try:
+                validate(domain,'Domain')
+            except DomainError as exc:
+                issues.append(str(exc))
+            continue
         if len(domain.get("summary") or "") > MAX_DOMAIN_SUMMARY_CHARS:
             issues.append(f"domain {domain.get('id')!r} summary exceeds 400 characters")
         if not domain.get("evidence"):

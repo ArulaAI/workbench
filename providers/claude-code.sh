@@ -23,6 +23,54 @@ unset CLAUDECODE 2>/dev/null || true
 # Resolve Claude CLI binary
 PROVIDER_BIN="${CLAUDE_BIN:-$(which claude 2>/dev/null || echo "claude")}"
 
+# Classify Claude-native result events and transport text in the adapter.  Raw
+# output is never copied into the shared failure envelope.
+_claude_record_failure() {
+    local raw="$1" rc="${2:-1}" diagnostic_log="${3:-}"
+    local category="process_failed" scope="provider" retryable="true"
+    local native_status="exit_${rc}" message="Provider process failed"
+    if printf '%s' "$raw" | grep -Eqi '(^|[^0-9])401([^0-9]|$)|not logged in|authentication (required|failed)|unauthenticated|invalid (api )?([ _-]?key|token)'; then
+        category="authentication_required"; retryable="false"; native_status="401"
+        message="Provider authentication is required"
+    elif printf '%s' "$raw" | grep -Eqi '(^|[^0-9])403([^0-9]|$)|forbidden|authorization denied|not authorized'; then
+        category="authorization_denied"; retryable="false"; native_status="403"
+        message="Provider rejected authorization"
+    elif printf '%s' "$raw" | grep -Eqi 'prompt is too long|input[^[:alnum:]]+(is )?too long|maximum context length|context window[^[:alnum:]]+(exceeded|limit)|too many (input )?tokens'; then
+        category="capability_unavailable"; scope="request"; retryable="false"; native_status="input_limit"
+        message="Provider request exceeds model input capacity"
+    elif printf '%s' "$raw" | grep -Eqi 'model[^[:alnum:]]+(not found|not available|unsupported|does not exist)|unsupported (model|capability)|capability[^[:alnum:]]+unavailable'; then
+        category="capability_unavailable"; retryable="false"; native_status="capability"
+        message="Provider capability is unavailable"
+    elif printf '%s' "$raw" | grep -Eqi '(^|[^0-9])429([^0-9]|$)|rate[ _-]?limit|too many requests'; then
+        category="rate_limited"; native_status="429"
+        message="Provider rate limit was reached"
+    elif printf '%s' "$raw" | grep -Eqi 'websocket|network (is )?unreachable|connection (refused|reset|failed)|could not resolve|dns|transport'; then
+        category="transport_unavailable"; native_status="transport"
+        message="Provider transport is unavailable"
+    elif printf '%s' "$raw" | grep -Eq 'error_max_turns'; then
+        category="response_incomplete"; scope="request"; retryable="false"; native_status="max_turns"
+        message="Provider response ended before completion"
+    elif printf '%s' "$raw" | grep -Eq 'error_tool_use'; then
+        category="response_invalid"; scope="request"; retryable="false"; native_status="tool_error"
+        message="Provider could not produce the requested response"
+    fi
+    provider_failure_record "$category" "$scope" "$retryable" "$native_status" "$message" "$diagnostic_log"
+}
+
+_provider_model_capabilities() {
+    case "$1" in
+        sonnet|opus)
+            printf '%s\n' '{"provider_context_tokens":1000000,"provider_max_output_tokens":128000,"output_limit_enforcement":"provider"}'
+            ;;
+        haiku)
+            printf '%s\n' '{"provider_context_tokens":200000,"provider_max_output_tokens":64000,"output_limit_enforcement":"provider"}'
+            ;;
+        *)
+            printf '%s\n' '{"provider_context_tokens":null,"provider_max_output_tokens":null,"output_limit_enforcement":"unknown"}'
+            ;;
+    esac
+}
+
 # ── Stream-JSON result extraction ────────────────────────────────
 # The stream-json output contains a final {"type":"result",...} event.
 # On success: {"type":"result","subtype":"success","result":"..."}
@@ -41,6 +89,19 @@ _find_result_event() {
 _detect_result_error() {
     local result_line="$1"
     [[ -z "$result_line" ]] && return 1
+
+    # Some Claude CLI failures retain subtype=success while setting is_error
+    # and placing the native failure in result. The explicit error flag must
+    # win before subtype classification.
+    local is_error
+    is_error=$(echo "$result_line" | jq -r '.is_error // false' 2>/dev/null)
+    if [[ "$is_error" == "true" ]]; then
+        local errors result
+        errors=$(echo "$result_line" | jq -r '.errors // [] | join("; ")' 2>/dev/null)
+        result=$(echo "$result_line" | jq -r '.result // empty' 2>/dev/null)
+        echo "${errors:-${result:-unknown error}}"
+        return 0
+    fi
 
     local subtype
     subtype=$(echo "$result_line" | jq -r '.subtype // empty' 2>/dev/null)
@@ -66,15 +127,6 @@ _detect_result_error() {
                 return 0
                 ;;
         esac
-    fi
-
-    local is_error
-    is_error=$(echo "$result_line" | jq -r '.is_error // false' 2>/dev/null)
-    if [[ "$is_error" == "true" ]]; then
-        local errors
-        errors=$(echo "$result_line" | jq -r '.errors // [] | join("; ")' 2>/dev/null)
-        echo "${errors:-unknown error}"
-        return 0
     fi
 
     return 1
@@ -184,6 +236,7 @@ _provider_stream_exec() {
         # Check for agent error
         local error_msg
         if error_msg=$(_detect_result_error "$result_line"); then
+            _claude_record_failure "${result_line}"$'\n'"${stderr_content}" "$rc" "$events_file"
             progress_error "$error_msg" "$wall_duration"
             log_debug "Events log: ${events_file}"
             echo "$result_line"
@@ -239,13 +292,18 @@ _provider_stream_exec() {
 
     # No result event — process died before completing
     if [[ $rc -eq 124 || $rc -eq 137 ]]; then
+        provider_failure_record "timeout" "provider" "true" "exit_${rc}" \
+            "Provider request timed out" "$events_file"
         progress_error "timed out after ${agent_timeout}s" "$wall_duration"
     elif [[ $rc -ne 0 ]]; then
+        _claude_record_failure "$stderr_content" "$rc" "$events_file"
         progress_error "crashed (exit ${rc})" "$wall_duration"
         if [[ -n "$stderr_content" ]]; then
             log_error "stderr: ${stderr_content}"
         fi
     else
+        provider_failure_record "response_incomplete" "provider" "true" "stream_incomplete" \
+            "Provider response stream did not complete" "$events_file"
         progress_error "no output" "$wall_duration"
         if [[ -n "$stderr_content" ]]; then
             log_error "stderr: ${stderr_content}"
@@ -345,7 +403,10 @@ provider_run() {
     local allowed_tools="${4:-$AGENT_TOOLS_FULL}"
     local label="${5:-Agent}"
 
+    provider_failure_clear
     if [[ ! -f "$system_prompt_file" ]]; then
+        provider_failure_record "response_invalid" "request" "false" "missing_prompt" \
+            "Provider request prompt is unavailable" ""
         log_error "Agent prompt file missing: ${system_prompt_file}"
         return 1
     fi
@@ -411,7 +472,10 @@ provider_run_json() {
     local arg_count=$#
     local label="${7:-Agent}"
 
+    provider_failure_clear
     if [[ ! -f "$system_prompt_file" ]]; then
+        provider_failure_record "response_invalid" "request" "false" "missing_prompt" \
+            "Provider request prompt is unavailable" ""
         log_error "Agent prompt file missing: ${system_prompt_file}"
         return 1
     fi
@@ -511,6 +575,8 @@ provider_run_json() {
 
     log_error "JSON agent returned no structured output"
     log_debug "Events log: ${events_file}"
+    provider_failure_record_if_absent "response_incomplete" "request" "false" "structured_output_missing" \
+        "Provider returned no structured output" "$events_file"
     return 1
 }
 

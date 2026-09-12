@@ -42,7 +42,7 @@ function DigestOverviewContent() {
       ? `/define/${encodeURIComponent(featureParam)}`
       : null;
 
-  const { digest, fetching, error, status, refreshing, refreshError, dismissRefreshError, handleRefresh } =
+  const { digest, fetching, error, status, domainStatus, refreshing, refreshError, dismissRefreshError, handleRefresh, reloadStored } =
     useRepositoryDigest();
 
   return (
@@ -67,7 +67,7 @@ function DigestOverviewContent() {
             />
             <FootprintGrid footprint={d.footprint} />
             <LanguageComposition footprint={d.footprint} />
-            <DomainList domains={d.domains} />
+            <DomainList domains={d.domains} buildId={d.domainBuildId} status={domainStatus} onReviewed={reloadStored} />
           </>
         )}
       </DigestStateGate>

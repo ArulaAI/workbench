@@ -12,6 +12,7 @@ language: python
 metadata:
   produces: node
   kind: function
+  executable_body: true
 rule:
   kind: function_definition
 
@@ -21,6 +22,7 @@ language: python
 metadata:
   produces: node
   kind: method
+  executable_body: true
 rule:
   kind: function_definition
   inside:
@@ -33,6 +35,7 @@ language: python
 metadata:
   produces: node
   kind: function
+  executable_body: true
 rule:
   kind: decorated_definition
   has:

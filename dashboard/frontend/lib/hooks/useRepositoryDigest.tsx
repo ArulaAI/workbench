@@ -9,6 +9,7 @@ import {
   REPOSITORY_DIGEST_UPDATED_SUBSCRIPTION,
   type RepositoryDigestData,
   type RepositoryDigestBuildStatus,
+  type DomainDiscoveryStatus,
 } from "@/lib/graphql/queries/repository-digest";
 
 /**
@@ -56,7 +57,7 @@ function useRepositoryDigestState() {
   const [{ data, fetching, error }, refetch] = useQuery<{ repositoryDigest: RepositoryDigestData | null }>({
     query: REPOSITORY_DIGEST_QUERY,
   });
-  const [{ data: statusData }, reexecuteStatusQuery] = useQuery<{ repositoryDigestStatus: RepositoryDigestBuildStatus }>({
+  const [{ data: statusData }, reexecuteStatusQuery] = useQuery<{ repositoryDigestStatus: RepositoryDigestBuildStatus; domainDiscoveryStatus?:DomainDiscoveryStatus }>({
     query: REPOSITORY_DIGEST_STATUS_QUERY,
   });
   const [, executeRefresh] = useMutation(REFRESH_REPOSITORY_DIGEST_MUTATION);
@@ -153,6 +154,7 @@ function useRepositoryDigestState() {
 
   return {
     digest: data?.repositoryDigest ?? null,
+    domainStatus: statusData?.domainDiscoveryStatus,
     fetching,
     error,
     status,
@@ -160,6 +162,7 @@ function useRepositoryDigestState() {
     refreshError,
     dismissRefreshError: () => setRefreshError(null),
     handleRefresh,
+    reloadStored: () => refetch({ requestPolicy: 'network-only' }),
   };
 }
 

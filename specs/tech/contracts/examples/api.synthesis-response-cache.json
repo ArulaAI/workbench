@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "kind": "response",
+  "key": "b0e664e7e699e754c4c151afcd2d6b098ec1eb4f7875e130c019f00f7405f4dc",
+  "created_at": "2026-09-06T00:00:00Z",
+  "request_key": "5f75809151348890df1f6c2cfbff28b9be6f16dba4524f244ba9edfc42d3b8d1",
+  "prompt_hash": "f1b34b63355f3fd3914e602ce0ca3a2c49cc065c1adc229154dc91412c3d501c",
+  "output_schema_hash": "8867df3547d60e8bfff62a582d1f25e831565e1201bbf9be1f4bc60d49a84f7e",
+  "provider_fingerprint": "ad86dd4ef6fcbdbe9f2466980df6b6e43d817b904f25868db1a4a2fbb4568d2f",
+  "validated_at": "2026-09-06T00:00:00Z",
+  "verification_response_key": "696a91cfbbb480cc4ce3d61eadad136625743199ba549aa152b8fe6bba368aa2",
+  "response": {
+    "schema_version": 1,
+    "request_id": "a064a1e3-28b4-578d-95c5-a43b2feadd7b",
+    "operation": "synthesize",
+    "input_fingerprint": "cc3ee2375c43edad0cef13764a214e3780e2a0e39bc4a7486c8a303088878497",
+    "candidate": {
+      "scope_id": "scope:api-whole",
+      "input_fingerprint": "cc3ee2375c43edad0cef13764a214e3780e2a0e39bc4a7486c8a303088878497",
+      "activities": {},
+      "rules": {},
+      "concepts": {},
+      "information_uses": {},
+      "ownerships": {},
+      "rule_relationships": {},
+      "claims": {},
+      "domains": {},
+      "relationships": {},
+      "dispositions": []
+    },
+    "verification_report": null,
+    "usage": {
+      "input_tokens": null,
+      "output_tokens": null
+    },
+    "provider_revision": null,
+    "warnings": []
+  }
+}

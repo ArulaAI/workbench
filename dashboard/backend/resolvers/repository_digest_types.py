@@ -11,6 +11,8 @@ import enum
 from typing import Any, Optional
 
 import strawberry
+from .business_domain_types import (DomainActivityConnection, DomainRuleConnection, DomainEvidenceConnection,
+    DomainConceptConnection, DomainOwnershipConnection, DomainClaimConnection, BusinessBoundaryItem, DomainError, to_record)
 
 
 @strawberry.enum
@@ -143,7 +145,7 @@ class DigestFootprint:
 
 
 @strawberry.type
-class DigestDomain:
+class DigestStructuralGroup:
     id: str
     label: str
     summary: str
@@ -158,6 +160,83 @@ class DigestDomain:
     used_by: list[str]
     evidence: list[DigestEvidence]
     lane: str
+
+
+@strawberry.type
+class DigestDomain(DigestStructuralGroup):
+    name: str = ''
+    support: str = 'insufficient'
+    review_state: str = 'proposed'
+    boundary_rationale: str = ''
+    unresolved_questions: list[str] = strawberry.field(default_factory=list)
+    activity_count: int = 0
+    primary_activity_ids: list[str] = strawberry.field(default_factory=list)
+    exclusions: list[BusinessBoundaryItem] = strawberry.field(default_factory=list)
+    alternatives: list[BusinessBoundaryItem] = strawberry.field(default_factory=list)
+    _build_id: strawberry.Private[str] = ''
+
+    @strawberry.field
+    def has_shared_code(self, info: strawberry.types.Info) -> bool:
+        from .business_domains import current_model
+        from lib.context.business_domain_context import file_participation
+        model, problem = current_model(info.context['project_root'],self._build_id)
+        if problem:
+            return False
+        return any(self.id in domains and len(domains)>1
+                   for domains in file_participation(model).values())
+
+    @strawberry.field
+    def activities(self, info: strawberry.types.Info, first: int = 20, after: Optional[str] = None) -> DomainActivityConnection:
+        from .business_domains import connection
+        return connection(info.context['project_root'],self._build_id,self.id,'activities',first,after)
+
+    @strawberry.field
+    def rules(self, info: strawberry.types.Info, first: int = 20, after: Optional[str] = None) -> DomainRuleConnection:
+        from .business_domains import connection
+        return connection(info.context['project_root'],self._build_id,self.id,'rules',first,after)
+
+    @strawberry.field
+    def implementation_evidence(self, info: strawberry.types.Info, first: int = 20, after: Optional[str] = None) -> DomainEvidenceConnection:
+        from .business_domains import connection
+        return connection(info.context['project_root'],self._build_id,self.id,'evidence',first,after)
+
+    @strawberry.field
+    def concepts(self, info: strawberry.types.Info, first: int = 20, after: Optional[str] = None) -> DomainConceptConnection:
+        from .business_domains import connection
+        return connection(info.context['project_root'],self._build_id,self.id,'concepts',first,after)
+
+    @strawberry.field
+    def ownerships(self, info: strawberry.types.Info, first: int = 20, after: Optional[str] = None) -> DomainOwnershipConnection:
+        from .business_domains import connection
+        return connection(info.context['project_root'],self._build_id,self.id,'ownerships',first,after)
+
+    @strawberry.field
+    def claims(self, info: strawberry.types.Info, first: int = 20, after: Optional[str] = None) -> DomainClaimConnection:
+        from .business_domains import connection
+        return connection(info.context['project_root'],self._build_id,self.id,'claims',first,after)
+
+
+@strawberry.type
+class DomainDetailResult:
+    domain: Optional[DigestDomain]
+    error: Optional[DomainError]
+
+
+def to_domain(d, build_id=''):
+    return DigestDomain(
+        id=d['id'],label=d.get('name',d.get('label','')),name=d.get('name',d.get('label','')),
+        summary=d.get('summary',''),confidence=_confidence(d.get('confidence')),
+        file_count=d['file_count'],symbol_count=d['symbol_count'],cohesion=d.get('cohesion'),
+        avg_blast_radius=d.get('avg_blast_radius',0.0),representative_files=d.get('representative_files',[]),
+        representative_symbols=d.get('representative_symbols',[]),depends_on=d.get('depends_on',[]),
+        used_by=d.get('used_by',[]),evidence=_to_evidence(d.get('evidence',[])),lane=d.get('lane','other'),
+        support=d.get('support','insufficient'),review_state=d.get('review_state','proposed'),
+        boundary_rationale=d.get('boundary_rationale',''),unresolved_questions=d.get('unresolved_questions',[]),
+        activity_count=len(d.get('activity_memberships',[])),
+        primary_activity_ids=[m['activity_id'] for m in d.get('activity_memberships',[]) if m['role']=='primary'],
+        exclusions=[to_record(item,'BoundaryItem') for item in d.get('exclusions',[])],
+        alternatives=[to_record(item,'BoundaryItem') for item in d.get('alternatives',[])],
+        _build_id=build_id)
     """Deterministic Frontend/API/Services/Data/Other classification —
     see lib/context/repository_digest_architecture.py:classify_domain_lane.
     "other" on an old digest predating this field, never a guess."""
@@ -210,6 +289,9 @@ class DigestHotspot:
     centrality: float
     reason: str
     evidence: list[DigestEvidence]
+    domain_ids: list[str] = strawberry.field(default_factory=list)
+    cluster_id: str = ''
+    domain_participation: str = 'unknown'
 
 
 @strawberry.type
@@ -227,6 +309,9 @@ class DigestRisk:
     severity: str
     evidence: list[DigestEvidence]
     domain_id: str
+    domain_ids: list[str] = strawberry.field(default_factory=list)
+    cluster_id: str = ''
+    domain_participation: str = 'unknown'
 
 
 @strawberry.type
@@ -265,6 +350,10 @@ class DigestAnnotatedDirectory:
     file_count: int
     total_lines: int
     dominant_domain_label: Optional[str]
+    domain_ids: list[str] = strawberry.field(default_factory=list)
+    domain_labels: list[str] = strawberry.field(default_factory=list)
+    shared_file_count: int = 0
+    unassigned_file_count: int = 0
 
 
 @strawberry.type
@@ -571,7 +660,7 @@ class DigestKnowledgeDraft:
 
 
 _RISK_SEVERITY = {
-    "high_blast_radius": "high", "cross_domain_hub": "high",
+    "high_blast_radius": "high", "cross_domain_hub": "high", "cross_cluster_hub":"high",
     "repeated_failure": "medium", "stale_knowledge": "medium",
     "conflicting_discovery": "medium",
 }
@@ -607,31 +696,35 @@ class RepositoryDigest:
     _reading_path: strawberry.Private[list[dict[str, Any]]]
     _approved_knowledge: strawberry.Private[list[dict[str, Any]]]
     _pending_knowledge: strawberry.Private[list[dict[str, Any]]]
+    domain_build_id: Optional[str] = None
+    _structural_groups: strawberry.Private[list[dict[str,Any]]] = strawberry.field(default_factory=list)
+    _structural_relationships: strawberry.Private[list[dict[str,Any]]] = strawberry.field(default_factory=list)
+
+    @strawberry.field
+    def structural_groups(self, limit: int = 10) -> list[DigestStructuralGroup]:
+        _validate_limit(limit)
+        return [DigestStructuralGroup(**{name:getattr(to_domain(d),name)
+            for name in DigestStructuralGroup.__annotations__}) for d in self._structural_groups[:limit]]
+
+    @strawberry.field
+    def structural_relationships(self, limit: int = 30) -> list[DigestRelationship]:
+        _validate_limit(limit)
+        return [DigestRelationship(source=r['from'],target=r['to'],weight=r.get('weight',0),
+            evidence_type=r.get('evidence_type','unknown'),sample_references=[
+                DigestSymbolReference(source_symbol=s.get('from',''),target_symbol=s.get('to',''))
+                for s in r.get('sample_references',[])]) for r in self._structural_relationships[:limit]]
 
     @strawberry.field
     def domains(self, limit: int = 10) -> list[DigestDomain]:
         _validate_limit(limit)
-        return [
-            DigestDomain(
-                id=d["id"], label=d["label"], summary=d.get("summary", ""),
-                confidence=_confidence(d.get("confidence")), file_count=d["file_count"],
-                symbol_count=d["symbol_count"], cohesion=d.get("cohesion"),
-                avg_blast_radius=d.get("avg_blast_radius", 0.0),
-                representative_files=d.get("representative_files", []),
-                representative_symbols=d.get("representative_symbols", []),
-                depends_on=d.get("depends_on", []), used_by=d.get("used_by", []),
-                evidence=_to_evidence(d.get("evidence", [])),
-                lane=d.get("lane", "other"),
-            )
-            for d in self._domains[:limit]
-        ]
+        return [to_domain(d,self.domain_build_id or '') for d in self._domains[:limit]]
 
     @strawberry.field
     def relationships(self, limit: int = 30) -> list[DigestRelationship]:
         _validate_limit(limit)
         return [
             DigestRelationship(
-                source=r["from"], target=r["to"], weight=r.get("weight", 0),
+                source=r.get("from_domain_id",r.get("from","")), target=r.get("to_domain_id",r.get("to","")), weight=r.get("weight", 0),
                 evidence_type=r.get("evidence_type", "unknown"),
                 sample_references=[
                     DigestSymbolReference(source_symbol=s.get("from", ""), target_symbol=s.get("to", ""))
@@ -663,7 +756,8 @@ class RepositoryDigest:
         return [
             DigestHotspot(
                 symbol_id=h["symbol_id"], name=h["name"], file=h["file"], line=h["line"],
-                domain_id=h.get("domain_id", ""), blast_radius=h["blast_radius"], dependents=h["dependents"],
+                domain_id='',domain_ids=h.get('domain_ids',[]),cluster_id=h.get('cluster_id',''),
+                domain_participation=h.get('domain_participation','unknown'),blast_radius=h["blast_radius"], dependents=h["dependents"],
                 centrality=h.get("centrality", 0.0), reason=h.get("reason", ""),
                 evidence=_to_evidence(h.get("evidence", [])),
             )
@@ -685,7 +779,8 @@ class RepositoryDigest:
         return [
             DigestRisk(type=r["type"], description=r["description"],
                        severity=_RISK_SEVERITY.get(r["type"], "medium"), evidence=_to_evidence(r.get("evidence", [])),
-                       domain_id=r.get("domain_id", ""))
+                       domain_id='',domain_ids=r.get('domain_ids',[]),cluster_id=r.get('cluster_id',''),
+                       domain_participation=r.get('domain_participation','unknown'))
             for r in self._risks[:limit]
         ]
 
@@ -707,6 +802,8 @@ class RepositoryDigest:
             DigestAnnotatedDirectory(
                 path=d["path"], file_count=d.get("file_count", 0), total_lines=d.get("total_lines", 0),
                 dominant_domain_label=d.get("dominant_domain_label"),
+                domain_ids=d.get('domain_ids',[]),domain_labels=d.get('domain_labels',[]),
+                shared_file_count=d.get('shared_file_count',0),unassigned_file_count=d.get('unassigned_file_count',0),
             )
             for d in self._annotated_tree
         ]
@@ -750,6 +847,7 @@ def to_repository_digest(data: dict[str, Any]) -> RepositoryDigest:
     freshness = data.get("_freshness", {})
     return RepositoryDigest(
         schema_version=data["schema_version"],
+        domain_build_id=data.get('domain_build_id'),
         status=DigestStatus(data["status"]) if data["status"] in ("complete", "partial", "failed") else DigestStatus.FAILED,
         effective_state=DigestEffectiveState(data.get("_effective_state", "CURRENT")),
         generated_at=data["generated_at"],
@@ -779,6 +877,8 @@ def to_repository_digest(data: dict[str, Any]) -> RepositoryDigest:
         security=_to_security(data.get("security")),
         changes_history=_to_changes_history(data.get("_changes_history")),
         _domains=data.get("domains", []),
+        _structural_groups=data.get('structural_groups',[]),
+        _structural_relationships=data.get('structural_relationships',[]),
         _relationships=data.get("relationships", []),
         _entrypoints=data.get("entrypoints", []),
         _commands=data.get("commands", []),

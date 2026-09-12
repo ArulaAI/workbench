@@ -1,0 +1,38 @@
+{
+  "domain_identity_min_overlap": 0.7,
+  "transient_retry_limit": 1,
+  "schema_repair_limit": 2,
+  "semantic_repair_limit": 4,
+  "transient_retry_codes": [
+    "PROVIDER_FAILED",
+    "PROVIDER_TIMEOUT"
+  ],
+  "schema_repair_codes": [
+    "INVALID_PROVIDER_OUTPUT",
+    "INVALID_ARTIFACT"
+  ],
+  "semantic_repair_codes": [
+    "INVALID_REFERENCE",
+    "INVALID_ID",
+    "INVALID_EVIDENCE",
+    "INVALID_TRACE",
+    "INVALID_COVERAGE",
+    "INVALID_ENFORCEMENT",
+    "INVALID_MEMBERSHIP",
+    "INSUFFICIENT_EVIDENCE",
+    "EMPTY_DOMAIN",
+    "INVALID_REVIEW"
+  ],
+  "input_token_encoding": "o200k_base",
+  "input_token_margin_percent": 60,
+  "input_framing_tokens": 512,
+  "token_estimator": "tiktoken:o200k_base+60-percent-margin+512-framing",
+  "review_output_tokens_per_claim": 256,
+  "max_reference_enum_values": 128,
+  "rule_projection": {
+    "sql": {"category": "invariant", "basis": "source_observed", "evaluation_kind": "data_constraint"},
+    "api": {"category": "validation", "basis": "contract_declared", "evaluation_kind": "predicate"},
+    "ui": {"category": "validation", "basis": "source_observed", "evaluation_kind": "predicate"},
+    "default": {"category": "unclassified", "basis": "source_observed", "evaluation_kind": "predicate"}
+  }
+}

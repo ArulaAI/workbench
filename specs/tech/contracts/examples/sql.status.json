@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "attempt_build_id": "60ad335b-e160-5d8b-bde0-fa05573c3cdc",
+  "phase": "partial",
+  "execution_mode": "whole_graph",
+  "current_scope_id": null,
+  "root_reconciled": true,
+  "started_at": null,
+  "completed_at": null,
+  "published_build_id": "60ad335b-e160-5d8b-bde0-fa05573c3cdc",
+  "heartbeat_at": null,
+  "freshness": "current",
+  "external_freshness": "not_applicable",
+  "coverage": {
+    "anchors_total": 1,
+    "representations_total": 1,
+    "representations_canonicalized": 1,
+    "correspondences_ambiguous": 0,
+    "correspondences_unresolved": 0,
+    "anchors_processed": 1,
+    "anchors_excluded": 0,
+    "anchors_pending": 0,
+    "edges_resolved": 0,
+    "edges_ambiguous": 0,
+    "edges_unresolved": 0,
+    "evidence_valid": 1,
+    "evidence_invalid": 0,
+    "unsupported_source_ids": [],
+    "diagnostics": []
+  },
+  "limits": {
+    "max_trace_depth": 1,
+    "max_symbols_per_activity": 1,
+    "max_request_input_tokens": 1,
+    "max_request_output_tokens": 1,
+    "max_build_input_tokens": 1,
+    "max_build_output_tokens": 1,
+    "token_estimator": "manual-specimen",
+    "provider_context_tokens": null,
+    "provider_max_output_tokens": null,
+    "effective_request_input_tokens": 1,
+    "effective_request_output_tokens": 1,
+    "provider_concurrency": 1,
+    "deadline_seconds": 1,
+    "max_source_bytes": 1,
+    "max_artifact_bytes": 1,
+    "cache_retention_days": 1,
+    "semantic_units_total": 1,
+    "semantic_units_validated": 1,
+    "semantic_units_cached": 0,
+    "semantic_units_active": 0,
+    "semantic_units_failed": 0,
+    "semantic_units_pending": 0,
+    "model_ready_graph_tokens": 1,
+    "completion_input_tokens_reserved": 0,
+    "completion_output_tokens_reserved": 0,
+    "input_tokens_reserved": 0,
+    "input_tokens_reported": null,
+    "output_tokens_reported": null,
+    "requests": 0,
+    "retries": 0,
+    "elapsed_ms": 0,
+    "source_bytes": 0,
+    "artifact_bytes": 0,
+    "truncated": false,
+    "output_limit_enforcement": "unknown"
+  },
+  "warnings": [
+    {
+      "code": "MANUAL_PARTIAL_SPECIMEN",
+      "message": "No runtime execution or extractor/domain-quality result is asserted.",
+      "subject_ids": [
+        "anchor:sql"
+      ],
+      "evidence_ids": [
+        "ev:sql"
+      ]
+    }
+  ],
+  "error": null
+}

@@ -80,7 +80,7 @@ export const baseDigest: RepositoryDigestData = {
       name: "build_repository_digest",
       file: "lib/context/repository_digest.py",
       line: 120,
-      domainId: "cluster-core",
+      clusterId: "cluster-core",
       reason: "High blast radius",
       blastRadius: 40,
       dependents: 11,
@@ -106,8 +106,8 @@ export const baseDigest: RepositoryDigestData = {
     { name: "app.py", file: "lib/app.py", kind: "run" },
   ],
   annotatedTree: [
-    { path: "lib", fileCount: 80, totalLines: 20000, dominantDomainLabel: "Core" },
-    { path: "dashboard", fileCount: 40, totalLines: 14000, dominantDomainLabel: null },
+    { path: "lib", fileCount: 80, totalLines: 20000, dominantDomainLabel: "Core", domainIds: ["d1"], domainLabels: ["Core"], sharedFileCount: 0, unassignedFileCount: 0 },
+    { path: "dashboard", fileCount: 40, totalLines: 14000, dominantDomainLabel: null, domainIds: [], domainLabels: [], sharedFileCount: 0, unassignedFileCount: 40 },
   ],
   readingPath: [
     { file: "README.md", reason: "Repository overview — where the project explains its own purpose.", kind: "documentation" },
@@ -207,12 +207,18 @@ export const baseDigest: RepositoryDigestData = {
   },
 };
 
+// Structural graph fixtures remain separate from the business-domain list.
+baseDigest.structuralGroups = baseDigest.domains;
+baseDigest.structuralRelationships = baseDigest.relationships;
+
 export const partialDigest: RepositoryDigestData = {
   ...baseDigest,
   status: "PARTIAL",
   footprint: { ...baseDigest.footprint, symbolCount: null, domainCount: null },
   domains: [],
   relationships: [],
+  structuralGroups: [],
+  structuralRelationships: [],
   commands: [],
   conventions: [],
   warnings: [],

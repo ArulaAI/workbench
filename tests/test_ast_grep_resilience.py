@@ -28,6 +28,10 @@ import time
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
+if __name__ != "__main__":
+    import pytest
+    pytest.skip("standalone resilience harness", allow_module_level=True)
+
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 
@@ -112,7 +116,9 @@ REQUIRED_RULE_FIELDS = {"id", "language", "rule"}
 # "constraints" is a real, optional ast-grep field (meta-variable regex
 # constraints) — anything else is not part of the rule schema at all.
 ALLOWED_RULE_FIELDS = {"id", "language", "metadata", "rule", "constraints"}
-VALID_PRODUCES = {"node", "edge", "reference"}
+VALID_PRODUCES = {"node", "edge", "reference", "business_anchor", "binding",
+                  "receiver_binding", "rule_observation", "semantic_relation", "semantic_effect",
+                  "ui_control", "ui_event", "ui_validation", "ui_route"}
 
 rule_files_checked = 0
 rules_checked = 0

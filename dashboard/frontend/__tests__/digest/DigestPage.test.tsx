@@ -85,7 +85,7 @@ describe("DigestOverviewPage", () => {
     expect(screen.getByText("Files")).toBeInTheDocument();
     expect(screen.getByText("Language composition")).toBeInTheDocument();
     expect(screen.getByText(/python/)).toBeInTheDocument();
-    expect(screen.getByText("Major areas")).toBeInTheDocument();
+    expect(screen.getByText("Business domains")).toBeInTheDocument();
     expect(screen.getAllByText("Core").length).toBeGreaterThan(0);
   });
 
@@ -114,7 +114,7 @@ describe("DigestOverviewPage", () => {
   it("shows the domains empty state for a partial digest instead of hiding the page", () => {
     setupUrqlHooks({ digest: partialDigest });
     renderDigestPage(<DigestOverviewPage />);
-    expect(screen.getByText("No areas available — semantic graph not yet built.")).toBeInTheDocument();
+    expect(screen.getByText(/No supported domain proposals are available/)).toBeInTheDocument();
   });
 
   it("shows a stale banner with the indexed-versus-current commit when the digest is out of date", () => {

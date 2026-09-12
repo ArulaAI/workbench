@@ -309,8 +309,8 @@ check("has domain_overlap", "domain_overlap" in analysis)
 check("has interface_boundaries", "interface_boundaries" in analysis)
 check("has high_impact_modifications", "high_impact_modifications" in analysis)
 
-# t1 and t2 share utils.py → should have domain overlap (requires CSG)
-overlaps = analysis.get("domain_overlap", [])
+# t1 and t2 share utils.py → structural cluster overlap, not business ownership.
+overlaps = analysis.get("cluster_overlap", [])
 if has_csg_nodes:
     check("domain overlap found", len(overlaps) > 0, f"got {len(overlaps)}")
 else:

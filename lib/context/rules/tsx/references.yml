@@ -25,6 +25,7 @@ metadata:
   produces: reference
   ref_kind: import
   module_var: MODULE
+  symbols_var: NAME
 rule:
   kind: import_statement
   pattern: import $NAME from $MODULE
@@ -70,6 +71,8 @@ metadata:
   produces: reference
   ref_kind: call
   name_var: FUNC
+  callee_separator: '.'
+  implicit_receiver: this
 rule:
   kind: call_expression
   pattern: $FUNC($$$ARGS)

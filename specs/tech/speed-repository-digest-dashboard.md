@@ -698,6 +698,12 @@ speed digest [--refresh] [--rebuild-discovery] [--json]
 
 The CLI is a Should-level deliverable. The dashboard and artifact contract do not depend on it.
 
+For the business-domain discovery extension, refresh behavior and exit mapping are defined by `speed-business-domain-discovery.md`, including its shared build interface and provider contract. A refresh performs required business-domain discovery independently of the optional digest narrative flag.
+
+The CLI and dashboard use the same Python refresh owner and command-owned provider entry point in `lib/cmd/digest.sh`. There is no dedicated digest bridge. Dashboard refresh retains its existing build-lease transfer, background execution and status publication.
+
+The first eligible provider timeout may escalate from the configured support model to the configured planning model under the discovery specification's single retry allowance. Escalation does not restart the refresh or reset its lock, deadline or budget. Read-only digest queries never invoke a provider.
+
 ## Validation Rules
 
 | Field or behavior | Constraints |

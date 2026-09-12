@@ -162,7 +162,7 @@ def test_invalid_conventions_do_not_remove_domains(tmp_path):
     digest = build_repository_digest(str(tmp_path), config={})
 
     assert digest["status"] == "partial"
-    assert digest["domains"]
+    assert digest["structural_groups"]
     assert digest["conventions"] == []
     conv = [r for r in digest["readiness"] if r["capability"] == "conventions"][0]
     assert conv["status"] == "invalid"
@@ -214,7 +214,7 @@ def test_domain_ranking_is_deterministic_when_scores_tie(tmp_path):
         ],
     )
     digest = build_repository_digest(str(tmp_path), config={})
-    ranks = [(d["id"], d["rank"]) for d in digest["domains"]]
+    ranks = [(d["id"], d["rank"]) for d in digest["structural_groups"]]
     assert ranks[0][1] == 1
     assert ranks[1][1] == 2
 
@@ -228,7 +228,7 @@ def test_domain_label_falls_back_to_unlabeled_with_unknown_confidence(tmp_path):
                    "files": ["src/util.py", "src/common.py", "src/helpers.py"], "cohesion": 0.1}],
     )
     digest = build_repository_digest(str(tmp_path), config={})
-    domain = digest["domains"][0]
+    domain = digest["structural_groups"][0]
     assert domain["confidence"] == "unknown"
     assert domain["label"].startswith("Unlabeled domain")
     assert any(g["type"] == "domain_label_unresolved" for g in digest["gaps"])
@@ -243,8 +243,8 @@ def test_existing_layer1_label_is_preferred(tmp_path):
                    "files": ["orders/checkout.py"], "cohesion": 0.9}],
     )
     digest = build_repository_digest(str(tmp_path), config={})
-    assert digest["domains"][0]["label"] == "Orders"
-    assert digest["domains"][0]["confidence"] == "derived"
+    assert digest["structural_groups"][0]["label"] == "Orders"
+    assert digest["structural_groups"][0]["confidence"] == "derived"
 
 
 # ── Hotspots ──────────────────────────────────────────────────────
@@ -333,7 +333,7 @@ def test_normalize_confidence_unknown_input_becomes_unknown():
 
 def _minimal_valid_digest(**overrides):
     digest = {
-        "schema_version": 1, "status": "partial",
+        "schema_version": 2, "status": "partial",
         "generated_at": "2026-01-01T00:00:00Z",
         "generator": {"name": "speed-repository-digest", "version": "1"},
         "fingerprint": {},
@@ -987,7 +987,7 @@ def test_dangling_domain_reference_is_dropped_with_warning(tmp_path):
     )
     digest = build_repository_digest(str(tmp_path), config={})
 
-    domain = digest["domains"][0]
+    domain = digest["structural_groups"][0]
     assert "c-does-not-exist" not in domain["depends_on"]
     assert any("c-does-not-exist" in w for w in digest["warnings"])
 
@@ -1015,7 +1015,7 @@ def test_domain_gets_lane_from_full_cluster_file_list(tmp_path):
         }],
     )
     digest = build_repository_digest(str(tmp_path), config={})
-    assert digest["domains"][0]["lane"] == "services"
+    assert digest["structural_groups"][0]["lane"] == "services"
 
 
 def test_domain_with_no_lane_evidence_is_other(tmp_path):
@@ -1026,7 +1026,7 @@ def test_domain_with_no_lane_evidence_is_other(tmp_path):
         clusters=[{"id": "c0", "label": "Docs", "symbols": ["README.md::x"], "files": ["README.md"], "cohesion": 1.0}],
     )
     digest = build_repository_digest(str(tmp_path), config={})
-    assert digest["domains"][0]["lane"] == "other"
+    assert digest["structural_groups"][0]["lane"] == "other"
 
 
 def test_relationship_carries_verified_evidence_and_sample_references(tmp_path):
@@ -1048,11 +1048,11 @@ def test_relationship_carries_verified_evidence_and_sample_references(tmp_path):
     )
     digest = build_repository_digest(str(tmp_path), config={})
 
-    rel = digest["relationships"][0]
+    rel = digest["structural_relationships"][0]
     assert rel["evidence_type"] == "verified"
     assert rel["sample_references"] == [{"from": "a/services/x.py::foo", "to": "a/models/y.py::bar"}]
 
-    domains_by_id = {d["id"]: d for d in digest["domains"]}
+    domains_by_id = {d["id"]: d for d in digest["structural_groups"]}
     assert domains_by_id["c0"]["lane"] == "services"
     assert domains_by_id["c1"]["lane"] == "data"
 
@@ -1605,7 +1605,7 @@ def test_symbol_to_domain_computed_once_and_shared(tmp_path):
         clusters=[{"id": "c0", "label": "Core", "symbols": ["a.py::x"], "files": ["a.py"], "cohesion": 1.0}],
     )
     digest = build_repository_digest(str(tmp_path), config={})
-    assert digest["hotspots"][0]["domain_id"] == "c0"
+    assert digest["hotspots"][0]["cluster_id"] == "c0"
 
     csg = {"clusters": [{"id": "c0", "symbols": ["a.py::x"]}]}
     assert _build_symbol_to_domain(csg) == {"a.py::x": "c0"}
@@ -1648,11 +1648,11 @@ def test_risk_domain_id_uses_full_cluster_membership_not_representative_files(tm
     )
     digest = build_repository_digest(str(tmp_path), config={})
 
-    domain = next(d for d in digest["domains"] if d["id"] == "c0")
+    domain = next(d for d in digest["structural_groups"] if d["id"] == "c0")
     assert "pkg/f5.py" not in domain["representative_files"]
 
-    risk = next(r for r in digest["risks"] if r["type"] == "cross_domain_hub")
-    assert risk["domain_id"] == "c0"
+    risk = next(r for r in digest["risks"] if r["type"] == "cross_cluster_hub")
+    assert risk["cluster_id"] == "c0"
 
 
 # ═════════════════════════════════════════════════════════════════
@@ -1864,8 +1864,11 @@ def test_old_domain_missing_lane_still_loads_and_defaults_to_other(tmp_path):
         clusters=[{"id": "c0", "label": "Core", "symbols": ["a/services/x.py::foo"], "files": ["a/services/x.py"], "cohesion": 1.0}],
     )
     old_digest = build_repository_digest(str(tmp_path), config={})
-    assert old_digest["domains"][0]["lane"] == "services"  # sanity: it was actually set
-    old_digest["domains"][0].pop("lane", None)
+    assert old_digest["structural_groups"][0]["lane"] == "services"  # sanity: it was actually set
+    old_digest["structural_groups"][0].pop("lane", None)
+    old_digest["schema_version"] = 1
+    old_digest["domains"] = old_digest.pop("structural_groups")
+    old_digest["relationships"] = old_digest.pop("structural_relationships")
     paths = repository_digest_input_paths(str(tmp_path))
     paths["digest"].write_text(json.dumps(old_digest))
 
@@ -1879,7 +1882,112 @@ def test_old_domain_missing_lane_still_loads_and_defaults_to_other(tmp_path):
     loaded["_effective_state"] = "CURRENT"
     loaded["_freshness"] = {"state": "CURRENT", "indexed_git_head": None, "current_git_head": None, "stale_reasons": []}
     result = to_repository_digest(loaded)
-    assert result.domains()[0].lane == "other"
+    assert result.structural_groups()[0].lane == "other"
+
+
+def test_build_tolerates_stale_invalid_domain_artifact_and_preserves_status(
+        tmp_path, caplog):
+    from lib.context.business_domain_schema import atomic_write, limits, record, settings
+    from lib.context.business_domains import paths as domain_paths
+
+    write_project_map(tmp_path, [{
+        "path": "a/services/x.py", "language": "python", "lines": 5,
+        "category": "source",
+    }])
+    write_semantic_graph(tmp_path, nodes=[make_node("a/services/x.py::foo")],
+        clusters=[{"id": "c0", "label": "Structural service",
+                   "symbols": ["a/services/x.py::foo"],
+                   "files": ["a/services/x.py"], "cohesion": 1.0}])
+    locations = domain_paths(tmp_path)
+    locations['model'].write_text('{"schema_version":1}')
+    latest = record('StatusArtifact', phase='unavailable', freshness='stale',
+                    limits=limits(settings(None)))
+    atomic_write(locations['status'], latest)
+
+    built = build_repository_digest(str(tmp_path), config={})
+
+    assert built['domains'] == [] and built['relationships'] == []
+    assert built['domain_build_id'] is None
+    assert built['domain_status'] == latest
+    assert built['structural_groups'][0]['label'] == 'Structural service'
+    assert all(item.get('id') != 'c0' for item in built['domains'])
+    assert any('Canonical business-domain artifact unavailable (INVALID_ARTIFACT)'
+               in warning for warning in built['warnings'])
+    assert 'Business context unavailable' not in caplog.text
+
+
+def test_loaded_digest_retains_embedded_valid_status_when_current_artifacts_are_invalid(
+        tmp_path):
+    from lib.context.business_domain_schema import atomic_write, limits, record, settings
+    from lib.context.business_domains import paths as domain_paths
+
+    minimal_repo(tmp_path)
+    locations = domain_paths(tmp_path)
+    locations['model'].write_text('{"schema_version":1}')
+    latest = record('StatusArtifact', phase='failed', freshness='stale',
+                    limits=limits(settings(None)))
+    atomic_write(locations['status'], latest)
+    build_repository_digest(str(tmp_path), config={})
+    locations['status'].write_text('{"schema_version":999}')
+
+    state, loaded, reason = load_repository_digest_with_status(str(tmp_path))
+
+    assert state == 'ok', reason
+    assert loaded['domain_status'] == latest
+    assert loaded['domains'] == [] and loaded['domain_build_id'] is None
+    assert any('Canonical business-domain artifact unavailable (INVALID_ARTIFACT)'
+               in warning for warning in loaded['warnings'])
+
+
+def test_build_migrates_legacy_status_limits_without_losing_failure(tmp_path):
+    from lib.context.business_domain_schema import atomic_write, record
+    from lib.context.business_domains import paths as domain_paths
+
+    minimal_repo(tmp_path)
+    locations = domain_paths(tmp_path)
+    locations['model'].write_text('{"schema_version":1}')
+    legacy_limits = {
+        'max_trace_depth': 6, 'max_symbols_per_activity': 200,
+        'max_request_input_tokens': 16000, 'max_request_output_tokens': 2000,
+        'max_build_input_tokens': 150000, 'max_build_output_tokens': 30000,
+        'provider_concurrency': 2, 'deadline_seconds': 600,
+        'max_source_bytes': 500000, 'max_artifact_bytes': 25000000,
+        'cache_retention_days': 30, 'max_activities': 200,
+        'max_evidence_per_packet': 30, 'activities_used': 0,
+        'input_tokens_reserved': 0, 'input_tokens_reported': None,
+        'output_tokens_reported': None, 'requests': 0, 'retries': 0,
+        'elapsed_ms': 9396, 'source_bytes': 935484, 'artifact_bytes': 0,
+        'truncated': True, 'output_limit_enforcement': 'unknown',
+    }
+    coverage = record('Coverage', anchors_total=86, anchors_pending=86)
+    failure = record('Error', code='OVERSIZED_ATOMIC_RECORD',
+                     message='Atomic graph record exceeds the request allowance',
+                     field='symbol:oversized', retryable=False)
+    legacy = record(
+        'StatusArtifact', attempt_build_id='66f0b273-f97e-43a7-aad7-f8d8aa114bfe',
+        phase='failed', freshness='missing', coverage=coverage,
+        limits=legacy_limits, error=failure,
+    )
+    atomic_write(locations['status'], legacy)
+
+    built = build_repository_digest(str(tmp_path), config={})
+
+    status = built['domain_status']
+    assert status['attempt_build_id'] == legacy['attempt_build_id']
+    assert status['phase'] == 'failed' and status['error'] == failure
+    assert status['coverage'] == coverage
+    assert status['limits']['effective_request_input_tokens'] == 16000
+    assert status['limits']['effective_request_output_tokens'] == 2000
+    assert status['limits']['provider_context_tokens'] is None
+    assert status['limits']['semantic_units_total'] == 0
+    assert set(legacy_limits) - {
+        'max_activities', 'max_evidence_per_packet', 'activities_used',
+    } <= set(status['limits'])
+    assert not ({'max_activities', 'max_evidence_per_packet', 'activities_used'}
+                & set(status['limits']))
+    assert built['domains'] == [] and built['relationships'] == []
+    assert any('Canonical business-domain artifact unavailable (INVALID_ARTIFACT)'
+               in warning for warning in built['warnings'])
 
 
 def test_old_relationship_missing_evidence_fields_still_loads_with_safe_defaults(tmp_path):
@@ -1900,8 +2008,8 @@ def test_old_relationship_missing_evidence_fields_still_loads_with_safe_defaults
         cluster_edges=[{"from": "c0", "to": "c1", "edge_count": 1, "symbols": [{"from": "a/services/x.py::foo", "to": "a/models/y.py::bar"}]}],
     )
     old_digest = build_repository_digest(str(tmp_path), config={})
-    old_digest["relationships"][0].pop("evidence_type", None)
-    old_digest["relationships"][0].pop("sample_references", None)
+    old_digest["structural_relationships"][0].pop("evidence_type", None)
+    old_digest["structural_relationships"][0].pop("sample_references", None)
 
     import sys
     sys.path.insert(0, str(Path(__file__).parent.parent / "dashboard" / "backend"))
@@ -1910,7 +2018,7 @@ def test_old_relationship_missing_evidence_fields_still_loads_with_safe_defaults
     old_digest["_effective_state"] = "CURRENT"
     old_digest["_freshness"] = {"state": "CURRENT", "indexed_git_head": None, "current_git_head": None, "stale_reasons": []}
     result = to_repository_digest(old_digest)
-    rel = result.relationships()[0]
+    rel = result.structural_relationships()[0]
     assert rel.evidence_type == "unknown"
     assert rel.sample_references == []
 

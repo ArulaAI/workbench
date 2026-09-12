@@ -123,6 +123,7 @@ def build_feature_cross_task(
     tasks: list[dict],
     csg: dict | None,
     feature_context_dir: str,
+    project_root: str | None = None,
 ) -> dict:
     """Build cross-task analysis for a feature (once per speed run).
 
@@ -135,6 +136,8 @@ def build_feature_cross_task(
         cross-task-analysis.json dict.
     """
     ensure_dir(feature_context_dir)
-    analysis = build_cross_task_analysis(tasks, csg)
+    from .business_domain_context import read_business_model
+    model = read_business_model(project_root) if project_root else None
+    analysis = build_cross_task_analysis(tasks,csg,business_model=model)
     save_cross_task_analysis(analysis, feature_context_dir)
     return analysis

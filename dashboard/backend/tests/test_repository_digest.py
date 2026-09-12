@@ -154,7 +154,7 @@ class TestRepositoryDigestQuery:
         assert result.errors is None
         data = result.data["repositoryDigest"]
 
-        assert data["schemaVersion"] == 1
+        assert data["schemaVersion"] == 2
         assert data["status"] in ("COMPLETE", "PARTIAL")
         assert data["effectiveState"] == "CURRENT"
         assert data["identity"]["name"]
@@ -619,7 +619,7 @@ def _build_golden_digest_with_domains_and_hotspots(root: Path) -> dict:
 DOMAIN_CONTRACT_QUERY = """
 query {
   repositoryDigest {
-    domains(limit: 5) {
+    structuralGroups(limit: 5) {
       id cohesion avgBlastRadius
     }
   }
@@ -630,7 +630,7 @@ HOTSPOT_CONTRACT_QUERY = """
 query {
   repositoryDigest {
     hotspots(limit: 5) {
-      symbolId domainId centrality
+      symbolId clusterId domainIds centrality
       evidence { source path symbol description }
     }
   }
@@ -641,13 +641,13 @@ query {
 class TestDomainHotspotGraphQLContract:
     def test_domain_cohesion_and_avg_blast_radius_round_trip(self, tmp_path: Path):
         digest = _build_golden_digest_with_domains_and_hotspots(tmp_path)
-        stored_domain = digest["domains"][0]
+        stored_domain = digest["structural_groups"][0]
         assert stored_domain["cohesion"] == 0.75
         assert stored_domain["avg_blast_radius"] == 15.0  # avg(20, 10)
 
         result = schema.execute_sync(DOMAIN_CONTRACT_QUERY, context_value=_make_context(tmp_path))
         assert result.errors is None
-        gql_domain = result.data["repositoryDigest"]["domains"][0]
+        gql_domain = result.data["repositoryDigest"]["structuralGroups"][0]
         assert gql_domain["cohesion"] == stored_domain["cohesion"]
         assert gql_domain["avgBlastRadius"] == stored_domain["avg_blast_radius"]
 
@@ -663,7 +663,8 @@ class TestDomainHotspotGraphQLContract:
 
         for gql_h in gql_hotspots:
             stored_h = stored_hotspots[gql_h["symbolId"]]
-            assert gql_h["domainId"] == stored_h["domain_id"] == "cluster-core"
+            assert gql_h["clusterId"] == stored_h["cluster_id"] == "cluster-core"
+            assert gql_h['domainIds'] == stored_h['domain_ids'] == []
             assert gql_h["centrality"] == stored_h["centrality"]
             assert stored_h["evidence"], "fixture hotspot must have stored evidence to test round-tripping"
             assert gql_h["evidence"], "hotspot evidence must not be dropped between JSON and GraphQL"
@@ -683,7 +684,7 @@ class TestDomainHotspotGraphQLContract:
         # plain scalars (list/object fields like evidence/representative_*
         # are covered by the dedicated tests above and by existing tests).
         domain_scalar_fields = ["id", "label", "confidence", "file_count", "symbol_count", "cohesion", "avg_blast_radius"]
-        hotspot_scalar_fields = ["symbol_id", "name", "file", "line", "domain_id", "blast_radius", "dependents", "centrality", "reason"]
+        hotspot_scalar_fields = ["symbol_id", "name", "file", "line", "cluster_id", "domain_participation", "blast_radius", "dependents", "centrality", "reason"]
 
         def to_camel(snake: str) -> str:
             head, *tail = snake.split("_")
@@ -694,7 +695,7 @@ class TestDomainHotspotGraphQLContract:
         query = f"""
         query {{
           repositoryDigest {{
-            domains(limit: 5) {{ {domain_gql_fields} }}
+            structuralGroups(limit: 5) {{ {domain_gql_fields} }}
             hotspots(limit: 5) {{ {hotspot_gql_fields} }}
           }}
         }}
@@ -702,8 +703,8 @@ class TestDomainHotspotGraphQLContract:
         result = schema.execute_sync(query, context_value=_make_context(tmp_path))
         assert result.errors is None
 
-        gql_domain = result.data["repositoryDigest"]["domains"][0]
-        stored_domain = digest["domains"][0]
+        gql_domain = result.data["repositoryDigest"]["structuralGroups"][0]
+        stored_domain = digest["structural_groups"][0]
         for field in domain_scalar_fields:
             confidence_field = field == "confidence"
             gql_value = gql_domain[to_camel(field)]

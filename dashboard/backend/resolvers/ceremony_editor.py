@@ -425,6 +425,7 @@ def decompose_draft_sync(
     codebase_context = ""
     try:
         from lib.context.assembly import assemble_architect
+        from lib.context.business_domain_context import read_business_model
 
         csg_path = project_root / ".speed" / "context" / "semantic-graph.json"
         pm_path = project_root / ".speed" / "context" / "project-map.json"
@@ -436,6 +437,7 @@ def decompose_draft_sync(
 
         codebase_context = assemble_architect(
             project_map=pm, csg=csg, spec_alignment=sa,
+            business_model=read_business_model(project_root),
         )
     except Exception as exc:
         log.warning("Context assembly for decomposition failed: %s", exc)

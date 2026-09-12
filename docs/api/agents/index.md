@@ -3,7 +3,7 @@ title: Agent Fleet
 description: Overview of the SPEED agent fleet, organized by mission area.
 ---
 
-SPEED orchestrates 13 specialized agents grouped into four fleets. Each agent has a narrow mission, fixed inputs and outputs, and runs on a designated model tier. For how these agents coordinate during execution, see [Agent Orchestration](/docs/architecture/agent-orchestration/).
+SPEED orchestrates specialized agents grouped by mission. Each agent has a narrow mission, fixed inputs and outputs, and runs on a designated model tier. For how these agents coordinate during execution, see [Agent Orchestration](/docs/architecture/agent-orchestration/).
 
 ## Planning Fleet
 
@@ -45,6 +45,18 @@ Agents that scan for vulnerabilities and triage defect reports.
 |-------|---------|-------|------------|
 | [Security Auditor](/docs/api/agents/security-auditor/) | Scans feature code for OWASP vulnerabilities across SAST, SCA, and secrets dimensions | `support_model` (Sonnet) | `speed security` |
 | [Triage](/docs/api/agents/triage/) | Investigates defect reports and classifies complexity for fix pipeline routing | `support_model` (Sonnet) | `speed defect` |
+
+## Business Domain Discovery
+
+Three bounded agents run during `speed digest --refresh` and the equivalent dashboard refresh. They receive supplied evidence packets and have no tools. Reads never invoke them.
+
+| Agent | Mission | Definition |
+|-------|---------|------------|
+| Activity | Interpret business behavior, rules and information use from source evidence | `agents/business-domain-activity.md` |
+| Grouping | Propose business responsibilities and evidence-backed memberships | `agents/business-domain-grouping.md` |
+| Evidence Review | Check claims and retain uncertainty or reject unsupported interpretations | `agents/business-domain-evidence-review.md` |
+
+The deterministic discovery pipeline controls extraction, budgets, reference validation, caching and publication. These agents use `business_domains.model` when configured, otherwise `agent.support_model`; they cannot approve their own proposals as human-reviewed.
 
 ## Model Tiers
 

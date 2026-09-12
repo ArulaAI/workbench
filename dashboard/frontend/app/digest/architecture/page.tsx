@@ -34,8 +34,8 @@ export default function DigestArchitecturePage() {
       >
         {(d) => (
           <ArchitectureBody
-            domains={d.domains}
-            relationships={d.relationships}
+            domains={d.structuralGroups ?? []}
+            relationships={d.structuralRelationships ?? []}
             hotspots={d.hotspots}
             risks={d.risks}
             selectedId={selectedId}
@@ -74,7 +74,7 @@ function ArchitectureBody({
     return (
       <div className="surface" style={{ padding: 24 }}>
         <div className="type-section-title" style={{ marginBottom: 8 }}>
-          No domains discovered yet
+          No structural groups discovered yet
         </div>
         <p className="type-body">
           The architecture graph needs a semantic graph with clusters. Run{" "}
@@ -105,7 +105,7 @@ function ArchitectureBody({
                 borderRadius: 8, padding: "8px 12px",
               }}
             >
-              No cross-domain relationships were found among these domains.
+              No cross-group relationships were found among these structural groups.
             </div>
           )}
         </div>
@@ -153,11 +153,11 @@ function EvidenceNote({ relationships }: { relationships: DigestRelationship[] }
 
   let message: string;
   if (total === 0) {
-    message = "This dataset currently has no cross-domain relationships to classify.";
+    message = "This dataset currently has no cross-cluster relationships to classify.";
   } else if (allVerified) {
-    message = `All ${total} relationship${total === 1 ? "" : "s"} shown ${total === 1 ? "is" : "are"} VERIFIED — derived directly from concrete cross-domain code references (function calls, type usage, inheritance, imports). This dataset currently contains no separate "inferred" relationship category; see the arrow between two domains for direction, and edge thickness for reference count.`;
+    message = `All ${total} relationship${total === 1 ? "" : "s"} shown ${total === 1 ? "is" : "are"} VERIFIED — derived directly from concrete cross-cluster code references (function calls, type usage, inheritance, imports). This dataset currently contains no separate "inferred" relationship category; see the arrow between two structural groups for direction, and edge thickness for reference count.`;
   } else {
-    message = `${verifiedCount} of ${total} relationships shown ${verifiedCount === 1 ? "is" : "are"} VERIFIED; the rest have an unrecognized or unknown evidence type. See the arrow between two domains for direction, and edge thickness for reference count.`;
+    message = `${verifiedCount} of ${total} relationships shown ${verifiedCount === 1 ? "is" : "are"} VERIFIED; the rest have an unrecognized or unknown evidence type. See the arrow between two structural groups for direction, and edge thickness for reference count.`;
   }
 
   return (
@@ -184,17 +184,17 @@ function DomainDetailPanel({
     return (
       <div className="surface" style={{ padding: 20 }}>
         <div className="type-section-title" style={{ marginBottom: 8 }}>
-          Domain details
+          Structural group details
         </div>
-        <p className="type-body">Select a domain in the graph to see its details.</p>
+        <p className="type-body">Select a structural group in the graph to see its details.</p>
       </div>
     );
   }
 
   const labelById = new Map(domains.map((d) => [d.id, d.label]));
   const relCount = relationships.filter((r) => r.source === domain.id || r.target === domain.id).length;
-  const domainHotspots = hotspots.filter((h) => h.domainId === domain.id);
-  const domainRisks = risks.filter((r) => r.domainId === domain.id);
+  const domainHotspots = hotspots.filter((h) => h.clusterId === domain.id);
+  const domainRisks = risks.filter((r) => r.clusterId === domain.id);
 
   return (
     <div className="surface" style={{ padding: 20, display: "flex", flexDirection: "column", gap: 14 }} data-testid="architecture-detail-panel">
@@ -221,7 +221,7 @@ function DomainDetailPanel({
       <div>
         <div className="type-cell-label" style={{ marginBottom: 4 }}>Hotspots</div>
         {domainHotspots.length === 0 ? (
-          <p className="type-caption">No hotspots among the top-ranked repository-wide are in this domain.</p>
+          <p className="type-caption">No hotspots among the top-ranked repository-wide are in this structural group.</p>
         ) : (
           <ul style={{ margin: 0, paddingLeft: 16 }}>
             {domainHotspots.map((h) => (
@@ -234,7 +234,7 @@ function DomainDetailPanel({
       <div>
         <div className="type-cell-label" style={{ marginBottom: 4 }}>Risks</div>
         {domainRisks.length === 0 ? (
-          <p className="type-caption">No risks are associated with this domain.</p>
+          <p className="type-caption">No risks are associated with this structural group.</p>
         ) : (
           <ul style={{ margin: 0, paddingLeft: 16 }}>
             {domainRisks.map((r, i) => (

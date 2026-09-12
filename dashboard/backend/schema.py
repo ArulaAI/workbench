@@ -18,7 +18,14 @@ from .resolvers.repository_digest_types import (
     to_build_status,
     to_refresh_result,
     to_repository_digest,
+    DomainDetailResult,
+    to_domain,
 )
+from .resolvers import business_domains as business_domains_resolver
+from .resolvers.business_domain_types import (
+    BusinessStatusArtifact, DomainReviewInput, DomainReviewResult, DomainBuildActionResult, DomainUnassignedConnection,
+)
+from lib.context.business_domain_schema import DomainError as BusinessDomainError
 from .resolvers import landing as landing_resolver
 from .resolvers import define
 from .resolvers import spec_editor
@@ -775,6 +782,27 @@ class Query:
     def repository_digest_status(self, info: strawberry.types.Info) -> RepositoryDigestBuildStatus:
         project_root = info.context["project_root"]
         return to_build_status(repository_digest_resolver.get_repository_digest_status(project_root))
+
+    @strawberry.field
+    def domain_discovery_status(self, info: strawberry.types.Info) -> BusinessStatusArtifact:
+        return business_domains_resolver.status(info.context['project_root'])
+
+    @strawberry.field
+    def domain_unassigned(self, info: strawberry.types.Info, expected_build_id: strawberry.ID,
+                          first: int = 20, after: Optional[str] = None) -> DomainUnassignedConnection:
+        return business_domains_resolver.connection(info.context['project_root'],str(expected_build_id),
+            None,'unassigned',first,after)
+
+    @strawberry.field
+    def domain(self, info: strawberry.types.Info, id: strawberry.ID, expected_build_id: strawberry.ID) -> DomainDetailResult:
+        try:
+            model,error = business_domains_resolver.current_model(info.context['project_root'],str(expected_build_id))
+            value = model['domains'].get(str(id)) if model else None
+            if model and value is None:
+                raise BusinessDomainError('DOMAIN_NOT_FOUND','The requested domain does not exist in this build','id')
+            return DomainDetailResult(domain=to_domain(value,model['build_id']) if value else None,error=error)
+        except BusinessDomainError as exc:
+            return DomainDetailResult(domain=None,error=business_domains_resolver.error(exc,str(expected_build_id)))
 
     @strawberry.field
     def spec_alignment(
@@ -1849,6 +1877,27 @@ class Mutation:
             ),
         )
         return to_refresh_result(result)
+
+    @strawberry.mutation
+    async def review_domain(self, info: strawberry.types.Info, input: DomainReviewInput) -> DomainReviewResult:
+        root = info.context['project_root']
+        try:
+            operation = business_domains_resolver.review_input(input)
+            result = await asyncio.to_thread(business_domains_resolver.review,root,str(input.expected_build_id),
+                operation,input.explanation,info.context.get('reviewer_name','local dashboard user'))
+            return DomainReviewResult(**result)
+        except BusinessDomainError as exc:
+            model,_ = business_domains_resolver.load(root)
+            return DomainReviewResult(accepted=False,build_id=None,domain_ids=[],
+                error=business_domains_resolver.error(exc,str(input.expected_build_id),model['build_id'] if model else None))
+
+    @strawberry.mutation
+    async def cancel_domain_build(self, info: strawberry.types.Info, build_id: strawberry.ID) -> DomainBuildActionResult:
+        try:
+            result = await asyncio.to_thread(business_domains_resolver.cancel_build,info.context['project_root'],str(build_id))
+            return DomainBuildActionResult(**result)
+        except BusinessDomainError as exc:
+            return DomainBuildActionResult(accepted=False,build_id=build_id,error=business_domains_resolver.error(exc))
 
 
 # ── Schema ───────────────────────────────────────────────────────

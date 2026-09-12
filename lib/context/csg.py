@@ -199,6 +199,7 @@ def _resolve_reference(
     ref_file: str,
     index: dict,
     import_map: dict[str, dict[str, str]],
+    allow_global: bool = True,
 ) -> str | None:
     """Resolve a reference name to a symbol ID.
 
@@ -227,12 +228,24 @@ def _resolve_reference(
     file_imports = import_map.get(ref_file, {})
     if clean_name in file_imports:
         source_module = file_imports[clean_name]
-        # Try to find the symbol in the source module's file
-        candidates = index["by_name"].get(clean_name, [])
-        for sid in candidates:
-            node = index["by_id"][sid]
-            if source_module in node["file"]:
-                return sid
+        module_path = source_module.replace(".", "/")
+        if source_module.startswith("."):
+            module_path = os.path.normpath(os.path.join(
+                os.path.dirname(ref_file), source_module))
+        module_path = module_path.lstrip("./")
+        module_symbols = [sid for sid, node in index["by_id"].items()
+            if os.path.splitext(node["file"])[0].endswith(module_path)
+            or os.path.splitext(node["file"])[0].endswith(module_path + "/index")]
+        exact = [sid for sid in module_symbols
+                 if index["by_id"][sid]["name"] == clean_name]
+        if len(exact) == 1:
+            return exact[0]
+        # A default import can use any local alias. Declarative extractors name
+        # anonymous default implementations ``<module>.default``.
+        defaults = [sid for sid in module_symbols
+                    if index["by_id"][sid]["name"].endswith(".default")]
+        if len(defaults) == 1:
+            return defaults[0]
 
     # 3. Global name match (only if unambiguous within the same language).
     # A same-named symbol in an unrelated language can never actually be
@@ -255,6 +268,8 @@ def _resolve_reference(
     # conflated "no explicit import" with "uncertain," when for
     # same-package access the former is simply how the language works,
     # not a weaker claim. See RELATIONSHIP_EVIDENCE_TYPE.
+    if not allow_global:
+        return None
     ref_lang = _classify_language(ref_file)
     candidates = index["by_name"].get(clean_name, [])
     same_lang_candidates = [
@@ -313,11 +328,28 @@ def _build_import_map(
         for ref in result.references:
             if ref.kind != "import":
                 continue
-            module = ref.module or ""
+            module = (ref.module or "").strip("'\"")
             for sym_name in ref.symbols:
                 import_map[rel_path][sym_name] = module
 
     return dict(import_map)
+
+
+def resolve_source_reference(
+    ref_name: str,
+    ref_file: str,
+    nodes: list[dict],
+    extractions: dict[str, ExtractionResult],
+    *,
+    allow_global: bool = False,
+) -> str | None:
+    """Resolve one adapter reference through the canonical CSG resolver.
+
+    Adapter semantic links default to lexical/import evidence only. Callers
+    must opt into the CSG's unique same-language global fallback explicitly.
+    """
+    return _resolve_reference(ref_name, ref_file, _build_symbol_index(nodes),
+                              _build_import_map(extractions), allow_global)
 
 
 def build_layer_b(

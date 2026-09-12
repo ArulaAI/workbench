@@ -1,0 +1,153 @@
+id: python-http-entrypoint
+language: python
+metadata:
+  produces: business_anchor
+  anchor_kind: http
+  route_var: ROUTE
+  method_var: METHOD
+  route_pattern: '^["'']([^"'']*)["'']$'
+rule:
+  kind: decorated_definition
+  has:
+    kind: decorator
+    regex: '\.(route|get|post|put|patch|delete)\('
+    has:
+      kind: call
+      any:
+        - pattern: $APP.$METHOD($ROUTE)
+        - pattern: $APP.$METHOD($ROUTE, $$$ARGS)
+---
+id: python-workflow-entrypoint
+language: python
+metadata:
+  produces: business_anchor
+  anchor_kind: workflow
+rule:
+  kind: decorated_definition
+  has:
+    kind: decorator
+    regex: '@(dag|task)\b'
+---
+id: python-condition-observation
+language: python
+metadata:
+  produces: rule_observation
+  source_location_kind: api
+rule:
+  any:
+    - kind: if_statement
+    - kind: assert_statement
+---
+id: python-input-binding
+language: python
+metadata:
+  produces: binding
+  direction: input
+  name_var: NAME
+  expression_var: NAME
+rule:
+  kind: identifier
+  pattern: $NAME
+  inside:
+    kind: parameters
+---
+id: python-return-binding
+language: python
+metadata:
+  produces: binding
+  direction: output
+  expression_var: VALUE
+rule:
+  kind: return_statement
+  pattern: return $VALUE
+---
+id: python-dag-context
+language: python
+metadata:
+  produces: node
+  kind: declarative_operation
+  anchor_kind: workflow
+rule:
+  pattern: |
+    with $FACTORY($$$ARGS) as $NAME:
+        $$$BODY
+constraints:
+  FACTORY:
+    regex: '(^|\.)DAG$'
+---
+id: python-workflow-operator
+language: python
+metadata:
+  produces: node
+  kind: declarative_operation
+  anchor_kind: workflow
+  connect_to_enclosing: true
+rule:
+  pattern: $NAME = $OPERATOR($$$ARGS)
+  inside:
+    any:
+      - kind: with_statement
+        regex: '\bDAG\s*\('
+      - kind: decorated_definition
+        regex: '@(?:\w+\.)?dag\b'
+    stopBy: end
+constraints:
+  OPERATOR:
+    regex: '(Operator|Sensor)$'
+---
+id: python-workflow-setting
+language: python
+metadata:
+  produces: binding
+  direction: input
+  symbol_kinds: [declarative_operation]
+  name_var: NAME
+  expression_var: VALUE
+rule:
+  kind: keyword_argument
+  all:
+    - has:
+        field: name
+        pattern: $NAME
+    - has:
+        field: value
+        pattern: $VALUE
+---
+id: python-workflow-callback
+language: python
+metadata:
+  produces: semantic_relation
+  edge_kind: calls
+  to_var: TARGET
+  source_kind: declarative_operation
+rule:
+  kind: keyword_argument
+  all:
+    - has:
+        field: name
+        regex: '^python_callable$'
+    - has:
+        field: value
+        pattern: $TARGET
+---
+id: python-workflow-downstream
+language: python
+metadata:
+  produces: semantic_relation
+  edge_kind: depends_on
+  from_var: DOWNSTREAM
+  to_var: UPSTREAM
+  requires_endpoint_kind: declarative_operation
+rule:
+  pattern: $UPSTREAM >> $DOWNSTREAM
+---
+id: python-workflow-upstream
+language: python
+metadata:
+  produces: semantic_relation
+  edge_kind: depends_on
+  from_var: DOWNSTREAM
+  to_var: UPSTREAM
+  requires_endpoint_kind: declarative_operation
+rule:
+  pattern: $DOWNSTREAM << $UPSTREAM
