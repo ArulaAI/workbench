@@ -44,7 +44,7 @@ PROVIDER_FAILURE_CODES = {
 OPERATIONS = {
     'synthesize': ('CandidatePayload', 'synthesis'),
     'verify': ('VerificationReport', 'verification'),
-    'repair': ('CandidatePayload', 'synthesis'),
+    'repair': ('RepairPayload', 'synthesis'),
 }
 PROVIDER_PROJECTION_VERSION = 1
 
@@ -771,6 +771,9 @@ def _contract_record_collections():
 
 
 MAPPING_RECORD_TYPES, SEQUENCE_RECORD_TYPES = _contract_record_collections()
+CANDIDATE_RECORD_COLLECTIONS = tuple(
+    name for name in DEFINITIONS['CandidatePayload']['properties']
+    if name in MAPPING_RECORD_TYPES or name in SEQUENCE_RECORD_TYPES)
 
 
 def _declared_set_paths(shape, path=(), seen=frozenset()):
@@ -1033,15 +1036,161 @@ def _normalize_payload(payload, aliases, output_type):
     return normalized
 
 
-def normalize_ids(payload, graph):
-    """Allocate stable semantic IDs and rewrite response-local references."""
+def _normalize_ids_with_aliases(payload, graph):
+    """Allocate stable semantic IDs and retain the response-local alias map."""
     records = _provider_records(payload)
     aliases = {}
     for collections in DEPENDENCY_GROUPS:
         _allocate_collision_safe_ids(records, collections, graph, aliases)
     output_type = ('VerificationReport' if 'verdict' in payload
                    else 'CandidatePayload')
-    return _normalize_payload(payload, aliases, output_type)
+    return _normalize_payload(payload, aliases, output_type), aliases
+
+
+def normalize_ids(payload, graph):
+    """Allocate stable semantic IDs and rewrite response-local references."""
+    normalized, _ = _normalize_ids_with_aliases(payload, graph)
+    return normalized
+
+
+def _candidate_records(candidate):
+    """Map every candidate-owned ID to its collection and record body."""
+    indexed = {}
+    for collection in CANDIDATE_RECORD_COLLECTIONS:
+        records = candidate.get(collection, {})
+        records = records.values() if isinstance(records, dict) else records
+        indexed.update((item['id'], (collection, item)) for item in records)
+    return indexed
+
+
+def normalize_repair_payload(payload, graph, previous, expected_parent_hash):
+    """Normalize and validate a complete replacement plus its identity ledger."""
+    findings = []
+    if payload['parent_candidate_hash'] != expected_parent_hash:
+        findings.append(validation_finding(
+            'INVALID_REPAIR_PARENT',
+            'Repair response does not identify the exact rejected candidate'))
+
+    replacement, aliases = _normalize_ids_with_aliases(
+        payload['candidate'], graph)
+    previous_records = _candidate_records(previous)
+    replacement_records = _candidate_records(replacement)
+    previous_owners = {
+        record_id: owned[0] for record_id, owned in previous_records.items()}
+    replacement_owners = {
+        record_id: owned[0] for record_id, owned in replacement_records.items()}
+    normalized_changes = []
+    claimed_from, claimed_to = set(), set()
+
+    cardinality = {
+        'added': lambda before, after: not before and len(after) == 1,
+        'retained': lambda before, after: (
+            len(before) == len(after) == 1 and before == after),
+        'revised': lambda before, after: len(before) == len(after) == 1,
+        'retired': lambda before, after: len(before) == 1 and not after,
+        'merged': lambda before, after: len(before) >= 2 and len(after) == 1,
+        'split': lambda before, after: len(before) == 1 and len(after) >= 2,
+    }
+
+    for change in payload['identity_changes']:
+        normalized = copy.deepcopy(change)
+        normalized['from_ids'] = sorted(set(change['from_ids']))
+        normalized['to_ids'] = sorted({
+            aliases.get(record_id, record_id)
+            for record_id in change['to_ids']
+        })
+        before, after = normalized['from_ids'], normalized['to_ids']
+        subjects = sorted(set(before) | set(after))
+
+        if (len(before) != len(change['from_ids'])
+                or len(after) != len(change['to_ids'])):
+            findings.append(validation_finding(
+                'INVALID_IDENTITY_CHANGE',
+                'Identity change cannot repeat a record ID',
+                subject_ids=subjects))
+        if not normalized['reason'].strip():
+            findings.append(validation_finding(
+                'INVALID_IDENTITY_CHANGE',
+                'Identity change requires a concrete reason',
+                subject_ids=subjects))
+        if not cardinality[normalized['kind']](before, after):
+            findings.append(validation_finding(
+                'INVALID_IDENTITY_CHANGE',
+                f"{normalized['kind']} identity change has invalid cardinality",
+                subject_ids=subjects))
+
+        missing_from = set(before) - set(previous_owners)
+        missing_to = set(after) - set(replacement_owners)
+        if missing_from or missing_to:
+            findings.append(validation_finding(
+                'INVALID_IDENTITY_CHANGE',
+                'Identity change refers outside its parent or replacement candidate',
+                subject_ids=sorted(missing_from | missing_to)))
+
+        collections = {
+            previous_owners[record_id]
+            for record_id in before if record_id in previous_owners
+        } | {
+            replacement_owners[record_id]
+            for record_id in after if record_id in replacement_owners
+        }
+        if len(collections) > 1:
+            findings.append(validation_finding(
+                'INVALID_IDENTITY_CHANGE',
+                'Identity change cannot cross semantic collections',
+                subject_ids=subjects))
+
+        repeated_from = claimed_from & set(before)
+        repeated_to = claimed_to & set(after)
+        if repeated_from or repeated_to:
+            findings.append(validation_finding(
+                'INVALID_IDENTITY_CHANGE',
+                'A record identity cannot participate in two changes',
+                subject_ids=sorted(repeated_from | repeated_to)))
+        claimed_from.update(before)
+        claimed_to.update(after)
+        normalized_changes.append(normalized)
+
+    removed = set(previous_owners) - set(replacement_owners)
+    added = set(replacement_owners) - set(previous_owners)
+    modified = {
+        record_id for record_id in set(previous_owners) & set(replacement_owners)
+        if previous_records[record_id] != replacement_records[record_id]
+    }
+    transitioned_from = {
+        record_id
+        for change in normalized_changes if change['kind'] != 'retained'
+        for record_id in change['from_ids']
+    }
+    transitioned_to = {
+        record_id
+        for change in normalized_changes if change['kind'] != 'retained'
+        for record_id in change['to_ids']
+    }
+    expected_from = removed | modified
+    expected_to = added | modified
+    if expected_from != transitioned_from:
+        findings.append(validation_finding(
+            'INCOMPLETE_IDENTITY_CHANGE',
+            'Identity ledger must account for every removed or revised parent record',
+            subject_ids=sorted(expected_from ^ transitioned_from)))
+    if expected_to != transitioned_to:
+        findings.append(validation_finding(
+            'INCOMPLETE_IDENTITY_CHANGE',
+            'Identity ledger must account for every added or revised replacement record',
+            subject_ids=sorted(expected_to ^ transitioned_to)))
+
+    if findings:
+        first = findings[0]
+        raise DomainError(
+            first['code'], first['message'], findings=findings,
+            rejected_candidate=copy.deepcopy(payload['candidate']),
+            repair_kind='semantic')
+    return {
+        'parent_candidate_hash': payload['parent_candidate_hash'],
+        'candidate': replacement,
+        'identity_changes': normalized_changes,
+    }
 
 
 def _model_ready_context(model: dict, subject_ids: list[str]) -> dict:
@@ -1292,6 +1441,7 @@ class Synthesis:
         self.completion_protected = {'input': 0, 'output': 0}
         self.cached_unit_threads = set()
         self.last_response_keys = {}
+        self.last_identity_changes = {}
         self.pending_responses = {}
 
     def _speed_call(self, action, *args, timeout=30):
@@ -1492,6 +1642,7 @@ class Synthesis:
             'SemanticRequest', request_id=str(uuid.uuid4()), operation=operation,
             input_fingerprint=graph['input_fingerprint'], graph=copy.deepcopy(graph),
             candidate=copy.deepcopy(candidate),
+            parent_candidate_hash=(digest(candidate) if candidate is not None else None),
             deterministic_findings=copy.deepcopy(list(deterministic_findings)),
             verification_report=copy.deepcopy(verification_report),
             allowed_evidence_ids=allowed_evidence_ids(graph),
@@ -1548,7 +1699,7 @@ class Synthesis:
         return self._size_graph(whole_graph_scope(model, selected))
 
     def run(self, graph: dict, validate_candidate) -> dict:
-        """Synthesize, independently verify, repair once, and reverify."""
+        """Synthesize, verify and run the bounded semantic repair chain."""
         owner = threading.get_ident() not in self.completion_reservations
         if owner:
             with self.accounting_lock:
@@ -1590,6 +1741,7 @@ class Synthesis:
                     self.counters['semantic_units_failed'] += 1
             raise
         finally:
+            self.last_identity_changes.pop(threading.get_ident(), None)
             with self.accounting_lock:
                 self.counters['semantic_units_active'] -= 1
                 if owner:
@@ -1622,6 +1774,79 @@ class Synthesis:
             }])
         return findings
 
+    @staticmethod
+    def _repair_subject_closure(candidate, subject_ids):
+        """Include candidate records whose content references a named subject."""
+        allowed = set(subject_ids)
+
+        def references(value):
+            if isinstance(value, str):
+                return value in allowed
+            if isinstance(value, list):
+                return any(references(item) for item in value)
+            if isinstance(value, dict):
+                return any(references(item) for item in value.values())
+            return False
+
+        changed = True
+        while changed:
+            changed = False
+            for collection in CANDIDATE_RECORD_COLLECTIONS:
+                records = candidate.get(collection, {})
+                records = (records.values()
+                           if isinstance(records, dict) else records)
+                for item in records:
+                    record_id = item['id']
+                    if record_id not in allowed and references(item):
+                        allowed.add(record_id)
+                        changed = True
+        return allowed
+
+    @classmethod
+    def _repair_regressions(cls, previous, identity_changes,
+                            findings, report):
+        """Return changed records outside the requested dependency closure."""
+        named = {
+            subject_id
+            for finding in [*(findings or []),
+                            *((report or {}).get('findings', []))]
+            for subject_id in finding.get('subject_ids', [])
+        }
+        allowed = cls._repair_subject_closure(previous, named)
+        changed = {
+            record_id
+            for change in identity_changes
+            for record_id in change['from_ids']
+        }
+        return sorted(changed - allowed)
+
+    @staticmethod
+    def _finding_signature(findings, report):
+        """Stable rejection identity used to detect a stalled repair."""
+        return digest({
+            'deterministic': sorted(
+                (finding['code'], tuple(sorted(finding['subject_ids'])))
+                for finding in findings or []),
+            'verdict': (report or {}).get('verdict'),
+            'blocking': sorted(
+                (finding['category'],
+                 tuple(sorted(finding['subject_ids'])))
+                for finding in (report or {}).get('findings', [])
+                if finding['severity'] == 'blocking'),
+        })
+
+    @staticmethod
+    def _combined_repair_findings(findings, report):
+        """Return deterministic findings and independent semantic blockers."""
+        combined = copy.deepcopy(findings or [])
+        combined.extend(validation_finding(
+            'SEMANTIC_VERIFICATION_FAILED', finding['message'],
+            subject_ids=finding['subject_ids'],
+            evidence_ids=finding['evidence_ids'])
+            for finding in (report or {}).get('findings', [])
+            if finding['severity'] == 'blocking')
+        return combined
+
     def _validate_verify_repair(self, graph, synthesis_request, candidate,
                                 validate_candidate, initial_findings=None):
         findings = (copy.deepcopy(initial_findings)
@@ -1637,29 +1862,66 @@ class Synthesis:
             self._commit_candidate_response(synthesis_request, verification_key)
             return candidate
 
-        repair_request = self.request_for(
-            'repair', graph, candidate, findings, report)
-        repaired, _ = self._run_with_retries(repair_request)
-        repaired_findings = self._candidate_findings(
-            graph, repaired, validate_candidate)
-        reverify_request = self.request_for(
-            'verify', graph, repaired, repaired_findings)
-        repaired_report, _ = self._run_with_retries(
-            reverify_request, report_requires_failure=bool(repaired_findings))
-        verification_key = self.last_response_keys[threading.get_ident()]
-        if repaired_findings or repaired_report['verdict'] != 'pass':
-            combined = repaired_findings or [
-                {'code': 'SEMANTIC_VERIFICATION_FAILED', 'severity': 'error',
-                 'message': finding['message'],
-                 'subject_ids': finding['subject_ids'],
-                 'evidence_ids': finding['evidence_ids']}
-                for finding in repaired_report['findings']
-                if finding['severity'] == 'blocking']
-            raise DomainError(
-                'SEMANTIC_VERIFICATION_FAILED',
-                'Repaired candidate did not pass complete-scope verification',
-                findings=combined, rejected_candidate=repaired,
-                verification_report=repaired_report)
+        seen = {self._finding_signature(findings, report)}
+        for repair_attempt in range(
+                1, POLICY['semantic_repair_limit'] + 1):
+            repair_request = self.request_for(
+                'repair', graph, candidate, findings, report)
+            try:
+                repaired, _ = self._run_with_retries(repair_request)
+            except DomainError as exc:
+                if not (exc.repair_kind == 'semantic' and exc.findings
+                        and exc.rejected_candidate is not None):
+                    raise
+                # Identity/canonicalization defects are themselves repairable.
+                # The structurally valid raw candidate becomes the exact input
+                # to the next round; it is never verified, cached or published.
+                repaired = exc.rejected_candidate
+                repaired_findings = exc.findings
+                repaired_report = report
+            else:
+                identity_changes = self.last_identity_changes.pop(
+                    threading.get_ident(), [])
+                repaired_findings = self._candidate_findings(
+                    graph, repaired, validate_candidate)
+                regressions = self._repair_regressions(
+                    candidate, identity_changes, findings, report)
+                if regressions:
+                    repaired_findings.append(validation_finding(
+                        'UNJUSTIFIED_REGRESSION',
+                        f'Repair changed {len(regressions)} records outside '
+                        'the finding dependency closure',
+                        subject_ids=regressions))
+                reverify_request = self.request_for(
+                    'verify', graph, repaired, repaired_findings)
+                repaired_report, _ = self._run_with_retries(
+                    reverify_request,
+                    report_requires_failure=bool(repaired_findings))
+                verification_key = self.last_response_keys[
+                    threading.get_ident()]
+                if (not repaired_findings
+                        and repaired_report['verdict'] == 'pass'):
+                    break
+
+            signature = self._finding_signature(
+                repaired_findings, repaired_report)
+            stalled = signature in seen
+            exhausted = repair_attempt == POLICY['semantic_repair_limit']
+            if stalled or exhausted:
+                reason = ('repeated the same blocking defect set' if stalled
+                          else 'reached the configured repair limit')
+                raise DomainError(
+                    'SEMANTIC_VERIFICATION_FAILED',
+                    'Repaired candidate did not pass complete-scope '
+                    f'verification after {repair_attempt} repair attempt(s): '
+                    f'{reason}',
+                    findings=self._combined_repair_findings(
+                        repaired_findings, repaired_report),
+                    rejected_candidate=repaired,
+                    verification_report=repaired_report)
+            seen.add(signature)
+            candidate, findings, report = (
+                repaired, repaired_findings, repaired_report)
         self._commit_candidate_response(repair_request, verification_key)
         # The unchanged whole-graph synthesis request is the stable checkpoint.
         self._commit_or_store_repaired_synthesis(
@@ -2254,14 +2516,29 @@ class Synthesis:
             self.recorder.progress('semantic',
                 f'Normalizing and validating {operation} response')
         try:
+            identity_changes = []
             if projected_provider:
                 value = projection.decode_response(value)
             payload = from_wire(value, DEFINITIONS[output_type])
             validate(payload, output_type)
-            payload = normalize_ids(payload, request['graph'])
-            validate(payload, output_type)
+            if output_type == 'RepairPayload':
+                repair = normalize_repair_payload(
+                    payload, request['graph'], request['candidate'],
+                    request['parent_candidate_hash'])
+                payload = repair['candidate']
+                identity_changes = repair['identity_changes']
+                self.last_identity_changes[threading.get_ident()] = \
+                    identity_changes
+                validate(payload, 'CandidatePayload')
+            else:
+                payload = normalize_ids(payload, request['graph'])
+                validate(payload, output_type)
             if normalization:
-                normalization.success(payload,schema=output_type)
+                normalization.success(
+                    payload,
+                    schema=('CandidatePayload'
+                            if output_type == 'RepairPayload'
+                            else output_type))
         except (KeyError, TypeError, ValueError, DomainError) as exc:
             error = (exc if isinstance(exc,DomainError) else DomainError(
                 'INVALID_PROVIDER_OUTPUT',
@@ -2301,10 +2578,12 @@ class Synthesis:
             operation=operation,
             input_fingerprint=request['input_fingerprint'],
             candidate=(copy.deepcopy(payload)
-                       if output_type == 'CandidatePayload' else None),
+                       if output_type in ('CandidatePayload', 'RepairPayload')
+                       else None),
             verification_report=(
                 copy.deepcopy(payload)
                 if output_type == 'VerificationReport' else None),
+            identity_changes=copy.deepcopy(identity_changes),
             usage={
                 'input_tokens': actual.get('inputTokens'),
                 'output_tokens': actual.get('outputTokens'),

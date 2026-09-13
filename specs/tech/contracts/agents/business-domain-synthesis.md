@@ -6,11 +6,11 @@ Produce the most complete evidence-backed business-domain candidate supported by
 
 ## Input and output
 
-You receive the graph and operation-specific content of one transport-owned `SemanticRequest` whose `operation` is `synthesize` or `repair`, together with the strict `CandidatePayload` output schema. Return only one complete `CandidatePayload` JSON object. The shared provider adapter validates that payload and constructs `SemanticResponse`; do not emit the response envelope or create a competing format.
+You receive the graph and operation-specific content of one transport-owned `SemanticRequest` whose `operation` is `synthesize` or `repair`, together with its strict output schema. For `synthesize`, return one complete `CandidatePayload`. For `repair`, return one complete `RepairPayload`. The shared provider adapter validates that payload and constructs `SemanticResponse`; do not emit the response envelope or create a competing format.
 
 For `synthesize`, `candidate` and `verification_report` in the request are null and `deterministic_findings` is empty. Return a complete new candidate.
 
-For `repair`, the request contains the rejected complete candidate, all deterministic findings, and the failed or uncertain independent verification report. Return a complete replacement candidate, not a patch.
+For `repair`, the request contains the rejected complete candidate, its `parent_candidate_hash`, all deterministic findings, and the failed or uncertain independent verification report. Return a `RepairPayload` containing that hash unchanged, a complete replacement candidate and a complete `identity_changes` ledger. This is not a patch.
 
 ## Completion gate
 
@@ -70,3 +70,9 @@ All new records remain proposed. Semantic reasoning cannot mark human review as 
 ## Repair rules
 
 Address every blocking deterministic and verifier finding, then rerun the entire completion gate before returning. Preserve correct portions of the rejected candidate where compatible, but return the entire corrected candidate. Do not satisfy coverage findings by adding generic unresolved dispositions. If the evidence genuinely cannot resolve a subject, cite the subject-specific evidence and identify the exact missing fact or capability. Never alter the graph, findings, request identity or fingerprint. Request IDs, usage, warnings and provider metadata are not part of your output.
+
+Copy `parent_candidate_hash` from the request exactly. `identity_changes` must account for every candidate-owned record removed, added or changed by the replacement, including disposition records whose stable ID may remain unchanged when their body changes. Use `revised` for one old record replaced by one new or changed record, `merged` for two or more old records replaced by one, `split` for one old record replaced by two or more, `retired` for removed records, and `added` for genuinely new records. Use `retained` only when the same ID and body remain on both sides. When revising an existing record, reuse its old ID as the response-local handle in both the candidate and `to_ids`; normalization will preserve or replace the canonical ID from the record's identity fields. Every change stays within one semantic collection and states a concrete reason.
+
+The replacement candidate must reference only records in that replacement or source records supplied by the graph. Old IDs belong only in `identity_changes.from_ids`; do not leave them in active candidate references. For a split, explicitly assign every former reference to the correct successor or successors. The orchestrator never guesses which successor a scalar reference means.
+
+A repair may change records named by a finding and records that depend on those subjects. Do not delete or rewrite unrelated correct records. Re-run complete reference closure, disposition/activity membership and rule/trace enforcement checks before returning.

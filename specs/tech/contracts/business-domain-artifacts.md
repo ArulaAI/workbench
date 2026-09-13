@@ -738,7 +738,7 @@ Published unassigned records are the projection of final excluded/unresolved can
 ### IdentityChange
 
 ```text
-kind: "added" | "retained" | "retired" | "merged" | "split"
+kind: "added" | "retained" | "revised" | "retired" | "merged" | "split"
 from_ids: Array<string>
 to_ids: Array<string>
 reason: string
@@ -1010,6 +1010,7 @@ operation: "synthesize" | "verify" | "repair"
 input_fingerprint: SHA-256
 graph: GraphScope
 candidate: CandidatePayload | null
+parent_candidate_hash: SHA-256 | null
 deterministic_findings: Array<ValidationFinding>
 verification_report: VerificationReport | null
 allowed_evidence_ids: Array<EvidenceID>
@@ -1021,13 +1022,23 @@ deadline_at: UTC date-time
 
 Every field is present. Operation invariants are:
 
-| Operation | `candidate` | `deterministic_findings` | `verification_report` | Expected response |
-| --- | --- | --- | --- | --- |
-| `synthesize` | null | empty | null | Complete `candidate`; null `verification_report` |
-| `verify` | candidate under review | complete deterministic report, possibly empty | null | Null `candidate`; complete `verification_report` |
-| `repair` | rejected candidate | complete deterministic report | failed/uncertain verifier report | Complete replacement `candidate`; null `verification_report` |
+| Operation | `candidate` | `parent_candidate_hash` | `deterministic_findings` | `verification_report` | Raw model output |
+| --- | --- | --- | --- | --- | --- |
+| `synthesize` | null | null | empty | null | Complete `CandidatePayload` |
+| `verify` | candidate under review | candidate hash | complete deterministic report, possibly empty | null | Complete `VerificationReport` |
+| `repair` | rejected candidate | rejected candidate hash | complete deterministic report | failed/uncertain verifier report | Complete `RepairPayload` |
 
-The request fingerprint covers the graph, operation-specific inputs, prompt/schema versions, provider/model selection and project instructions. `output_schema` is the trusted raw-model-output schema: `CandidatePayload` for synthesize/repair and `VerificationReport` for verify. The model returns that payload only. The shared provider adapter supplies the response envelope fields.
+The request fingerprint covers the graph, operation-specific inputs, prompt/schema versions, provider/model selection and project instructions. `output_schema` is the trusted raw-model-output schema: `CandidatePayload` for synthesize, `VerificationReport` for verify and `RepairPayload` for repair. The model returns that payload only. The shared provider adapter supplies the response envelope fields.
+
+### RepairPayload
+
+```text
+parent_candidate_hash: SHA-256
+candidate: CandidatePayload
+identity_changes: Array<IdentityChange>
+```
+
+The hash must identify the exact rejected candidate. The ledger accounts for every candidate-owned record removed, added or changed, including same-ID body changes, and uses response-local successor IDs; normalization rewrites those IDs together with all candidate references. Old IDs remain historical lineage, not active aliases in the replacement.
 
 ### SemanticResponse
 
@@ -1038,6 +1049,7 @@ operation: "synthesize" | "verify" | "repair"
 input_fingerprint: SHA-256
 candidate: CandidatePayload | null
 verification_report: VerificationReport | null
+identity_changes: Array<IdentityChange>
 usage:
   input_tokens: integer >= 0 | null
   output_tokens: integer >= 0 | null
@@ -1045,7 +1057,7 @@ provider_revision: string | null
 warnings: Array<Diagnostic>
 ```
 
-Every field is present. `synthesize` and `repair` require a candidate and null verification report. `verify` requires a verification report and null candidate. Response operation, request ID and input fingerprint must exactly match the request. The adapter creates `schema_version`, `request_id`, `operation`, `input_fingerprint`, `usage`, `provider_revision` and transport warnings around the validated raw payload; the model cannot supply or alter those fields.
+Every field is present. `synthesize` requires a candidate, null verification report and an empty identity ledger. `repair` requires a candidate, null verification report and the normalized repair ledger. `verify` requires a verification report, null candidate and an empty ledger. Response operation, request ID and input fingerprint must exactly match the request. The adapter creates `schema_version`, `request_id`, `operation`, `input_fingerprint`, `usage`, `provider_revision` and transport warnings around the validated raw payload; the model cannot supply or alter those fields.
 
 ### CacheArtifact
 

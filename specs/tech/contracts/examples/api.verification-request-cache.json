@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "kind": "request",
-  "key": "6774feba6cd27eed6a2bf806c618d6a57bceb5c7dd09bced67d9b0a7a3ab0642",
+  "key": "e7ee97c2456159c69ef04df07de1d298a2464a14dd6acd8cc90378090309d7f5",
   "created_at": "2026-09-06T00:00:00Z",
   "request": {
     "schema_version": 1,
@@ -61,6 +61,7 @@
       "relationships": {},
       "dispositions": []
     },
+    "parent_candidate_hash": "33440164eb0f2584390142c69fed9fca2273d32ae790af3d4b884e1e4c906657",
     "deterministic_findings": [],
     "verification_report": null,
     "allowed_evidence_ids": [],

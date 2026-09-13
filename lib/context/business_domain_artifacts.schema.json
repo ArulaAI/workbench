@@ -4082,6 +4082,7 @@
           "enum": [
             "added",
             "retained",
+            "revised",
             "retired",
             "merged",
             "split"
@@ -6938,6 +6939,30 @@
       ],
       "additionalProperties": false
     },
+    "RepairPayload": {
+      "type": "object",
+      "properties": {
+        "parent_candidate_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "candidate": {
+          "$ref": "#/$defs/CandidatePayload"
+        },
+        "identity_changes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/IdentityChange"
+          }
+        }
+      },
+      "required": [
+        "parent_candidate_hash",
+        "candidate",
+        "identity_changes"
+      ],
+      "additionalProperties": false
+    },
     "ValidationFinding": {
       "type": "object",
       "properties": {
@@ -7144,6 +7169,17 @@
             }
           ]
         },
+        "parent_candidate_hash": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "deterministic_findings": {
           "type": "array",
           "items": {
@@ -7191,6 +7227,7 @@
         "input_fingerprint",
         "graph",
         "candidate",
+        "parent_candidate_hash",
         "deterministic_findings",
         "verification_report",
         "allowed_evidence_ids",
@@ -7211,6 +7248,9 @@
           "then": {
             "properties": {
               "candidate": {
+                "type": "null"
+              },
+              "parent_candidate_hash": {
                 "type": "null"
               },
               "deterministic_findings": {
@@ -7318,6 +7358,12 @@
             }
           ]
         },
+        "identity_changes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/IdentityChange"
+          }
+        },
         "usage": {
           "$ref": "#/$defs/ProviderUsage"
         },
@@ -7345,6 +7391,7 @@
         "input_fingerprint",
         "candidate",
         "verification_report",
+        "identity_changes",
         "usage",
         "provider_revision",
         "warnings"
@@ -7354,10 +7401,29 @@
           "if": {
             "properties": {
               "operation": {
-                "enum": [
-                  "synthesize",
-                  "repair"
-                ]
+                "const": "synthesize"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "candidate": {
+                "$ref": "#/$defs/CandidatePayload"
+              },
+              "verification_report": {
+                "type": "null"
+              },
+              "identity_changes": {
+                "maxItems": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operation": {
+                "const": "repair"
               }
             }
           },
@@ -7387,6 +7453,9 @@
               },
               "verification_report": {
                 "$ref": "#/$defs/VerificationReport"
+              },
+              "identity_changes": {
+                "maxItems": 0
               }
             }
           }
