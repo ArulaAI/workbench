@@ -824,6 +824,107 @@ def test_agent_projection_prioritizes_identity_before_domains(tmp_path):
     assert "test project" in small.lower() or "repository digest" in small.lower()
 
 
+def test_agent_projection_puts_failed_discovery_before_freshness():
+    digest = {
+        'identity': {
+            'name': 'spring-petclinic-reactjs',
+            'summary': '',
+        },
+        'status': 'partial',
+        '_effective_state': 'CURRENT',
+        'domain_build_id': None,
+        'domain_status': {
+            'phase': 'failed',
+            'coverage': {
+                'anchors_processed': 0,
+                'anchors_total': 52,
+            },
+            'error': {
+                'code': 'SEMANTIC_VERIFICATION_FAILED',
+                'message': (
+                    'Repaired candidate did not pass complete-scope '
+                    'verification'),
+            },
+        },
+        'gaps': [],
+        'domains': [],
+    }
+
+    projection = project_digest_for_agent(digest, token_budget=2000)
+
+    discovery = (
+        '**Domain discovery:** FAILED '
+        '(0/52 entry points processed; '
+        'no published domain model is available)')
+    assert discovery in projection
+    assert (
+        '> **Discovery error:** SEMANTIC_VERIFICATION_FAILED: '
+        'Repaired candidate did not pass complete-scope verification'
+        in projection)
+    assert projection.index(discovery) < projection.index(
+        '**Freshness:** CURRENT')
+
+
+def test_agent_projection_labels_domains_from_a_previous_publication():
+    digest = {
+        'identity': {'name': 'fixture', 'summary': ''},
+        'status': 'partial',
+        'domain_build_id': 'previous-build',
+        'domain_status': {
+            'phase': 'failed',
+            'coverage': {
+                'anchors_processed': 0,
+                'anchors_total': 1,
+            },
+            'error': {
+                'code': 'SEMANTIC_VERIFICATION_FAILED',
+                'message': 'The latest candidate failed verification',
+            },
+        },
+        'gaps': [],
+        'domains': [{
+            'name': 'Previous domain',
+            'summary': 'Previously validated responsibility.',
+            'file_count': 1,
+            'symbol_count': 1,
+            'rank': 1,
+        }],
+    }
+
+    projection = project_digest_for_agent(digest, token_budget=2000)
+
+    assert 'showing the last published domain model' in projection
+    assert projection.index('**Domain discovery:** FAILED') < \
+        projection.index('### Previous domain')
+
+
+def test_agent_projection_labels_a_published_partial_model():
+    digest = {
+        'identity': {'name': 'fixture', 'summary': ''},
+        'status': 'partial',
+        'domain_build_id': 'partial-build',
+        'domain_status': {
+            'phase': 'partial',
+            'published_build_id': 'partial-build',
+            'coverage': {
+                'anchors_processed': 1,
+                'anchors_total': 2,
+            },
+            'error': None,
+        },
+        'gaps': [],
+        'domains': [],
+    }
+
+    projection = project_digest_for_agent(digest, token_budget=2000)
+
+    assert (
+        '**Domain discovery:** PARTIAL '
+        '(1/2 entry points processed; '
+        'showing the published partial domain model)'
+        in projection)
+
+
 # ── Performance ────────────────────────────────────────────────────
 
 

@@ -1306,3 +1306,41 @@ def test_verification_envelope_findings_name_affected_subjects():
         if finding['message'] == (
             'Passing verification cannot contain a blocking finding'))
     assert passing['subject_ids'] == [anchor_id, graph['scope_id']]
+
+
+def test_semantic_outcome_summary_exposes_verdict_and_record_counts():
+    graph = graph_scope(1)
+    candidate = one_activity_candidate(graph)
+    report = record(
+        'VerificationReport', scope_id=graph['scope_id'],
+        input_fingerprint=graph['input_fingerprint'], verdict='fail',
+        findings=[record(
+            'VerificationFinding', id='verification_finding:blocking',
+            category='missing_activity', severity='blocking',
+            message='A required activity is missing.',
+            subject_ids=graph['canonical_anchor_ids'])],
+        checked_subject_ids=graph['canonical_anchor_ids'])
+
+    verification = Synthesis._outcome_summary('verify', report)
+    synthesis = Synthesis._outcome_summary('synthesize', candidate)
+
+    assert verification == {
+        'summary': 'verdict fail, 1 finding(s), 1 blocking',
+        'level': 'warning',
+        'details': {
+            'verdict': 'fail',
+            'finding_count': 1,
+            'blocking_finding_count': 1,
+        },
+    }
+    assert synthesis == {
+        'summary': '1 activities, 0 rules, 0 domains',
+        'level': 'step',
+        'details': {
+            'record_counts': {
+                'activities': 1,
+                'rules': 0,
+                'domains': 0,
+            },
+        },
+    }

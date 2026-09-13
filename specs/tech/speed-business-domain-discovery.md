@@ -1365,6 +1365,9 @@ Cancellation is new behavior, not existing digest functionality. `DomainBuildAct
 
 ### Reader presentation
 
+When the latest discovery attempt is failed, partial, unavailable, cancelled or superseded, every sufficiently budgeted digest projection states the discovery phase, processed and total entry-point counts, publication availability and latest structured error before freshness or domain content. If a prior validated domain model remains readable, the projection identifies the displayed domains as the last published model.
+
+Freshness describes only whether the digest's recorded input fingerprints match current repository inputs. `CURRENT` must never be presented as evidence that domain discovery completed or passed verification. The projection derives discovery outcome exclusively from `domain_status.phase`; the top-level digest status continues to describe repository-digest input readiness.
 
 Each card shows the domain name, a one-sentence responsibility, a short activity list, support/review status and shared-code indication. Details answer:
 

@@ -91,7 +91,25 @@ def refresh_digest(project_root: str, *, rebuild_discovery=False, narrative=Fals
                 digest = build_repository_digest(str(root),config=config,narrative=narrative)
                 boundary.success(digest,schema='RepositoryDigest',
                     artifact='.speed/context/repository-digest.json')
-            recorder.progress('digest','Repository digest validated and written')
+            domain_count = len(digest.get('domains') or [])
+            entrypoint_count = len(digest.get('entrypoints') or [])
+            digest_state = digest.get('status') or 'unknown'
+            domain_phase = status['phase']
+            recorder.progress(
+                'digest',
+                f'Repository digest written: {domain_count} domains, '
+                f'{entrypoint_count} entrypoints; '
+                f'digest status={digest_state}, '
+                f'discovery phase={domain_phase}',
+                level=(
+                    'warning'
+                    if domain_phase != 'complete' else 'step'),
+                details={
+                    'domain_count': domain_count,
+                    'entrypoint_count': entrypoint_count,
+                    'digest_status': digest_state,
+                    'discovery_phase': domain_phase,
+                })
             outcome = status['phase']
             coverage = status['coverage']
             warnings = list(digest.get('warnings',[]))

@@ -2242,6 +2242,40 @@ class Synthesis:
         self._store_response(directory, metadata, verification_key)
         self.pending_responses.pop(request_key, None)
 
+    @staticmethod
+    def _outcome_summary(operation, payload):
+        """Return safe progress text, severity and structured outcome details."""
+        if operation == 'verify':
+            finding_count = len(payload['findings'])
+            blocking_count = sum(
+                finding['severity'] == 'blocking'
+                for finding in payload['findings'])
+            verdict = payload['verdict']
+            return {
+                'summary': (
+                    f'verdict {verdict}, {finding_count} finding(s), '
+                    f'{blocking_count} blocking'),
+                'level': (
+                    'warning'
+                    if verdict != 'pass' or blocking_count else 'step'),
+                'details': {
+                    'verdict': verdict,
+                    'finding_count': finding_count,
+                    'blocking_finding_count': blocking_count,
+                },
+            }
+
+        counts = {
+            name: len(payload[name])
+            for name in ('activities', 'rules', 'domains')
+            if name in payload}
+        return {
+            'summary': ', '.join(
+                f'{count} {name}' for name, count in counts.items()),
+            'level': 'step',
+            'details': {'record_counts': counts},
+        }
+
     def _run_with_retries(self, request, allow_candidate_cache=False,
                           report_requires_failure=False):
         transient = 0
@@ -2266,9 +2300,15 @@ class Synthesis:
                 if boundary:
                     boundary.success(result[0],metadata={
                         'attempt':attempt,'cache_hit':result[1]})
+                    outcome = self._outcome_summary(
+                        request['operation'], result[0])
                     self.recorder.progress('semantic',
                         f"{request['operation'].capitalize()} attempt {attempt} accepted"
-                        + (' from validated cache' if result[1] else ''))
+                        + (' from validated cache' if result[1] else '')
+                        + (f"; {outcome['summary']}"
+                           if outcome['summary'] else ''),
+                        level=outcome['level'],
+                        details=outcome['details'])
                 return result
             except DomainError as exc:
                 if boundary:

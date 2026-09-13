@@ -1604,7 +1604,7 @@ def _narrative_synthesize(identity: dict[str, Any]) -> tuple[dict[str, Any] | No
 
 def project_digest_for_agent(digest: dict[str, Any], *, token_budget: int) -> str:
     """Deterministic bounded Markdown projection. Priority order: identity,
-    freshness, readiness gaps, then domains ranked highest-first,
+    incomplete domain discovery, freshness, readiness gaps, then domains,
     truncating an individual domain's detail before dropping it outright.
     Never triggers a rebuild — reads only what's passed in.
     """
@@ -1620,6 +1620,40 @@ def project_digest_for_agent(digest: dict[str, Any], *, token_budget: int) -> st
 
     sections: list[str] = [header]
     used = cost(header)
+
+    domain_status = digest.get("domain_status") or {}
+    domain_phase = domain_status.get("phase")
+    if domain_phase and domain_phase != "complete":
+        coverage = domain_status.get("coverage") or {}
+        processed = coverage.get("anchors_processed", 0)
+        total = coverage.get("anchors_total", 0)
+        domain_build_id = digest.get("domain_build_id")
+        if not domain_build_id:
+            publication = "no published domain model is available"
+        elif (domain_phase == "partial"
+              and domain_status.get("published_build_id") == domain_build_id):
+            publication = "showing the published partial domain model"
+        else:
+            publication = "showing the last published domain model"
+        status_block = (
+            f"**Domain discovery:** {domain_phase.upper()} "
+            f"({processed}/{total} entry points processed; "
+            f"{publication})\n\n")
+        if used + cost(status_block) <= token_budget:
+            sections.append(status_block)
+            used += cost(status_block)
+
+            error = domain_status.get("error") or {}
+            error_message = " ".join(
+                str(error.get("message") or "").split())[:500]
+            if error_message:
+                error_code = error.get("code")
+                label = f"{error_code}: " if error_code else ""
+                error_block = (
+                    f"> **Discovery error:** {label}{error_message}\n\n")
+                if used + cost(error_block) <= token_budget:
+                    sections.append(error_block)
+                    used += cost(error_block)
 
     identity = digest.get("identity") or {}
     if identity.get("summary"):

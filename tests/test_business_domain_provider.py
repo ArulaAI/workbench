@@ -525,6 +525,38 @@ def scripted_synthesis(tmp_path, monkeypatch, provider, failures=()):
     return engine, graph, calls, recorder, progress
 
 
+def test_semantic_progress_reports_payload_counts_and_failed_verdict(
+        tmp_path, monkeypatch):
+    engine, graph, _, recorder, progress = scripted_synthesis(
+        tmp_path, monkeypatch, 'codex-cli')
+    try:
+        engine.run(graph, lambda candidate: [])
+    finally:
+        recorder.finish('complete')
+
+    accepted = [event for event in progress
+                if 'attempt 1 accepted' in event['message']]
+    synthesis = next(event for event in accepted
+                     if event['message'].startswith('Synthesize'))
+    failed_verification = next(
+        event for event in accepted
+        if event['message'].startswith('Verify')
+        and event['details'].get('verdict') == 'fail')
+
+    assert synthesis['message'].endswith(
+        '1 activities, 0 rules, 0 domains')
+    assert synthesis['details']['record_counts'] == {
+        'activities': 1, 'rules': 0, 'domains': 0}
+    assert failed_verification['level'] == 'warning'
+    assert failed_verification['message'].endswith(
+        'verdict fail, 1 finding(s), 1 blocking')
+    assert failed_verification['details'] == {
+        'verdict': 'fail',
+        'finding_count': 1,
+        'blocking_finding_count': 1,
+    }
+
+
 @pytest.mark.parametrize('provider', ['claude-code', 'codex-cli'])
 @pytest.mark.parametrize('timeout_call', [1, 2, 3, 4])
 def test_timeout_escalation_is_charged_verified_and_logged(
