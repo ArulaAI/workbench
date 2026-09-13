@@ -60,6 +60,12 @@ extraction = "rules"
 extraction = "rules"
 ambient_globals = "ecmascript"
 
+[jsx]
+extraction = "rules"
+grammar_module = "tree_sitter_javascript"
+rules_language = "tsx"
+ambient_globals = "ecmascript"
+
 [typescript]
 extraction = "rules"
 grammar_module = "tree_sitter_typescript"
@@ -141,7 +147,7 @@ extraction = "rules"
 # ── Skeleton-only (grammar exists, parse for structure, no defs/refs) ──
 
 [html]
-extraction = "skeleton"
+extraction = "rules"
 
 [css]
 extraction = "skeleton"
@@ -189,6 +195,116 @@ overload_resolution = "unsupported"
 type_resolution = "unsupported"
 relationship_resolution = "partial"
 framework_enrichment = "unsupported"
+bindings = "partial"
+data_access = "unsupported"
+rules = "partial"
+control_flow = "partial"
+outputs = "partial"
+runtime_selection = "unsupported"
+
+[source_adapters.ts_semantic]
+kind = "adapter"
+module = "ts_semantic"
+version = "tree-sitter-typescript-0.23"
+contract_version = 1
+normalized_output_version = 1
+conformance = "semantic"
+languages = ["javascript", "jsx", "typescript", "tsx"]
+diagnostic_codes = ["JS_EXTERNAL_CALL", "JS_CALL_UNRESOLVED", "JS_CALL_AMBIGUOUS", "JS_MODULE_UNRESOLVED"]
+[source_adapters.ts_semantic.capabilities]
+parsing = "supported"
+declaration_extraction = "supported"
+entrypoint_detection = "partial"
+call_classification = "supported"
+callable_resolution = "partial"
+overload_resolution = "unsupported"
+type_resolution = "unsupported"
+relationship_resolution = "partial"
+framework_enrichment = "unsupported"
+bindings = "partial"
+data_access = "unsupported"
+rules = "partial"
+control_flow = "partial"
+outputs = "partial"
+runtime_selection = "unsupported"
+
+[source_adapters.html_semantic]
+kind = "adapter"
+module = "html_semantic"
+version = "tree-sitter-html-0.23"
+contract_version = 1
+normalized_output_version = 1
+conformance = "semantic"
+languages = ["html"]
+diagnostic_codes = ["HTML_FORM_TARGET_UNRESOLVED", "HTML_HANDLER_UNRESOLVED"]
+[source_adapters.html_semantic.capabilities]
+parsing = "supported"
+declaration_extraction = "partial"
+entrypoint_detection = "partial"
+call_classification = "partial"
+callable_resolution = "partial"
+overload_resolution = "unsupported"
+type_resolution = "unsupported"
+relationship_resolution = "partial"
+framework_enrichment = "unsupported"
+bindings = "partial"
+data_access = "unsupported"
+rules = "partial"
+control_flow = "partial"
+outputs = "partial"
+runtime_selection = "unsupported"
+
+[source_adapters.react_semantic]
+kind = "enricher"
+module = "react_semantic"
+version = "1"
+framework = "react"
+contract_version = 1
+normalized_output_version = 1
+conformance = "semantic"
+languages = ["javascript", "jsx", "typescript", "tsx"]
+diagnostic_codes = ["REACT_STATE_UNRESOLVED", "REACT_TRANSITION_UNRESOLVED"]
+[source_adapters.react_semantic.evidence]
+imports_any = ['^react$', '^react(?:/.*)?$', '^react-dom(?:/.*)?$', '^react-router(?:-dom)?(?:/.*)?$']
+[source_adapters.react_semantic.capabilities]
+parsing = "unsupported"
+declaration_extraction = "unsupported"
+entrypoint_detection = "partial"
+call_classification = "partial"
+callable_resolution = "unsupported"
+overload_resolution = "unsupported"
+type_resolution = "unsupported"
+relationship_resolution = "partial"
+framework_enrichment = "supported"
+bindings = "partial"
+data_access = "unsupported"
+rules = "partial"
+control_flow = "partial"
+outputs = "partial"
+runtime_selection = "unsupported"
+
+[source_adapters.angular_semantic]
+kind = "enricher"
+module = "angular_semantic"
+version = "1"
+framework = "angular"
+contract_version = 1
+normalized_output_version = 1
+conformance = "semantic"
+languages = ["typescript"]
+diagnostic_codes = ["ANGULAR_TEMPLATE_UNRESOLVED", "ANGULAR_HANDLER_UNRESOLVED", "ANGULAR_HTTP_TARGET_UNRESOLVED"]
+[source_adapters.angular_semantic.evidence]
+imports_any = ['^@angular/core$', '^@angular/router$', '^@angular/common/http$', '^@angular/forms$']
+[source_adapters.angular_semantic.capabilities]
+parsing = "unsupported"
+declaration_extraction = "unsupported"
+entrypoint_detection = "partial"
+call_classification = "partial"
+callable_resolution = "unsupported"
+overload_resolution = "unsupported"
+type_resolution = "unsupported"
+relationship_resolution = "partial"
+framework_enrichment = "supported"
 bindings = "partial"
 data_access = "unsupported"
 rules = "partial"

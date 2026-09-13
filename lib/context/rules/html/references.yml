@@ -1,0 +1,31 @@
+id: html-angular-event-binding
+language: html
+metadata:
+  produces: template_binding
+  binding_kind: event
+  parse_attribute: true
+rule:
+  kind: attribute
+  regex: '^\([^)]+\)\s*='
+
+---
+id: html-angular-event
+language: html
+metadata:
+  produces: ui_event
+  parse_attribute: true
+  attribute_event: true
+rule:
+  kind: attribute
+  regex: '^\([^)]+\)\s*='
+
+---
+id: html-angular-property-binding
+language: html
+metadata:
+  produces: template_binding
+  binding_kind: property
+  parse_attribute: true
+rule:
+  kind: attribute
+  regex: '^\[[^]]+\]\s*='

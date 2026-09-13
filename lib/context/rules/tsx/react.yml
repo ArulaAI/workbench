@@ -1,0 +1,53 @@
+id: tsx-react-class-component
+language: tsx
+metadata:
+  produces: component_marker
+  framework: react
+rule:
+  kind: class_declaration
+  has:
+    kind: class_heritage
+    regex: 'extends\s+(?:React\.)?Component(?:<|\s|$)'
+
+---
+id: tsx-react-class-state
+language: tsx
+metadata:
+  produces: ui_state
+  framework: react
+  value_var: VALUE
+rule:
+  pattern: this.state = $VALUE
+
+---
+id: tsx-react-set-state
+language: tsx
+metadata:
+  produces: ui_transition
+  framework: react
+  value_var: VALUE
+rule:
+  pattern: this.setState($VALUE)
+
+---
+id: tsx-react-hook-state
+language: tsx
+metadata:
+  produces: ui_state
+  framework: react
+  name_var: STATE
+  setter_var: SETTER
+  value_var: INITIAL
+rule:
+  pattern: const [$STATE, $SETTER] = useState($INITIAL)
+
+---
+id: tsx-react-hook-transition
+language: tsx
+metadata:
+  produces: ui_transition
+  framework: react
+  target_var: SETTER
+  value_var: VALUE
+rule:
+  pattern: $SETTER($VALUE)

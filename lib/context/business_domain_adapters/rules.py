@@ -598,80 +598,85 @@ def _operation_binding(unit, name, expression, start, resolution, reason):
         'resolution': resolution, 'reason': reason}
 
 
+def http_operation(unit, match, metadata=None):
+    """Normalize one tree-selected HTTP call for every frontend reader."""
+    metadata = metadata or match.attributes
+    start, end = span(unit.source, match)
+    expression = capture(match, metadata.get('target_var'))
+    operation_start = start - unit.start
+    target_name, target_resolved, target_value_resolved, target_evidence = \
+        _http_target(unit, expression, operation_start)
+    expression_at = match.text.find(expression) if expression else -1
+    if expression_at < 0:
+        raise ValueError('HTTP operation target capture is outside its exact call span')
+    target_start = operation_start + expression_at
+    dynamic_reason = None if target_resolved else (
+        'HTTP destination value is dynamic; its call-site expression is retained.')
+    inputs = [_operation_binding(unit, f'http.target@{operation_start}',
+        expression, target_start,
+        'resolved' if target_value_resolved else 'unresolved',
+        None if target_value_resolved else
+            ('The endpoint pattern is known, but its runtime values are not.'
+             if target_resolved else dynamic_reason))]
+    request = capture(match, metadata.get('request_var'))
+    if request:
+        request_at = match.text.find(request, expression_at+len(expression))
+        if request_at < 0:
+            raise ValueError('HTTP request capture is outside its exact call span')
+        inputs.append(_operation_binding(unit, f'http.request@{operation_start}',
+            request, operation_start+request_at, 'unresolved',
+            'Request expression is evidenced; runtime request values are unavailable.'))
+    outputs = [_operation_binding(unit, f'http.response@{operation_start}',
+        match.text, operation_start, 'unresolved',
+        'Response mapping is evidenced only after the remote call executes.')]
+    projection_gaps = [{
+        'projection': 'completion',
+        'code': 'HTTP_OUTCOME_UNVERIFIED',
+        'reason': 'The call is declared, but its runtime completion is not established.',
+    }, {
+        'projection': 'condition',
+        'code': 'HTTP_CONTROL_FLOW_NOT_ESTABLISHED',
+        'reason': 'Path-sensitive execution conditions are not established by this rule.',
+    }, {
+        'projection': 'output_bindings',
+        'code': 'HTTP_RESPONSE_MAPPING_UNRESOLVED',
+        'reason': 'The response expression is known, but its runtime value and mapping are not.',
+    }]
+    if any(binding['resolution'] != 'resolved' for binding in inputs):
+        projection_gaps.append({
+            'projection': 'input_bindings',
+            'code': 'HTTP_REQUEST_MAPPING_UNRESOLVED',
+            'reason': 'The request expressions are known, but one or more runtime values are not.',
+        })
+    if not target_resolved:
+        projection_gaps.append({
+            'projection': 'target',
+            'code': 'HTTP_TARGET_DYNAMIC',
+            'reason': dynamic_reason,
+        })
+    return declare_operation_observation(unit,
+        position=operation_start, end=end-unit.start,
+        kind=metadata['effect_kind'],
+        resource={'kind':metadata['resource_kind'], 'name':target_name,
+            'resolution':'resolved' if target_resolved else 'unresolved',
+            'reason':None if target_resolved else dynamic_reason},
+        input_bindings=inputs, output_bindings=outputs,
+        protocol=metadata.get('protocol'), outcome=match.text,
+        completion='declared', resolution='unresolved',
+        supporting_evidence_spans=target_evidence,
+        projection_gaps=projection_gaps,
+        reason=('Call expression is present; runtime outcome and destination '
+                'implementation are not established.'))
+
+
 def operations(unit):
     result = []
     for match in unit.source.rule_outputs:
-        metadata = match.attributes
         if match.output_type != 'semantic_effect':
             continue
-        start,end = span(unit.source,match)
-        if not owns(unit,start,end):
-            continue
-        expression = capture(match,metadata.get('target_var'))
-        operation_start = start-unit.start
-        target_name, target_resolved, target_value_resolved, target_evidence = \
-            _http_target(unit, expression, operation_start)
-        expression_at = match.text.find(expression) if expression else -1
-        if expression_at < 0:
-            raise ValueError('HTTP operation target capture is outside its exact call span')
-        target_start = operation_start + expression_at
-        dynamic_reason = None if target_resolved else (
-            'HTTP destination value is dynamic; its call-site expression is retained.')
-        inputs = [_operation_binding(unit, f'http.target@{operation_start}',
-            expression, target_start,
-            'resolved' if target_value_resolved else 'unresolved',
-            None if target_value_resolved else
-                ('The endpoint pattern is known, but its runtime values are not.'
-                 if target_resolved else dynamic_reason))]
-        request = capture(match, metadata.get('request_var'))
-        if request:
-            request_at = match.text.find(request, expression_at+len(expression))
-            if request_at < 0:
-                raise ValueError('HTTP request capture is outside its exact call span')
-            inputs.append(_operation_binding(unit, f'http.request@{operation_start}',
-                request, operation_start+request_at, 'unresolved',
-                'Request expression is evidenced; runtime request values are unavailable.'))
-        outputs = [_operation_binding(unit, f'http.response@{operation_start}',
-            match.text, operation_start, 'unresolved',
-            'Response mapping is evidenced only after the remote call executes.')]
-        projection_gaps = [{
-            'projection': 'completion',
-            'code': 'HTTP_OUTCOME_UNVERIFIED',
-            'reason': 'The call is declared, but its runtime completion is not established.',
-        }, {
-            'projection': 'condition',
-            'code': 'HTTP_CONTROL_FLOW_NOT_ESTABLISHED',
-            'reason': 'Path-sensitive execution conditions are not established by this rule.',
-        }, {
-            'projection': 'output_bindings',
-            'code': 'HTTP_RESPONSE_MAPPING_UNRESOLVED',
-            'reason': 'The response expression is known, but its runtime value and mapping are not.',
-        }]
-        if any(binding['resolution'] != 'resolved' for binding in inputs):
-            projection_gaps.append({
-                'projection': 'input_bindings',
-                'code': 'HTTP_REQUEST_MAPPING_UNRESOLVED',
-                'reason': 'The request expressions are known, but one or more runtime values are not.',
-            })
-        if not target_resolved:
-            projection_gaps.append({
-                'projection': 'target',
-                'code': 'HTTP_TARGET_DYNAMIC',
-                'reason': dynamic_reason,
-            })
-        result.append(declare_operation_observation(unit,
-            position=operation_start, end=end-unit.start,
-            kind=metadata['effect_kind'],
-            resource={'kind':metadata['resource_kind'], 'name':target_name,
-                'resolution':'resolved' if target_resolved else 'unresolved',
-                'reason':None if target_resolved else dynamic_reason},
-            input_bindings=inputs, output_bindings=outputs,
-            protocol=metadata.get('protocol'), outcome=match.text,
-            completion='declared', resolution='unresolved',
-            supporting_evidence_spans=target_evidence,
-            projection_gaps=projection_gaps,
-            reason=('Call expression is present; runtime outcome and destination '
-                    'implementation are not established.')))
+        start, end = span(unit.source, match)
+        if owns(unit, start, end):
+            result.append(http_operation(unit, match))
     return result
 
 
@@ -730,6 +735,44 @@ def relations(source):
     return result
 
 
+def hydrate_ui_calls(unit, facts, result, traced_symbols=None):
+    """Attach calls after any reader has finished resolving UI handlers."""
+    traced_symbols = traced_symbols or {
+        sid for trace in facts['traces'].values()
+        if trace['anchor_id'] == unit.anchor_id for sid in trace['symbol_ids']}
+    outgoing = {}
+    for edge in facts['edges'].values():
+        if edge['resolution'] == 'resolved' and edge['to_ref']:
+            outgoing.setdefault(edge['from_ref']['id'], set()).add(
+                edge['to_ref']['id'])
+    for event in result['events'].values():
+        if not event['handler_symbol_id']:
+            continue
+        pending = [event['handler_symbol_id']]
+        visited = set()
+        while pending:
+            current = pending.pop()
+            if current in visited or current not in traced_symbols:
+                continue
+            visited.add(current)
+            pending.extend(outgoing.get(current, set()) - visited)
+        for effect in facts['effects'].values():
+            origin = effect.get('origin_ref')
+            if (effect['protocol'] and effect['kind'] == 'external_action'
+                    and origin and origin['id'] in visited):
+                cid = identifier('ui_call', event['id'], effect['id'])
+                result['calls'][cid] = record('UICall', id=cid,
+                    event_id=event['id'],
+                    caller_symbol_id=event['handler_symbol_id'],
+                    request_binding_ids=effect['input_binding_ids'],
+                    response_binding_ids=effect['output_binding_ids'],
+                    evidence_ids=sorted(set(
+                        event['evidence_ids'] + effect['evidence_ids'])),
+                    resolution='unresolved',
+                    reason='Registered handler can reach this call expression; request mapping, remote implementation and outcome remain unverified.')
+    return result
+
+
 def interaction(unit,evidence,facts):
     if unit.anchor_kind != 'ui':
         return None
@@ -777,11 +820,19 @@ def interaction(unit,evidence,facts):
             continue
         start,end = span(unit.source,match)
         parents = sorted((c for c in controls if c[0]<=start<end<=c[1]),key=lambda c:c[1]-c[0])
-        if not parents:
+        if not parents and not metadata.get('attribute_event'):
             continue
-        element_id = parents[0][2]; eid = evidence(unit.source,start,end)
+        element_id = parents[0][2] if parents else view_id
+        eid = evidence(unit.source,start,end)
         event_id = identifier('ui_event',unit.anchor_id,start,end)
         handler = capture(match,metadata.get('handler_var'))
+        trigger = capture(match,metadata.get('trigger_var')) or metadata.get('trigger','unknown')
+        if metadata.get('attribute_event'):
+            attribute = re.fullmatch(
+                r'''\s*\(([^)]+)\)\s*=\s*["']\s*([A-Za-z_$][\w$]*)\s*\([^"']*["']\s*''',
+                match.text, re.DOTALL)
+            if attribute:
+                trigger, handler = attribute.groups()
         separator = metadata.get('handler_separator')
         receiver,name = (handler.rsplit(separator,1) if separator and handler and separator in handler else (None,handler))
         if receiver == metadata.get('implicit_receiver'):
@@ -789,7 +840,7 @@ def interaction(unit,evidence,facts):
         targets = candidates(unit,receiver,name,[u for u in unit.source.units if u.name == name]) if handler else []
         target = targets[0] if len(targets)==1 else None
         result['events'][event_id] = record('UIEvent',id=event_id,element_id=element_id,
-            trigger=capture(match,metadata.get('trigger_var')) or metadata.get('trigger','unknown'),
+            trigger=trigger,
             handler_symbol_id=target.symbol_id if target else None,evidence_ids=[eid],
             resolution='resolved' if target else ('ambiguous' if targets else 'unresolved'),
             reason=None if target else 'Event registration is present; invocation behavior is not fully resolved.')
@@ -805,28 +856,7 @@ def interaction(unit,evidence,facts):
                 and v['source']['kind'] == 'symbol'
                 and v['source']['id'] in traced_symbols]
     result['binding_ids'] = [v['id'] for v in bindings]
-    outgoing = {}
-    for edge in facts['edges'].values():
-        if edge['resolution']=='resolved' and edge['to_ref']:
-            outgoing.setdefault(edge['from_ref']['id'],set()).add(edge['to_ref']['id'])
-    for event in result['events'].values():
-        if not event['handler_symbol_id']:
-            continue
-        pending = [event['handler_symbol_id']]; visited = set()
-        while pending:
-            current = pending.pop()
-            if current in visited or current not in traced_symbols:
-                continue
-            visited.add(current)
-            pending.extend(outgoing.get(current,set())-visited)
-        for effect in facts['effects'].values():
-            origin = effect.get('origin_ref')
-            if effect['protocol'] and effect['kind']=='external_action' and origin and origin['id'] in visited:
-                cid = identifier('ui_call',event['id'],effect['id'])
-                result['calls'][cid] = record('UICall',id=cid,event_id=event['id'],caller_symbol_id=event['handler_symbol_id'],
-                    request_binding_ids=effect['input_binding_ids'],response_binding_ids=effect['output_binding_ids'],
-                    evidence_ids=sorted(set(event['evidence_ids']+effect['evidence_ids'])),resolution='unresolved',
-                    reason='Registered handler can reach this call expression; request mapping, remote implementation and outcome remain unverified.')
+    hydrate_ui_calls(unit, facts, result, traced_symbols)
     for binding in bindings:
         if binding['direction'] == 'output':
             oid = identifier('ui_output',unit.anchor_id,binding['id'])

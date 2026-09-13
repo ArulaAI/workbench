@@ -37,6 +37,7 @@ metadata:
   produces: reference
   ref_kind: import
   module_var: MODULE
+  symbols_var: NAME
 rule:
   kind: import_statement
   pattern: import * as $NAME from $MODULE

@@ -107,6 +107,7 @@ RULE_OUTPUT_TYPES = frozenset({
     "semantic_relation", "ui_control", "ui_event", "ui_route",
     "ui_validation", "entrypoint_implementation", "entrypoint_registration",
     "component_composition", "dynamic_selection",
+    "component_marker", "template_binding", "ui_state", "ui_transition",
 })
 
 
@@ -201,9 +202,16 @@ def _run_ast_grep(file_path: str, language: str) -> list[dict]:
         return []
 
     # Quick bail-out: skip languages that have no rule directory
-    lang_rules_dir = _RULES_DIR / language
+    rules_language = registry.rules_language(language)
+    lang_rules_dir = _RULES_DIR / rules_language
     if not lang_rules_dir.is_dir():
         return []
+
+    # A parser language may intentionally reuse another declarative catalog
+    # (JSX uses the TSX-shaped JSX rules). Run those rules explicitly because
+    # ast-grep's extension dispatch otherwise filters them out.
+    if rules_language != language:
+        return _run_ast_grep_stdin(sg, file_path, lang_rules_dir)
 
     # Extensionless files: ast-grep can't detect language from extension,
     # so pipe content via stdin with explicit rule files.
@@ -268,7 +276,7 @@ def match_source(source: str, language: str, max_output_bytes: int = 25_000_000)
     sg = _find_sg()
     if not sg:
         raise RuntimeError('ast-grep executable unavailable')
-    rule_files = sorted((_RULES_DIR / language).glob('*.yml'))
+    rule_files = sorted((_RULES_DIR / registry.rules_language(language)).glob('*.yml'))
     if not rule_files:
         raise RuntimeError('No declarative extraction rules registered')
     matches = []

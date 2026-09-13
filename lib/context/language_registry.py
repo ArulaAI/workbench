@@ -74,6 +74,7 @@ class Language:
     grammar_module: str          # "tree_sitter_python"
     grammar_func: str            # "language"
     extraction: str              # "rules" | "skeleton" | "none"
+    rules_language: str          # shared declarative rule catalog identity
     ambient_globals: tuple[str, ...] = ()  # bound by the language, never declared
 
 
@@ -236,6 +237,10 @@ class LanguageRegistry:
             fence_label = speed_cfg.get("fence_label", name)
             grammar_module = speed_cfg.get("grammar_module", f"tree_sitter_{name}")
             grammar_func = speed_cfg.get("grammar_func", "language")
+            rules_language = speed_cfg.get("rules_language", name)
+            if not isinstance(rules_language, str) or not re.fullmatch(
+                    r"[a-z][a-z0-9_-]*", rules_language):
+                raise ValueError("Rule language must name an installed catalog")
             ambient = speed_cfg.get("ambient_globals", [])
             if isinstance(ambient, str):
                 ambient = extraction_config.get(
@@ -255,6 +260,7 @@ class LanguageRegistry:
                 grammar_module=grammar_module,
                 grammar_func=grammar_func,
                 extraction=extraction,
+                rules_language=rules_language,
                 ambient_globals=tuple(sorted(set(ambient))),
             )
 
@@ -330,6 +336,11 @@ class LanguageRegistry:
         if lang is None:
             return "none"
         return lang.extraction
+
+    def rules_language(self, name: str) -> str:
+        """Return the declarative catalog shared by this parser language."""
+        lang = self._by_name.get(name)
+        return lang.rules_language if lang else name
 
     def ambient_globals(self, name: str) -> frozenset[str]:
         """Return the names this language binds without any declaration.
