@@ -380,68 +380,106 @@ def accept_candidate(model, graph, payload, *, verified=False):
     """Validate one complete canonical candidate before changing its model."""
     _allowed_evidence(payload, graph)
     candidate = copy.deepcopy(model)
+    grouped_findings = {}
+
+    def report(code, message, *subject_ids):
+        """Collect equal violations while retaining every affected subject."""
+        grouped_findings.setdefault((code, message), set()).update(
+            subject_id for subject_id in subject_ids if subject_id)
+
     semantic_collections = (
         'activities', 'rules', 'concepts', 'information_uses', 'ownerships',
         'rule_relationships', 'claims', 'domains', 'relationships')
     for collection in semantic_collections:
         overlap = set(candidate[collection]) & set(payload[collection])
-        if any(candidate[collection][key] != payload[collection][key]
-               for key in overlap):
-            raise DomainError(
+        conflicts = {
+            record_id for record_id in overlap
+            if candidate[collection][record_id] != payload[collection][record_id]
+        }
+        if conflicts:
+            report(
                 'INVALID_ID',
-                'Semantic record ID reused with different contents')
+                'Semantic record ID reused with different contents',
+                *conflicts)
         candidate[collection].update(copy.deepcopy(payload[collection]))
 
     traces = graph['context']['traces']
     observations = set(graph['context']['rule_observations'])
-    for activity in payload['activities'].values():
+    for activity_id in sorted(payload['activities']):
+        activity = payload['activities'][activity_id]
+        trace_ids = set(activity['trace_ids'])
+        outside_trace_ids = trace_ids-set(traces)
+        unresolved_trace_ids = {
+            trace_id for trace_id in trace_ids & set(traces)
+            if traces[trace_id]['resolution'] != 'resolved'}
         if (not activity['evidence_ids'] or not activity['claim_ids']
                 or not activity['trace_ids']):
-            raise DomainError(
+            report(
                 'INSUFFICIENT_EVIDENCE',
-                'Activity needs evidence, claims and a trace')
-        if any(trace_id not in traces for trace_id in activity['trace_ids']):
-            raise DomainError(
+                'Activity needs evidence, claims and a trace', activity_id)
+        if outside_trace_ids:
+            report(
                 'INVALID_TRACE',
-                'Activity refers to a trace outside its graph scope')
-        if (activity['support'] == 'supported'
-                and any(traces[trace_id]['resolution'] != 'resolved'
-                        for trace_id in activity['trace_ids'])):
-            raise DomainError(
+                'Activity refers to a trace outside its graph scope',
+                activity_id, *outside_trace_ids)
+        incomplete_trace_ids = outside_trace_ids | unresolved_trace_ids
+        if activity['support'] == 'supported' and incomplete_trace_ids:
+            report(
                 'INVALID_TRACE',
-                'Supported activity requires resolved implementation traces')
-        for rule_id in activity['rule_ids']:
+                'Supported activity requires resolved implementation traces',
+                activity_id, *incomplete_trace_ids)
+        for rule_id in sorted(activity['rule_ids']):
             rule = candidate['rules'].get(rule_id)
             if rule is None:
-                raise DomainError(
+                report(
                     'INVALID_REFERENCE',
-                    'Activity references a rule absent from the candidate')
+                    'Activity references a rule absent from the candidate',
+                    activity_id, rule_id)
+                continue
             if (rule['enforcement_status'] == 'verified_on_trace'
-                    and any(traces[trace_id]['resolution'] != 'resolved'
-                            for trace_id in activity['trace_ids'])):
-                raise DomainError(
+                    and incomplete_trace_ids):
+                report(
                     'INVALID_ENFORCEMENT',
-                    'Verified rule enforcement requires resolved traces')
-        for field, identifiers in activity_closure(candidate, activity).items():
-            candidate['activities'][activity['id']][field] = sorted(identifiers)
+                    'Verified rule enforcement requires resolved traces',
+                    activity_id, rule_id, *incomplete_trace_ids)
+        if not outside_trace_ids:
+            for field, identifiers in activity_closure(
+                    candidate, activity).items():
+                candidate['activities'][activity_id][field] = sorted(identifiers)
 
-    for use in payload['information_uses'].values():
+    for use_id in sorted(payload['information_uses']):
+        use = payload['information_uses'][use_id]
         if use['activity_id'] not in payload['activities']:
-            raise DomainError(
+            report(
                 'INVALID_REFERENCE',
-                'Information use refers outside its candidate activities')
-        closure = information_use_closure(candidate, use)
-        stored = candidate['information_uses'][use['id']]
+                'Information use refers outside its candidate activities',
+                use_id, use['activity_id'])
+            continue
+        activity = payload['activities'][use['activity_id']]
+        outside_trace_ids = set(activity['trace_ids'])-set(traces)
+        if outside_trace_ids:
+            continue
+        try:
+            closure = information_use_closure(candidate, use)
+        except DomainError as exc:
+            report(
+                exc.code, str(exc), use_id, use['activity_id'],
+                use['concept_id'], *use['resource_ids'])
+            continue
+        stored = candidate['information_uses'][use_id]
         for field in ('trace_ids', 'binding_ids', 'effect_ids'):
             stored[field] = sorted(closure[field])
         stored['evidence_ids'] = sorted(
             set(stored['evidence_ids']) | closure['evidence_ids'])
 
-    for rule in payload['rules'].values():
-        if not set(rule['observation_ids']) <= observations:
-            raise DomainError(
+    for rule_id in sorted(payload['rules']):
+        rule = payload['rules'][rule_id]
+        outside_observation_ids = set(rule['observation_ids'])-observations
+        if outside_observation_ids:
+            report(
                 'INVALID_REFERENCE',
-                'Rule cites an observation outside its graph scope')
+                'Rule cites an observation outside its graph scope',
+                rule_id, *outside_observation_ids)
     for observation_id, observation in candidate['rule_observations'].items():
         users = [rule for rule in candidate['rules'].values()
                  if observation_id in rule['observation_ids']]
@@ -450,50 +488,66 @@ def accept_candidate(model, graph, payload, *, verified=False):
             activity_id for rule in users
             for activity_id in rule['activity_ids']})
 
-    for relationship in payload['rule_relationships'].values():
+    for relationship_id in sorted(payload['rule_relationships']):
+        relationship = payload['rule_relationships'][relationship_id]
         if relationship['verification'] == 'verified':
-            raise DomainError(
+            report(
                 'INVALID_REVIEW',
-                'A semantic proposal cannot verify rule equivalence or precedence')
+                'A semantic proposal cannot verify rule equivalence or precedence',
+                relationship_id)
         endpoints = {
             relationship['from_observation_id'],
             relationship['to_observation_id']}
         if len(endpoints) != 2 or not endpoints <= observations:
-            raise DomainError(
+            report(
                 'INVALID_REFERENCE',
-                'Rule relationship requires two supplied observations')
+                'Rule relationship requires two supplied observations',
+                relationship_id, *endpoints)
         claims = [claim for claim in payload['claims'].values()
-                  if claim['subject_id'] == relationship['id']]
+                  if claim['subject_id'] == relationship_id]
         if (not relationship['evidence_ids'] or not claims
                 or not relationship['explanation'].strip()):
-            raise DomainError(
+            report(
                 'INSUFFICIENT_EVIDENCE',
-                'Rule relationship needs evidence, explanation and a claim')
+                'Rule relationship needs evidence, explanation and a claim',
+                relationship_id)
 
-    for domain in payload['domains'].values():
+    for domain_id in sorted(payload['domains']):
+        domain = payload['domains'][domain_id]
         if (not domain['evidence_ids'] or not domain['claim_ids']
                 or not domain['boundary_rationale'].strip()):
-            raise DomainError(
+            report(
                 'INSUFFICIENT_EVIDENCE',
-                'Domain needs evidence and boundary claims')
+                'Domain needs evidence and boundary claims', domain_id)
         if not domain['activity_memberships']:
-            raise DomainError('EMPTY_DOMAIN', 'Domain must contain an activity')
-        stored = candidate['domains'][domain['id']]
+            report('EMPTY_DOMAIN', 'Domain must contain an activity', domain_id)
+        stored = candidate['domains'][domain_id]
+        valid_activity_ids = []
         for membership in domain['activity_memberships']:
-            if (membership['activity_id'] not in payload['activities']
-                    or not membership['claim_ids']):
-                raise DomainError(
+            activity_id = membership['activity_id']
+            activity = payload['activities'].get(activity_id)
+            if activity is None or not membership['claim_ids']:
+                report(
                     'INVALID_MEMBERSHIP',
-                    'Domain membership needs a candidate activity and claim')
+                    'Domain membership needs a candidate activity and claim',
+                    domain_id, activity_id, *membership['claim_ids'])
+            if (activity is not None
+                    and set(activity['trace_ids']) <= set(traces)):
+                valid_activity_ids.append(activity_id)
         stored['symbol_memberships'] = implementation_symbol_memberships(
-            candidate,
-            (membership['activity_id']
-             for membership in domain['activity_memberships']))
+            candidate, valid_activity_ids)
         symbols = {membership['symbol_id']
                    for membership in stored['symbol_memberships']}
         stored['symbol_count'] = len(symbols)
-        stored['file_count'] = len({candidate['symbols'][symbol_id]['file']
-                                    for symbol_id in symbols})
+        missing_symbols = symbols-set(candidate['symbols'])
+        if missing_symbols:
+            report(
+                'INVALID_REFERENCE',
+                'Derived domain membership refers to an absent symbol',
+                domain_id, *missing_symbols)
+        stored['file_count'] = len({
+            candidate['symbols'][symbol_id]['file']
+            for symbol_id in symbols & set(candidate['symbols'])})
 
     candidate['unassigned'] = []
     for disposition in payload['dispositions']:
@@ -504,14 +558,20 @@ def accept_candidate(model, graph, payload, *, verified=False):
             status=('excluded' if disposition['status'] == 'excluded'
                     else 'pending'),
             reason=disposition['reason']))
-    for claim in candidate['claims'].values():
+    for claim_id in sorted(candidate['claims']):
+        claim = candidate['claims'][claim_id]
         if not verified and claim['semantic_review'] != 'uncertain':
-            raise DomainError(
+            report(
                 'INVALID_REVIEW',
-                'Candidate claims must remain unverified before verification')
+                'Candidate claims must remain unverified before verification',
+                claim_id)
         if verified:
             claim['semantic_review'] = 'supported'
 
+    findings = [
+        validation_finding(code, message, subject_ids=subject_ids)
+        for (code, message), subject_ids in sorted(grouped_findings.items())]
+    reject_findings(findings)
     validate(candidate, 'DomainArtifact')
     validate_references(candidate)
     model.clear()

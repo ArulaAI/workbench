@@ -235,7 +235,8 @@ def candidate_scope_findings(graph: dict, candidate: dict) -> list[dict]:
     if candidate['input_fingerprint'] != graph['input_fingerprint']:
         findings.append(validation_finding(
             'INVALID_COVERAGE',
-            'Candidate input fingerprint differs from its graph scope'))
+            'Candidate input fingerprint differs from its graph scope',
+            subject_ids=[graph['scope_id']]))
 
     by_subject = {}
     for disposition in candidate['dispositions']:
@@ -311,11 +312,13 @@ def verification_report_findings(graph: dict, report: dict) -> list[dict]:
     findings = []
     if report['scope_id'] != graph['scope_id']:
         findings.append(validation_finding(
-            'INVALID_REVIEW', 'Verification report belongs to another scope'))
+            'INVALID_REVIEW', 'Verification report belongs to another scope',
+            subject_ids=[graph['scope_id'], report['scope_id']]))
     if report['input_fingerprint'] != graph['input_fingerprint']:
         findings.append(validation_finding(
             'INVALID_REVIEW',
-            'Verification report fingerprint differs from its graph scope'))
+            'Verification report fingerprint differs from its graph scope',
+            subject_ids=[graph['scope_id']]))
     required = set(required_scope_subjects(graph))
     checked = set(report['checked_subject_ids'])
     if checked != required:
@@ -326,13 +329,19 @@ def verification_report_findings(graph: dict, report: dict) -> list[dict]:
     blocking = any(finding['severity'] == 'blocking'
                    for finding in report['findings'])
     if report['verdict'] == 'pass' and blocking:
+        blocking_subjects = {
+            subject_id for finding in report['findings']
+            if finding['severity'] == 'blocking'
+            for subject_id in finding['subject_ids']}
         findings.append(validation_finding(
             'INVALID_REVIEW',
-            'Passing verification cannot contain a blocking finding'))
+            'Passing verification cannot contain a blocking finding',
+            subject_ids=[graph['scope_id'], *blocking_subjects]))
     if report['verdict'] != 'pass' and not blocking:
         findings.append(validation_finding(
             'INVALID_REVIEW',
-            'Non-passing verification requires a blocking finding'))
+            'Non-passing verification requires a blocking finding',
+            subject_ids=[graph['scope_id'], *report['checked_subject_ids']]))
     return findings
 
 

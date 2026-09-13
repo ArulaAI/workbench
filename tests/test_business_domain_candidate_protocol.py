@@ -7,13 +7,14 @@ import pytest
 from lib.context.business_domain_schema import (
     DEFINITIONS, DomainError, candidate_scope_findings, digest, limits, record,
     required_scope_subjects, validate, validation_findings,
+    verification_report_findings,
 )
 from lib.context.business_domain_synthesis import (
     CANDIDATE_RECORD_COLLECTIONS, POLICY, ProviderProjection, Synthesis,
     agent_instructions, allowed_evidence_ids, normalize_ids,
     normalize_repair_payload, wire_schema,
 )
-from lib.context.business_domains import discover, paths
+from lib.context.business_domains import accept_candidate, discover, paths
 
 
 def encode(value, schema):
@@ -104,6 +105,14 @@ def graph_scope_with_evidence(evidence_count):
     })
     validate(graph, 'GraphScope')
     return graph
+
+
+def model_for_graph(graph):
+    model = record('DomainArtifact')
+    for collection, values in graph['context'].items():
+        if collection in model:
+            model[collection] = copy.deepcopy(values)
+    return model
 
 
 def evidence_fields(schema):
@@ -1178,3 +1187,122 @@ def test_discover_publishes_only_a_passing_candidate(tmp_path, passing):
         assert model is None
         assert not paths(tmp_path)['model'].exists()
         assert status['error']['code'] == 'SEMANTIC_VERIFICATION_FAILED'
+
+
+def test_candidate_validation_reports_all_independent_rule_failures():
+    graph = graph_scope()
+    model = model_for_graph(graph)
+    original = copy.deepcopy(model)
+    candidate = one_activity_candidate(graph)
+    activity = next(iter(candidate['activities'].values()))
+    activity['support'] = 'supported'
+    missing_rule_ids = [f'rule:missing-{index:02d}' for index in range(19)]
+    activity['rule_ids'] = [*missing_rule_ids, 'rule:verified']
+    candidate['rules']['rule:verified'] = record(
+        'Rule', id='rule:verified', name='Verified rule',
+        description='A rule whose enforcement requires a resolved trace.',
+        activity_ids=[activity['id']], evidence_ids=['ev:fixture'],
+        basis=['source_observed'], enforcement_status='verified_on_trace',
+        support='supported')
+
+    with pytest.raises(DomainError) as raised:
+        accept_candidate(model, graph, candidate)
+
+    assert raised.value.findings == [
+        {
+            'code': 'INVALID_ENFORCEMENT',
+            'severity': 'error',
+            'message': 'Verified rule enforcement requires resolved traces',
+            'subject_ids': [
+                activity['id'], 'rule:verified', 'trace:fixture'],
+            'evidence_ids': [],
+        },
+        {
+            'code': 'INVALID_REFERENCE',
+            'severity': 'error',
+            'message': 'Activity references a rule absent from the candidate',
+            'subject_ids': sorted([activity['id'], *missing_rule_ids]),
+            'evidence_ids': [],
+        },
+        {
+            'code': 'INVALID_TRACE',
+            'severity': 'error',
+            'message': (
+                'Supported activity requires resolved implementation traces'),
+            'subject_ids': [activity['id'], 'trace:fixture'],
+            'evidence_ids': [],
+        },
+    ]
+    assert model == original
+
+
+def test_missing_trace_does_not_hide_missing_rule_or_raise_key_error():
+    graph = graph_scope()
+    model = model_for_graph(graph)
+    candidate = one_activity_candidate(graph)
+    activity = next(iter(candidate['activities'].values()))
+    activity['trace_ids'] = ['trace:absent']
+    activity['rule_ids'] = ['rule:absent']
+
+    with pytest.raises(DomainError) as raised:
+        accept_candidate(model, graph, candidate)
+
+    assert {(finding['code'], tuple(finding['subject_ids']))
+            for finding in raised.value.findings} == {
+        ('INVALID_REFERENCE', (activity['id'], 'rule:absent')),
+        ('INVALID_TRACE', (activity['id'], 'trace:absent')),
+    }
+
+
+def test_candidate_finding_order_is_independent_of_provider_rule_order():
+    graph = graph_scope()
+    rule_ids = ['rule:zeta', 'rule:alpha', 'rule:middle']
+    findings = []
+    for ordering in (rule_ids, list(reversed(rule_ids))):
+        candidate = one_activity_candidate(graph)
+        next(iter(candidate['activities'].values()))['rule_ids'] = ordering
+        with pytest.raises(DomainError) as raised:
+            accept_candidate(model_for_graph(graph), graph, candidate)
+        findings.append(raised.value.findings)
+
+    assert findings[0] == findings[1]
+    assert findings[0][0]['subject_ids'] == [
+        'activity:provider-one', 'rule:alpha', 'rule:middle', 'rule:zeta']
+
+
+def test_candidate_fingerprint_finding_names_the_graph_scope():
+    graph = graph_scope()
+    candidate = one_activity_candidate(graph)
+    candidate['input_fingerprint'] = 'f' * 64
+
+    findings = candidate_scope_findings(graph, candidate)
+
+    fingerprint = next(
+        finding for finding in findings
+        if finding['message'] == (
+            'Candidate input fingerprint differs from its graph scope'))
+    assert fingerprint['subject_ids'] == [graph['scope_id']]
+
+
+def test_verification_envelope_findings_name_affected_subjects():
+    graph = graph_scope()
+    anchor_id = graph['canonical_anchor_ids'][0]
+    report = record(
+        'VerificationReport', scope_id='scope:other',
+        input_fingerprint='f' * 64, verdict='pass',
+        checked_subject_ids=sorted(required_scope_subjects(graph)),
+        findings=[record(
+            'VerificationFinding', id='verification_finding:blocking',
+            category='missing_activity', severity='blocking',
+            message='A required activity is missing.',
+            subject_ids=[anchor_id])])
+
+    findings = verification_report_findings(graph, report)
+
+    assert len(findings) == 3
+    assert all(finding['subject_ids'] for finding in findings)
+    passing = next(
+        finding for finding in findings
+        if finding['message'] == (
+            'Passing verification cannot contain a blocking finding'))
+    assert passing['subject_ids'] == [anchor_id, graph['scope_id']]
