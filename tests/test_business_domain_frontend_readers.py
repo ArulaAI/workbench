@@ -108,6 +108,16 @@ export class OrdersComponent {
   <button type="submit">Save</button>
 </form>
 ''',
+        'openapi.yml': '''
+openapi: 3.0.0
+paths:
+  /api/orders:
+    post:
+      operationId: createOrder
+      responses:
+        "200":
+          description: Created
+''',
     })
 
     interaction = next(trace['ui_interaction'] for trace in facts['traces'].values()
@@ -116,5 +126,104 @@ export class OrdersComponent {
     assert interaction['calls']
     effect = next(iter(facts['effects'].values()))
     assert facts['resources'][effect['target']['id']]['name'] == '/api/orders'
+    call = next(iter(interaction['calls'].values()))
+    endpoint = facts['anchors'][call['target_anchor_id']]
+    assert effect['target_identity_key'] == 'http:repository:POST:/api/orders'
+    assert endpoint['operation']['method'] == 'POST'
+    assert endpoint['operation']['path'] == '/api/orders'
+    assert call['resolution'] == 'resolved'
     assert any(edge['kind'] == 'composes' and edge['resolution'] == 'resolved'
                for edge in facts['edges'].values())
+
+
+def test_fetch_get_links_to_exact_http_anchor(tmp_path):
+    facts, _ = _extract(tmp_path, {
+        'Owners.tsx': '''
+function loadOwners() { return fetch('/api/owners'); }
+export default () => <button onClick={loadOwners}>Load owners</button>;
+''',
+        'openapi.yml': '''
+openapi: 3.0.0
+paths:
+  /api/owners:
+    get:
+      operationId: listOwners
+      responses:
+        "200":
+          description: Owners
+''',
+    })
+
+    effect = next(iter(facts['effects'].values()))
+    interaction = next(trace['ui_interaction'] for trace in facts['traces'].values()
+                       if trace.get('ui_interaction')
+                       and trace['ui_interaction']['calls'])
+    call = next(iter(interaction['calls'].values()))
+    endpoint = facts['anchors'][call['target_anchor_id']]
+    assert effect['target_identity_key'] == 'http:repository:GET:/api/owners'
+    assert endpoint['operation']['method'] == 'GET'
+    assert endpoint['operation']['path'] == '/api/owners'
+    assert call['resolution'] == 'resolved'
+    assert call['reason'] is None
+
+
+def test_fetch_does_not_link_to_same_path_with_different_method(tmp_path):
+    facts, _ = _extract(tmp_path, {
+        'Owners.tsx': '''
+function loadOwners() { return fetch('/api/owners'); }
+export default () => <button onClick={loadOwners}>Load owners</button>;
+''',
+        'openapi.yml': '''
+openapi: 3.0.0
+paths:
+  /api/owners:
+    post:
+      operationId: createOwner
+      responses:
+        "200":
+          description: Owner
+''',
+    })
+
+    call = next(call for trace in facts['traces'].values()
+                if trace.get('ui_interaction')
+                for call in trace['ui_interaction']['calls'].values())
+    assert call['target_anchor_id'] is None
+    assert call['resolution'] == 'unresolved'
+    assert call['reason']
+
+
+def test_fetch_with_dynamic_options_does_not_guess_method(tmp_path):
+    facts, _ = _extract(tmp_path, {
+        'Owners.tsx': '''
+function loadOwners(options) { return fetch('/api/owners', options); }
+export default () => <button onClick={loadOwners}>Load owners</button>;
+''',
+        'openapi.yml': '''
+openapi: 3.0.0
+paths:
+  /api/owners:
+    get:
+      operationId: listOwners
+      responses:
+        "200":
+          description: Owners
+''',
+    })
+
+    effect = next(iter(facts['effects'].values()))
+    call = next(call for trace in facts['traces'].values()
+                if trace.get('ui_interaction')
+                for call in trace['ui_interaction']['calls'].values())
+    assert effect['target_identity_key'] is None
+    assert call['target_anchor_id'] is None
+    assert call['resolution'] == 'unresolved'
+
+
+def test_javascript_fetch_uses_the_same_get_identity(tmp_path):
+    facts, _ = _extract(tmp_path, {
+        'owners.js': "export function loadOwners() { return fetch('/api/owners'); }\n",
+    })
+
+    effect = next(iter(facts['effects'].values()))
+    assert effect['target_identity_key'] == 'http:repository:GET:/api/owners'

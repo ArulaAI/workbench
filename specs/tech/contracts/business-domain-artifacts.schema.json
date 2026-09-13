@@ -2832,6 +2832,17 @@
             }
           ]
         },
+        "target_identity_key": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "status": {
           "anyOf": [
             {
@@ -4268,7 +4279,8 @@
                 "additionalProperties": {
                   "required": [
                     "origin_ref",
-                    "edge_id"
+                    "edge_id",
+                    "target_identity_key"
                   ],
                   "properties": {
                     "origin_ref": {
@@ -4530,7 +4542,8 @@
                 "additionalProperties": {
                   "required": [
                     "origin_ref",
-                    "edge_id"
+                    "edge_id",
+                    "target_identity_key"
                   ],
                   "properties": {
                     "origin_ref": {

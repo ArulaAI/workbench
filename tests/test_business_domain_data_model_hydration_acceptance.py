@@ -95,6 +95,7 @@ def all_operations():
          'input_bindings': [binding('request', 15, 24)],
          'output_bindings': [binding('response', 15, 24)],
          'protocol': 'http', 'completion': 'declared',
+         'target_identity_key': 'http:repository:POST:/billing',
          'resolution': 'unresolved',
          'reason': 'Runtime completion is not established.',
          'projection_gaps': [{'projection': 'completion',
@@ -105,7 +106,7 @@ def all_operations():
 
 def test_f08_ac01_one_versioned_contract_projects_into_the_canonical_model(tmp_path, monkeypatch):
     facts = fixture_facts(tmp_path, monkeypatch, all_operations())
-    assert OPERATION_CONTRACT_VERSION == 1
+    assert OPERATION_CONTRACT_VERSION == 2
     assert 'operations' not in facts
     assert set(facts['edges']) and set(facts['resources']) and set(facts['bindings'])
     targets = {edge['to_ref']['id'] for edge in facts['edges'].values()
@@ -125,6 +126,9 @@ def test_f08_ac02_each_supported_operation_hydrates_applicable_records(tmp_path,
     assert all(edge['to_ref'] and edge['binding_ids'] for edge in edges.values())
     assert {effect['kind'] for effect in facts['effects'].values()} == {
         'data_write', 'external_action'}
+    external = next(effect for effect in facts['effects'].values()
+                    if effect['kind'] == 'external_action')
+    assert external['target_identity_key'] == 'http:repository:POST:/billing'
 
 
 def test_f08_ac03_operation_edge_kinds_are_canonical(tmp_path, monkeypatch):

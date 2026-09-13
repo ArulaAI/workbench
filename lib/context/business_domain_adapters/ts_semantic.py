@@ -151,9 +151,12 @@ def operations(unit):
         start, end = rules.span(unit.source, match)
         relative = (start-unit.start, end-unit.start)
         if rules.owns(unit, start, end) and relative not in occupied:
+            method = rules.capture(match, match.attributes.get('method_var'))
             result.append(rules.http_operation(unit, match, {
                 'effect_kind': 'external_action', 'resource_kind': 'service',
-                'protocol': 'http', 'target_var': match.attributes['target_var'],
+                'protocol': 'http',
+                'method': method.upper() if method else None,
+                'target_var': match.attributes['target_var'],
             }))
     return result
 

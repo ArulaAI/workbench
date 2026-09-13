@@ -7,7 +7,7 @@ import re
 from .base import (SemanticResult, Unit, declare_anchor_registration,
                    declare_anchor_representation,
                    declare_operation_observation, declare_trace_contract,
-                   http_identity)
+                   http_identity, resolve_anchor_identity)
 from . import CATALOG
 from ..csg import resolve_source_reference
 from ..language_registry import registry
@@ -598,6 +598,15 @@ def _operation_binding(unit, name, expression, start, resolution, reason):
         'resolution': resolution, 'reason': reason}
 
 
+def _http_target_identity(unit, metadata, target_name, target_resolved):
+    """Build an identity only when the adapter established every component."""
+    method = metadata.get('method')
+    if (not target_resolved or not isinstance(method, str)
+            or not method.strip()):
+        return None
+    return http_identity(unit.source, method.strip(), target_name)
+
+
 def http_operation(unit, match, metadata=None):
     """Normalize one tree-selected HTTP call for every frontend reader."""
     metadata = metadata or match.attributes
@@ -606,6 +615,8 @@ def http_operation(unit, match, metadata=None):
     operation_start = start - unit.start
     target_name, target_resolved, target_value_resolved, target_evidence = \
         _http_target(unit, expression, operation_start)
+    target_identity_key = _http_target_identity(
+        unit, metadata, target_name, target_resolved)
     expression_at = match.text.find(expression) if expression else -1
     if expression_at < 0:
         raise ValueError('HTTP operation target capture is outside its exact call span')
@@ -660,6 +671,7 @@ def http_operation(unit, match, metadata=None):
         resource={'kind':metadata['resource_kind'], 'name':target_name,
             'resolution':'resolved' if target_resolved else 'unresolved',
             'reason':None if target_resolved else dynamic_reason},
+        target_identity_key=target_identity_key,
         input_bindings=inputs, output_bindings=outputs,
         protocol=metadata.get('protocol'), outcome=match.text,
         completion='declared', resolution='unresolved',
@@ -760,16 +772,18 @@ def hydrate_ui_calls(unit, facts, result, traced_symbols=None):
             origin = effect.get('origin_ref')
             if (effect['protocol'] and effect['kind'] == 'external_action'
                     and origin and origin['id'] in visited):
+                target_anchor_id, resolution, reason = resolve_anchor_identity(
+                    facts, effect.get('target_identity_key'))
                 cid = identifier('ui_call', event['id'], effect['id'])
                 result['calls'][cid] = record('UICall', id=cid,
                     event_id=event['id'],
                     caller_symbol_id=event['handler_symbol_id'],
+                    target_anchor_id=target_anchor_id,
                     request_binding_ids=effect['input_binding_ids'],
                     response_binding_ids=effect['output_binding_ids'],
                     evidence_ids=sorted(set(
                         event['evidence_ids'] + effect['evidence_ids'])),
-                    resolution='unresolved',
-                    reason='Registered handler can reach this call expression; request mapping, remote implementation and outcome remain unverified.')
+                    resolution=resolution, reason=reason)
     return result
 
 

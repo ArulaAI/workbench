@@ -1014,6 +1014,7 @@ class Extractor:
                 output_binding_ids=sorted(binding_ids['output']),
                 condition=observed['condition'], outcome=observed['outcome'],
                 protocol=observed['protocol'], status=observed['status'],
+                target_identity_key=observed['target_identity_key'],
                 media_type=observed['media_type'],
                 header_binding_ids=observed['header_binding_ids'],
                 transaction_scope=observed['transaction_scope'],

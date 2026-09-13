@@ -40,6 +40,7 @@ metadata:
   effect_kind: external_action
   resource_kind: service
   protocol: http
+  method: GET
   target_var: URL
   target_pattern: '^["'']([^"'']*)["'']$'
 rule:

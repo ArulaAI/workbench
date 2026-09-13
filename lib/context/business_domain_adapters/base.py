@@ -21,7 +21,7 @@ ANCHOR_REPRESENTATION_ROLES = frozenset({
 })
 ANCHOR_ELIGIBILITY = frozenset({'unresolved', 'eligible', 'supporting'})
 ANCHOR_VISIBILITY = frozenset({'unknown', 'external', 'public', 'internal'})
-OPERATION_CONTRACT_VERSION = 1
+OPERATION_CONTRACT_VERSION = 2
 OPERATION_KINDS = frozenset({
     'data_read', 'data_write', 'external_action', 'event_publish',
     'response', 'render', 'navigation', 'audit', 'cache_write',
@@ -173,6 +173,28 @@ def http_identity(source: Source, method: str | None, route: str | None) -> str 
     return f'http:{scope or "repository"}:{method.upper()}:{route}'
 
 
+def resolve_anchor_identity(
+    facts: dict,
+    identity_key: str | None,
+) -> tuple[str | None, str, str | None]:
+    """Resolve one exact operation identity against canonical anchors."""
+    if not identity_key:
+        return None, 'unresolved', 'The call has no exact target identity.'
+    candidates = sorted({
+        anchor['id']
+        for anchor in facts['anchors'].values()
+        if any(representation['identity_key'] == identity_key
+               for representation in anchor['representations'])
+    })
+    if len(candidates) == 1:
+        return candidates[0], 'resolved', None
+    if len(candidates) > 1:
+        return (None, 'ambiguous',
+                f'Exact target identity matches {len(candidates)} canonical anchors.')
+    return (None, 'unresolved',
+            'No canonical anchor has the call\'s exact target identity.')
+
+
 def declare_anchor_representation(
     unit: Unit,
     role: str,
@@ -234,6 +256,7 @@ def declare_operation_observation(
     kind: str,
     outcome: str,
     resource: dict | None = None,
+    target_identity_key: str | None = None,
     input_binding_names: list[str] | tuple[str, ...] = (),
     output_binding_names: list[str] | tuple[str, ...] = (),
     input_bindings: list[dict] | tuple[dict, ...] = (),
@@ -295,6 +318,13 @@ def declare_operation_observation(
     if kind == 'data_write' and resolution == 'resolved':
         raise ValueError(
             'Static data write requires an unresolved completion projection')
+    if target_identity_key is not None:
+        if (not isinstance(target_identity_key, str)
+                or not target_identity_key.strip()):
+            raise ValueError(
+                'Operation target identity must be a nonempty string or null')
+        if resource is None:
+            raise ValueError('Operation target identity requires a target resource')
     capability = 'data_access' if kind in {'data_read', 'data_write'} else 'outputs'
     if unit.source.declared_capabilities.get(capability) not in {'supported', 'partial'}:
         raise ValueError('Adapter emitted an operation outside its declared capability')
@@ -373,6 +403,7 @@ def declare_operation_observation(
         'end': end,
         'kind': kind,
         'resource': resource,
+        'target_identity_key': target_identity_key,
         'input_binding_names': names(input_binding_names, 'input binding names'),
         'output_binding_names': names(output_binding_names, 'output binding names'),
         'input_bindings': normalized_input_bindings,
@@ -401,6 +432,7 @@ def normalize_operation_observation(unit: Unit, value: dict) -> dict:
     expected = {
         'contract_version', 'capability', 'origin_ref', 'adapter_id',
         'adapter_version', 'position', 'end', 'kind', 'resource',
+        'target_identity_key',
         'input_binding_names', 'output_binding_names', 'input_binding_ids',
         'output_binding_ids', 'input_bindings', 'output_bindings',
         'condition', 'outcome', 'protocol', 'status',

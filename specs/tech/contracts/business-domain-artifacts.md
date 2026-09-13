@@ -409,6 +409,11 @@ resolution: "resolved" | "ambiguous" | "unresolved"
 reason: string | null
 ```
 
+`UICall.resolution` describes static target-anchor resolution. A resolved UI
+call identifies exactly one canonical anchor. Runtime request values, response
+mapping and completion remain independently represented by bindings and the
+corresponding effect.
+
 ### UIState
 
 ```text
@@ -506,6 +511,7 @@ output_binding_ids: Array<string>
 condition: string | null
 outcome: string
 protocol: string | null
+target_identity_key: string | null
 status: string | null
 media_type: string | null
 header_binding_ids: Array<string>
