@@ -12,6 +12,17 @@ from jsonschema.exceptions import ValidationError
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_runtime_agent_definitions_match_the_normative_contract():
+    for role in ('synthesis', 'verification'):
+        runtime = (
+            ROOT/'agents'/f'business-domain-{role}.md').read_text()
+        normative = (
+            ROOT/'specs/tech/contracts/agents'/
+            f'business-domain-{role}.md').read_text()
+
+        assert runtime == normative
+
+
 def test_runtime_limits_and_defaults_match_the_normative_contract():
     normative = json.loads(
         (ROOT/'specs/tech/contracts/business-domain-artifacts.schema.json').read_text())

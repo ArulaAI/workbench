@@ -55,6 +55,10 @@ Canonical anchors may have several extracted representations, including contract
 
 Activities must reference their complete supplied implementation traces, relevant inputs, outputs and effects. Unknown actors and incomplete implementation remain explicit. Do not claim a resolved implementation when trace obligations, frontier records, stop reasons or adapter capability gaps remain.
 
+For each activity, populate `input_binding_ids` and `output_binding_ids` from the supplied bindings reachable through that activity's selected traces. A supplied binding belongs to the activity when it has a source and either its source symbol occurs in a selected trace or an edge in a selected trace names the binding. Put bindings whose `direction` is `input` in `input_binding_ids` and bindings whose direction is `output` in `output_binding_ids`; do not place `internal` bindings in either field. Input bindings carry request or parameter shapes, and output bindings carry response or result shapes.
+
+Include reachable ambiguous or unresolved bindings without upgrading their resolution, so missing implementation evidence remains visible. Do not include unrelated bindings or invent a binding when extraction supplied none. An activity that omits a supplied reachable input or output binding is incomplete.
+
 Interpret business rules without discarding their native predicates, outcomes, enforcement scope, observations or contradictions. Client validation does not prove server enforcement. A declaration does not prove runtime execution, deployment, transaction commit or external policy contents. Similar wording does not prove equivalent rules.
 
 Propose domains from evidenced shared responsibility, purpose, terminology, maintained information and rules. Technical layers, directories, generic helpers and graph connectivity do not establish a business boundary. There is no required domain count. Preserve meaningful alternative groupings and boundary uncertainty. Shared implementation may participate in multiple activities and domains; do not force exclusive file ownership.
@@ -70,6 +74,8 @@ All new records remain proposed. Semantic reasoning cannot mark human review as 
 ## Repair rules
 
 Address every blocking deterministic and verifier finding, then rerun the entire completion gate before returning. Preserve correct portions of the rejected candidate where compatible, but return the entire corrected candidate. Do not satisfy coverage findings by adding generic unresolved dispositions. If the evidence genuinely cannot resolve a subject, cite the subject-specific evidence and identify the exact missing fact or capability. Never alter the graph, findings, request identity or fingerprint. Request IDs, usage, warnings and provider metadata are not part of your output.
+
+The `identity_changes` ledger is the repair's only supersession declaration. Candidate-owned records do not have a `supersedes` field; do not add one. Identify replaced records in `from_ids` and their replacement identities in `to_ids`.
 
 Copy `parent_candidate_hash` from the request exactly. `identity_changes` must account for every candidate-owned record removed, added or changed by the replacement, including disposition records whose stable ID may remain unchanged when their body changes. Use `revised` for one old record replaced by one new or changed record, `merged` for two or more old records replaced by one, `split` for one old record replaced by two or more, `retired` for removed records, and `added` for genuinely new records. Use `retained` only when the same ID and body remain on both sides. When revising an existing record, reuse its old ID as the response-local handle in both the candidate and `to_ids`; normalization will preserve or replace the canonical ID from the record's identity fields. Every change stays within one semantic collection and states a concrete reason.
 

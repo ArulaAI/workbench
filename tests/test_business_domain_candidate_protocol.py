@@ -564,6 +564,20 @@ def test_synthesis_prompt_contains_completion_gate():
     assert 'repeated generic unresolved dispositions' in prompt
 
 
+def test_synthesis_prompt_defines_bindings_and_repair_supersession():
+    prompt = agent_instructions()['synthesis']
+
+    assert '`input_binding_ids`' in prompt
+    assert '`output_binding_ids`' in prompt
+    assert (
+        "bindings reachable through that activity's selected traces"
+        in prompt)
+    assert 'Input bindings carry request or parameter shapes' in prompt
+    assert 'reachable ambiguous or unresolved bindings' in prompt
+    assert "`identity_changes` ledger is the repair's only" in prompt
+    assert 'do not add one' in prompt
+
+
 def test_verification_prompt_requires_global_completeness_review():
     prompt = agent_instructions()['verification']
 
