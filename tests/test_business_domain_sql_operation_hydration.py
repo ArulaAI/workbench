@@ -4,12 +4,12 @@ from pathlib import Path
 import pytest
 
 from lib.context.business_domain_adapters import adapter_for
-from lib.context.business_domains import accept_activity, materialize_observed_rules
+from lib.context.business_domains import accept_candidate, materialize_observed_rules
 from lib.context.business_domain_extract import Extractor
 from lib.context.business_domain_schema import (
     DEFAULTS, copy_facts, record, validate_references,
 )
-from lib.context.business_domain_synthesis import packet_for
+from lib.context.business_domain_work import whole_graph_scope
 
 
 FIXTURES = Path(__file__).parents[1] / "specs/tech/fixtures/business-domains"
@@ -35,8 +35,8 @@ def test_observed_constraint_becomes_trace_linked_rule_after_activity_acceptance
     """})
     trace = next(iter(facts["traces"].values()))
     model = copy_facts(facts, "00000000-0000-4000-8000-000000000010")
-    packet = packet_for(model, "activity", [trace["anchor_id"]])
-    evidence = sorted(packet["context"]["evidence"])
+    graph = whole_graph_scope(model)
+    evidence = sorted(graph["context"]["evidence"])
     activity = record("Activity", id="activity:update-pet", name="Update pet",
         description="Updates an evidenced pet", anchor_ids=[trace["anchor_id"]],
         trace_ids=[trace["id"]], evidence_ids=evidence,
@@ -44,8 +44,12 @@ def test_observed_constraint_becomes_trace_linked_rule_after_activity_acceptance
     claim = record("Claim", id="claim:update-pet", subject_id=activity["id"],
         text=activity["description"], kind="behavior", evidence_ids=evidence,
         trace_ids=[trace["id"]], semantic_review="uncertain")
-    accept_activity(model, packet, record("ActivityPayload",
-        activities={activity["id"]: activity}, claims={claim["id"]: claim}))
+    accept_candidate(model, graph, record("CandidatePayload",
+        scope_id=graph["scope_id"], input_fingerprint=graph["input_fingerprint"],
+        activities={activity["id"]: activity}, claims={claim["id"]: claim},
+        dispositions=[record("ScopeDisposition", id="disposition:update-pet",
+            subject_kind="anchor", subject_id=trace["anchor_id"],
+            status="represented", activity_ids=[activity["id"]])]))
 
     materialize_observed_rules(model)
 
@@ -117,7 +121,7 @@ def test_oracle_and_postgresql_emit_the_same_normalized_operation_contract(
     oracle, postgres = records
     assert set(oracle) == set(postgres)
     for record in records:
-        assert record["contract_version"] == 1
+        assert record["contract_version"] == 2
         assert record["capability"] == "data_access"
         assert record["origin_ref"]["kind"] == "symbol"
         assert record["kind"] == "data_write"
@@ -314,7 +318,7 @@ def test_live_grocery_every_supported_dml_operation_has_reachable_closure():
     selected_edges = [facts["edges"][key] for key in trace["edge_ids"]]
     read = next(edge for edge in selected_edges if edge["kind"] == "reads_data")
     model = copy_facts(facts, "00000000-0000-4000-8000-000000000008")
-    packet = packet_for(model, "activity", [trace["anchor_id"]])
+    graph = whole_graph_scope(model)
     activity = record("Activity", id="activity:grocery-f08",
         name="Grocery operation closure",
         description="Evidenced Grocery SQL operation closure",
@@ -332,12 +336,23 @@ def test_live_grocery_every_supported_dml_operation_has_reachable_closure():
         subject_id=activity["id"], text=activity["description"],
         kind="behavior", evidence_ids=activity["evidence_ids"],
         trace_ids=[trace["id"]], semantic_review="uncertain")
-    payload = record("ActivityPayload",
+    payload = record("CandidatePayload", scope_id=graph["scope_id"],
+        input_fingerprint=graph["input_fingerprint"],
         activities={activity["id"]: activity},
         concepts={concept["id"]: concept},
-        information_uses={use["id"]: use}, claims={claim["id"]: claim})
+        information_uses={use["id"]: use}, claims={claim["id"]: claim},
+        dispositions=[record("ScopeDisposition",
+            id=f"disposition:grocery-{index}", subject_kind="anchor",
+            subject_id=anchor_id,
+            status=("represented" if anchor_id == trace["anchor_id"] else "excluded"),
+            activity_ids=([activity["id"]] if anchor_id == trace["anchor_id"] else []),
+            reason=(None if anchor_id == trace["anchor_id"] else
+                    "Outside the operation under test."),
+            evidence_ids=([] if anchor_id == trace["anchor_id"] else
+                          sorted(graph["context"]["evidence"])))
+            for index, anchor_id in enumerate(graph["canonical_anchor_ids"])])
 
-    accept_activity(model, packet, payload)
+    accept_candidate(model, graph, payload)
     accepted = model["activities"][activity["id"]]
     expected_effects = sorted(effect["id"] for effect in model["effects"].values()
         if trace["id"] in effect["trace_ids"])

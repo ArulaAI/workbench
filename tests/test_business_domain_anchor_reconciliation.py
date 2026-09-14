@@ -100,7 +100,7 @@ def test_implementation_body_alone_is_supporting_not_an_entrypoint():
 
 def test_extraction_reconciles_canonical_identity_before_tracing_and_scheduling(tmp_path, monkeypatch):
     from lib.context.business_domain_extract import Extractor
-    from lib.context.business_domain_synthesis import packet_for
+    from lib.context.business_domain_work import whole_graph_scope
 
     (tmp_path/'service.py').write_text(
         "@app.get('/owners')\ndef owners():\n    return []\n")
@@ -124,9 +124,9 @@ def test_extraction_reconciles_canonical_identity_before_tracing_and_scheduling(
     assert {unit.anchor_id for unit in units if unit.anchor_id} == {canonical_id}
     trace = next(iter(facts['traces'].values()))
     assert trace['anchor_id'] == canonical_id
-    packet = packet_for(facts, 'activity', [canonical_id])
-    assert packet['anchor_ids'] == [canonical_id]
-    assert {item['anchor_id'] for item in packet['context']['traces'].values()} == {canonical_id}
+    graph = whole_graph_scope(facts)
+    assert graph['canonical_anchor_ids'] == [canonical_id]
+    assert {item['anchor_id'] for item in graph['context']['traces'].values()} == {canonical_id}
 
 
 def test_extraction_uses_adapter_declared_route_identity(tmp_path):

@@ -19,7 +19,7 @@ from lib.context.business_domain_schema import (
     validate_references,
 )
 from lib.context.business_domain_synthesis import (
-    Synthesis, input_token_estimate, packet_for, wire_schema,
+    Synthesis, input_token_estimate, wire_schema,
 )
 
 
@@ -364,12 +364,14 @@ BEGIN
 END;
 ''')
     facts, _ = Extractor(tmp_path, DEFAULTS).extract()
-    packet = packet_for(facts, 'activity', list(facts['anchors']))
     provider = SimpleNamespace(model='fixture')
     synthesis = Synthesis(tmp_path, DEFAULTS, provider, record('Limits'))
+    graph = synthesis.graph_scope(facts)
+    request = synthesis.request_for('synthesize', graph)
+    schema = wire_schema('CandidatePayload', graph)
     tokens = synthesis.estimate_input(
-        synthesis.request_for(packet), wire_schema('ActivityPayload', packet))
+        request, schema)
     canonical_tokens = input_token_estimate(
-        synthesis.request_for(packet), wire_schema('ActivityPayload', packet))
+        request, schema)
     assert tokens < canonical_tokens
     assert tokens <= DEFAULTS['max_request_input_tokens'] == 2_000_000

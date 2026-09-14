@@ -1041,10 +1041,9 @@ The request fingerprint covers the graph, operation-specific inputs, prompt/sche
 ```text
 parent_candidate_hash: SHA-256
 candidate: CandidatePayload
-identity_changes: Array<IdentityChange>
 ```
 
-The hash must identify the exact rejected candidate. The ledger accounts for every candidate-owned record removed, added or changed, including same-ID body changes, and uses response-local successor IDs; normalization rewrites those IDs together with all candidate references. Old IDs remain historical lineage, not active aliases in the replacement.
+The hash must identify the exact rejected candidate. The model returns the complete replacement but no identity ledger. After canonical normalization, the orchestrator derives `revised` entries for same-ID body changes, `retired` entries for records absent from the replacement and `added` entries for new records. The derived ledger is exact, deterministic and stored in `SemanticResponse`. Old IDs remain historical lineage, not active aliases in the replacement.
 
 ### SemanticResponse
 
@@ -1063,7 +1062,7 @@ provider_revision: string | null
 warnings: Array<Diagnostic>
 ```
 
-Every field is present. `synthesize` requires a candidate, null verification report and an empty identity ledger. `repair` requires a candidate, null verification report and the normalized repair ledger. `verify` requires a verification report, null candidate and an empty ledger. Response operation, request ID and input fingerprint must exactly match the request. The adapter creates `schema_version`, `request_id`, `operation`, `input_fingerprint`, `usage`, `provider_revision` and transport warnings around the validated raw payload; the model cannot supply or alter those fields.
+Every field is present. `synthesize` requires a candidate, null verification report and an empty identity ledger. `repair` requires a candidate, null verification report and the orchestrator-derived repair ledger. `verify` requires a verification report, null candidate and an empty ledger. Response operation, request ID and input fingerprint must exactly match the request. The adapter creates `schema_version`, `request_id`, `operation`, `input_fingerprint`, `identity_changes`, `usage`, `provider_revision` and transport warnings around the validated raw payload; the model cannot supply or alter those fields.
 
 ### CacheArtifact
 

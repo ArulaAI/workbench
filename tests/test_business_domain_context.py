@@ -2,11 +2,11 @@ from lib.context.business_domains import discover
 from lib.context.business_domain_context import participation
 from lib.context.cross_task import build_cross_task_analysis,normalize_cross_task_analysis
 from lib.context.assembly import assemble_architect
-from test_business_domain_pipeline import Provider,source
+from tests.business_domains.provider_fixture import PassingProvider, write_service
 
 
 def test_file_tasks_have_potential_business_participation_and_separate_cluster_overlap(tmp_path):
-    source(tmp_path);model,_ = discover(tmp_path,provider=Provider())
+    write_service(tmp_path);model,_ = discover(tmp_path,provider=PassingProvider())
     tasks=[{'id':'one','files_touched':['service.py']},{'id':'two','files_touched':['service.py']}]
     csg={'nodes':[{'id':'symbol','name':'service','file':'service.py','cluster':'cluster-code'}], 'edges':[]}
     result=build_cross_task_analysis(tasks,csg,business_model=model)
@@ -32,7 +32,7 @@ def test_legacy_cross_task_records_are_projected_as_structure_without_mutation()
 
 
 def test_architect_gets_canonical_business_responsibility(tmp_path):
-    source(tmp_path);model,_ = discover(tmp_path,provider=Provider())
+    write_service(tmp_path);model,_ = discover(tmp_path,provider=PassingProvider())
     text=assemble_architect({}, {},business_model=model)
     assert 'Business Responsibilities' in text
     assert next(iter(model['domains'].values()))['name'] in text

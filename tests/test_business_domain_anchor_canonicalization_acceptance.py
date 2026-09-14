@@ -20,8 +20,8 @@ from lib.context.business_domain_schema import (
     validate,
     validate_references,
 )
-from lib.context.business_domain_synthesis import packet_for
-from lib.context.business_domains import accept_activity
+from lib.context.business_domain_work import whole_graph_scope
+from lib.context.business_domains import accept_candidate
 
 
 OPENAPI = """openapi: 3.0.1
@@ -260,14 +260,14 @@ def test_ac08_resolved_pair_occurs_once_with_complete_alias_trace_scope(tmp_path
                 if anchor["operation"]["path"] == "/api/pets/{id}"]
     assert len(matching) == 1
     anchor = matching[0]
-    packet = packet_for(facts, "activity", [anchor["id"]])
+    graph = whole_graph_scope(facts)
 
-    assert packet["anchor_ids"] == [anchor["id"]]
-    assert list(packet["context"]["anchors"]) == [anchor["id"]]
-    supplied = packet["context"]["anchors"][anchor["id"]]
+    assert graph["canonical_anchor_ids"] == [anchor["id"]]
+    assert list(graph["context"]["anchors"]) == [anchor["id"]]
+    supplied = graph["context"]["anchors"][anchor["id"]]
     assert {item["id"] for item in supplied["representations"]} == {
         item["id"] for item in anchor["representations"]}
-    assert len([trace for trace in packet["context"]["traces"].values()
+    assert len([trace for trace in graph["context"]["traces"].values()
                 if trace["anchor_id"] == anchor["id"]]) == 1
 
 
@@ -283,10 +283,10 @@ def create_order():
 """})
     anchor_ids = sorted(facts["anchors"])
     assert len(anchor_ids) == 2
-    packet = packet_for(facts, "activity", anchor_ids)
     model = copy_facts(facts, str(uuid.uuid4()))
-    trace_ids = sorted(packet["context"]["traces"])
-    evidence_ids = sorted(packet["context"]["evidence"])
+    graph = whole_graph_scope(model)
+    trace_ids = sorted(graph["context"]["traces"])
+    evidence_ids = sorted(graph["context"]["evidence"])
     activity = record(
         "Activity", id="activity:orders", name="Manage orders",
         description="List and create orders", anchor_ids=anchor_ids,
@@ -298,10 +298,15 @@ def create_order():
         text=activity["description"], kind="behavior", evidence_ids=evidence_ids,
         trace_ids=trace_ids, semantic_review="uncertain",
     )
-    payload = record("ActivityPayload", activities={activity["id"]: activity},
-                     claims={claim["id"]: claim})
+    payload = record("CandidatePayload", scope_id=graph["scope_id"],
+        input_fingerprint=graph["input_fingerprint"],
+        activities={activity["id"]: activity}, claims={claim["id"]: claim},
+        dispositions=[record("ScopeDisposition", id=f"disposition:orders-{index}",
+            subject_kind="anchor", subject_id=anchor_id, status="represented",
+            activity_ids=[activity["id"]])
+            for index, anchor_id in enumerate(anchor_ids)])
 
-    accept_activity(model, packet, payload)
+    accept_candidate(model, graph, payload)
     assert model["activities"][activity["id"]]["anchor_ids"] == anchor_ids
     assert len(model["anchors"]) == 2
 

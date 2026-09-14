@@ -1063,129 +1063,52 @@ def _candidate_records(candidate):
     return indexed
 
 
+def derive_identity_changes(previous, replacement):
+    """Return the exact record-level diff for a normalized repair candidate."""
+    before = _candidate_records(previous)
+    after = _candidate_records(replacement)
+    common = set(before) & set(after)
+    changed = []
+
+    for record_id in sorted(common):
+        before_collection, before_record = before[record_id]
+        after_collection, after_record = after[record_id]
+        if before_collection != after_collection:
+            raise DomainError(
+                'INVALID_IDENTITY_CHANGE',
+                'A stable candidate record ID cannot change semantic collection',
+                record_id)
+        if before_record != after_record:
+            changed.append(record(
+                'IdentityChange', kind='revised',
+                from_ids=[record_id], to_ids=[record_id],
+                reason=('Record body changed under its stable canonical '
+                        'identity.')))
+
+    changed.extend(record(
+        'IdentityChange', kind='retired', from_ids=[record_id], to_ids=[],
+        reason='Record is absent from the complete replacement candidate.')
+        for record_id in sorted(set(before) - set(after)))
+    changed.extend(record(
+        'IdentityChange', kind='added', from_ids=[], to_ids=[record_id],
+        reason='Record is new in the complete replacement candidate.')
+        for record_id in sorted(set(after) - set(before)))
+    return changed
+
+
 def normalize_repair_payload(payload, graph, previous, expected_parent_hash):
-    """Normalize and validate a complete replacement plus its identity ledger."""
-    findings = []
+    """Normalize a complete replacement and derive its exact identity ledger."""
     if payload['parent_candidate_hash'] != expected_parent_hash:
-        findings.append(validation_finding(
+        finding = validation_finding(
             'INVALID_REPAIR_PARENT',
-            'Repair response does not identify the exact rejected candidate'))
-
-    replacement, aliases = _normalize_ids_with_aliases(
-        payload['candidate'], graph)
-    previous_records = _candidate_records(previous)
-    replacement_records = _candidate_records(replacement)
-    previous_owners = {
-        record_id: owned[0] for record_id, owned in previous_records.items()}
-    replacement_owners = {
-        record_id: owned[0] for record_id, owned in replacement_records.items()}
-    normalized_changes = []
-    claimed_from, claimed_to = set(), set()
-
-    cardinality = {
-        'added': lambda before, after: not before and len(after) == 1,
-        'retained': lambda before, after: (
-            len(before) == len(after) == 1 and before == after),
-        'revised': lambda before, after: len(before) == len(after) == 1,
-        'retired': lambda before, after: len(before) == 1 and not after,
-        'merged': lambda before, after: len(before) >= 2 and len(after) == 1,
-        'split': lambda before, after: len(before) == 1 and len(after) >= 2,
-    }
-
-    for change in payload['identity_changes']:
-        normalized = copy.deepcopy(change)
-        normalized['from_ids'] = sorted(set(change['from_ids']))
-        normalized['to_ids'] = sorted({
-            aliases.get(record_id, record_id)
-            for record_id in change['to_ids']
-        })
-        before, after = normalized['from_ids'], normalized['to_ids']
-        subjects = sorted(set(before) | set(after))
-
-        if (len(before) != len(change['from_ids'])
-                or len(after) != len(change['to_ids'])):
-            findings.append(validation_finding(
-                'INVALID_IDENTITY_CHANGE',
-                'Identity change cannot repeat a record ID',
-                subject_ids=subjects))
-        if not normalized['reason'].strip():
-            findings.append(validation_finding(
-                'INVALID_IDENTITY_CHANGE',
-                'Identity change requires a concrete reason',
-                subject_ids=subjects))
-        if not cardinality[normalized['kind']](before, after):
-            findings.append(validation_finding(
-                'INVALID_IDENTITY_CHANGE',
-                f"{normalized['kind']} identity change has invalid cardinality",
-                subject_ids=subjects))
-
-        missing_from = set(before) - set(previous_owners)
-        missing_to = set(after) - set(replacement_owners)
-        if missing_from or missing_to:
-            findings.append(validation_finding(
-                'INVALID_IDENTITY_CHANGE',
-                'Identity change refers outside its parent or replacement candidate',
-                subject_ids=sorted(missing_from | missing_to)))
-
-        collections = {
-            previous_owners[record_id]
-            for record_id in before if record_id in previous_owners
-        } | {
-            replacement_owners[record_id]
-            for record_id in after if record_id in replacement_owners
-        }
-        if len(collections) > 1:
-            findings.append(validation_finding(
-                'INVALID_IDENTITY_CHANGE',
-                'Identity change cannot cross semantic collections',
-                subject_ids=subjects))
-
-        repeated_from = claimed_from & set(before)
-        repeated_to = claimed_to & set(after)
-        if repeated_from or repeated_to:
-            findings.append(validation_finding(
-                'INVALID_IDENTITY_CHANGE',
-                'A record identity cannot participate in two changes',
-                subject_ids=sorted(repeated_from | repeated_to)))
-        claimed_from.update(before)
-        claimed_to.update(after)
-        normalized_changes.append(normalized)
-
-    removed = set(previous_owners) - set(replacement_owners)
-    added = set(replacement_owners) - set(previous_owners)
-    modified = {
-        record_id for record_id in set(previous_owners) & set(replacement_owners)
-        if previous_records[record_id] != replacement_records[record_id]
-    }
-    transitioned_from = {
-        record_id
-        for change in normalized_changes if change['kind'] != 'retained'
-        for record_id in change['from_ids']
-    }
-    transitioned_to = {
-        record_id
-        for change in normalized_changes if change['kind'] != 'retained'
-        for record_id in change['to_ids']
-    }
-    expected_from = removed | modified
-    expected_to = added | modified
-    if expected_from != transitioned_from:
-        findings.append(validation_finding(
-            'INCOMPLETE_IDENTITY_CHANGE',
-            'Identity ledger must account for every removed or revised parent record',
-            subject_ids=sorted(expected_from ^ transitioned_from)))
-    if expected_to != transitioned_to:
-        findings.append(validation_finding(
-            'INCOMPLETE_IDENTITY_CHANGE',
-            'Identity ledger must account for every added or revised replacement record',
-            subject_ids=sorted(expected_to ^ transitioned_to)))
-
-    if findings:
-        first = findings[0]
+            'Repair response does not identify the exact rejected candidate')
         raise DomainError(
-            first['code'], first['message'], findings=findings,
+            finding['code'], finding['message'], findings=[finding],
             rejected_candidate=copy.deepcopy(payload['candidate']),
             repair_kind='semantic')
+
+    replacement = normalize_ids(payload['candidate'], graph)
+    normalized_changes = derive_identity_changes(previous, replacement)
     return {
         'parent_candidate_hash': payload['parent_candidate_hash'],
         'candidate': replacement,
@@ -1208,20 +1131,21 @@ def _model_ready_context(model: dict, subject_ids: list[str]) -> dict:
         context['traces'] = {k:v for k,v in model['traces'].items() if v['anchor_id'] in anchor_ids}
         obligation_ids = {oid for trace in context['traces'].values() for oid in trace.get('obligation_ids', [])}
         context['trace_obligations'] = {k:v for k,v in model.get('trace_obligations', {}).items() if k in obligation_ids}
+        edge_ids = identity_edges | {
+            edge_id for trace in context['traces'].values()
+            for edge_id in trace['edge_ids']}
+        context['edges'] = {k:v for k,v in model['edges'].items() if k in edge_ids}
         symbols = {s for t in context['traces'].values() for s in t['symbol_ids']}
         symbols.update(representation['symbol_id'] for anchor in context['anchors'].values()
             for representation in anchor.get('representations', [])
             if representation['symbol_id'])
-        for edge_id in identity_edges:
-            edge = model['edges'][edge_id]
+        for edge in context['edges'].values():
             if edge['from_ref']['kind'] == 'symbol':
                 symbols.add(edge['from_ref']['id'])
             if edge['to_ref'] and edge['to_ref']['kind'] == 'symbol':
                 symbols.add(edge['to_ref']['id'])
             symbols.update(edge.get('candidate_target_ids', []))
         context['symbols'] = {k:v for k,v in model['symbols'].items() if k in symbols}
-        edge_ids = identity_edges | {e for t in context['traces'].values() for e in t['edge_ids']}
-        context['edges'] = {k:v for k,v in model['edges'].items() if k in edge_ids}
         context['bindings'] = {k:v for k,v in model['bindings'].items()
                                if any(v[side] and v[side]['id'] in symbols for side in ('source','target'))}
         context['effects'] = {k:v for k,v in model['effects'].items()
@@ -1868,7 +1792,9 @@ class Synthesis:
             repair_request = self.request_for(
                 'repair', graph, candidate, findings, report)
             try:
-                repaired, _ = self._run_with_retries(repair_request)
+                repaired, _ = self._run_with_retries(
+                    repair_request,
+                    progress_operation=f'Repair round {repair_attempt}, provider')
             except DomainError as exc:
                 if not (exc.repair_kind == 'semantic' and exc.findings
                         and exc.rejected_candidate is not None):
@@ -2277,16 +2203,19 @@ class Synthesis:
         }
 
     def _run_with_retries(self, request, allow_candidate_cache=False,
-                          report_requires_failure=False):
+                          report_requires_failure=False,
+                          progress_operation=None):
         transient = 0
         schema_failures = 0
         last_provider_failure = None
         attempt = 0
+        progress_operation = (
+            progress_operation or request.get('operation', 'semantic').capitalize())
         while True:
             attempt += 1
             if self.recorder:
                 self.recorder.progress('semantic',
-                    f"{request['operation'].capitalize()} attempt {attempt} started")
+                    f'{progress_operation} attempt {attempt} started')
             boundary = (self.recorder.boundary(
                 'semantic.'+request['operation'],request,
                 metadata={'attempt':attempt}) if self.recorder else None)
@@ -2303,7 +2232,7 @@ class Synthesis:
                     outcome = self._outcome_summary(
                         request['operation'], result[0])
                     self.recorder.progress('semantic',
-                        f"{request['operation'].capitalize()} attempt {attempt} accepted"
+                        f'{progress_operation} attempt {attempt} accepted'
                         + (' from validated cache' if result[1] else '')
                         + (f"; {outcome['summary']}"
                            if outcome['summary'] else ''),
@@ -2314,7 +2243,8 @@ class Synthesis:
                 if boundary:
                     boundary.__exit__(type(exc),exc,exc.__traceback__)
                     self.recorder.progress('semantic',
-                        f"{request['operation'].capitalize()} attempt {attempt} failed ({exc.code})",
+                        f'{progress_operation} attempt {attempt} failed '
+                        f'({exc.code})',
                         level='warning')
                 with self.accounting_lock:
                     if self.provider_failure is not None:

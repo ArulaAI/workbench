@@ -9,8 +9,8 @@ from lib.context.business_domain_extract import Extractor
 from lib.context.business_domain_schema import (
     DEFAULTS, DomainError, copy_facts, record, validate_references,
 )
-from lib.context.business_domain_synthesis import packet_for
-from lib.context.business_domains import accept_activity
+from lib.context.business_domain_work import whole_graph_scope
+from lib.context.business_domains import accept_candidate
 
 
 def _selection_facts(tmp_path, monkeypatch, *, language="fixture",
@@ -132,36 +132,43 @@ def test_ambiguous_implementations_have_same_bounded_outcome_across_languages(
     assert set(selection["candidate_target_ids"]) <= set(facts["symbols"])
 
 
-def test_capability_gap_blocks_selected_implementation_and_reaches_packet(
+def test_declaring_adapter_gap_does_not_block_selected_implementation_in_graph(
         tmp_path, monkeypatch):
     facts, _, trace, obligations = _selection_facts(
         tmp_path, monkeypatch, relationship_capability="unsupported")
-    packet = packet_for(facts, "activity", [trace["anchor_id"]])
+    graph = whole_graph_scope(facts)
 
-    assert trace["traversal_complete"] is True and trace["resolution"] == "unresolved"
-    assert any(item["reason_code"] == "CAPABILITY_UNAVAILABLE" for item in obligations)
-    assert packet["context"]["capabilities"] == facts["capabilities"]
-    assert packet["context"]["trace_obligations"] == facts["trace_obligations"]
-    assert packet["context"]["traces"][trace["id"]]["stop_reasons"] == ["capability_gap"]
+    assert trace["traversal_complete"] is True and trace["resolution"] == "resolved"
+    assert not any(item["reason_code"] == "CAPABILITY_UNAVAILABLE"
+                   for item in obligations)
+    assert graph["context"]["capabilities"] == facts["capabilities"]
+    assert graph["context"]["trace_obligations"] == facts["trace_obligations"]
+    assert graph["context"]["traces"][trace["id"]]["stop_reasons"] == []
 
 
 def test_supported_activity_cannot_claim_obligation_incomplete_trace(tmp_path, monkeypatch):
     facts, _, trace, _ = _selection_facts(
         tmp_path, monkeypatch, implementations=1, produce=False)
     model = copy_facts(facts, facts["build_id"])
-    packet = packet_for(model, "activity", [trace["anchor_id"]])
-    evidence = list(packet["context"]["evidence"])
+    graph = whole_graph_scope(model)
+    evidence = list(graph["context"]["evidence"])
     activity = record("Activity", id="activity:fixture", name="Fixture",
         description="Overstated", anchor_ids=[trace["anchor_id"]],
         trace_ids=[trace["id"]], evidence_ids=evidence,
         claim_ids=["claim:fixture"], support="supported")
-    payload = record("ActivityPayload", activities={activity["id"]: activity},
+    payload = record("CandidatePayload", scope_id=graph["scope_id"],
+        input_fingerprint=graph["input_fingerprint"],
+        activities={activity["id"]: activity},
         claims={"claim:fixture": record("Claim", id="claim:fixture",
             subject_id=activity["id"], text="Overstated", kind="behavior",
-            evidence_ids=evidence, trace_ids=[trace["id"]])})
+            evidence_ids=evidence, trace_ids=[trace["id"]],
+            semantic_review="uncertain")},
+        dispositions=[record("ScopeDisposition", id="disposition:fixture",
+            subject_kind="anchor", subject_id=trace["anchor_id"],
+            status="represented", activity_ids=[activity["id"]])])
 
-    with pytest.raises(DomainError, match="semantically complete"):
-        accept_activity(model, packet, payload)
+    with pytest.raises(DomainError, match="resolved implementation"):
+        accept_candidate(model, graph, payload)
 
 
 @pytest.mark.parametrize(("filename", "text"), [

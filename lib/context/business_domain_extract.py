@@ -1028,3 +1028,60 @@ class Extractor:
                     code=gap['code'],
                     message=f"{gap['projection']}: {gap['reason']}",
                     subject_ids=subjects, evidence_ids=effect_evidence_ids))
+
+
+def extraction_measurements(facts: dict) -> dict:
+    """Summarize normalized extraction without invoking semantic synthesis."""
+    traces = list(facts['traces'].values())
+    obligations = list(facts['trace_obligations'].values())
+    languages_by_path = {
+        resource['name']: resource['language']
+        for resource in facts['resources'].values()
+        if resource.get('kind') == 'repository_file' and resource.get('language')
+    }
+
+    def obligation_language(obligation):
+        origin = obligation['origin_ref']
+        if origin['kind'] != 'symbol':
+            return 'unknown'
+        symbol = facts['symbols'].get(origin['id'])
+        if not symbol:
+            return 'unknown'
+        return languages_by_path.get(symbol['file'], 'unknown')
+
+    unresolved_calls = [
+        obligation for obligation in obligations
+        if obligation['kind'] == 'call_target'
+        and obligation['status'] == 'unresolved'
+    ]
+    unresolved_by_language = {}
+    for obligation in unresolved_calls:
+        language = obligation_language(obligation)
+        unresolved_by_language[language] = \
+            unresolved_by_language.get(language, 0) + 1
+
+    ui_anchor_ids = {
+        anchor['id'] for anchor in facts['anchors'].values()
+        if anchor['kind'] == 'ui'
+    }
+    ui_traces = [
+        trace for trace in traces if trace['anchor_id'] in ui_anchor_ids
+    ]
+    return {
+        'schema_version': 1,
+        'traces': {
+            'total': len(traces),
+            'resolved': sum(trace['resolution'] == 'resolved' for trace in traces),
+            'ambiguous': sum(trace['resolution'] == 'ambiguous' for trace in traces),
+            'unresolved': sum(trace['resolution'] == 'unresolved' for trace in traces),
+        },
+        'call_targets': {
+            'unresolved': len(unresolved_calls),
+            'unresolved_by_language': dict(sorted(unresolved_by_language.items())),
+        },
+        'ui_interactions': {
+            'eligible_traces': len(ui_traces),
+            'populated_traces': sum(
+                trace.get('ui_interaction') is not None for trace in ui_traces),
+        },
+    }

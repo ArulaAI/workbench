@@ -1,8 +1,12 @@
 """Java/Spring semantic adapter conformance and PetClinic regressions."""
 from pathlib import Path
+from types import SimpleNamespace
 
 from lib.context.business_domain_extract import Extractor
-from lib.context.business_domain_schema import DEFAULTS, digest, identifier, validate_references
+from lib.context.business_domain_schema import (
+    DEFAULTS, digest, identifier, record, validate_references,
+)
+from lib.context.business_domain_synthesis import Synthesis
 from lib.context.business_domain_adapters.base import Source
 from lib.context.business_domain_adapters import documents, java_semantic, rules, spring_semantic
 
@@ -266,6 +270,46 @@ def test_java_ambiguity_retains_bounded_candidate_symbol_ids(tmp_path):
     assert len(edge["candidate_target_ids"]) == 2
     assert set(edge["candidate_target_ids"]) <= set(facts["symbols"])
     assert any(item["code"] == "JAVA_TYPE_AMBIGUOUS" for item in facts["warnings"])
+
+
+def test_whole_graph_retains_ambiguous_call_candidate_symbols(tmp_path):
+    facts = _extract(tmp_path, {
+        "Controller.java": """
+            import org.springframework.web.bind.annotation.GetMapping;
+            import org.springframework.web.bind.annotation.RestController;
+
+            @RestController class Controller {
+              private Mapper mapper;
+
+              @GetMapping("/x")
+              public Object entry(Object dto) {
+                return mapper.map(dto);
+              }
+            }
+
+            class Mapper {
+              Object map(A dto) { return dto; }
+              Object map(B dto) { return dto; }
+            }
+
+            class A {}
+            class B {}
+        """,
+    })
+    edge = next(
+        edge for edge in facts["edges"].values()
+        if edge["kind"] == "calls" and edge["resolution"] == "ambiguous")
+    candidate_ids = set(edge["candidate_target_ids"])
+
+    assert len(candidate_ids) == 2
+
+    synthesis = Synthesis(
+        tmp_path, DEFAULTS, SimpleNamespace(model="fixture"), record("Limits"))
+    graph = synthesis.graph_scope(facts)
+
+    assert edge["id"] in graph["context"]["edges"]
+    assert candidate_ids <= set(graph["context"]["symbols"])
+    assert graph["context"]["record_refs"] == {}
 
 
 def test_tests_and_documentation_remain_distinct_supporting_relationships(tmp_path):

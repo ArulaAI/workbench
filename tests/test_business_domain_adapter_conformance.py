@@ -1,5 +1,6 @@
 """Conformance checks for the installed source-adapter boundary."""
 from pathlib import Path
+from shutil import copytree
 
 import pytest
 
@@ -389,3 +390,25 @@ def test_failed_adapter_reports_only_unsupported_capabilities(tmp_path, monkeypa
     assert all('ADAPTER_UNAVAILABLE' in item['diagnostic_codes']
                for item in capabilities)
     assert any(item['code'] == 'ADAPTER_UNAVAILABLE' for item in facts['warnings'])
+
+
+@pytest.mark.parametrize(('case', 'adapter', 'enricher'), [
+    ('typescript', 'ts_semantic', None),
+    ('html', 'html_semantic', None),
+    ('react', 'ts_semantic', 'react_semantic'),
+    ('angular', 'ts_semantic', 'angular_semantic'),
+])
+def test_frontend_adapter_fixture_uses_installed_contract(
+        tmp_path, case, adapter, enricher):
+    from lib.context.business_domain_extract import Extractor
+    from lib.context.business_domain_schema import DEFAULTS, validate_references
+
+    source = Path(__file__).parent / 'fixtures/business_domains/adapters' / case
+    copytree(source, tmp_path, dirs_exist_ok=True)
+    facts, _ = Extractor(tmp_path, DEFAULTS).extract()
+    validate_references(facts)
+
+    adapters = {item['adapter'] for item in facts['capabilities']}
+    assert adapter in adapters
+    if enricher:
+        assert enricher in adapters

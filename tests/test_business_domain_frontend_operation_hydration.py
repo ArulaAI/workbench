@@ -8,8 +8,8 @@ from lib.context.business_domain_extract import Extractor
 from lib.context.business_domain_schema import (
     DEFAULTS, copy_facts, record, validate_references,
 )
-from lib.context.business_domain_synthesis import packet_for
-from lib.context.business_domains import accept_activity
+from lib.context.business_domain_work import whole_graph_scope
+from lib.context.business_domains import accept_candidate
 
 
 PETCLINIC = Path('/private/tmp/speed-domain-petclinic')
@@ -118,13 +118,11 @@ def test_petclinic_all_supported_fetches_have_complete_graph_dispositions(petcli
     assert all(any(facts['evidence'][eid]['excerpt'].lstrip().startswith('fetch(')
                    for eid in edge['evidence_ids']) for edge in operations)
 
-    # Every graph scope that reaches an operation supplies its complete packet.
+    # The whole graph supplied to synthesis retains every operation closure.
     model = copy_facts(facts, str(uuid.uuid4()))
+    context = whole_graph_scope(model)['context']
     for effect in effects:
         for trace_id in effect['trace_ids']:
-            trace = facts['traces'][trace_id]
-            packet = packet_for(model, 'activity', [trace['anchor_id']])
-            context = packet['context']
             assert effect['id'] in context['effects']
             assert effect['edge_id'] in context['edges']
             assert set(effect['input_binding_ids'] + effect['output_binding_ids']) \
@@ -154,9 +152,9 @@ def test_petclinic_route_lifecycle_and_activity_closure_are_hydrated(petclinic):
     trace = next(trace for trace in facts['traces'].values()
         if trace['id'] in wrapper_effect['trace_ids'] and trace['ui_interaction']
         and trace['ui_interaction']['calls'])
-    packet = packet_for(copy_facts(facts, str(uuid.uuid4())), 'activity',
-                        [trace['anchor_id']])
-    evidence_ids = sorted(packet['context']['evidence'])
+    model = copy_facts(facts, str(uuid.uuid4()))
+    graph = whole_graph_scope(model)
+    evidence_ids = sorted(graph['context']['evidence'])
     activity = record('Activity', id='activity:frontend-operation',
         name='Frontend operation', description='Evidenced frontend operation',
         anchor_ids=[trace['anchor_id']], trace_ids=[trace['id']],
@@ -166,10 +164,19 @@ def test_petclinic_route_lifecycle_and_activity_closure_are_hydrated(petclinic):
         subject_id=activity['id'], text=activity['description'], kind='behavior',
         evidence_ids=evidence_ids, trace_ids=[trace['id']],
         semantic_review='uncertain')
-    payload = record('ActivityPayload', activities={activity['id']: activity},
-        claims={claim['id']: claim})
-    model = copy_facts(facts, str(uuid.uuid4()))
-    accept_activity(model, packet, payload)
+    payload = record('CandidatePayload', scope_id=graph['scope_id'],
+        input_fingerprint=graph['input_fingerprint'],
+        activities={activity['id']: activity}, claims={claim['id']: claim},
+        dispositions=[record('ScopeDisposition',
+            id=f'disposition:frontend-{index}', subject_kind='anchor',
+            subject_id=anchor_id,
+            status=('represented' if anchor_id == trace['anchor_id'] else 'excluded'),
+            activity_ids=([activity['id']] if anchor_id == trace['anchor_id'] else []),
+            reason=(None if anchor_id == trace['anchor_id'] else
+                    'Outside the activity under test.'),
+            evidence_ids=([] if anchor_id == trace['anchor_id'] else evidence_ids))
+            for index, anchor_id in enumerate(graph['canonical_anchor_ids'])])
+    accept_candidate(model, graph, payload)
     accepted = model['activities'][activity['id']]
 
     assert wrapper_effect['id'] in accepted['effect_ids']

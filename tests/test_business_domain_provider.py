@@ -542,6 +542,9 @@ def test_semantic_progress_reports_payload_counts_and_failed_verdict(
         event for event in accepted
         if event['message'].startswith('Verify')
         and event['details'].get('verdict') == 'fail')
+    repair = next(event for event in accepted
+                  if event['message'].startswith(
+                      'Repair round 1, provider attempt 1'))
 
     assert synthesis['message'].endswith(
         '1 activities, 0 rules, 0 domains')
@@ -555,6 +558,8 @@ def test_semantic_progress_reports_payload_counts_and_failed_verdict(
         'finding_count': 1,
         'blocking_finding_count': 1,
     }
+    assert repair['message'].startswith(
+        'Repair round 1, provider attempt 1 accepted')
 
 
 @pytest.mark.parametrize('provider', ['claude-code', 'codex-cli'])

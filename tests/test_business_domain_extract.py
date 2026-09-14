@@ -145,15 +145,15 @@ entrypoints="partial"
 
 def test_contract_only_trace_retains_missing_implementation_obligation(tmp_path):
     from lib.context.business_domain_schema import DomainError, copy_facts
-    from lib.context.business_domain_synthesis import packet_for
+    from lib.context.business_domain_work import whole_graph_scope
     facts, _ = extract(tmp_path, {'api.yaml':
         'openapi: 3.0.1\npaths:\n  /visits:\n    post:\n      operationId: addVisit\n'})
     trace = next(iter(facts['traces'].values()))
     assert trace['edge_ids'] == [] and trace['resolution'] == 'unresolved'
     obligations = [facts['trace_obligations'][oid] for oid in trace['obligation_ids']]
     assert any(o['reason_code'] == 'IMPLEMENTATION_NOT_REACHED' for o in obligations)
-    packet = packet_for(copy_facts(facts, 'fixture'), 'activity', [trace['anchor_id']])
-    assert packet['context']['trace_obligations'] == facts['trace_obligations']
+    graph = whole_graph_scope(copy_facts(facts, 'fixture'))
+    assert graph['context']['trace_obligations'] == facts['trace_obligations']
     trace['frontier_ids'] = []
     trace['resolution'] = 'resolved'
     with pytest.raises(DomainError, match='satisfied implementation'):
@@ -563,7 +563,7 @@ END;
 
 
 def test_sql_table_constraints_follow_the_resource_into_activity_evidence(tmp_path):
-    from lib.context.business_domain_synthesis import packet_for
+    from lib.context.business_domain_work import whole_graph_scope
     facts,_ = extract(tmp_path,{'orders.sql':'''CREATE TABLE orders (
   id NUMBER PRIMARY KEY,
   amount NUMBER CHECK (
@@ -577,14 +577,14 @@ END;
 /
 '''})
     assert len(facts['anchors'])==1
-    packet=packet_for(facts,'activity',list(facts['anchors']))
-    observations=packet['context']['rule_observations'].values()
+    context=whole_graph_scope(facts)['context']
+    observations=context['rule_observations'].values()
     assert any('CHECK' in o['native_expression'] and 'amount >= 0' in o['native_expression'] for o in observations)
-    assert all(eid in packet['context']['evidence'] for o in observations for eid in o['evidence_ids'])
+    assert all(eid in context['evidence'] for o in observations for eid in o['evidence_ids'])
 
 
 def test_sql_read_is_a_typed_operation_without_fabricated_effect(tmp_path):
-    from lib.context.business_domain_synthesis import packet_for
+    from lib.context.business_domain_work import whole_graph_scope
     facts, _ = extract(tmp_path, {'orders.sql': '''CREATE OR REPLACE PROCEDURE load_order(
   order_id IN NUMBER
 ) IS
@@ -612,10 +612,10 @@ END;
     assert not facts['effects']
     trace = next(iter(facts['traces'].values()))
     assert edge['id'] in trace['edge_ids']
-    packet = packet_for(facts, 'activity', list(facts['anchors']))
-    assert edge['to_ref']['id'] in packet['context']['resources']
-    assert edge['evidence_ids'][0] in packet['context']['evidence']
-    assert set(edge['binding_ids']) <= set(packet['context']['bindings'])
+    context = whole_graph_scope(facts)['context']
+    assert edge['to_ref']['id'] in context['resources']
+    assert edge['evidence_ids'][0] in context['evidence']
+    assert set(edge['binding_ids']) <= set(context['bindings'])
 
 
 def test_operation_integrity_rejects_orphaned_write_and_read_effect(tmp_path):
@@ -734,7 +734,7 @@ def test_activity_packet_keeps_typed_resource_edge_closure_without_effect(tmp_pa
     from types import SimpleNamespace
     from lib.context import business_domain_extract as core
     from lib.context.business_domain_adapters.base import Unit, declare_operation_observation
-    from lib.context.business_domain_synthesis import packet_for
+    from lib.context.business_domain_work import whole_graph_scope
     adapter = SimpleNamespace(
         extract=lambda source: [Unit(source, 'entry', 'entry', 0, len(source.text),
             'function', anchor_kind='workflow', anchor_resolution='resolved', executable_body=True,
@@ -753,13 +753,13 @@ def test_activity_packet_keeps_typed_resource_edge_closure_without_effect(tmp_pa
     edge = next(edge for edge in facts['edges'].values() if edge['to_ref']['kind'] == 'resource')
     resource = facts['resources'][edge['to_ref']['id']]
     exact_evidence = edge['evidence_ids'][0]
-    packet = packet_for(facts, 'activity', list(facts['anchors']))
+    context = whole_graph_scope(facts)['context']
 
-    assert packet['context']['resources'][resource['id']] == resource
-    assert packet['context']['evidence'][exact_evidence] == facts['evidence'][exact_evidence]
+    assert context['resources'][resource['id']] == resource
+    assert context['evidence'][exact_evidence] == facts['evidence'][exact_evidence]
     snapshot_id = facts['evidence'][exact_evidence]['locator']['snapshot_id']
-    assert packet['context']['source_snapshots'][snapshot_id] == facts['source_snapshots'][snapshot_id]
-    assert resource['id'] not in packet['context']['record_refs']
+    assert context['source_snapshots'][snapshot_id] == facts['source_snapshots'][snapshot_id]
+    assert resource['id'] not in context['record_refs']
 
 
 def test_receiver_parameter_in_sibling_method_cannot_resolve_call(tmp_path):

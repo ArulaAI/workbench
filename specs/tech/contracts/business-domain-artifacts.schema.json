@@ -6961,18 +6961,11 @@
         },
         "candidate": {
           "$ref": "#/$defs/CandidatePayload"
-        },
-        "identity_changes": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/IdentityChange"
-          }
         }
       },
       "required": [
         "parent_candidate_hash",
-        "candidate",
-        "identity_changes"
+        "candidate"
       ],
       "additionalProperties": false
     },

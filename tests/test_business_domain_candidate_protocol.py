@@ -15,25 +15,7 @@ from lib.context.business_domain_synthesis import (
     normalize_repair_payload, wire_schema,
 )
 from lib.context.business_domains import accept_candidate, discover, paths
-
-
-def encode(value, schema):
-    if '$ref' in schema:
-        return encode(value, DEFINITIONS[schema['$ref'].rsplit('/', 1)[1]])
-    if value is None:
-        return None
-    if 'anyOf' in schema:
-        return encode(value, schema['anyOf'][0])
-    if (schema.get('type') == 'object'
-            and isinstance(schema.get('additionalProperties'), dict)):
-        return [encode(item, schema['additionalProperties'])
-                for item in value.values()]
-    if schema.get('type') == 'object':
-        return {key: encode(item, schema['properties'][key])
-                for key, item in value.items()}
-    if schema.get('type') == 'array':
-        return [encode(item, schema['items']) for item in value]
-    return value
+from tests.business_domains.provider_fixture import encode
 
 
 def graph_scope(anchor_count=52):
@@ -189,40 +171,10 @@ def candidate_record_ids(candidate):
     return set(candidate_records(candidate))
 
 
-def repair_payload(request, candidate, graph):
-    normalized = normalize_ids(candidate, graph)
-    before_records = candidate_records(request['candidate'])
-    after_records = candidate_records(normalized)
-    before, after = set(before_records), set(after_records)
-    local_ids = {}
-    for collection in CANDIDATE_RECORD_COLLECTIONS:
-        local = candidate.get(collection, {})
-        local = list(local.values()) if isinstance(local, dict) else local
-        canonical_records = normalized.get(collection, {})
-        canonical_records = (list(canonical_records.values())
-                             if isinstance(canonical_records, dict)
-                             else canonical_records)
-        local_ids.update(
-            (canonical_item['id'], local_item['id'])
-            for local_item, canonical_item in zip(local, canonical_records))
-    changes = [record(
-        'IdentityChange', kind='retired', from_ids=[record_id], to_ids=[],
-        reason='The verifier finding requires this record to be removed.')
-        for record_id in sorted(before - after)]
-    changes.extend(record(
-        'IdentityChange', kind='added', from_ids=[],
-        to_ids=[local_ids[record_id]],
-        reason='The verifier finding requires this replacement record.')
-        for record_id in sorted(after - before))
-    changes.extend(record(
-        'IdentityChange', kind='revised', from_ids=[record_id],
-        to_ids=[local_ids[record_id]],
-        reason='The verifier finding requires this record body to change.')
-        for record_id in sorted(before & after)
-        if before_records[record_id] != after_records[record_id])
+def repair_payload(request, candidate):
     return record(
         'RepairPayload', parent_candidate_hash=request['parent_candidate_hash'],
-        candidate=candidate, identity_changes=changes)
+        candidate=candidate)
 
 
 def unresolved_candidate(graph, *, evidence_ids=('ev:fixture',)):
@@ -320,7 +272,7 @@ class ProtocolProvider:
                 payload['dispositions'].pop()
         elif operation == 'repair':
             payload = repair_payload(
-                request, repaired_candidate(self.graph), self.graph)
+                request, repaired_candidate(self.graph))
         else:
             checked = sorted(required_scope_subjects(self.graph))
             if self.incomplete_check:
@@ -414,6 +366,16 @@ def test_wire_schema_requires_provider_record_prefix(
     assert set(_record_id_patterns(schema['$defs'][record_type])) == {
         f'^{prefix}:[^ ]+$'
     }
+
+
+def test_repair_provider_schema_excludes_orchestrator_identity_ledger():
+    schema = wire_schema('RepairPayload', graph_scope())
+
+    assert set(schema['properties']) == {
+        'parent_candidate_hash', 'candidate'}
+    assert set(schema['required']) == {
+        'parent_candidate_hash', 'candidate'}
+    assert schema['additionalProperties'] is False
 
 
 def test_invalid_verification_finding_prefix_uses_schema_retry(tmp_path):
@@ -564,7 +526,7 @@ def test_synthesis_prompt_contains_completion_gate():
     assert 'repeated generic unresolved dispositions' in prompt
 
 
-def test_synthesis_prompt_defines_bindings_and_repair_supersession():
+def test_synthesis_prompt_defines_bindings_and_orchestrator_owned_repair_diff():
     prompt = agent_instructions()['synthesis']
 
     assert '`input_binding_ids`' in prompt
@@ -574,8 +536,8 @@ def test_synthesis_prompt_defines_bindings_and_repair_supersession():
         in prompt)
     assert 'Input bindings carry request or parameter shapes' in prompt
     assert 'reachable ambiguous or unresolved bindings' in prompt
-    assert "`identity_changes` ledger is the repair's only" in prompt
-    assert 'do not add one' in prompt
+    assert 'orchestrator normalizes the replacement and derives' in prompt
+    assert 'do not return an identity ledger' in prompt
 
 
 def test_verification_prompt_requires_global_completeness_review():
@@ -708,7 +670,7 @@ def concept_candidate(graph, concepts):
         concepts={item['id']: item for item in concepts})
 
 
-def test_repair_payload_normalizes_a_many_to_one_merge():
+def test_repair_payload_derives_retired_and_added_records_for_a_merge():
     graph = graph_scope(anchor_count=1)
     previous = normalize_ids(concept_candidate(graph, [
         record('Concept', id='concept:a', name='Owner',
@@ -721,22 +683,22 @@ def test_repair_payload_normalizes_a_many_to_one_merge():
         qualified_type_names=['Customer', 'Owner'])])
     response = record(
         'RepairPayload', parent_candidate_hash=digest(previous),
-        candidate=merged, identity_changes=[record(
-            'IdentityChange', kind='merged',
-            from_ids=sorted(previous['concepts']),
-            to_ids=['concept:merged'],
-            reason='Both concepts identify the same business party.')])
+        candidate=merged)
 
     normalized = normalize_repair_payload(
         response, graph, previous, digest(previous))
     merged_id = next(iter(normalized['candidate']['concepts']))
 
-    assert normalized['identity_changes'][0]['from_ids'] == sorted(
+    retired = [change for change in normalized['identity_changes']
+               if change['kind'] == 'retired']
+    added = [change for change in normalized['identity_changes']
+             if change['kind'] == 'added']
+    assert {change['from_ids'][0] for change in retired} == set(
         previous['concepts'])
-    assert normalized['identity_changes'][0]['to_ids'] == [merged_id]
+    assert [change['to_ids'][0] for change in added] == [merged_id]
 
 
-def test_repair_payload_represents_a_one_to_many_split_without_guessing():
+def test_repair_payload_derives_retired_and_added_records_for_a_split():
     graph = graph_scope(anchor_count=1)
     previous = normalize_ids(concept_candidate(graph, [record(
         'Concept', id='concept:party', name='Party',
@@ -750,16 +712,17 @@ def test_repair_payload_represents_a_one_to_many_split_without_guessing():
     old_id = next(iter(previous['concepts']))
     response = record(
         'RepairPayload', parent_candidate_hash=digest(previous),
-        candidate=split, identity_changes=[record(
-            'IdentityChange', kind='split', from_ids=[old_id],
-            to_ids=['concept:owner', 'concept:vet'],
-            reason='The source evidence establishes two business parties.')])
+        candidate=split)
 
     normalized = normalize_repair_payload(
         response, graph, previous, digest(previous))
 
-    assert normalized['identity_changes'][0]['from_ids'] == [old_id]
-    assert set(normalized['identity_changes'][0]['to_ids']) == set(
+    retired = [change for change in normalized['identity_changes']
+               if change['kind'] == 'retired']
+    added = [change for change in normalized['identity_changes']
+             if change['kind'] == 'added']
+    assert [change['from_ids'][0] for change in retired] == [old_id]
+    assert {change['to_ids'][0] for change in added} == set(
         normalized['candidate']['concepts'])
 
 
@@ -768,7 +731,7 @@ def test_repair_payload_rejects_the_wrong_parent_candidate():
     previous = concept_candidate(graph, [])
     response = record(
         'RepairPayload', parent_candidate_hash=digest('another candidate'),
-        candidate=copy.deepcopy(previous), identity_changes=[])
+        candidate=copy.deepcopy(previous))
 
     with pytest.raises(DomainError) as raised:
         normalize_repair_payload(
@@ -778,25 +741,25 @@ def test_repair_payload_rejects_the_wrong_parent_candidate():
     assert raised.value.repair_kind == 'semantic'
 
 
-def test_repair_payload_requires_complete_identity_change_coverage():
+def test_repair_payload_derives_complete_identity_change_coverage():
     graph = graph_scope(anchor_count=1)
     previous = normalize_ids(concept_candidate(graph, [record(
         'Concept', id='concept:party', name='Party')]), graph)
     replacement = concept_candidate(graph, [])
     response = record(
         'RepairPayload', parent_candidate_hash=digest(previous),
-        candidate=replacement, identity_changes=[])
+        candidate=replacement)
 
-    with pytest.raises(DomainError) as raised:
-        normalize_repair_payload(
-            response, graph, previous, digest(previous))
+    normalized = normalize_repair_payload(
+        response, graph, previous, digest(previous))
 
-    assert raised.value.code == 'INCOMPLETE_IDENTITY_CHANGE'
-    assert raised.value.findings[0]['subject_ids'] == sorted(
-        previous['concepts'])
+    assert normalized['identity_changes'] == [record(
+        'IdentityChange', kind='retired',
+        from_ids=[next(iter(previous['concepts']))], to_ids=[],
+        reason='Record is absent from the complete replacement candidate.')]
 
 
-def test_repair_payload_requires_lineage_for_a_same_id_body_change():
+def test_repair_payload_derives_lineage_for_a_same_id_body_change():
     graph = graph_scope(anchor_count=1)
     previous = normalize_ids(repaired_candidate(graph), graph)
     replacement = copy.deepcopy(previous)
@@ -808,19 +771,15 @@ def test_repair_payload_requires_lineage_for_a_same_id_body_change():
 
     response = record(
         'RepairPayload', parent_candidate_hash=digest(previous),
-        candidate=replacement, identity_changes=[])
-    with pytest.raises(DomainError) as raised:
-        normalize_repair_payload(
-            response, graph, previous, digest(previous))
-    assert raised.value.code == 'INCOMPLETE_IDENTITY_CHANGE'
-    assert disposition_id in raised.value.findings[0]['subject_ids']
+        candidate=replacement)
+    normalized = normalize_repair_payload(
+        response, graph, previous, digest(previous))
 
-    response['identity_changes'] = [record(
-        'IdentityChange', kind='revised', from_ids=[disposition_id],
-        to_ids=[disposition_id],
-        reason='The disposition explanation was made precise.')]
-    assert normalize_repair_payload(
-        response, graph, previous, digest(previous))['candidate'] == replacement
+    assert normalized['candidate'] == replacement
+    assert normalized['identity_changes'] == [record(
+        'IdentityChange', kind='revised',
+        from_ids=[disposition_id], to_ids=[disposition_id],
+        reason='Record body changed under its stable canonical identity.')]
 
 
 def test_repair_regression_allows_only_the_finding_dependency_closure():
@@ -908,7 +867,7 @@ def test_normalization_collision_uses_existing_repair_and_verified_cache(
                     ])
             elif operation == 'repair':
                 payload = repair_payload(
-                    request, repaired_candidate(graph), graph)
+                    request, repaired_candidate(graph))
             else:
                 repaired = any(item['operation'] == 'repair'
                                for item in self.requests)
@@ -989,35 +948,6 @@ def test_nonpassing_repaired_candidate_is_not_cached(tmp_path):
                for request in provider.requests) == 2
 
 
-class InvalidLedgerOnceProvider(ProtocolProvider):
-    def generate(self, request, schema, *args):
-        value, usage = super().generate(request, schema, *args)
-        repair_count = sum(
-            item['operation'] == 'repair' for item in self.requests)
-        if request['operation'] == 'repair' and repair_count == 1:
-            payload = record(
-                'RepairPayload',
-                parent_candidate_hash=request['parent_candidate_hash'],
-                candidate=normalize_ids(repaired_candidate(self.graph),
-                                        self.graph),
-                identity_changes=[])
-            self.responses[-1] = copy.deepcopy(payload)
-            value = encode(payload, DEFINITIONS['RepairPayload'])
-        return value, usage
-
-
-def test_invalid_repair_lineage_gets_the_next_bounded_repair(tmp_path):
-    graph = graph_scope()
-    provider = InvalidLedgerOnceProvider(graph)
-
-    result = synthesis(tmp_path, provider).run(
-        graph, lambda value: validate_candidate(graph, value))
-
-    assert result == normalize_ids(repaired_candidate(graph), graph)
-    assert [request['operation'] for request in provider.requests] == [
-        'synthesize', 'verify', 'repair', 'repair', 'verify']
-
-
 class RepairChainProvider(ProtocolProvider):
     def __init__(self, graph, pass_after=None):
         super().__init__(graph)
@@ -1039,33 +969,10 @@ class RepairChainProvider(ProtocolProvider):
             activity_id = next(iter(candidate['activities']))
             candidate['activities'][activity_id]['concept_ids'].append(
                 concept_id)
-            claim_id = next(iter(candidate['claims']))
             payload = record(
                 'RepairPayload',
                 parent_candidate_hash=request['parent_candidate_hash'],
-                candidate=candidate,
-                identity_changes=[
-                    record(
-                        'IdentityChange', kind='added', from_ids=[],
-                        to_ids=[concept_id],
-                        reason='The next repair adds distinct supported context.'),
-                    record(
-                        'IdentityChange', kind='revised',
-                        from_ids=[activity_id], to_ids=[activity_id],
-                        reason='The activity now references the added concept.'),
-                    record(
-                        'IdentityChange', kind='revised',
-                        from_ids=[claim_id], to_ids=[claim_id],
-                        reason='The claim follows its revised activity subject.'),
-                    *[
-                        record(
-                            'IdentityChange', kind='revised',
-                            from_ids=[item['id']], to_ids=[item['id']],
-                            reason=('The disposition follows its revised '
-                                    'activity reference.'))
-                        for item in request['candidate']['dispositions']
-                    ],
-                ])
+                candidate=candidate)
             output_type = 'RepairPayload'
         else:
             verify_count = sum(
@@ -1182,7 +1089,7 @@ class DiscoverProvider:
                 dispositions=dispositions)
             output_type = 'CandidatePayload'
             if request['operation'] == 'repair':
-                payload = repair_payload(request, payload, graph)
+                payload = repair_payload(request, payload)
                 output_type = 'RepairPayload'
         return encode(payload, DEFINITIONS[output_type]), {'last': {}}
 

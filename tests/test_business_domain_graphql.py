@@ -3,7 +3,7 @@ import asyncio
 
 from dashboard.backend.schema import schema
 from lib.context.business_domains import discover
-from test_business_domain_pipeline import Provider, source
+from tests.business_domains.provider_fixture import PassingProvider, write_service
 
 
 def execute(tmp_path, query, variables=None):
@@ -14,7 +14,7 @@ def execute(tmp_path, query, variables=None):
 
 
 def test_detail_and_cursors_are_scoped_to_published_build(tmp_path):
-    source(tmp_path); model,_ = discover(tmp_path,provider=Provider())
+    write_service(tmp_path); model,_ = discover(tmp_path,provider=PassingProvider())
     did = next(iter(model['domains']))
     query = '''query($id:ID!,$build:ID!,$after:String) {
       domain(id:$id,expectedBuildId:$build) {
@@ -41,7 +41,7 @@ def test_detail_and_cursors_are_scoped_to_published_build(tmp_path):
 
 
 def test_review_mutation_and_unavailable_cancel_return_typed_results(tmp_path):
-    source(tmp_path); model,_ = discover(tmp_path,provider=Provider())
+    write_service(tmp_path); model,_ = discover(tmp_path,provider=PassingProvider())
     did = next(iter(model['domains']))
     result = execute(tmp_path,'''mutation($input:DomainReviewInput!) {
       reviewDomain(input:$input) {accepted buildId domainIds error {code}}
@@ -68,7 +68,7 @@ def test_status_read_on_missing_repository_does_not_create_artifacts(tmp_path):
 def test_trace_obligations_are_typed_and_scoped_to_the_published_activity(tmp_path):
     (tmp_path/'api.yaml').write_text(
         'openapi: 3.0.1\npaths:\n  /visits:\n    post:\n      operationId: addVisit\n')
-    model, _ = discover(tmp_path, provider=Provider())
+    model, _ = discover(tmp_path, provider=PassingProvider())
     query = '''query($id:ID!,$build:ID!) {
       domain(id:$id,expectedBuildId:$build) {domain {activities(first:1) {
         edges {node {traces {id obligationIds obligations {id traceId kind status reasonCode originRef {kind id}}}}}
@@ -84,8 +84,8 @@ def test_trace_obligations_are_typed_and_scoped_to_the_published_activity(tmp_pa
 def test_legacy_trace_without_new_optional_fields_remains_queryable(tmp_path):
     from lib.context.business_domains import paths
     from lib.context.business_domain_schema import atomic_write
-    source(tmp_path)
-    model, _ = discover(tmp_path, provider=Provider())
+    write_service(tmp_path)
+    model, _ = discover(tmp_path, provider=PassingProvider())
     model['schema_version'] = 1
     model.pop('trace_obligations')
     for trace in model['traces'].values():
@@ -113,7 +113,7 @@ def test_frontend_documents_match_the_real_schema():
 def test_domain_reasoning_pages_include_unknown_ownership_and_scoped_claims(tmp_path):
     from lib.context.business_domain_schema import record, atomic_write
     from lib.context.business_domains import paths
-    source(tmp_path); model,_ = discover(tmp_path,provider=Provider())
+    write_service(tmp_path); model,_ = discover(tmp_path,provider=PassingProvider())
     did = next(iter(model['domains'])); domain = model['domains'][did]
     concept = record('Concept',id='concept:purchase',name='Purchase request')
     model['concepts'][concept['id']] = concept; domain['concepts'] = [concept['id']]
@@ -143,7 +143,7 @@ def test_domain_reasoning_pages_include_unknown_ownership_and_scoped_claims(tmp_
 def test_unassigned_pages_preserve_reasons_and_reject_other_builds(tmp_path):
     from lib.context.business_domain_schema import record, atomic_write
     from lib.context.business_domains import paths
-    source(tmp_path); model,_ = discover(tmp_path,provider=Provider())
+    write_service(tmp_path); model,_ = discover(tmp_path,provider=PassingProvider())
     aid = next(iter(model['activities']))
     model['unassigned'] = [record('Unassigned',subject_id=aid,status=state,reason=reason)
         for state,reason in [('pending','Grouping budget reached'),('excluded','No business-purpose evidence')]]
