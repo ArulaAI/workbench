@@ -120,7 +120,19 @@ def _artifact(root: Path, feature_dir: Path, feature: str, kind: str) -> dict[st
     }
 
 
-def _next_action(artifacts: dict[str, dict[str, Any]], audit: dict | None) -> dict[str, str]:
+def _adr_candidates(feature_dir: Path) -> list[dict[str, Any]]:
+    """Every ADR candidate captured for this feature, across the PRD and RFC checkpoints."""
+    candidates: list[dict[str, Any]] = []
+    for kind in ("prd", "rfc"):
+        checkpoint = _read_json(feature_dir / f"authoring-{kind}.json")
+        if checkpoint:
+            candidates.extend(checkpoint.get("adr_candidates", []))
+    return candidates
+
+
+def _next_action(
+    artifacts: dict[str, dict[str, Any]], audit: dict | None, adr_unresolved_count: int
+) -> dict[str, str]:
     for kind in ARTIFACTS:
         item = artifacts[kind]
         if item["status"] != "published" or not item["hash_current"]:
@@ -142,10 +154,22 @@ def _next_action(artifacts: dict[str, dict[str, Any]], audit: dict | None) -> di
                 "reason": f"{artifacts[kind]['label']} is not ratified for its committed revision.",
                 "command": f"Open Review & commit for {artifacts[kind]['label']}",
             }
+    if adr_unresolved_count:
+        return {
+            "stage": "adr",
+            "reason": (
+                f"{adr_unresolved_count} ADR candidate(s) are open or stale and need a "
+                "confirm or reject decision."
+            ),
+            "command": "workbench draft <artifact> <feature> --adr-candidate-status-json <decision>",
+        }
     return {
-        "stage": "decisions-evaluation",
-        "reason": "Core artifacts are ready; ADR and evaluation gates are not implemented yet.",
-        "command": "Complete ADR and evaluation support before Plan",
+        "stage": "evaluation",
+        "reason": (
+            "Core artifacts, audit, ratification, and ADR candidates are resolved; "
+            "the evaluation-specification gate is not implemented yet."
+        ),
+        "command": "Complete evaluation-specification support before Plan",
     }
 
 
@@ -162,6 +186,14 @@ def _snapshot(root: Path, feature: str) -> dict[str, Any]:
         latest["stale"] = latest.get("inputs", {}).get("artifacts") != current_inputs
         if latest["stale"]:
             latest["status"] = "stale"
+    # A "stale" candidate needs the same reconciliation an "open" one does —
+    # its source answer changed after it was confirmed, so the recorded
+    # decision can no longer be trusted as-is. Both keep the gate blocked.
+    adr_unresolved_count = sum(
+        1 for candidate in _adr_candidates(feature_dir)
+        if candidate.get("status") in {"open", "stale"}
+    )
+    unsupported_gates = ["evaluation"] + (["adr"] if adr_unresolved_count else [])
     package = {
         "schema_version": 1,
         "feature_name": feature,
@@ -173,20 +205,17 @@ def _snapshot(root: Path, feature: str) -> dict[str, Any]:
         "discover_handoff": None,
         "artifacts": artifacts,
         "connected_audit": latest,
-        "unsupported_gates": ["adr", "evaluation"],
+        "unsupported_gates": unsupported_gates,
     }
-    next_action = _next_action(artifacts, latest)
+    next_action = _next_action(artifacts, latest, adr_unresolved_count)
     package["next_action"] = {
         **next_action,
         "command": next_action["command"].replace("<feature>", feature),
     }
-    package["plan_readiness"] = {
-        "status": "blocked",
-        "reasons": [
-            package["next_action"]["reason"],
-            "ADR and evaluation-specification gates are not implemented.",
-        ],
-    }
+    reasons = [package["next_action"]["reason"]]
+    if next_action["stage"] != "evaluation":
+        reasons.append("The evaluation-specification gate is not implemented.")
+    package["plan_readiness"] = {"status": "blocked", "reasons": reasons}
     return package
 
 
@@ -306,11 +335,17 @@ def _write_index(root: Path, package: dict[str, Any]) -> None:
             f"{item['published_revision'] if item['published_revision'] is not None else '—'} | "
             f"`{digest}` | {item['owner'] or 'Unassigned'} | {approval} |"
         )
+    gates = package.get("unsupported_gates") or []
+    gates_note = (
+        f"> Unsupported gate(s) remaining: {', '.join(gates)}. This package cannot yet be reported Plan-ready."
+        if gates
+        else "> Every gate this package tracks is resolved."
+    )
     lines.extend([
         "", "## Next action", "",
         package["next_action"]["reason"], "",
         f"`{package['next_action']['command']}`", "",
-        "> ADR and evaluation-specification stages remain explicit unsupported gates; this package cannot yet be reported Plan-ready.", "",
+        gates_note, "",
     ])
     path = root / "specs" / feature / "index.md"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -354,7 +389,7 @@ def audit(root: Path, feature: str) -> dict[str, Any]:
             "status": "blocked",
             "reasons": [
                 "Resolve every fail and warning finding." if findings else "Core audit passed.",
-                "ADR and evaluation-specification gates are not implemented.",
+                f"Unsupported gate(s) remaining: {', '.join(package['unsupported_gates'])}.",
                 "Final package ratification is not implemented.",
             ],
         },

@@ -276,6 +276,26 @@ def _run_rfc(project: Path, *args: str):
     return result, json.loads(result.stdout)
 
 
+def _run_adr(project: Path, candidate_id: str, *args: str):
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(HELPER),
+            "adr",
+            "add-due-date-to-task",
+            "--candidate-id",
+            candidate_id,
+            "--project-root",
+            str(project),
+            "--json",
+            *args,
+        ],
+        capture_output=True,
+        text=True,
+    )
+    return result, json.loads(result.stdout)
+
+
 DESCRIPTION = (
     "Team leads cannot see which tasks are overdue; due dates live in ticket "
     "titles today, so nothing can be sorted or alerted on."
@@ -428,6 +448,32 @@ def _complete_design(project: Path, *, publish: bool = False):
     assert payload["status"] == "drafted"
     if publish:
         result, payload = _run_design(
+            project,
+            "--publish",
+            "--expected-revision",
+            str(payload["revision"]),
+        )
+        assert result.returncode == 0, result.stderr
+    return payload
+
+
+def _complete_rfc(project: Path, *, publish: bool = False):
+    result, payload = _run_rfc(project)
+    assert result.returncode == 0, result.stderr
+    for answer in RFC_ANSWERS:
+        if payload["status"] in {"drafted", "drafted_with_open_questions"}:
+            break
+        result, payload = _run_rfc(
+            project,
+            "--answer",
+            answer,
+            "--expected-revision",
+            str(payload["revision"]),
+        )
+        assert result.returncode == 0, result.stderr
+    assert payload["status"] == "drafted"
+    if publish:
+        result, payload = _run_rfc(
             project,
             "--publish",
             "--expected-revision",
@@ -2710,3 +2756,373 @@ def test_list_reads_the_multiplayer_layout(tmp_path):
 
     assert [entry["feature_name"] for entry in payload["sessions"]] == ["task-due-dates"]
     assert ".speed/shared/features" in payload["message"]
+
+
+ADR_CANDIDATE = json.dumps({
+    "source_question_id": "P-Q8",
+    "title": "Store timezone alongside the due date",
+    "context": "Due dates need a deployment-independent source of truth for their timezone.",
+    "decision": "Persist the originating timezone on write instead of inferring it at read time.",
+    "alternatives_considered": ["Derive timezone from the request at read time"],
+    "consequences": "Adds one column; read-time derivation is no longer possible.",
+})
+ADR_ANSWERS = [
+    "Due date persistence needs a deployment-independent source of truth for "
+    "timezone; without it, a server config change silently changes displayed dates.",
+    "Persist the originating timezone as a stored column on write, instead of "
+    "deriving it from server context at read time.",
+    "Considered deriving timezone from the request at read time, but rejected it "
+    "because the display would then depend on which server handled the read.",
+    "Adds one non-nullable column to the tasks table and removes the option to "
+    "change timezone display purely through server configuration.",
+    "Governs REQ-1 in the linked PRD.",
+]
+
+
+def test_adr_candidate_ids_are_sequential_across_prd_and_rfc_checkpoints(tmp_path):
+    _publish_prd(tmp_path)
+    result, prd_payload = _run(
+        tmp_path,
+        "--adr-candidate-json",
+        ADR_CANDIDATE,
+        "--expected-revision",
+        str(_run(tmp_path, "--peek")[1]["revision"]),
+    )
+    assert result.returncode == 0, result.stderr
+    assert prd_payload["adr_candidates"][-1]["id"] == "ADRC-add-due-date-to-task-001"
+
+    _complete_design(tmp_path, publish=True)
+    rfc_start, rfc_payload = _run_rfc(tmp_path)
+    assert rfc_start.returncode == 0, rfc_start.stderr
+    rfc_candidate = json.loads(ADR_CANDIDATE)
+    rfc_candidate["source_question_id"] = "R-Q6"
+    result, rfc_payload = _run_rfc(
+        tmp_path,
+        "--adr-candidate-json",
+        json.dumps(rfc_candidate),
+        "--expected-revision",
+        str(rfc_payload["revision"]),
+    )
+    assert result.returncode == 0, result.stderr
+    assert rfc_payload["adr_candidates"][-1]["id"] == "ADRC-add-due-date-to-task-002"
+
+
+def test_adr_candidate_rejects_malformed_or_incomplete_payload(tmp_path):
+    payload = _complete_prd(tmp_path)
+
+    invalid_json, response = _run(
+        tmp_path, "--adr-candidate-json", "{ not json", "--expected-revision", str(payload["revision"])
+    )
+    assert invalid_json.returncode == 1
+    assert response["status"] == "error"
+
+    missing_field = json.dumps({"source_question_id": "P-Q8", "title": "x", "context": "y"})
+    incomplete, response = _run(
+        tmp_path, "--adr-candidate-json", missing_field, "--expected-revision", str(payload["revision"])
+    )
+    assert incomplete.returncode == 1
+    assert "decision" in response["message"]
+
+    _, peeked = _run(tmp_path, "--peek")
+    assert peeked["adr_candidates"] == []
+    assert peeked["revision"] == payload["revision"]
+
+
+def test_adr_candidate_status_transitions(tmp_path):
+    payload = _complete_prd(tmp_path)
+    result, payload = _run(
+        tmp_path, "--adr-candidate-json", ADR_CANDIDATE, "--expected-revision", str(payload["revision"])
+    )
+    assert result.returncode == 0, result.stderr
+    candidate_id = payload["adr_candidates"][-1]["id"]
+
+    confirm = json.dumps({"id": candidate_id, "status": "confirmed"})
+    result, payload = _run(
+        tmp_path, "--adr-candidate-status-json", confirm, "--expected-revision", str(payload["revision"])
+    )
+    assert result.returncode == 0, result.stderr
+    assert payload["adr_candidates"][-1]["status"] == "confirmed"
+
+    already_confirmed, response = _run(
+        tmp_path, "--adr-candidate-status-json", confirm, "--expected-revision", str(payload["revision"])
+    )
+    assert already_confirmed.returncode == 1
+    assert "Cannot move" in response["message"]
+
+    unknown_id = json.dumps({"id": "ADRC-add-due-date-to-task-999", "status": "rejected"})
+    unknown, response = _run(
+        tmp_path, "--adr-candidate-status-json", unknown_id, "--expected-revision", str(payload["revision"])
+    )
+    assert unknown.returncode == 1
+    assert "Unknown ADR candidate" in response["message"]
+
+
+def test_adr_promotion_requires_a_confirmed_candidate(tmp_path):
+    payload = _complete_prd(tmp_path)
+    result, payload = _run(
+        tmp_path, "--adr-candidate-json", ADR_CANDIDATE, "--expected-revision", str(payload["revision"])
+    )
+    candidate_id = payload["adr_candidates"][-1]["id"]
+
+    result, response = _run_adr(tmp_path, candidate_id)
+
+    assert result.returncode == 1
+    assert "must be confirmed" in response["message"]
+    assert not (
+        tmp_path / f".speed/features/add-due-date-to-task/adr/{candidate_id}/authoring-adr.json"
+    ).exists()
+
+
+def test_adr_promotion_drafts_a_scoped_artifact_and_flips_the_source_candidate(tmp_path):
+    payload = _complete_prd(tmp_path)
+    result, payload = _run(
+        tmp_path, "--adr-candidate-json", ADR_CANDIDATE, "--expected-revision", str(payload["revision"])
+    )
+    candidate_id = payload["adr_candidates"][-1]["id"]
+    confirm = json.dumps({"id": candidate_id, "status": "confirmed"})
+    result, payload = _run(
+        tmp_path, "--adr-candidate-status-json", confirm, "--expected-revision", str(payload["revision"])
+    )
+    assert result.returncode == 0, result.stderr
+
+    result, adr_payload = _run_adr(tmp_path, candidate_id)
+    assert result.returncode == 0, result.stderr
+    assert adr_payload["current_question"]["id"] == "A-Q1"
+    assert adr_payload["intake"]["title"] == "Store timezone alongside the due date"
+
+    prd_after_start = json.loads(
+        (tmp_path / ".speed/features/add-due-date-to-task/authoring-prd.json").read_text()
+    )
+    promoted_candidate = next(
+        c for c in prd_after_start["adr_candidates"] if c["id"] == candidate_id
+    )
+    assert promoted_candidate["status"] == "promoted"
+    assert promoted_candidate["promoted_to"] == f"specs/add-due-date-to-task/adr/{candidate_id}.md"
+
+    for revision, answer in enumerate(ADR_ANSWERS):
+        result, adr_payload = _run_adr(
+            tmp_path, candidate_id, "--answer", answer, "--expected-revision", str(revision)
+        )
+        assert result.returncode == 0, result.stderr
+
+    assert adr_payload["status"] == "drafted"
+    assert adr_payload["artifact_path"] == f"specs/add-due-date-to-task/adr/{candidate_id}.md"
+    content = (tmp_path / adr_payload["artifact_path"]).read_text()
+    assert f"**Candidate:** `{candidate_id}`" in content
+    assert "**Source question:** `P-Q8`" in content
+
+    result, published = _run_adr(
+        tmp_path, candidate_id, "--publish", "--expected-revision", str(adr_payload["revision"])
+    )
+    assert result.returncode == 0, result.stderr
+    assert published["status"] == "published"
+
+
+def test_v1_checkpoint_migrates_adr_candidates_default(tmp_path):
+    state_path = tmp_path / ".speed/features/add-due-date-to-task/authoring-prd.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text(json.dumps({
+        "schema_version": 1,
+        "feature_name": "add-due-date-to-task",
+        "artifact_type": "prd",
+        "question_bank_version": "prd-v1",
+        "status": "interviewing",
+        "revision": 1,
+        "created_at": "2026-01-01T00:00:00+00:00",
+        "updated_at": "2026-01-01T00:00:00+00:00",
+        "answers": {
+            "P-Q1": {
+                "state": "confirmed",
+                "answer": ANSWERS[0],
+                "confirmed_at": "2026-01-01T00:00:00+00:00",
+            }
+        },
+        "artifact": None,
+    }))
+
+    result, payload = _run(tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    migrated = json.loads(state_path.read_text())
+    assert migrated["adr_candidates"] == []
+
+
+def test_re_answering_a_confirmed_source_question_marks_the_candidate_stale(tmp_path):
+    payload = _complete_prd(tmp_path)
+    result, payload = _run(
+        tmp_path, "--adr-candidate-json", ADR_CANDIDATE, "--expected-revision", str(payload["revision"])
+    )
+    candidate_id = payload["adr_candidates"][-1]["id"]
+    confirm = json.dumps({"id": candidate_id, "status": "confirmed"})
+    result, payload = _run(
+        tmp_path, "--adr-candidate-status-json", confirm, "--expected-revision", str(payload["revision"])
+    )
+    assert result.returncode == 0, result.stderr
+
+    result, payload = _run(
+        tmp_path,
+        "--update-coverage",
+        "P-Q8",
+        "--answer",
+        ANSWER_BY_ID["P-Q8"] + " Ownership moves to the platform team after rollout.",
+        "--expected-revision",
+        str(payload["revision"]),
+    )
+    assert result.returncode == 0, result.stderr
+    assert payload["adr_candidates"][-1]["status"] == "stale"
+
+
+def test_self_review_flags_a_confirmed_answer_citing_an_unknown_adr_candidate(tmp_path):
+    payload = _complete_prd(tmp_path)
+
+    # P-Q8 may have been skipped as immaterial during the ordinary interview;
+    # a review edit reaches it regardless of whether it was originally asked.
+    result, payload = _run(
+        tmp_path,
+        "--update-coverage",
+        "P-Q8",
+        "--answer",
+        ANSWER_BY_ID["P-Q8"] + " See ADRC-add-due-date-to-task-999 for the rationale.",
+        "--expected-revision",
+        str(payload["revision"]),
+    )
+    assert result.returncode == 0, result.stderr
+
+    assert payload["status"] == "review_repair"
+    assert any(
+        finding["kind"] == "unknown_adr_candidate" and finding["question_id"] == "P-Q8"
+        for finding in payload["self_review"]["findings"]
+    )
+
+
+def test_drafting_a_prd_does_not_pollute_the_package_index_with_an_adr_row(tmp_path):
+    # Regression test: _ensure_define_compatibility's package-index loop once
+    # iterated draft.py's own ARTIFACTS dict directly, which includes "adr" —
+    # so every PRD draft, even with zero ADR candidates, produced a bogus
+    # "ADR | Missing" row and reintroduced the old hardcoded gate text.
+    payload = _complete_prd(tmp_path)
+
+    index = (tmp_path / "specs/add-due-date-to-task/index.md").read_text()
+
+    assert "ADR" not in index
+    assert "| [PRD](prd.md) |" in index
+    assert "| [Design](design.md) |" in index
+    assert "| [Technical RFC](rfc.md) |" in index
+    assert "The evaluation-specification gate is not implemented" in index
+
+
+def test_peek_reflects_an_in_progress_adr_interview(tmp_path):
+    # Regression test: peek_once built its checkpoint path without the
+    # candidate-id-aware logic run_once uses, so it always looked at
+    # authoring-adr.json directly under the feature dir (which never exists)
+    # and reported "not_started" for a real, in-progress ADR interview.
+    payload = _complete_prd(tmp_path)
+    result, payload = _run(
+        tmp_path, "--adr-candidate-json", ADR_CANDIDATE, "--expected-revision", str(payload["revision"])
+    )
+    candidate_id = payload["adr_candidates"][-1]["id"]
+    confirm = json.dumps({"id": candidate_id, "status": "confirmed"})
+    result, payload = _run(
+        tmp_path, "--adr-candidate-status-json", confirm, "--expected-revision", str(payload["revision"])
+    )
+    result, adr_payload = _run_adr(tmp_path, candidate_id)
+    assert result.returncode == 0, result.stderr
+
+    result, peeked = _run_adr(tmp_path, candidate_id, "--peek")
+
+    assert result.returncode == 0, result.stderr
+    assert peeked["status"] != "not_started"
+    assert peeked["current_question"]["id"] == "A-Q1"
+    assert peeked["revision"] == adr_payload["revision"]
+
+
+def test_stale_adr_candidate_can_be_re_confirmed_and_clears_stale_reason(tmp_path):
+    # Regression test: the confirm/reject transition map only accepted "open"
+    # as a starting status, so a candidate marked stale by a changed source
+    # answer could never be re-confirmed or re-rejected again.
+    payload = _complete_prd(tmp_path)
+    result, payload = _run(
+        tmp_path, "--adr-candidate-json", ADR_CANDIDATE, "--expected-revision", str(payload["revision"])
+    )
+    candidate_id = payload["adr_candidates"][-1]["id"]
+    confirm = json.dumps({"id": candidate_id, "status": "confirmed"})
+    result, payload = _run(
+        tmp_path, "--adr-candidate-status-json", confirm, "--expected-revision", str(payload["revision"])
+    )
+
+    result, payload = _run(
+        tmp_path,
+        "--update-coverage",
+        "P-Q8",
+        "--answer",
+        ANSWER_BY_ID["P-Q8"] + " Ownership moves to the platform team after rollout.",
+        "--expected-revision",
+        str(payload["revision"]),
+    )
+    assert payload["adr_candidates"][-1]["status"] == "stale"
+    assert payload["adr_candidates"][-1]["stale_reason"]
+
+    reconfirm = json.dumps({"id": candidate_id, "status": "confirmed"})
+    result, payload = _run(
+        tmp_path, "--adr-candidate-status-json", reconfirm, "--expected-revision", str(payload["revision"])
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert payload["adr_candidates"][-1]["status"] == "confirmed"
+    assert "stale_reason" not in payload["adr_candidates"][-1]
+
+
+def test_self_review_accepts_an_adrc_reference_captured_on_a_sibling_checkpoint(tmp_path):
+    # Regression test: the known-id set for the unknown-ADRC self-review check
+    # only looked at the current checkpoint's own adr_candidates, so an RFC
+    # answer legitimately citing a candidate captured during the PRD
+    # interview (a completely normal thing to do, since RFC is downstream of
+    # PRD) was wrongly flagged as an unknown reference.
+    payload = _publish_prd(tmp_path)
+    result, payload = _run(
+        tmp_path, "--adr-candidate-json", ADR_CANDIDATE, "--expected-revision", str(payload["revision"])
+    )
+    candidate_id = payload["adr_candidates"][-1]["id"]
+    result, payload = _run(tmp_path, "--publish", "--expected-revision", str(payload["revision"]))
+    assert result.returncode == 0, result.stderr
+
+    _complete_design(tmp_path, publish=True)
+
+    rfc_answers = list(RFC_ANSWERS)
+    rfc_answers[5] = f"As decided in {candidate_id}, {rfc_answers[5]}"
+    result, payload = _run_rfc(tmp_path)
+    for revision, answer in enumerate(rfc_answers):
+        result, payload = _run_rfc(
+            tmp_path, "--answer", answer, "--expected-revision", str(revision)
+        )
+        assert result.returncode == 0, result.stderr
+
+    assert payload["status"] == "drafted"
+    assert payload["self_review"]["findings"] == []
+
+
+def test_find_confirmed_adr_candidate_never_writes(tmp_path):
+    # Regression test: promotion used to validate and write in one step, so a
+    # failure later in the same call could leave the source candidate marked
+    # "promoted" with no ADR checkpoint behind it. Lookup/validation must be
+    # read-only; only _commit_adr_promotion, called once the new checkpoint
+    # is about to be written, may mutate the source checkpoint.
+    payload = _complete_prd(tmp_path)
+    result, payload = _run(
+        tmp_path, "--adr-candidate-json", ADR_CANDIDATE, "--expected-revision", str(payload["revision"])
+    )
+    candidate_id = payload["adr_candidates"][-1]["id"]
+    confirm = json.dumps({"id": candidate_id, "status": "confirmed"})
+    _run(tmp_path, "--adr-candidate-status-json", confirm, "--expected-revision", str(payload["revision"]))
+
+    state_path = tmp_path / ".speed/features/add-due-date-to-task/authoring-prd.json"
+    before = state_path.read_bytes()
+
+    helper = runpy.run_path(str(HELPER))
+    candidate, checkpoint_path, checkpoint = helper["_find_confirmed_adr_candidate"](
+        tmp_path, "add-due-date-to-task", candidate_id
+    )
+
+    assert candidate["status"] == "confirmed"
+    assert state_path.read_bytes() == before
+    assert json.loads(before)["adr_candidates"][-1]["status"] == "confirmed"

@@ -1,0 +1,65 @@
+{
+  "version": "adr-v1",
+  "questions": [
+    {
+      "id": "A-Q1",
+      "prompt": "What forced this decision, and what would have happened if nothing changed?",
+      "evidence": "The captured candidate's context, and the PRD or RFC answer it was raised from",
+      "purpose": "Ground the ADR in the concrete pressure that made a decision necessary.",
+      "completion_evidence": "States the forcing constraint or problem, not just the topic area.",
+      "quality": {
+        "min_chars": 40,
+        "follow_up_prompt": "Add the concrete constraint or problem that forced this decision."
+      },
+      "sections": ["Context"]
+    },
+    {
+      "id": "A-Q2",
+      "prompt": "What was decided, stated as a concrete, checkable choice?",
+      "evidence": "The captured candidate's decision text",
+      "purpose": "Record the decision itself in a form someone can verify was followed.",
+      "completion_evidence": "States a specific choice, not a goal or a direction to explore.",
+      "quality": {
+        "min_chars": 20,
+        "follow_up_prompt": "State the specific choice that was made."
+      },
+      "sections": ["Decision"]
+    },
+    {
+      "id": "A-Q3",
+      "prompt": "What alternatives were considered, and why were they rejected?",
+      "evidence": "The captured candidate's alternatives_considered list",
+      "purpose": "Preserve the reasoning that ruled out other options, so it isn't re-litigated later without cause.",
+      "completion_evidence": "Names at least one real alternative and the reason it was not chosen.",
+      "quality": {
+        "min_chars": 20,
+        "follow_up_prompt": "Name an alternative that was considered and why it was rejected."
+      },
+      "sections": ["Alternatives Considered"]
+    },
+    {
+      "id": "A-Q4",
+      "prompt": "What does this decision cost, and what does it rule out going forward?",
+      "evidence": "The captured candidate's consequences, and any dependent requirements",
+      "purpose": "Make the trade-off explicit instead of presenting the decision as free.",
+      "completion_evidence": "States a real trade-off, constraint, or follow-up obligation this decision creates.",
+      "quality": {
+        "min_chars": 20,
+        "follow_up_prompt": "Add a concrete consequence or constraint this decision creates."
+      },
+      "sections": ["Consequences"]
+    },
+    {
+      "id": "A-Q5",
+      "prompt": "Which product or technical requirements does this decision affect?",
+      "evidence": "The source PRD or RFC's requirement and section identifiers",
+      "purpose": "Keep the ADR traceable to the specific obligations it governs.",
+      "completion_evidence": "Names at least one requirement, section, or explicitly states none apply yet.",
+      "quality": {
+        "min_chars": 10,
+        "follow_up_prompt": "Name the requirement or section this decision governs, or state that none apply yet."
+      },
+      "sections": ["Related Requirements"]
+    }
+  ]
+}

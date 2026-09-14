@@ -65,7 +65,23 @@ ARTIFACTS = {
             "Unresolved Questions",
         ],
     },
+    "adr": {
+        "label": "ADR",
+        "persona": "Engineering",
+        "question_bank": "adr-questions.json",
+        "sections": [
+            "Context", "Decision", "Alternatives Considered", "Consequences",
+            "Status", "Related Requirements",
+        ],
+    },
 }
+
+# The artifacts that make up one Define ceremony package (claim, commit,
+# ratification, one row in specs/<feature>/index.md). An ADR is scoped to one
+# candidate, not one per feature, so it never joins the package the way
+# prd/design/rfc do — iterating ARTIFACTS itself here would treat "adr" as a
+# fourth package member and read a checkpoint path that doesn't exist.
+_PACKAGE_ARTIFACTS = ("prd", "design", "rfc")
 
 
 class DraftError(RuntimeError):
@@ -100,6 +116,24 @@ def _feature_dir(project_root: Path, feature: str) -> Path:
 
 def _feature_dir_display(project_root: Path, feature: str) -> str:
     return _feature_dir(project_root, feature).relative_to(project_root).as_posix()
+
+
+def _checkpoint_path(
+    project_root: Path, feature: str, artifact_type: str, candidate_id: str | None
+) -> Path:
+    """Where one interview's state lives.
+
+    Every artifact type is one file per feature except `adr`, which is scoped
+    to one candidate — a feature can have many. Both callers that resolve a
+    checkpoint path (`run_once`, `peek_once`) go through this so the two never
+    drift apart on how an ADR path is built.
+    """
+    feature_dir = _feature_dir(project_root, feature)
+    if artifact_type == "adr":
+        if not candidate_id:
+            raise DraftError("--candidate-id is required when the artifact type is 'adr'.")
+        return feature_dir / "adr" / candidate_id / "authoring-adr.json"
+    return feature_dir / f"authoring-{artifact_type}.json"
 
 
 def _slugify(title: str) -> str:
@@ -1315,6 +1349,7 @@ def _new_state(
     upstream: dict[str, dict[str, Any]] | None = None,
     feature_description: str | None = None,
     feature_title: str | None = None,
+    candidate_id: str | None = None,
 ) -> dict[str, Any]:
     now = _now()
     intake: dict[str, Any] = {}
@@ -1357,6 +1392,8 @@ def _new_state(
         "artifact": None,
         "upstream": upstream or {},
         "intake": intake,
+        "adr_candidates": [],
+        "candidate_id": candidate_id,
         "planning": {
             "mode": "fallback",
             "planner_version": None,
@@ -1417,6 +1454,8 @@ def _migrate_state(state: dict[str, Any]) -> dict[str, Any]:
     state.setdefault("artifact_versions", [])
     state.setdefault("published_revision", None)
     state.setdefault("publish_history", [])
+    state.setdefault("adr_candidates", [])
+    state.setdefault("candidate_id", None)
     state.setdefault("self_review", {
         "pass_count": 0,
         "max_passes": 2,
@@ -2402,13 +2441,20 @@ def _render_artifact(feature: str, state: dict[str, Any], bank: dict[str, Any]) 
                 "> The technical contract must implement both the published Product "
                 "and Design obligations without silently redefining either."
             )
-    else:
+    elif artifact_type == "adr":
+        intake = state.get("intake") or {}
         header += (
-            "\n\n> This document maps confirmed interview answers into the PRD template. "
-            "Workbench has not invented or expanded the product decisions."
+            f"  \n**Candidate:** `{state.get('candidate_id')}`  \n"
+            f"**Source question:** `{intake.get('source_question_id')}`\n\n"
+            "> This ADR records one decision confirmed during drafting. "
+            "Workbench has not invented or expanded the recorded reasoning."
         )
     sections = [
-        _render_section(title, bank, confirmed)
+        (
+            f"## Status\n\nPromoted from candidate `{state.get('candidate_id')}`."
+            if artifact_type == "adr" and title == "Status"
+            else _render_section(title, bank, confirmed)
+        )
         for title in ARTIFACTS[artifact_type]["sections"]
     ]
     return header + "\n\n" + "\n\n".join(sections) + "\n"
@@ -2526,7 +2572,7 @@ def _ensure_define_compatibility(
     current_hashes: dict[str, str] = {}
     rows: list[str] = []
     next_stage: str | None = None
-    for kind in ARTIFACTS:
+    for kind in _PACKAGE_ARTIFACTS:
         item_state = state if kind == artifact_type else (
             _read_json(feature_dir / f"authoring-{kind}.json") or {}
         )
@@ -2560,8 +2606,12 @@ def _ensure_define_compatibility(
         if next_stage
         else "Run `workbench audit " + feature + "`."
         if latest_audit.get("status") != "passed"
-        else "Complete artifact ratification, then the unsupported ADR and evaluation gates."
+        else "Complete artifact ratification, then the unsupported evaluation gate."
     )
+    # ADR candidate status isn't modeled here — this writer only tracks the
+    # prd/design/rfc package. `workbench define` (a separate skill) owns the
+    # real, computed adr/evaluation gate status; duplicating that check here
+    # would drift out of sync with it, so this note only names evaluation.
     index_content = (
         f"# Define Package: {feature}\n\n"
         "**Plan readiness:** Blocked  \n"
@@ -2572,7 +2622,7 @@ def _ensure_define_compatibility(
         + "\n".join(rows)
         + "\n\n## Next action\n\n"
         + next_text
-        + "\n\n> ADR and evaluation-specification stages remain explicit unsupported gates; "
+        + "\n\n> The evaluation-specification gate is not implemented; "
         "this package cannot yet be reported Plan-ready.\n"
     )
     _atomic_write(project_root / "specs" / feature / "index.md", index_content)
@@ -2603,7 +2653,11 @@ def _generate(
         _validate_pinned_upstream(
             state, "design", _design_upstream(project_root, feature)
         )
-    artifact_path = f"specs/{feature}/{artifact_type}.md"
+    artifact_path = (
+        f"specs/{feature}/adr/{state['candidate_id']}.md"
+        if artifact_type == "adr"
+        else f"specs/{feature}/{artifact_type}.md"
+    )
     dashboard_url = f"{dashboard_base.rstrip('/')}/define/{feature}"
     if _snapshot_current_artifact(project_root, state):
         state["revision"] += 1
@@ -2612,9 +2666,13 @@ def _generate(
     artifact_file = project_root / artifact_path
     _atomic_write(artifact_file, content)
     state["status"] = "drafted"
-    _ensure_define_compatibility(
-        project_root, feature, state, content, artifact_path, dashboard_url
-    )
+    # ADR artifacts are scoped to one candidate, not one per feature, so they
+    # never join the ceremony package (claim/commit/ratification, one row in
+    # specs/<feature>/index.md) the way PRD/Design/RFC do.
+    if artifact_type != "adr":
+        _ensure_define_compatibility(
+            project_root, feature, state, content, artifact_path, dashboard_url
+        )
     state["artifact"] = {
         "path": artifact_path,
         "authoring_url": f"{dashboard_url}/authoring/{artifact_type}",
@@ -2734,14 +2792,15 @@ def _publish_artifact(
     dashboard_url = artifact.get("dashboard_url")
     if not dashboard_url:
         dashboard_url = f"http://localhost:3000/define/{state['feature_name']}"
-    _ensure_define_compatibility(
-        project_root,
-        state["feature_name"],
-        state,
-        content,
-        artifact_path,
-        dashboard_url,
-    )
+    if state["artifact_type"] != "adr":
+        _ensure_define_compatibility(
+            project_root,
+            state["feature_name"],
+            state,
+            content,
+            artifact_path,
+            dashboard_url,
+        )
 
 
 def _artifact_quality_findings(
@@ -2843,6 +2902,14 @@ def _self_review(
     artifact_path = project_root / state["artifact"]["path"]
     content = artifact_path.read_text(encoding="utf-8")
     findings: list[dict[str, Any]] = []
+    # A candidate captured in the PRD is a legitimate thing for an RFC answer
+    # to cite (RFC is downstream of PRD), and vice versa, so the known-id set
+    # spans both checkpoints rather than just this one.
+    known_adr_ids = (
+        {candidate["id"] for candidate in _adr_candidate_records(project_root, feature)}
+        if state["artifact_type"] in {"prd", "rfc"}
+        else set()
+    )
 
     for question in bank["questions"]:
         record = state["answers"].get(question["id"], {})
@@ -2863,6 +2930,16 @@ def _self_review(
                 "message": "Confirmed answer contains a placeholder or unresolved marker.",
                 "blocking": True,
             })
+        if state["artifact_type"] in {"prd", "rfc"}:
+            for referenced_id in re.findall(r"\bADRC-[a-z0-9-]+-\d{3}\b", answer):
+                if referenced_id not in known_adr_ids:
+                    findings.append({
+                        "id": f"unknown-adrc-{question['id'].lower()}-{referenced_id.lower()}",
+                        "kind": "unknown_adr_candidate",
+                        "question_id": question["id"],
+                        "message": f"Answer references {referenced_id}, which has no captured ADR candidate.",
+                        "blocking": True,
+                    })
 
     required_headings = (
         _applicable_prd_sections(state)
@@ -2891,14 +2968,15 @@ def _self_review(
     if not findings:
         review["status"] = "passed"
         state["status"] = "drafted"
-        _ensure_define_compatibility(
-            project_root,
-            feature,
-            state,
-            content,
-            state["artifact"]["path"],
-            state["artifact"]["dashboard_url"],
-        )
+        if state["artifact_type"] != "adr":
+            _ensure_define_compatibility(
+                project_root,
+                feature,
+                state,
+                content,
+                state["artifact"]["path"],
+                state["artifact"]["dashboard_url"],
+            )
         return
 
     review["status"] = "needs_repair"
@@ -2910,14 +2988,15 @@ def _self_review(
             record["state"] = "stale"
             record["stale_reason"] = "self_review"
     state["status"] = "review_repair"
-    _ensure_define_compatibility(
-        project_root,
-        feature,
-        state,
-        content,
-        state["artifact"]["path"],
-        state["artifact"]["dashboard_url"],
-    )
+    if state["artifact_type"] != "adr":
+        _ensure_define_compatibility(
+            project_root,
+            feature,
+            state,
+            content,
+            state["artifact"]["path"],
+            state["artifact"]["dashboard_url"],
+        )
 
 
 def _artifact_version_ordinal(
@@ -3112,6 +3191,7 @@ def _result(state: dict[str, Any], bank: dict[str, Any]) -> dict[str, Any]:
         "coverage": state.get("coverage", {}),
         "sections": _artifact_sections(state, bank),
         "intake": state.get("intake", {}),
+        "adr_candidates": state.get("adr_candidates", []),
         "interview": interview,
         "feature_title": _display_name(state["feature_name"], state),
         "draft_available": draft_ready,
@@ -3441,6 +3521,7 @@ def _apply_response(
             str(record.get("coverage_id") or question["id"]),
             state["revision"] + 1,
         )
+        _mark_adr_candidates_stale(state, question["id"], state["revision"] + 1)
     state["decision_history"].append({
         "question_id": question["id"],
         "suggestion_id": suggestion["id"],
@@ -3563,6 +3644,7 @@ def _apply_coverage_update(
         question_id,
         state["revision"] + 1,
     )
+    _mark_adr_candidates_stale(state, question_id, state["revision"] + 1)
     state["decision_history"].append({
         "question_id": question_id,
         "suggestion_id": None,
@@ -3957,6 +4039,228 @@ def _apply_review_comment(
     state["updated_at"] = _now()
 
 
+_ADR_CANDIDATE_REQUIRED_FIELDS = ("title", "context", "decision")
+# The legal starting statuses for each destination. "stale" is included
+# alongside "open" so a candidate whose source answer changed can be
+# reviewed and re-confirmed or rejected directly, instead of being stuck
+# with no way back into the confirm/reject flow.
+_ADR_CANDIDATE_TRANSITIONS = {
+    "confirmed": {"open", "stale"},
+    "rejected": {"open", "stale"},
+}
+
+
+def _adr_candidate_records(project_root: Path, feature: str) -> list[dict[str, Any]]:
+    """Every ADR candidate captured for this feature, across every checkpoint that can hold one."""
+    records: list[dict[str, Any]] = []
+    feature_dir = _feature_dir(project_root, feature)
+    for artifact_type in ("prd", "rfc"):
+        checkpoint = _read_json(feature_dir / f"authoring-{artifact_type}.json")
+        if checkpoint:
+            records.extend(checkpoint.get("adr_candidates", []))
+    return records
+
+
+def _find_confirmed_adr_candidate(
+    project_root: Path, feature: str, candidate_id: str
+) -> tuple[dict[str, Any], Path, dict[str, Any]]:
+    """Locate a candidate on its source checkpoint and require it to be confirmed.
+
+    Read-only. Promotion is committed separately (`_commit_adr_promotion`),
+    only once the new ADR checkpoint has been fully constructed and is about
+    to be written — so a failure anywhere in between (validation, an
+    incompatible flag on the same call) can never leave the source candidate
+    marked "promoted" with no ADR checkpoint behind it.
+    """
+    feature_dir = _feature_dir(project_root, feature)
+    for artifact_type in ("prd", "rfc"):
+        checkpoint_path = feature_dir / f"authoring-{artifact_type}.json"
+        checkpoint = _read_json(checkpoint_path)
+        if not checkpoint:
+            continue
+        candidate = next(
+            (c for c in checkpoint.get("adr_candidates", []) if c.get("id") == candidate_id),
+            None,
+        )
+        if candidate is None:
+            continue
+        if candidate.get("status") != "confirmed":
+            raise DraftError(
+                f"ADR candidate {candidate_id} must be confirmed before drafting "
+                f"(current status: {candidate.get('status')})."
+            )
+        return candidate, checkpoint_path, checkpoint
+    raise DraftError(f"Unknown ADR candidate id: {candidate_id}")
+
+
+def _commit_adr_promotion(
+    checkpoint_path: Path, checkpoint: dict[str, Any], candidate_id: str, artifact_path: str
+) -> None:
+    """Mark a candidate promoted on its source checkpoint, once its ADR checkpoint is about to exist."""
+    candidate = next(
+        (c for c in checkpoint.get("adr_candidates", []) if c.get("id") == candidate_id), None
+    )
+    if candidate is None:
+        raise DraftError(f"Unknown ADR candidate id: {candidate_id}")
+    candidate["status"] = "promoted"
+    candidate["promoted_to"] = artifact_path
+    candidate["updated_at"] = _now()
+    _write_json(checkpoint_path, checkpoint)
+
+
+def _next_adr_candidate_id(project_root: Path, feature: str, state: dict[str, Any]) -> str:
+    """Assign the next sequential ADRC id, checked across every checkpoint that can capture one.
+
+    PRD and RFC each capture candidates into their own checkpoint file, so the
+    id sequence cannot be derived from either file alone without risking two
+    checkpoints assigning the same number to their first candidate.
+    """
+    prefix = f"ADRC-{feature}-"
+    seq = 0
+    for record in [*state.get("adr_candidates", []), *_adr_candidate_records(project_root, feature)]:
+        candidate_id = str(record.get("id") or "")
+        suffix = candidate_id[len(prefix):] if candidate_id.startswith(prefix) else ""
+        if suffix.isdigit():
+            seq = max(seq, int(suffix))
+    return f"{prefix}{seq + 1:03d}"
+
+
+def _mark_adr_candidates_stale(state: dict[str, Any], question_id: str, changed_revision: int) -> None:
+    """Flag confirmed candidates whose source answer just changed underneath them."""
+    for candidate in state.get("adr_candidates", []):
+        if candidate.get("source_question_id") == question_id and candidate.get("status") == "confirmed":
+            candidate["status"] = "stale"
+            candidate["stale_reason"] = f"Source answer {question_id} changed"
+            candidate["source_answer_changed_revision"] = changed_revision
+            candidate["updated_at"] = _now()
+
+
+def _apply_adr_candidate(
+    project_root: Path,
+    feature: str,
+    state: dict[str, Any],
+    bank: dict[str, Any],
+    candidate_json: str,
+    expected_revision: int | None,
+    actor: tuple[str, str],
+) -> None:
+    """Persist one ADR candidate captured alongside a confirmed decision-worthy answer."""
+    if expected_revision is not None and expected_revision != state["revision"]:
+        raise RevisionConflict(
+            f"Expected interview revision {expected_revision}, found {state['revision']}. "
+            "Reload before capturing the candidate."
+        )
+    try:
+        submitted = json.loads(candidate_json)
+    except json.JSONDecodeError as exc:
+        raise DraftError("The ADR candidate must be valid JSON.") from exc
+    if not isinstance(submitted, dict):
+        raise DraftError("The ADR candidate must be a JSON object.")
+
+    question_id = str(submitted.get("source_question_id") or "").strip()
+    if question_id not in {question["id"] for question in bank["questions"]}:
+        raise DraftError(f"Unknown source question for ADR candidate: {question_id or '(missing)'}")
+
+    fields: dict[str, str] = {}
+    for key in _ADR_CANDIDATE_REQUIRED_FIELDS:
+        value = str(submitted.get(key) or "").strip()
+        if not value:
+            raise DraftError(f"ADR candidate requires a non-empty '{key}'.")
+        fields[key] = value
+
+    alternatives = submitted.get("alternatives_considered") or []
+    if not isinstance(alternatives, list) or not all(isinstance(item, str) for item in alternatives):
+        raise DraftError("'alternatives_considered' must be a list of strings.")
+
+    actor_name, actor_email = actor
+    next_revision = state["revision"] + 1
+    candidate = {
+        "id": _next_adr_candidate_id(project_root, feature, state),
+        "source_question_id": question_id,
+        "status": "open",
+        "title": fields["title"],
+        "context": fields["context"],
+        "decision": fields["decision"],
+        "alternatives_considered": list(alternatives),
+        "consequences": str(submitted.get("consequences") or "").strip(),
+        "promoted_to": None,
+        "actor": actor_name,
+        "actor_email": actor_email,
+        "created_at": _now(),
+        "updated_at": _now(),
+    }
+    state["adr_candidates"].append(candidate)
+    state["decision_history"].append({
+        "question_id": question_id,
+        "suggestion_id": None,
+        "action": "adr_candidate_captured",
+        "answer": candidate["id"],
+        "actor": actor_name,
+        "actor_email": actor_email,
+        "at": _now(),
+        "revision": next_revision,
+    })
+    state["revision"] = next_revision
+    state["updated_at"] = _now()
+
+
+def _apply_adr_candidate_status(
+    state: dict[str, Any],
+    status_json: str,
+    expected_revision: int | None,
+    actor: tuple[str, str],
+) -> None:
+    """Confirm or reject a captured ADR candidate. Promotion happens by starting its ADR interview."""
+    if expected_revision is not None and expected_revision != state["revision"]:
+        raise RevisionConflict(
+            f"Expected interview revision {expected_revision}, found {state['revision']}. "
+            "Reload before updating the candidate."
+        )
+    try:
+        submitted = json.loads(status_json)
+    except json.JSONDecodeError as exc:
+        raise DraftError("The ADR candidate status update must be valid JSON.") from exc
+    if not isinstance(submitted, dict):
+        raise DraftError("The ADR candidate status update must be a JSON object.")
+
+    candidate_id = str(submitted.get("id") or "").strip()
+    new_status = str(submitted.get("status") or "").strip()
+    if new_status not in _ADR_CANDIDATE_TRANSITIONS:
+        raise DraftError(f"Unsupported ADR candidate status: {new_status or '(missing)'}")
+    candidate = next(
+        (item for item in state["adr_candidates"] if item.get("id") == candidate_id), None
+    )
+    if candidate is None:
+        raise DraftError(f"Unknown ADR candidate id: {candidate_id or '(missing)'}")
+    allowed_statuses = _ADR_CANDIDATE_TRANSITIONS[new_status]
+    if candidate.get("status") not in allowed_statuses:
+        raise DraftError(
+            f"Cannot move ADR candidate {candidate_id} from "
+            f"'{candidate.get('status')}' to '{new_status}'."
+        )
+
+    actor_name, actor_email = actor
+    next_revision = state["revision"] + 1
+    was_stale = candidate.get("status") == "stale"
+    candidate["status"] = new_status
+    candidate["updated_at"] = _now()
+    if was_stale:
+        candidate.pop("stale_reason", None)
+        candidate.pop("source_answer_changed_revision", None)
+    state["decision_history"].append({
+        "question_id": candidate.get("source_question_id"),
+        "suggestion_id": None,
+        "action": f"adr_candidate_{new_status}",
+        "answer": candidate_id,
+        "actor": actor_name,
+        "actor_email": actor_email,
+        "at": _now(),
+        "revision": next_revision,
+    })
+    state["revision"] = next_revision
+    state["updated_at"] = _now()
+
+
 def _apply_batch_answers(
     project_root: Path,
     feature: str,
@@ -4031,10 +4335,17 @@ def run_once(args: argparse.Namespace) -> dict[str, Any]:
         raise DraftError("--feature-description is supported only when starting a PRD.")
     if artifact_type != "prd" and feature_title:
         raise DraftError("--feature-title is supported only when starting a PRD.")
+    candidate_id = getattr(args, "candidate_id", None)
+    if artifact_type != "adr" and candidate_id:
+        raise DraftError("--candidate-id is supported only when the artifact type is 'adr'.")
     bank = _load_question_bank(artifact_type)
     feature_dir = _feature_dir(project_root, feature)
-    state_path = feature_dir / f"authoring-{artifact_type}.json"
+    state_path = _checkpoint_path(project_root, feature, artifact_type, candidate_id)
 
+    # ADR checkpoints are locked under the same per-feature lock as PRD/Design/
+    # RFC: the id allocator and the promotion check both read across those
+    # sibling checkpoints, so one lock per feature (not per artifact type)
+    # keeps that cross-checkpoint read consistent.
     with _feature_lock(feature_dir):
         upstream = (
             {"prd": _prd_upstream(project_root, feature)}
@@ -4101,17 +4412,35 @@ def run_once(args: argparse.Namespace) -> dict[str, Any]:
                 raise DraftError(
                     "--feature-description cannot replace existing interview evidence or progress."
                 )
-        state = _migrate_state(
-            persisted
-            or _new_state(
-                feature,
-                artifact_type,
-                bank,
-                upstream,
-                feature_description,
-                feature_title,
+        pending_promotion: tuple[Path, dict[str, Any]] | None = None
+        if persisted is not None:
+            state = _migrate_state(persisted)
+        elif artifact_type == "adr":
+            # A brand new ADR checkpoint always drafts one already-confirmed
+            # candidate; there is no blank-slate "adr" interview. The
+            # candidate isn't marked promoted yet — that commits only once
+            # this checkpoint is about to be written, below.
+            source_candidate, promotion_checkpoint_path, promotion_checkpoint = (
+                _find_confirmed_adr_candidate(project_root, feature, candidate_id)
             )
-        )
+            pending_promotion = (promotion_checkpoint_path, promotion_checkpoint)
+            state = _migrate_state(
+                _new_state(feature, artifact_type, bank, upstream, candidate_id=candidate_id)
+            )
+            state["intake"] = {
+                "source_candidate_id": candidate_id,
+                "source_question_id": source_candidate.get("source_question_id"),
+                "title": source_candidate.get("title"),
+                "context": source_candidate.get("context"),
+                "decision": source_candidate.get("decision"),
+                "alternatives_considered": source_candidate.get("alternatives_considered"),
+                "consequences": source_candidate.get("consequences"),
+                "captured_at": _now(),
+            }
+        else:
+            state = _migrate_state(
+                _new_state(feature, artifact_type, bank, upstream, feature_description, feature_title)
+            )
         _validate_state(state, feature, artifact_type, bank)
         if upstream:
             for upstream_type, current_upstream in upstream.items():
@@ -4229,6 +4558,23 @@ def run_once(args: argparse.Namespace) -> dict[str, Any]:
                 args.question_id,
             )
             _ensure_current_suggestion(project_root, feature, state, bank)
+        elif args.adr_candidate_json:
+            _apply_adr_candidate(
+                project_root,
+                feature,
+                state,
+                bank,
+                args.adr_candidate_json,
+                args.expected_revision,
+                _actor(project_root),
+            )
+        elif args.adr_candidate_status_json:
+            _apply_adr_candidate_status(
+                state,
+                args.adr_candidate_status_json,
+                args.expected_revision,
+                _actor(project_root),
+            )
         pending = _pending_questions(state, bank)
         if (
             not args.hold_generation
@@ -4237,16 +4583,31 @@ def run_once(args: argparse.Namespace) -> dict[str, Any]:
         ):
             _generate(project_root, feature, state, bank, args.dashboard_url)
             _self_review(project_root, feature, state, bank)
+        if pending_promotion is not None:
+            promotion_checkpoint_path, promotion_checkpoint = pending_promotion
+            _commit_adr_promotion(
+                promotion_checkpoint_path,
+                promotion_checkpoint,
+                candidate_id,
+                f"specs/{feature}/adr/{candidate_id}.md",
+            )
         _write_json(state_path, state)
         return _result(state, bank)
 
 
 def _session_summary(project_root: Path, state_path: Path) -> dict[str, Any] | None:
     """Summarize one persisted checkpoint. Reads evidence, writes nothing."""
-    feature = state_path.parent.name
+    # An ADR checkpoint is nested one level deeper (.../<feature>/adr/<candidate_id>/
+    # authoring-adr.json), so its feature sits above the candidate directory
+    # rather than being the checkpoint's immediate parent.
+    if state_path.parent.parent.name == "adr":
+        feature = state_path.parent.parent.parent.name
+        artifact_type = "adr"
+    else:
+        feature = state_path.parent.name
+        artifact_type = state_path.name[len("authoring-"):-len(".json")]
     if not FEATURE_RE.fullmatch(feature) or "--" in feature:
         return None
-    artifact_type = state_path.name[len("authoring-"):-len(".json")]
     if artifact_type not in ARTIFACTS:
         return None
     try:
@@ -4288,6 +4649,9 @@ def _session_summary(project_root: Path, state_path: Path) -> dict[str, Any] | N
         "artifact_path": result["artifact_path"],
         "authoring_url": result["authoring_url"],
         "message": result["message"],
+        "open_adr_candidates": sum(
+            1 for candidate in result["adr_candidates"] if candidate.get("status") == "open"
+        ),
     }
 
 
@@ -4298,7 +4662,11 @@ def list_once(args: argparse.Namespace) -> dict[str, Any]:
     features_root = _features_root(project_root)
     sessions: list[dict[str, Any]] = []
     if features_root.is_dir():
-        for state_path in sorted(features_root.glob("*/authoring-*.json")):
+        checkpoint_paths = [
+            *features_root.glob("*/authoring-*.json"),
+            *features_root.glob("*/adr/*/authoring-adr.json"),
+        ]
+        for state_path in sorted(checkpoint_paths):
             summary = _session_summary(project_root, state_path)
             if summary is None:
                 continue
@@ -4331,7 +4699,7 @@ def peek_once(args: argparse.Namespace) -> dict[str, Any]:
     feature = _validate_feature(args.feature_name)
     artifact_type = args.artifact_type
     bank = _load_question_bank(artifact_type)
-    state_path = _feature_dir(project_root, feature) / f"authoring-{artifact_type}.json"
+    state_path = _checkpoint_path(project_root, feature, artifact_type, getattr(args, "candidate_id", None))
     persisted = _read_json(state_path)
     if persisted is None:
         return {
@@ -4469,6 +4837,18 @@ def _parser() -> argparse.ArgumentParser:
         "--compact-plan-file",
         help="File containing a compact semantic intake plan generated by the current harness model",
     )
+    action.add_argument(
+        "--adr-candidate-json",
+        help="Persist one ADR candidate captured from a confirmed decision-worthy answer",
+    )
+    action.add_argument(
+        "--adr-candidate-status-json",
+        help="Confirm or reject a previously captured ADR candidate",
+    )
+    parser.add_argument(
+        "--candidate-id",
+        help="ADR candidate id to draft; required when the artifact type is 'adr'",
+    )
     parser.add_argument(
         "--review-plan-json",
         help="Validated affected-section revisions generated by the configured host model",
@@ -4566,6 +4946,8 @@ def main(argv: list[str] | None = None) -> int:
             and args.review_comments_json is None
             and args.model_plan_json is None
             and args.compact_plan_json is None
+            and args.adr_candidate_json is None
+            and args.adr_candidate_status_json is None
             and not args.publish
             and not args.defer
             and not args.accept_suggestion
