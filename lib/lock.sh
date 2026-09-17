@@ -10,6 +10,50 @@
 # Default lock location; overridden by feature_activate() in MP mode
 SPEED_LOCK="${STATE_DIR}/speed.lock"
 
+# A lock directory exists before its holder has written pid. That window is
+# microseconds wide, so a lock still empty after this many minutes belongs to a
+# process that died inside it. find -mmin is portable across BSD and GNU.
+LOCK_INIT_GRACE_MIN=1
+
+# Internal: take the exclusive right to break "$1", run "$2" to decide, break.
+#
+# Breaking a lock is two steps (inspect, then remove) and a plain rm -rf between
+# them is a race: two waiters both see the same dead holder, both remove, and
+# the second one deletes the live lock the first has already re-acquired. The
+# guard directory makes exactly one waiter the breaker, and the breaker re-reads
+# the lock's state after winning. No new holder can appear in between, because
+# mkdir cannot succeed while the lock directory is still there.
+#
+# Returns 0 if the lock was removed or had already gone, 1 to keep waiting.
+_lock_break() {
+    local lock="$1" verdict="$2" guard="${1}.breaking" rc=1
+
+    mkdir "$guard" 2>/dev/null || return 1
+    if [[ ! -d "$lock" ]]; then
+        rc=0
+    elif "$verdict" "$lock"; then
+        rm -rf "$lock"
+        rc=0
+    fi
+    rmdir "$guard" 2>/dev/null || rm -rf "$guard"
+    return $rc
+}
+
+# Internal: verdict for a lock whose recorded holder was seen dead.
+_lock_holder_still_dead() {
+    local pid
+    pid=$(cat "${1}/pid" 2>/dev/null || echo "")
+    # A pid that changed, or that has not been written yet, means someone else
+    # already broke this lock and a live process now owns it.
+    [[ -n "$pid" ]] && ! kill -0 "$pid" 2>/dev/null
+}
+
+# Internal: verdict for a lock left empty by a process that died mid-acquire.
+_lock_never_initialized() {
+    [[ ! -f "${1}/pid" ]] &&
+        [[ -n "$(find "$1" -maxdepth 0 -mmin "+${LOCK_INIT_GRACE_MIN}" 2>/dev/null)" ]]
+}
+
 # Acquire exclusive lock for a mutation command.
 # Args: command_name [max_wait_seconds]
 #   max_wait=0 (default) means fail immediately if locked.
@@ -34,9 +78,12 @@ speed_acquire_lock() {
                 lock_actor=$(cat "$SPEED_LOCK/actor" 2>/dev/null || echo "")
                 local actor_info=""
                 [[ -n "$lock_actor" ]] && actor_info=", actor ${lock_actor}"
-                log_warn "Breaking stale lock from '${lock_cmd}' (PID ${lock_pid}${actor_info}, acquired ${lock_time})"
-                rm -rf "$SPEED_LOCK"
-                continue
+                if _lock_break "$SPEED_LOCK" _lock_holder_still_dead; then
+                    log_warn "Broke stale lock from '${lock_cmd}' (PID ${lock_pid}${actor_info}, acquired ${lock_time})"
+                    continue
+                fi
+                # Another waiter is breaking it, or a live process already owns
+                # it again. Fall through and wait rather than remove it blindly.
             fi
 
             # Lock is held by a live process
@@ -50,9 +97,17 @@ speed_acquire_lock() {
                 return 1
             fi
         else
-            # Lock dir exists but no PID file — broken state, clean up
-            rm -rf "$SPEED_LOCK"
-            continue
+            # Another process may be between mkdir and writing its PID. An
+            # empty lock is not proof that its owner crashed, but one that is
+            # still empty long afterwards was abandoned inside that window.
+            if _lock_break "$SPEED_LOCK" _lock_never_initialized; then
+                log_warn "Broke an abandoned lock left uninitialized by a dead process"
+                continue
+            fi
+            if [[ $max_wait -eq 0 ]]; then
+                log_error "Cannot run '${command}': lock initialization is in progress (or needs speed recover)"
+                return 1
+            fi
         fi
 
         if [[ $waited -ge $max_wait ]]; then
@@ -101,6 +156,9 @@ speed_force_break_lock() {
         log_step "Force-breaking main-branch lock"
         rm -rf "$MAIN_BRANCH_LOCK"
     fi
+    # A breaker that died mid-break would otherwise leave nobody able to break
+    # a stale lock again.
+    rm -rf "${SPEED_LOCK}.breaking" "${MAIN_BRANCH_LOCK}.breaking"
 }
 
 # ── Main-branch lock ─────────────────────────────────────────
@@ -130,11 +188,16 @@ main_branch_acquire_lock() {
             local lock_pid
             lock_pid=$(cat "$MAIN_BRANCH_LOCK/pid" 2>/dev/null || echo "")
             if [[ -n "$lock_pid" ]] && ! kill -0 "$lock_pid" 2>/dev/null; then
-                rm -rf "$MAIN_BRANCH_LOCK"
-                continue
+                if _lock_break "$MAIN_BRANCH_LOCK" _lock_holder_still_dead; then
+                    log_warn "Broke stale main-branch lock (PID ${lock_pid})"
+                    continue
+                fi
             fi
-        else
-            rm -rf "$MAIN_BRANCH_LOCK"
+        elif _lock_break "$MAIN_BRANCH_LOCK" _lock_never_initialized; then
+            # Removing an empty lock unconditionally let two processes hold this
+            # lock at once and run checkout + merge on main concurrently. An
+            # empty lock usually means its owner is still writing its pid.
+            log_warn "Broke an abandoned main-branch lock"
             continue
         fi
 

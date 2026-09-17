@@ -27,6 +27,9 @@ from __future__ import annotations
 import os
 import subprocess
 from typing import Any
+from pathlib import Path
+
+from lib.eval_execution import render_command
 
 
 # ── Main entry point ─────────────────────────────────────────
@@ -339,10 +342,18 @@ def _verify_test(
     test_command: str | None = None,
     **kwargs: Any,
 ) -> dict:
-    """Verify via test: check test file exists + optionally run test.
+    """Verify via test: run the configured test command over the task's tests.
 
-    Without a test command configured, only checks for test file existence.
+    A test file sitting on disk is not a test that ran. Without a configured
+    runner there is nothing to execute, so the criterion is unverifiable and
+    never a pass, matching how _verify_lint treats an unconfigured linter.
     """
+    if not test_command:
+        return {
+            "status": "unverifiable",
+            "evidence": "Test runner not configured; file existence does not execute a test",
+        }
+
     files_touched = task.get("files_touched", [])
 
     # Find test files related to files_touched
@@ -356,32 +367,28 @@ def _verify_test(
 
     evidence_parts = [f"Test file(s) found: {', '.join(test_files[:3])}"]
 
-    # Run tests if command is configured
-    if test_command:
-        for test_file in test_files[:5]:  # Limit to 5 test files
-            abs_test = os.path.join(project_root, test_file)
-            cmd = test_command.replace("{file}", abs_test)
-            try:
-                result = subprocess.run(
-                    cmd, shell=True, capture_output=True, text=True,
-                    cwd=project_root, timeout=60,
-                )
-                if result.returncode == 0:
-                    evidence_parts.append(f"Tests pass: {test_file}")
-                else:
-                    evidence_parts.append(f"Tests FAIL: {test_file}")
-                    return {
-                        "status": "fail",
-                        "evidence": "; ".join(evidence_parts),
-                    }
-            except (subprocess.TimeoutExpired, OSError) as e:
-                evidence_parts.append(f"Test execution error: {e}")
+    for test_file in test_files[:5]:  # Limit to 5 test files
+        abs_test = os.path.join(project_root, test_file)
+        cmd = render_command(test_command, [abs_test], append=False)
+        try:
+            result = subprocess.run(
+                cmd, shell=True, capture_output=True, text=True,
+                cwd=project_root, timeout=60,
+            )
+            if result.returncode == 0:
+                evidence_parts.append(f"Tests pass: {test_file}")
+            else:
+                evidence_parts.append(f"Tests FAIL: {test_file}")
                 return {
-                    "status": "unverifiable",
+                    "status": "fail",
                     "evidence": "; ".join(evidence_parts),
                 }
-    else:
-        evidence_parts.append("Test runner not configured — file existence only")
+        except (subprocess.TimeoutExpired, OSError) as e:
+            evidence_parts.append(f"Test execution error: {e}")
+            return {
+                "status": "unverifiable",
+                "evidence": "; ".join(evidence_parts),
+            }
 
     return {
         "status": "pass",
@@ -397,6 +404,12 @@ def _find_test_files(files_touched: list[str], project_root: str) -> list[str]:
         basename = os.path.basename(f)
         name_no_ext = os.path.splitext(basename)[0]
         dirname = os.path.dirname(f)
+
+        # Include touched tests themselves as well as their source-file peers.
+        if (basename.startswith("test_") or ".test." in basename or ".spec." in basename
+                or "__tests__" in Path(f).parts):
+            if os.path.isfile(os.path.join(project_root, f)):
+                test_files.append(f)
 
         # Common test file patterns
         candidates = [
@@ -455,7 +468,7 @@ def _verify_lint(
         if not os.path.isfile(abs_path):
             continue
 
-        cmd = lint_command.replace("{file}", abs_path)
+        cmd = render_command(lint_command, [abs_path], append=False)
         try:
             result = subprocess.run(
                 cmd, shell=True, capture_output=True, text=True,

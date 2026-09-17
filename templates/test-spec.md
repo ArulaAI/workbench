@@ -34,10 +34,10 @@
      project-specific levels when needed. Every Scenario Catalog level must
      match a row in this table. Fill in Tooling and Environment with what the
      project actually uses, including which dependencies are real or replaced.
-     The base command belongs in the configured project agent file (for example
-     CLAUDE.md), as `test: <command>` under `## Quality Gates`, optionally within
-     `### Frontend` or `### Backend`. Reference that configuration here instead
-     of maintaining a second command. -->
+     The base command belongs in `speed.toml` under `[eval]` as
+     `test_command`, or in the project agent file as `test: <command>` under
+     `## Quality Gates`, optionally within `### Frontend` or `### Backend`.
+     Reference that configuration here instead of maintaining a second command. -->
 
 | Level | Meaning | Tooling | Environment |
 |---|---|---|---|
@@ -63,8 +63,11 @@
 - **Blocking dependencies:** Unavailable environments, source decisions, or prerequisites, and the scenarios they prevent from running.
 
 ## Scenario Catalog
-<!-- Group scenarios by functional concern, one H3 area per concern. Replace
-     the example rows below; they are there to show the format.
+<!-- Group scenarios by functional concern, one H3 area per concern. Never
+     group by whether a test exists yet; a scenario the specs require belongs
+     in its area even before it has a test, and the empty Selector cell in the
+     Execution and Evidence table is what records that gap. Replace the
+     example rows below; they are there to show the format.
 
      IDs are PREFIX-NN, unique across the file and stable once assigned,
      because traceability rows and generated tests reference them.
@@ -158,13 +161,17 @@ status codes, fields, and behavior.
 | | | | |
 
 ## Execution and Evidence
-<!-- Link the project's execution mapping and report locations. Planning may
-     create the mapping before test files exist; resolve it before execution.
-     Keep generated mappings and changing run results outside this spec. -->
+<!-- Map every catalog scenario to the selector that executes it in the table
+     below; `speed eval` reads this table. Keep changing run results outside
+     this spec. -->
 
-- **Execution mapping:** Location of scenario ID to test file and selector, or manual procedure and owner.
-- **Runner configuration:** Agent-file path and applicable Quality Gates entry; identify CI jobs using it.
+- **Execution mapping:** The table below. One row per scenario; separate several selectors in one cell with spaces. Leave Selector empty while no test exists so the gap stays visible; `speed eval` reports such a scenario as not examined, never as a pass. Command is optional and must equal a configured test command. Manual checks leave Selector empty and record their owner and procedure under Scenario Classification.
+- **Runner configuration:** `speed.toml` `[eval] test_command`, or the agent file's `test:` entry under `## Quality Gates` when unset; identify CI jobs using it.
 - **Result report:** Location of per-scenario outcomes, run ID/time, application commit/build, source-spec revision, environment, actual command or manual procedure, and evidence or defect links.
+
+| Scenario | Selector | Command |
+|---|---|---|
+| | | |
 
 An automated scenario passes only when its mapped test is discovered, executes,
 and its assertions pass. An unrelated green suite or zero discovered tests is
@@ -181,13 +188,23 @@ earlier failures and retry history; prose review cannot override failing tests.
 <!-- State which conditions and scenario subsets gate merge or release and
      where each gate is enforced. Reference scenario IDs or clearly defined
      sets and agreed limits. State any defect severity threshold explicitly.
-     These are required checks, not a claim that CI already enforces them. -->
+     These are required checks, not a claim that CI already enforces them.
 
-- **Merge gate:** Required scenarios, regression checks, and enforcement location.
-- **Release gate:** Required integrated-build results, quality thresholds, and enforcement location.
-- **Coverage review:** Required source mappings are complete; source changes and unresolved decisions have been reviewed.
-- **Exceptions:** A failed, blocked, skipped, not-run, or unverified scenario is not a pass. Any permitted release exception records affected IDs, risk, rationale, decision owner, and follow-up target.
-- **Flaky tests:** Record inconsistent outcomes and the repair owner. Rerunning until green does not erase earlier failures or establish reliable coverage.
+     `speed eval` reads the table below, one gate per row, so every gate
+     belongs in it. Keep `Gate` as the first column; the status column may be
+     headed `Required result` or `Status`, and the evidence column
+     `Enforcement` or `Evidence`. A row counts as passed only when its status
+     cell reads `pass` and its evidence cell is filled, so an unmet gate blocks
+     acceptance instead of disappearing. Replace the rows below with the gates
+     this feature needs. -->
+
+| Gate | Required result | Enforcement |
+|---|---|---|
+| Merge | Required scenarios and regression checks pass | Where the merge gate is enforced |
+| Release | Required integrated-build results and quality thresholds are met | Where the release gate is enforced |
+| Coverage review | Required source mappings are complete; source changes and unresolved decisions have been reviewed | Who reviews the mappings, and when |
+| Exceptions | A failed, blocked, skipped, not-run, or unverified scenario is not a pass. Any permitted release exception records affected IDs, risk, rationale, decision owner, and follow-up target | Where the exception and its follow-up are recorded |
+| Flaky tests | Inconsistent outcomes and the repair owner are recorded. Rerunning until green does not erase earlier failures or establish reliable coverage | Who tracks the repair |
 
 ## Out of Scope
 <!-- State what is not evaluated and why so an intentional boundary is not

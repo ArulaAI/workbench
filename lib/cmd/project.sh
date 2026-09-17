@@ -352,7 +352,7 @@ cmd_new() {
     sed -e "s/{Feature Name}/${humanized}/g" \
         -e "s/{name}/${name}/g" \
         -e "s|{product-spec}|specs/product/${name}.md|g" \
-        -e "s|{tech-spec}|specs/tech/${name}.md|g" \
+        -e "s|{tech-spec}|../tech/${name}.md|g" \
         "$template" > "$output"
 
     log_success "Created ${output_dir}/${name}.md"
