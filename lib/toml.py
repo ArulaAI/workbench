@@ -183,6 +183,15 @@ def emit(data: dict) -> None:
                 var_name = f"TOML_SECURITY_{key.upper()}"
                 print(f"{var_name}='{shell_escape(joined)}'")
 
+    # [diagnose] section
+    diagnose = data.get("diagnose", {})
+    if isinstance(diagnose, dict):
+        for key in ("classes_file", "spec_file"):
+            val = diagnose.get(key)
+            if val is not None:
+                var_name = f"TOML_DIAGNOSE_{key.upper()}"
+                print(f"{var_name}='{shell_escape(str(val))}'")
+
     # [context] section
     context = data.get("context", {})
     if isinstance(context, dict):

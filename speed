@@ -10,6 +10,7 @@
 #   plan <spec-file> [opts] Decompose a spec into a task DAG + contract
 #   verify                  Blind-verify the plan against the product spec
 #   run [options]           Execute pending tasks with parallel agents
+#   diagnose --task ID      Count failure-class signals on a task's diff
 #   status                  Show SPEED state and progress
 #   coherence [--resolve]    Check cross-task consistency before integration
 #   integrate               Merge completed branches into main
@@ -113,6 +114,7 @@ speed_help() {
     echo -e "    ${COLOR_STEP}plan${RESET} <spec-file> [opts]      Decompose a product spec into task DAG + contract"
     echo -e "    ${COLOR_STEP}verify${RESET}                       Blind-verify plan against product spec"
     echo -e "    ${COLOR_STEP}run${RESET}  [options]               Execute pending tasks with parallel agents"
+    echo -e "    ${COLOR_STEP}diagnose${RESET} --task ID            Count failure-class signals on a task's diff (writes risk-surface.yaml)"
     echo -e "    ${COLOR_STEP}status${RESET} [--defects]            Show SPEED state and progress"
     echo -e "    ${COLOR_STEP}defect${RESET} <spec-file>            Run the full defect pipeline (triage → fix → review)"
     echo -e "    ${COLOR_STEP}coherence${RESET} [--resolve]         Cross-task consistency check pre-integration"
@@ -275,6 +277,7 @@ main() {
         plan)      cmd_plan "$@" ;;
         verify)    cmd_verify "$@" ;;
         run)       cmd_run "$@" ;;
+        diagnose)  cmd_diagnose "$@" ;;
         security)  cmd_security "$@" ;;
         status)    cmd_status "$@" ;;
         defect)    cmd_defect "$@" ;;
