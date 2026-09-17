@@ -127,6 +127,7 @@ speed_help() {
     echo -e "    ${COLOR_STEP}learn${RESET}  [options]              Extract observations and discover conventions"
     echo -e "    ${COLOR_STEP}security${RESET} [--create-defects]   Run security audit on completed task diffs"
     echo -e "    ${COLOR_STEP}new${RESET} <type> <name>           Scaffold a new spec from template"
+    echo -e "        types: prd, rfc, design, defect, test-spec"
     echo -e "    ${COLOR_STEP}gates${RESET}   --task ID             Run quality gates for a task (used by Developer Agent mid-task)"
     echo -e "    ${COLOR_STEP}add-language${RESET} <lang>          Generate ast-grep rules for a new language"
     echo -e "    ${COLOR_STEP}test-rules${RESET}  [lang|--all]     Verify ast-grep rules against fixture files"
@@ -228,6 +229,7 @@ speed_help() {
     echo "    speed clean feature auth"
     echo "    speed new prd my-feature"
     echo "    speed new defect invite-failure"
+    echo "    speed new test-spec my-feature"
     echo ""
 }
 

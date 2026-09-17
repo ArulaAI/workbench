@@ -281,11 +281,11 @@ cmd_new() {
 
     # Validate subcommand
     case "$subcommand" in
-        prd|rfc|design|defect) ;;
+        prd|rfc|design|defect|test-spec) ;;
         *)
             log_error "Invalid subcommand: '${subcommand}'"
             echo "" >&2
-            echo -e "  Valid types: ${COLOR_STEP}prd${RESET}  ${COLOR_STEP}rfc${RESET}  ${COLOR_STEP}design${RESET}  ${COLOR_STEP}defect${RESET}" >&2
+            echo -e "  Valid types: ${COLOR_STEP}prd${RESET}  ${COLOR_STEP}rfc${RESET}  ${COLOR_STEP}design${RESET}  ${COLOR_STEP}defect${RESET}  ${COLOR_STEP}test-spec${RESET}" >&2
             echo "" >&2
             exit "$EXIT_CONFIG_ERROR"
             ;;
@@ -317,6 +317,7 @@ cmd_new() {
         rfc)    template="${TEMPLATES_DIR}/rfc.md";    output_dir="specs/tech" ;;
         design) template="${TEMPLATES_DIR}/design.md"; output_dir="specs/design" ;;
         defect) template="${TEMPLATES_DIR}/defect.md"; output_dir="specs/defects" ;;
+        test-spec) template="${TEMPLATES_DIR}/test-spec.md"; output_dir="specs/tests" ;;
     esac
 
     # Check template exists
@@ -351,6 +352,7 @@ cmd_new() {
     sed -e "s/{Feature Name}/${humanized}/g" \
         -e "s/{name}/${name}/g" \
         -e "s|{product-spec}|specs/product/${name}.md|g" \
+        -e "s|{tech-spec}|specs/tech/${name}.md|g" \
         "$template" > "$output"
 
     log_success "Created ${output_dir}/${name}.md"
