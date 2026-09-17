@@ -28,15 +28,15 @@
 
 ## Configuration
 
-Diagnose has no rules of its own. A project supplies them through a `[diagnose]` section in `speed.toml`:
+`speed.toml` and `.speed/classes.yaml` live in the project being diagnosed (e.g. `payments-validation-fixture`), not in this repo. Diagnose has no rules of its own — a project supplies them through a `[diagnose]` section in its `speed.toml`:
 
 ```toml
 [diagnose]
 classes_file = ".speed/classes.yaml"
-spec_file = "specs/01-prd.md"
+spec_file = "specs/product/payments.md"
 ```
 
-`classes_file` defaults to `.speed/classes.yaml` if not set. `spec_file` is only used by the `new-names-absent-from-spec` rule.
+`classes_file` defaults to `.speed/classes.yaml` if not set. `spec_file` is only used by the `new-names-absent-from-spec` rule — for `payments-validation-fixture` that's `specs/product/payments.md`.
 
 Each class in `classes.yaml` declares zero or more rules. A rule has a `look` (how it scans the diff), an optional `match` (regex, for the `added-lines` look), and a `say` template for the signal text:
 
@@ -55,13 +55,34 @@ classes:
 
 A class with no rules (F5, sycophantic self-approval) always reports `signals: []` — no mechanical way to check it, not a ruling that it didn't happen.
 
+`.speed/` is gitignored in `payments-validation-fixture` (it's SPEED's runtime state directory). `classes.yaml` is committed there as a tracked exception; task records under `.speed/features/*/tasks/` are not committed and need to be created locally — see Run below.
+
+`speed.toml` and `.speed/classes.yaml` live on the `config/speed-diagnose` branch, not on `main` — `main` itself is untouched. Diffing straight against `main` would pull that config commit into the diagnosis too (and trip F4/F6 on the config's own rule text). Set `MAIN_BRANCH` to make `config/speed-diagnose` the diff base instead; see Run below.
+
 ## Run
 
+Fresh checkout, reproducing the reviewed `payments` / task `1` example:
+
 ```bash
-speed diagnose -f payments --task 1
+git clone https://github.com/ArulaAI/workbench.git
+git clone https://github.com/ArulaAI/payments-validation-fixture.git
+cd payments-validation-fixture
+git checkout diagnose-demo
+
+mkdir -p .speed/features/payments/tasks
+cat > .speed/features/payments/tasks/1.json <<'EOF'
+{
+  "id": "1",
+  "branch": "diagnose-demo",
+  "agent_model": "sonnet",
+  "files_touched": ["src/payments/service.ts"]
+}
+EOF
+
+MAIN_BRANCH=origin/config/speed-diagnose ../workbench/speed diagnose -f payments --task 1
 ```
 
-This reads `.speed/features/payments/tasks/1.json`, diffs its branch against `main`, and writes `.speed/features/payments/risk-surface.yaml`.
+`MAIN_BRANCH=origin/config/speed-diagnose` makes that branch the diff base instead of `main`, so the diagnosis covers only the actual demo change, not the config commit that `diagnose-demo` also carries. This diffs `diagnose-demo` against `config/speed-diagnose` and writes `.speed/features/payments/risk-surface.yaml`.
 
 ## Risk surface
 
