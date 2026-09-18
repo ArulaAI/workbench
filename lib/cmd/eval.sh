@@ -91,6 +91,7 @@ _eval_print_summary() {
 
     echo ""
     log_step "Report written to ${COLOR_STEP}${output_dir}/summary.md${RESET}"
+    log_step "Evaluation written to ${COLOR_STEP}${output_dir}/evaluation.yaml${RESET}"
 }
 
 # One line that says what the report supports, without a percentage.

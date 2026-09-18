@@ -330,7 +330,7 @@ def finish(run: Path, failed: bool = False) -> None:
         atomic_json(run / "attempt.json", {"status": "failed", "finished_at": utc_now()})
     else:
         report = read_object(run / "report.json")
-        for name in ("report.json", "summary.md", "residue.json", "scenario-results.json", "test-plan.json"):
+        for name in ("report.json", "evaluation.yaml", "summary.md", "residue.json", "scenario-results.json", "test-plan.json"):
             source = run / name
             if source.is_file():
                 fd, temp = tempfile.mkstemp(dir=output)

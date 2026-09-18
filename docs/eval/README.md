@@ -10,7 +10,7 @@ This page covers what eval reads, how to configure a project for it, how to run 
 - Compiles the mapping table into `.speed/features/<name>/eval/test-plan.json`, one entry per scenario selector.
 - Runs each selector under the configured test command, one scenario at a time, and records the exit code and gate log per scenario.
 - Runs any selectors that finished tasks declare in their task files the same way.
-- Builds `report.json` and `summary.md`: one record per scenario with a status, an evidence type, and the requirements it traces to. Task acceptance criteria are appended as their own rows.
+- Builds `report.json`, `evaluation.yaml` and `summary.md`: one record per scenario with a status, an evidence type, and the requirements it traces to. Task acceptance criteria are appended as their own rows. The YAML is the hand-off `workbench define` reads, in the same shape as the `risk-surface.yaml` that `workbench diagnose` writes.
 - Optionally hands the leftover manual criteria to the evaluator agent. Its verdicts are recorded as opinion and cannot change an executed result.
 - Marks the feature `accepted` only when every applicable result passed. A scenario with no test is reported as not examined, never as a pass. There is no score and no percentage.
 - Exit code is `0` whatever the verdict unless `--strict` is set. Configuration errors (no spec, missing mapping file, unknown task) exit `3`.
@@ -136,6 +136,7 @@ Change: main @ uncommitted-working-tree   spec: specs/tests/payments.md
       OOS-06     Not applicable               Spec owners
 
 Report written to <project-root>/.speed/features/payments/eval/runs/<run-id>/summary.md
+Evaluation written to <project-root>/.speed/features/payments/eval/runs/<run-id>/evaluation.yaml
 Not accepted. 7 never examined.
 ```
 
@@ -149,13 +150,89 @@ Files written under `.speed/features/<name>/`:
 |---|---|
 | `eval/test-plan.json` | The mapping compiled from the spec's table |
 | `eval/scenario-results.json` | Per-scenario status, command, evidence and timestamp |
-| `eval/report.json` | Every result with status, evidence type, traces, area and task; `out_of_scope`; `summary` |
+| `eval/report.json` | Every result with status, evidence type, traces, area and task; `out_of_scope`; `summary`; per-test execution detail |
+| `eval/evaluation.yaml` | The same verdict and results as YAML, without the per-test detail; the next workflow step reads this file |
 | `eval/summary.md` | The same as tables, with a Not examined by decision section |
 | `eval/residue.json` | Manual criteria still unverifiable, the evaluator agent's input |
 | `eval/runs/<run-id>/summary.md` | The attempt's summary, whose path is printed in the terminal |
+| `eval/runs/<run-id>/evaluation.yaml` | The attempt's YAML, also printed; `eval/evaluation.yaml` is a copy of the latest completed attempt's |
 | `eval/runs/<run-id>/commands/<execution-id>/output.log` | The runner's output; each result identifies its execution log |
 | `eval/latest-attempt.json` | The latest attempt ID and completion or failure status |
 | `state.json` | Evaluation metadata; `accepted` or `integrated_not_accepted` after a full run with verified integration |
+
+### The evaluation YAML
+
+`evaluation.yaml` is the artifact the workflow carries forward: `workbench diagnose` writes `risk-surface.yaml`, `workbench eval` writes this file, and `workbench define` turns its failed and not-examined results into defect specs. Trimmed from the fixture run above (two results out of 24, one Out of Scope row out of six):
+
+```yaml
+# Written by `speed eval`. Each result carries its evidence. Silence is not a pass.
+feature: payments
+task: null
+run_id: "a23d91fd73b34d9db68e96653a66549b"
+generated_at: "2026-09-18T11:45:31Z"
+test_spec: "<project-root>/specs/tests/payments.md"
+test_spec_sha256: "a56fad841eb40b5cc083519179c248f005c6cfed97629fad79311cc13993702b"
+commit: null
+build:
+  head_commit: "652a8648384792c6ca862911a7d5fa9602d9a85b"
+  fingerprint: "75582d6a310b913b93b3194eff2e0e7a482ff52c213756b1a81282fb330a509d"
+  dirty: true
+accepted: false
+summary:
+  total: 24
+  examined: 17
+  not_examined: 7
+  pass: 17
+  fail: 0
+  partial: 0
+  blocked_upstream: 0
+  unverifiable: 7
+  not_applicable: 0
+results:
+  - id: AC-01
+    kind: scenario
+    area: Authorise
+    title: "Given a valid card, when 2500 is authorised, then the amount is reserved and a balanced pair is posted"
+    expected: "authorised is 2500; status authorised; ledger nets to 0; exactly two entries for the payment"
+    level: integration
+    status: pass
+    evidence_type: statistical
+    evidence: "All 11 discovered tests executed and passed (log: <project-root>/.speed/features/payments/eval/runs/<run-id>/commands/<execution-id>/output.log)"
+    traces: [ST1, TR5]
+    task: null
+    command: "node --experimental-strip-types --test --test-reporter=junit --test-reporter-destination=$SPEED_EVAL_JUNIT_FILE test/service.test.ts"
+    log: "<project-root>/.speed/features/payments/eval/runs/<run-id>/commands/<execution-id>/output.log"
+  - id: RISK-01
+    kind: scenario
+    area: Authorise
+    title: "Given an authorise request that fails, when the failure is serialised to the application log, then no field holds a full card number"
+    expected: "the logged record shows the pan field as redacted"
+    level: integration
+    status: unverifiable
+    evidence_type: silence
+    evidence: "No test mapped to this scenario"
+    traces: [TR11, "Product risk, Critical"]
+    task: null
+    command: null
+    log: null
+out_of_scope:
+  - id: OOS-01
+    excluded: "Refund idempotency: whether two identical refund requests are one refund or two"
+    disposition: Deferred
+    reason: "ST6 covers authorise and capture only; asserting either answer would invent policy"
+    owner: "payments-product to decide; release claim bounded until then"
+```
+
+| Field | Meaning |
+|---|---|
+| `task` | `null` for a whole-feature run; the task ID for `--task-id` runs, where `results[].task` names the owning task |
+| `commit` | The tested commit, or `null` when the tree had uncommitted changes; `build.head_commit` and `build.dirty` then say which commit and that it was dirty |
+| `results[].kind` | `scenario` from the catalog, `criterion` from a task's acceptance criteria, `gate` for the runtime's `COVERAGE-NN` and `BUILD-*` rows |
+| `results[].status`, `results[].evidence_type` | The vocabulary in Reading the result below |
+| `results[].traces` | The requirement IDs the scenario covers, from Acceptance Traceability |
+| `results[].command`, `results[].log` | What ran and where its output is; both `null` when nothing ran |
+
+Every value is a plain scalar or a list of scalars, and free text is always double-quoted, so the file loads with any YAML parser without a schema. The per-test breakdown of each execution is in `report.json` and in the log each result names.
 
 ## Reading the result
 
@@ -231,7 +308,8 @@ Acceptance needs at least one applicable result and every applicable result `pas
 ```bash
 python3 -m pytest tests/test_eval_report.py tests/test_eval_report_blocked.py \
                   tests/test_test_spec.py tests/test_toml_eval.py   # report, mapping, toml
+python3 tests/test_eval_yaml.py                                     # evaluation.yaml
 bash tests/test_eval.sh                                             # CLI command
 ```
 
-Last verified: 33 + 18 = 51 tests passing, 0 failing.
+Last verified: 36 + 10 + 19 = 65 tests passing, 0 failing.

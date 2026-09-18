@@ -56,6 +56,21 @@ def _atomic_json(path: Path, value: Any) -> None:
         raise
 
 
+def _atomic_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(prefix=path.name, dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        os.replace(temp_name, path)
+    except Exception:
+        try:
+            os.unlink(temp_name)
+        except OSError:
+            pass
+        raise
+
+
 def _tasks(tasks_dir: Path) -> list[dict[str, Any]]:
     tasks = []
     for path in sorted(tasks_dir.glob("*.json")):
@@ -615,8 +630,108 @@ def _summary_markdown(report: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+_YAML_BARE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
+# Digests and run ids: quoted whether or not they happen to start with a
+# digit, so commit, fingerprint and run_id always read the same way.
+_YAML_HEX = re.compile(r"^[0-9a-fA-F]{16,}$")
+_YAML_RESERVED = {"true", "false", "null", "yes", "no", "on", "off", "y", "n"}
+
+
+def _yaml_scalar(value: Any) -> str:
+    """One YAML scalar. Anything a reader could misread stays quoted.
+
+    JSON string escapes are a subset of YAML double-quoted escapes, so
+    json.dumps is a valid YAML encoder for arbitrary text. speed diagnose
+    renders risk-surface.yaml the same way through jq's tojson, and neither
+    command needs a YAML library for it.
+    """
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    text = str(value)
+    if _YAML_BARE.match(text) and not _YAML_HEX.match(text) and text.lower() not in _YAML_RESERVED:
+        return text
+    return json.dumps(text)
+
+
+def _evaluation_yaml(report: dict[str, Any]) -> str:
+    """Render the report as evaluation.yaml, the hand-off the next workflow
+    step (workbench define) reads.
+
+    Same verdict and per-result records as report.json. The per-test
+    execution detail stays in report.json and in the logs each `log` field
+    names, so the YAML stays readable at a glance.
+    """
+    build = (report.get("build") or {}).get("before")
+    build = build if isinstance(build, dict) else {}
+    summary = report.get("summary") or {}
+    lines = [
+        "# Written by `speed eval`. Each result carries its evidence. Silence is not a pass.",
+        f"feature: {_yaml_scalar(report.get('feature'))}",
+        f"task: {_yaml_scalar(report.get('task_id'))}",
+        f"run_id: {_yaml_scalar(report.get('run_id'))}",
+        f"generated_at: {_yaml_scalar(report.get('generated_at'))}",
+        f"test_spec: {_yaml_scalar(report.get('test_spec'))}",
+        f"test_spec_sha256: {_yaml_scalar(report.get('test_spec_sha256'))}",
+        f"commit: {_yaml_scalar(report.get('commit'))}",
+        "build:",
+        f"  head_commit: {_yaml_scalar(build.get('head_commit'))}",
+        f"  fingerprint: {_yaml_scalar(build.get('fingerprint'))}",
+        f"  dirty: {_yaml_scalar(build.get('dirty'))}",
+        f"accepted: {_yaml_scalar(bool(report.get('accepted')))}",
+        "summary:",
+    ]
+    for key in ("total", "examined", "not_examined", "pass", "fail", "partial",
+                "blocked_upstream", "unverifiable", "not_applicable"):
+        lines.append(f"  {key}: {_yaml_scalar(int(summary.get(key) or 0))}")
+    results = report.get("results") or []
+    lines.append("results:" if results else "results: []")
+    for result in results:
+        executions = [e for e in (result.get("executions") or []) if isinstance(e, dict)]
+        artifact_dir = executions[-1].get("artifact_dir") if executions else None
+        log = str(Path(artifact_dir) / "output.log") if artifact_dir else None
+        fields = [
+            ("id", result.get("id")),
+            ("kind", result.get("kind")),
+            ("area", result.get("area") or None),
+            ("title", result.get("title")),
+            ("expected", result.get("expected") or None),
+            ("level", result.get("level") or None),
+            ("status", result.get("status")),
+            ("evidence_type", result.get("evidence_type")),
+            ("evidence", result.get("evidence")),
+        ]
+        for index, (key, value) in enumerate(fields):
+            prefix = "  - " if index == 0 else "    "
+            lines.append(f"{prefix}{key}: {_yaml_scalar(value)}")
+        traces = ", ".join(_yaml_scalar(trace) for trace in (result.get("traces") or []))
+        lines.append(f"    traces: [{traces}]")
+        lines.append(f"    task: {_yaml_scalar(result.get('task_id') or None)}")
+        lines.append(f"    command: {_yaml_scalar(result.get('command') or None)}")
+        lines.append(f"    log: {_yaml_scalar(log)}")
+    out_of_scope = report.get("out_of_scope") or []
+    lines.append("out_of_scope:" if out_of_scope else "out_of_scope: []")
+    for row in out_of_scope:
+        fields = [
+            ("id", row.get("id") or None),
+            ("excluded", row.get("excluded")),
+            ("disposition", row.get("disposition")),
+            ("reason", row.get("reason") or None),
+            ("owner", row.get("owner") or None),
+        ]
+        for index, (key, value) in enumerate(fields):
+            prefix = "  - " if index == 0 else "    "
+            lines.append(f"{prefix}{key}: {_yaml_scalar(value)}")
+    lines.append("")
+    return "\n".join(lines)
+
+
 def write_report(report: dict[str, Any], output_dir: Path) -> None:
     _atomic_json(output_dir / "report.json", report)
+    _atomic_text(output_dir / "evaluation.yaml", _evaluation_yaml(report))
     residue = {
         "feature": report["feature"],
         "results": [

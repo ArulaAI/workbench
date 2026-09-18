@@ -348,6 +348,19 @@ test_task_scoped_eval_requires_existing_task() {
     assert_equals "$EXIT_CONFIG_ERROR" "$rc"
 }
 
+test_writes_evaluation_yaml_beside_the_report() {
+    local out run_id
+    out=$(eval_clean --strict --no-defects --skip-judge 2>&1)
+    run_id=$(jq -r '.run_id' "${FEATURE_DIR}/eval/latest-attempt.json")
+    [[ -f "${FEATURE_DIR}/eval/runs/${run_id}/evaluation.yaml" ]]
+    [[ -f "${FEATURE_DIR}/eval/evaluation.yaml" ]]
+    cmp -s "${FEATURE_DIR}/eval/runs/${run_id}/evaluation.yaml" "${FEATURE_DIR}/eval/evaluation.yaml"
+    grep -q "^accepted: true$" "${FEATURE_DIR}/eval/evaluation.yaml"
+    grep -q "^  - id: AC-01$" "${FEATURE_DIR}/eval/evaluation.yaml"
+    grep -q "^    status: pass$" "${FEATURE_DIR}/eval/evaluation.yaml"
+    assert_equals "1" "$(printf '%s' "$out" | grep -c "Evaluation written to .*/eval/runs/${run_id}/evaluation.yaml")"
+}
+
 run_test test_accepts_when_task_declared_scenarios_pass
 run_test test_rejects_and_files_defect_on_failure
 run_test test_unverifiable_residue_blocks_without_filing_defect
@@ -366,6 +379,7 @@ run_test test_feature_eval_requires_all_tasks_done
 run_test test_task_scoped_eval_reports_only_that_task
 run_test test_task_scoped_eval_ignores_other_tasks_state
 run_test test_task_scoped_eval_requires_existing_task
+run_test test_writes_evaluation_yaml_beside_the_report
 
 echo "${PASS} passed, ${FAIL} failed"
 [[ "$FAIL" -eq 0 ]]
