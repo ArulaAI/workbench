@@ -94,10 +94,59 @@ def _hand_parse_classes_yaml(path):
     current_rules = None
     current_rule = None
 
-    def _scalar(value):
+    # YAML's short escape list for double-quoted scalars, plus its
+    # fixed-width numeric forms (\xHH, \uHHHH, \UHHHHHHHH). An escape
+    # outside this set genuinely is invalid YAML — PyYAML rejects it too
+    # (confirmed: yaml.safe_load('"\\d"') raises "found unknown escape
+    # character 'd'") — this fallback does the same instead of silently
+    # producing a regex that doesn't mean what it looks like.
+    _dq_escapes = {"\\": "\\", '"': '"', "n": "\n", "t": "\t", "r": "\r",
+                   "0": "\0", "a": "\a", "b": "\b", "f": "\f", "v": "\v"}
+    _dq_hex_escapes = {"x": 2, "u": 4, "U": 8}
+
+    def _decode_double_quoted(body, line_no):
+        out = []
+        i = 0
+        while i < len(body):
+            c = body[i]
+            if c == "\\" and i + 1 < len(body):
+                nxt = body[i + 1]
+                if nxt in _dq_hex_escapes:
+                    width = _dq_hex_escapes[nxt]
+                    digits = body[i + 2:i + 2 + width]
+                    if len(digits) < width or not all(d in "0123456789abcdefABCDEF" for d in digits):
+                        raise ValueError(
+                            f"classes.yaml line {line_no}: '\\{nxt}' needs {width} hex "
+                            f"digits in a double-quoted value, got {digits!r}"
+                        )
+                    codepoint = int(digits, 16)
+                    try:
+                        out.append(chr(codepoint))
+                    except ValueError:
+                        raise ValueError(
+                            f"classes.yaml line {line_no}: '\\{nxt}{digits}' is not a "
+                            f"valid Unicode code point"
+                        )
+                    i += 2 + width
+                    continue
+                if nxt not in _dq_escapes:
+                    raise ValueError(
+                        f"classes.yaml line {line_no}: unsupported escape '\\{nxt}' in a "
+                        "double-quoted value — use single quotes for regex patterns "
+                        f"(they need no escaping), or double the backslash (\\\\{nxt})"
+                    )
+                out.append(_dq_escapes[nxt])
+                i += 2
+                continue
+            out.append(c)
+            i += 1
+        return "".join(out)
+
+    def _scalar(value, line_no):
         value = value.strip()
-        if (value.startswith('"') and value.endswith('"')) or \
-           (value.startswith("'") and value.endswith("'")):
+        if value.startswith('"') and value.endswith('"'):
+            return _decode_double_quoted(value[1:-1], line_no)
+        if value.startswith("'") and value.endswith("'"):
             return value[1:-1]
         return value
 
@@ -113,39 +162,37 @@ def _hand_parse_classes_yaml(path):
 
         if stripped == "classes:" and indent == 0:
             continue
-
-        if stripped.startswith("- id:") and indent == 2:
+        elif stripped.startswith("- id:") and indent == 2:
             if current_class is not None:
                 classes.append(current_class)
-            current_class = {"id": _scalar(stripped[len("- id:"):]), "title": "", "rules": []}
+            current_class = {"id": _scalar(stripped[len("- id:"):], line_no), "title": "", "rules": []}
             current_rules = current_class["rules"]
             current_rule = None
+        elif stripped.startswith("title:") and current_class is not None and current_rule is None:
+            current_class["title"] = _scalar(stripped[len("title:"):], line_no)
+        elif stripped == "rules:" and current_class is not None:
             continue
-
-        if stripped.startswith("title:") and current_class is not None and current_rule is None:
-            current_class["title"] = _scalar(stripped[len("title:"):])
+        elif stripped == "rules: []" and current_class is not None:
             continue
-
-        if stripped == "rules:" and current_class is not None:
-            continue
-
-        if stripped.startswith("- look:"):
+        elif stripped.startswith("- look:"):
             if current_rules is None:
                 raise ValueError(
                     f"classes.yaml line {line_no}: '- look:' found before any '- id:' class "
                     "— check indentation (a class entry must be '- id:' at 2 spaces)"
                 )
-            current_rule = {"look": _scalar(stripped[len("- look:"):]), "match": None, "say": ""}
+            current_rule = {"look": _scalar(stripped[len("- look:"):], line_no), "match": None, "say": ""}
             current_rules.append(current_rule)
-            continue
-
-        if stripped.startswith("match:") and current_rule is not None:
-            current_rule["match"] = _scalar(stripped[len("match:"):])
-            continue
-
-        if stripped.startswith("say:") and current_rule is not None:
-            current_rule["say"] = _scalar(stripped[len("say:"):])
-            continue
+        elif stripped.startswith("match:") and current_rule is not None:
+            current_rule["match"] = _scalar(stripped[len("match:"):], line_no)
+        elif stripped.startswith("say:") and current_rule is not None:
+            current_rule["say"] = _scalar(stripped[len("say:"):], line_no)
+        else:
+            raise ValueError(
+                f"classes.yaml line {line_no}: unrecognized syntax: {stripped!r} — this "
+                "hand-parser only understands the fixed classes.yaml shape documented "
+                "above (2-space-indented '- id:'/'- look:' entries); install PyYAML for "
+                "full YAML support"
+            )
 
     if current_class is not None:
         classes.append(current_class)
@@ -155,12 +202,106 @@ def _hand_parse_classes_yaml(path):
 
 # ── diff parsing ───────────────────────────────────────────────────
 
-_FILE_HEADER = re.compile(r"^\+\+\+ b/(.+)$")
+# A "+++ <path>" path is either bare ("b/foo.py", which may itself contain
+# spaces — nothing else follows it on the line, so that's unambiguous) or,
+# when git quotes it (the default for non-ASCII filenames), a double-quoted
+# C-style-escaped string ("b/caf\303\251.py" for "café.py").
+_QUOTED_B_TOKEN = re.compile(r'^"b/((?:[^"\\]|\\.)*)"$')
+_FILE_HEADER = re.compile(r"^\+\+\+ (.+)$")
+
+
+def _git_unquote(body):
+    """Decode the inside of a git-quoted path (C-style octal/backslash
+    escapes) back to the real filename."""
+    out = bytearray()
+    i = 0
+    while i < len(body):
+        c = body[i]
+        if c == "\\" and i + 1 < len(body):
+            nxt = body[i + 1]
+            if nxt in "01234567":
+                out.append(int(body[i + 1:i + 4], 8))
+                i += 4
+                continue
+            out.extend({
+                "a": b"\a", "b": b"\b", "f": b"\f", "n": b"\n", "r": b"\r",
+                "t": b"\t", "v": b"\v", '"': b'"', "\\": b"\\",
+            }.get(nxt, nxt.encode()))
+            i += 2
+            continue
+        out.append(ord(c))
+        i += 1
+    return out.decode("utf-8", errors="replace")
+
+
+def _file_header_path(token):
+    """Decode the path from a '+++ <token>' header: unquote it if git
+    quoted it (stripping the 'b/' prefix that then lives inside the
+    quotes), otherwise just drop the leading 'b/' — git may append a
+    trailing tab to a bare, potentially-ambiguous filename."""
+    token = token.rstrip("\t")
+    m = _QUOTED_B_TOKEN.match(token)
+    if m:
+        return _git_unquote(m.group(1))
+    if token.startswith("b/"):
+        return token[2:]
+    return token
+
+
+_QUOTED_TOKEN = re.compile(r'^"((?:[^"\\]|\\.)*)"$')
+_RENAME_OR_COPY_TO = re.compile(r"^(?:rename|copy) to (.+)$")
+
+
+def _rename_target_path(token):
+    """Decode the path from a 'rename to <token>' / 'copy to <token>'
+    header — unlike '+++'/'diff --git' tokens, these carry no 'a/'/'b/'
+    prefix, quoted C-style when needed, bare otherwise."""
+    m = _QUOTED_TOKEN.match(token)
+    return _git_unquote(m.group(1)) if m else token
+
+
+def _diff_git_line_paths(line):
+    """Parse 'diff --git <a> <b>' into (a_path, b_path), or None. Handles
+    git's quoted (non-ASCII) form unambiguously via the quotes themselves.
+    Bare paths may contain spaces, which makes splitting the line into its
+    two tokens ambiguous in general — but for the overwhelmingly common
+    case the two sides are identical (a rename is the only time they
+    differ), so that identity is what resolves the split, rather than
+    guessing where one token ends and the next begins. A bare rename
+    (differing, unquoted paths) is genuinely ambiguous here; callers
+    resolve it via the unambiguous 'rename to'/'copy to' header that git
+    always emits alongside it (see _changed_files)."""
+    prefix = "diff --git "
+    if not line.startswith(prefix):
+        return None
+    rest = line[len(prefix):]
+    if rest.startswith('"'):
+        m = re.match(r'^"a/((?:[^"\\]|\\.)*)" "b/((?:[^"\\]|\\.)*)"$', rest)
+        return (_git_unquote(m.group(1)), _git_unquote(m.group(2))) if m else None
+    if not rest.startswith("a/"):
+        return None
+    body = rest[2:]
+    # A single greedy regex split picks one candidate " b/" occurrence,
+    # which is wrong when the path itself contains that substring (e.g. a
+    # directory literally named "foo b"). Try every occurrence instead and
+    # take the one where both sides agree — identity is what resolves the
+    # split for the common (non-rename) case, so trying all candidates
+    # rather than assuming the regex's greedy pick is the only way to
+    # actually make that heuristic correct.
+    start = 0
+    while True:
+        idx = body.find(" b/", start)
+        if idx == -1:
+            return None
+        a_path, b_path = body[:idx], body[idx + len(" b/"):]
+        if a_path == b_path:
+            return a_path, b_path
+        start = idx + 1
+
 
 # "diff --git a/X b/Y" appears once per file, for every change type. Unlike
 # "+++ b/...", it doesn't go missing for a deleted file ("+++ /dev/null")
 # or a 100%-similarity rename (which has no +++/--- lines at all).
-_DIFF_GIT_HEADER = re.compile(r"^diff --git a/(.+?) b/(.+)$")
 
 
 def _added_lines_by_file(diff_text):
@@ -169,11 +310,10 @@ def _added_lines_by_file(diff_text):
     result = []
     current_file = None
     for line in diff_text.splitlines():
-        m = _FILE_HEADER.match(line)
-        if m:
-            current_file = m.group(1)
+        if line.startswith("+++ "):
+            current_file = _file_header_path(line[len("+++ "):])
             continue
-        if line.startswith("+++ ") or line.startswith("--- "):
+        if line.startswith("--- "):
             continue
         if line.startswith("+") and current_file:
             result.append((current_file, line[1:]))
@@ -182,10 +322,27 @@ def _added_lines_by_file(diff_text):
 
 def _changed_files(diff_text):
     files = []
-    for line in diff_text.splitlines():
-        m = _DIFF_GIT_HEADER.match(line)
-        if m and m.group(2) not in files:
-            files.append(m.group(2))
+    lines = diff_text.splitlines()
+    for i, line in enumerate(lines):
+        if not line.startswith("diff --git "):
+            continue
+        paths = _diff_git_line_paths(line)
+        if paths:
+            b_path = paths[1]
+        else:
+            # Ambiguous bare rename/copy (differing, unquoted paths) —
+            # resolve via the 'rename to'/'copy to' line git always
+            # emits alongside a detected rename or copy.
+            b_path = None
+            for nxt in lines[i + 1:]:
+                if nxt.startswith("diff --git "):
+                    break
+                m = _RENAME_OR_COPY_TO.match(nxt)
+                if m:
+                    b_path = _rename_target_path(m.group(1))
+                    break
+        if b_path and b_path not in files:
+            files.append(b_path)
     return files
 
 
@@ -221,8 +378,17 @@ def _look_changed_files_outside_declared(diff_text, declared_files, rule):
     return len(extra), extra, extra
 
 
+_TEST_DIR_NAMES = ("test", "tests", "spec", "specs", "__tests__")
+
+
 def _looks_like_test_file(path):
-    return bool(re.search(r"(^|/)(test|tests|spec|specs|__tests__)(/|$)|\.(test|spec)\.", path))
+    if re.search(r"(^|/)(test|tests|spec|specs|__tests__)(/|$)|\.(test|spec)\.", path):
+        return True
+    # Colocated Python/Go conventions: test_foo.py, foo_test.go. Kept as a
+    # separate, basename-only check so a directory merely containing
+    # "test" as part of a longer word (testing_utils.py) doesn't match.
+    base = os.path.basename(path)
+    return bool(re.match(r"^(test|spec)[_-]", base) or re.search(r"[_-](test|spec)\.[A-Za-z0-9]+$", base))
 
 
 def _test_file_stem(path):
@@ -233,14 +399,33 @@ def _test_file_stem(path):
     return base
 
 
+def _non_test_dirs(path):
+    """Directory segments of path, excluding recognized test-directory
+    names, so a flat top-level test root (test/, tests/, ...) and a
+    per-module nested one (mypkg/tests/) both normalize the same way a
+    project layout intends, without treating an unrelated directory that
+    merely shares a file's basename stem (frontend/service.test.ts vs
+    backend/service.py) as if it were that file's test."""
+    return [p for p in os.path.dirname(path).split("/") if p and p.lower() not in _TEST_DIR_NAMES]
+
+
 def _has_matching_test_change(source_path, changed_files):
     stem = re.sub(r"\.[A-Za-z0-9]+$", "", os.path.basename(source_path))
+    source_dirs = _non_test_dirs(source_path)
     for f in changed_files:
         if f == source_path:
             continue
         if not _looks_like_test_file(f):
             continue
-        if _test_file_stem(f) == stem:
+        if _test_file_stem(f) != stem:
+            continue
+        test_dirs = _non_test_dirs(f)
+        # An empty test_dirs means a flat top-level test root (test/foo.test.ts
+        # covers any src/**/foo.ts) — that wildcard only applies to the test
+        # side. A root-level *source* file (empty source_dirs) does not mean
+        # "any test file anywhere is mine"; it still has to actually match
+        # test_dirs, same as any other source file.
+        if not test_dirs or source_dirs == test_dirs:
             return True
     return False
 

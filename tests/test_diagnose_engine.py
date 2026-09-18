@@ -21,13 +21,23 @@ fire." In particular:
 
 import json
 import os
+import re
 import sys
 import tempfile
+
+try:
+    import yaml
+except ImportError:
+    yaml = None
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 
-from lib.diagnose_engine import diagnose, _hand_parse_classes_yaml, _added_lines_by_file
+from lib.diagnose_engine import (
+    diagnose, _hand_parse_classes_yaml, _added_lines_by_file,
+    _changed_files, _looks_like_test_file, _has_matching_test_change,
+    _git_unquote,
+)
 
 passed = 0
 failed = 0
@@ -492,8 +502,9 @@ try:
         error,
     )
     check(
-        "the error names the offending line number",
-        error is not None and "line 5" in str(error),
+        "the error names the offending line number (now caught at the "
+        "malformed '- id:' line itself, line 2, not several lines later)",
+        error is not None and "line 2" in str(error),
         error,
     )
 finally:
@@ -558,6 +569,566 @@ try:
     )
 finally:
     os.unlink(malformed_path)
+
+# ══════════════════════════════════════════════════════════════
+# Finding 1 — quoted/non-ASCII filenames must not be dropped or
+# misattributed to the previous file.
+# ══════════════════════════════════════════════════════════════
+
+diff_quoted_solo = (
+    'diff --git "a/caf\\303\\251.py" "b/caf\\303\\251.py"\n'
+    "new file mode 100644\n"
+    "--- /dev/null\n"
+    '+++ "b/caf\\303\\251.py"\n'
+    "@@ -0,0 +1 @@\n"
+    "+ascii content\n"
+)
+check(
+    "a quoted non-ASCII filename is decoded, not dropped, in _changed_files",
+    _changed_files(diff_quoted_solo) == ["café.py"],
+    _changed_files(diff_quoted_solo),
+)
+check(
+    "its added lines are attributed to the decoded filename, not lost",
+    _added_lines_by_file(diff_quoted_solo) == [("café.py", "ascii content")],
+    _added_lines_by_file(diff_quoted_solo),
+)
+
+diff_quoted_after_normal = (
+    "diff --git a/src/normal.py b/src/normal.py\n"
+    "+++ b/src/normal.py\n"
+    "@@ -0,0 +1 @@\n"
+    "+normal file content\n"
+    'diff --git "a/caf\\303\\251.py" "b/caf\\303\\251.py"\n'
+    "new file mode 100644\n"
+    "--- /dev/null\n"
+    '+++ "b/caf\\303\\251.py"\n'
+    "@@ -0,0 +1 @@\n"
+    "+quoted file content\n"
+)
+check(
+    "a quoted filename's content is not misattributed to the preceding file",
+    _added_lines_by_file(diff_quoted_after_normal) == [
+        ("src/normal.py", "normal file content"),
+        ("café.py", "quoted file content"),
+    ],
+    _added_lines_by_file(diff_quoted_after_normal),
+)
+
+diff_unquoted_still_works = "diff --git a/normal.py b/normal.py\n+++ b/normal.py\n@@ -0,0 +1 @@\n+content\n"
+check(
+    "unquoted (ASCII) filenames are unaffected by the quoting fix",
+    _changed_files(diff_unquoted_still_works) == ["normal.py"]
+    and _added_lines_by_file(diff_unquoted_still_works) == [("normal.py", "content")],
+    (_changed_files(diff_unquoted_still_works), _added_lines_by_file(diff_unquoted_still_works)),
+)
+
+# ══════════════════════════════════════════════════════════════
+# Finding 2 — source/test matching must respect directory boundaries,
+# not just basename stems, so unrelated modules/languages don't
+# suppress a genuine missing-test signal.
+# ══════════════════════════════════════════════════════════════
+
+check(
+    "backend/service.py does NOT match frontend/service.test.ts — different, unrelated modules",
+    _has_matching_test_change("backend/service.py", ["backend/service.py", "frontend/service.test.ts"]) is False,
+    None,
+)
+check(
+    "a flat top-level test root still matches any source subdirectory (existing legitimate layout)",
+    _has_matching_test_change("src/payments/refund.ts", ["src/payments/refund.ts", "test/refund.test.ts"]) is True,
+    None,
+)
+check(
+    "same-directory colocated test still matches",
+    _has_matching_test_change(
+        "src/payments/service.ts", ["src/payments/service.ts", "src/payments/service.test.ts"]
+    ) is True,
+    None,
+)
+check(
+    "a per-module nested tests/ directory matches its own module",
+    _has_matching_test_change("moduleA/service.py", ["moduleA/service.py", "moduleA/tests/test_service.py"]) is True,
+    None,
+)
+check(
+    "a per-module nested tests/ directory does NOT match a different module (cross-module false positive)",
+    _has_matching_test_change("moduleA/utils.py", ["moduleA/utils.py", "moduleB/tests/test_utils.py"]) is False,
+    None,
+)
+
+# ══════════════════════════════════════════════════════════════
+# Finding 3 — colocated Python/Go test-file naming conventions must be
+# recognized as test files, not misclassified as source.
+# ══════════════════════════════════════════════════════════════
+
+check("test_service.py is recognized as a test file", _looks_like_test_file("test_service.py") is True, None)
+check("service_test.go is recognized as a test file", _looks_like_test_file("service_test.go") is True, None)
+check(
+    "a Python file with a matching colocated test is no longer flagged as untested (F7)",
+    (lambda r: r["F7"]["signals"] == [])(
+        run_engine(
+            "diff --git a/backend/service.py b/backend/service.py\n"
+            "+++ b/backend/service.py\n@@ -0,0 +1 @@\n+def handler(): pass\n"
+            "diff --git a/backend/test_service.py b/backend/test_service.py\n"
+            "+++ b/backend/test_service.py\n@@ -0,0 +1 @@\n+def test_handler(): pass\n",
+            declared_files=["backend/service.py", "backend/test_service.py"],
+        )
+    ),
+    "F7 should stay silent once the colocated Python test is recognized",
+)
+check(
+    "'test_' as a substring of a longer word (testing_utils.py) is NOT misclassified as a test file",
+    _looks_like_test_file("testing_utils.py") is False,
+    None,
+)
+check(
+    "'test' appearing mid-word (latest.py) is NOT misclassified as a test file",
+    _looks_like_test_file("latest.py") is False,
+    None,
+)
+
+# ══════════════════════════════════════════════════════════════
+# Finding 4 — the hand-parser's double-quoted scalar decoding must
+# match PyYAML's behavior for supported escapes, and clearly reject
+# unsupported ones rather than silently compiling a broken regex.
+# ══════════════════════════════════════════════════════════════
+
+classes_yaml_dq_escape = write_tmp(
+    'classes:\n'
+    '  - id: F1\n'
+    '    title: Test\n'
+    '    rules:\n'
+    '      - look: added-lines\n'
+    '        match: "\\\\bimport\\\\b"\n'
+    '        say: "{n}"\n',
+    suffix=".yaml",
+)
+try:
+    parsed = _hand_parse_classes_yaml(classes_yaml_dq_escape)
+    decoded = parsed[0]["rules"][0]["match"]
+    check(
+        "a double-backslash escape in a double-quoted match value decodes the same as PyYAML",
+        decoded == "\\bimport\\b",
+        repr(decoded),
+    )
+    check(
+        "the decoded pattern behaves as the intended word-boundary regex",
+        bool(re.search(decoded, "import foo")),
+        decoded,
+    )
+finally:
+    os.unlink(classes_yaml_dq_escape)
+
+classes_yaml_bad_escape = write_tmp(
+    'classes:\n'
+    '  - id: F1\n'
+    '    title: Test\n'
+    '    rules:\n'
+    '      - look: added-lines\n'
+    '        match: "\\d+"\n'
+    '        say: "{n}"\n',
+    suffix=".yaml",
+)
+try:
+    error = None
+    try:
+        _hand_parse_classes_yaml(classes_yaml_bad_escape)
+    except ValueError as e:
+        error = e
+    check(
+        "an unsupported escape in a double-quoted value raises a clear error rather than a silently-wrong regex",
+        error is not None and "unsupported escape" in str(error),
+        error,
+    )
+finally:
+    os.unlink(classes_yaml_bad_escape)
+
+check(
+    "single-quoted values are still never escape-processed (existing, unaffected behavior)",
+    _hand_parse_classes_yaml(write_tmp(
+        "classes:\n  - id: F1\n    title: Test\n    rules:\n      - look: added-lines\n        match: '\\bimport\\b'\n        say: \"{n}\"\n",
+        suffix=".yaml",
+    ))[0]["rules"][0]["match"] == r"\bimport\b",
+    None,
+)
+
+# ══════════════════════════════════════════════════════════════
+# Finding 5 — unrecognized/malformed classes.yaml structure must raise
+# a clear configuration error, not silently return an empty class list
+# that would let diagnose report a misleading successful diagnosis.
+# ══════════════════════════════════════════════════════════════
+
+flow_style_path = write_tmp('classes: [{id: F1, title: "Test"}]\n', suffix=".yaml")
+try:
+    error = None
+    try:
+        _hand_parse_classes_yaml(flow_style_path)
+    except ValueError as e:
+        error = e
+    check(
+        "flow-style YAML (unsupported by the hand-parser) raises, rather than returning []",
+        error is not None and "unrecognized syntax" in str(error),
+        error,
+    )
+finally:
+    os.unlink(flow_style_path)
+
+check(
+    "a genuinely empty file (no classes at all) still returns [] without error — not every empty result is malformed",
+    _hand_parse_classes_yaml(write_tmp("", suffix=".yaml")) == [],
+    None,
+)
+
+check(
+    "rules: [] (the F5 shape used throughout every real classes.yaml) still parses correctly",
+    _hand_parse_classes_yaml(write_tmp(
+        "classes:\n  - id: F5\n    title: Sycophantic self-approval\n    rules: []\n",
+        suffix=".yaml",
+    )) == [{"id": "F5", "title": "Sycophantic self-approval", "rules": []}],
+    None,
+)
+
+# End-to-end: malformed structure surfaces through diagnose() itself as
+# a config error, forcing the no-PyYAML fallback path since PyYAML
+# would otherwise parse this flow-style file just fine on its own.
+flow_style_path2 = write_tmp('classes: [{id: F1}]\n', suffix=".yaml")
+try:
+    import builtins
+    real_import = builtins.__import__
+
+    def _no_yaml2(name, *args, **kwargs):
+        if name == "yaml":
+            raise ImportError("blocked for test")
+        return real_import(name, *args, **kwargs)
+
+    error = None
+    builtins.__import__ = _no_yaml2
+    try:
+        diagnose(flow_style_path2, "diff --git a/x b/x\n", [])
+    except Exception as e:
+        error = e
+    finally:
+        builtins.__import__ = real_import
+    check(
+        "diagnose() surfaces malformed YAML as a config error end-to-end, never a misleading empty success",
+        isinstance(error, ValueError),
+        error,
+    )
+finally:
+    os.unlink(flow_style_path2)
+
+# ══════════════════════════════════════════════════════════════
+# Follow-up review, finding 1 of 3 — a filename containing a space is
+# NOT quoted by git (only non-ASCII/control characters trigger quoting),
+# so the quoted-filename fix must not break this far more common case.
+# ══════════════════════════════════════════════════════════════
+
+diff_spaced_solo = (
+    "diff --git a/my file.py b/my file.py\n"
+    "new file mode 100644\n"
+    "--- /dev/null\n"
+    "+++ b/my file.py\n"
+    "@@ -0,0 +1 @@\n"
+    "+spaced file content\n"
+)
+check(
+    "an unquoted filename containing a space is not dropped",
+    _changed_files(diff_spaced_solo) == ["my file.py"],
+    _changed_files(diff_spaced_solo),
+)
+check(
+    "its added lines are attributed to the spaced filename, not lost",
+    _added_lines_by_file(diff_spaced_solo) == [("my file.py", "spaced file content")],
+    _added_lines_by_file(diff_spaced_solo),
+)
+
+diff_spaced_after_normal = (
+    "diff --git a/normal.py b/normal.py\n"
+    "+++ b/normal.py\n"
+    "@@ -0,0 +1 @@\n"
+    "+normal content\n"
+    "diff --git a/my file.py b/my file.py\n"
+    "new file mode 100644\n"
+    "--- /dev/null\n"
+    "+++ b/my file.py\n"
+    "@@ -0,0 +1 @@\n"
+    "+spaced file content\n"
+)
+check(
+    "a spaced filename's content is not misattributed to the preceding file (the actual reported regression)",
+    _added_lines_by_file(diff_spaced_after_normal) == [
+        ("normal.py", "normal content"),
+        ("my file.py", "spaced file content"),
+    ],
+    _added_lines_by_file(diff_spaced_after_normal),
+)
+check(
+    "the /dev/null deletion header still doesn't leak into current_file after this rewrite",
+    _added_lines_by_file(
+        "diff --git a/old.c b/old.c\ndeleted file mode 100644\n--- a/old.c\n+++ /dev/null\n@@ -1 +0,0 @@\n-int x;\n"
+    ) == [],
+    None,
+)
+check(
+    "quoted non-ASCII filenames still work after the rewrite (Finding 1, unaffected)",
+    _changed_files(
+        'diff --git "a/caf\\303\\251.py" "b/caf\\303\\251.py"\nnew file mode 100644\n--- /dev/null\n+++ "b/caf\\303\\251.py"\n@@ -0,0 +1 @@\n+x\n'
+    ) == ["café.py"],
+    None,
+)
+
+# ══════════════════════════════════════════════════════════════
+# Follow-up review, finding 2 of 3 — the "either side empty" wildcard
+# for flat test roots must only apply to the TEST side. A root-level
+# source file must not match an unrelated nested module's test just
+# because the source has no directory of its own.
+# ══════════════════════════════════════════════════════════════
+
+check(
+    "a root-level source file does NOT match an unrelated nested module's test (the reopened false positive)",
+    _has_matching_test_change("utils.py", ["utils.py", "moduleB/tests/test_utils.py"]) is False,
+    None,
+)
+check(
+    "a root-level source file still matches a root-level colocated test",
+    _has_matching_test_change("service.py", ["service.py", "test_service.py"]) is True,
+    None,
+)
+check(
+    "a root-level source file still matches a flat top-level test root",
+    _has_matching_test_change("service.py", ["service.py", "test/service.test.ts"]) is True,
+    None,
+)
+check(
+    "flat test root for a nested source still works (regression check)",
+    _has_matching_test_change("src/payments/refund.ts", ["src/payments/refund.ts", "test/refund.test.ts"]) is True,
+    None,
+)
+check(
+    "per-module nested tests/ still matches its own module (regression check)",
+    _has_matching_test_change("moduleA/service.py", ["moduleA/service.py", "moduleA/tests/test_service.py"]) is True,
+    None,
+)
+check(
+    "cross-module nested tests/ still rejected (regression check)",
+    _has_matching_test_change("moduleA/utils.py", ["moduleA/utils.py", "moduleB/tests/test_utils.py"]) is False,
+    None,
+)
+check(
+    "the original Finding 2 case (cross-directory/language) still rejected (regression check)",
+    _has_matching_test_change("backend/service.py", ["backend/service.py", "frontend/service.test.ts"]) is False,
+    None,
+)
+
+# ══════════════════════════════════════════════════════════════
+# Follow-up review, finding 3 of 3 — \xHH, \uHHHH, \UHHHHHHHH are valid
+# YAML double-quote escapes; the hand-parser must decode them the same
+# way PyYAML does, not reject them as "unsupported."
+# ══════════════════════════════════════════════════════════════
+
+classes_yaml_hex_escape = write_tmp(
+    'classes:\n'
+    '  - id: F1\n'
+    '    title: Test\n'
+    '    rules:\n'
+    '      - look: added-lines\n'
+    '        match: "\\x41caf\\u00e9"\n'
+    '        say: "{n}"\n',
+    suffix=".yaml",
+)
+try:
+    handparse_value = _hand_parse_classes_yaml(classes_yaml_hex_escape)[0]["rules"][0]["match"]
+    if yaml is not None:
+        pyyaml_value = yaml.safe_load(open(classes_yaml_hex_escape))["classes"][0]["rules"][0]["match"]
+        check(
+            "\\xHH and \\uHHHH decode identically under PyYAML and the hand-parser",
+            pyyaml_value == handparse_value == "Acafé",
+            (pyyaml_value, handparse_value),
+        )
+    else:
+        check("\\xHH and \\uHHHH decode to the expected characters (PyYAML unavailable to cross-check)",
+              handparse_value == "Acafé", handparse_value)
+finally:
+    os.unlink(classes_yaml_hex_escape)
+
+classes_yaml_big_unicode = write_tmp(
+    'classes:\n'
+    '  - id: F1\n'
+    '    title: Test\n'
+    '    rules:\n'
+    '      - look: added-lines\n'
+    '        match: "\\U0001F600"\n'
+    '        say: "{n}"\n',
+    suffix=".yaml",
+)
+try:
+    handparse_value = _hand_parse_classes_yaml(classes_yaml_big_unicode)[0]["rules"][0]["match"]
+    if yaml is not None:
+        pyyaml_value = yaml.safe_load(open(classes_yaml_big_unicode))["classes"][0]["rules"][0]["match"]
+        check(
+            "\\UHHHHHHHH (8-digit) decodes identically under PyYAML and the hand-parser",
+            pyyaml_value == handparse_value,
+            (pyyaml_value, handparse_value),
+        )
+    else:
+        check("\\UHHHHHHHH (8-digit) decodes to the expected character (PyYAML unavailable to cross-check)",
+              handparse_value == "\U0001F600", handparse_value)
+finally:
+    os.unlink(classes_yaml_big_unicode)
+
+classes_yaml_short_hex = write_tmp(
+    'classes:\n'
+    '  - id: F1\n'
+    '    title: Test\n'
+    '    rules:\n'
+    '      - look: added-lines\n'
+    '        match: "\\x4"\n'
+    '        say: "{n}"\n',
+    suffix=".yaml",
+)
+try:
+    error = None
+    try:
+        _hand_parse_classes_yaml(classes_yaml_short_hex)
+    except ValueError as e:
+        error = e
+    check(
+        "a truncated hex escape (too few digits) raises a clear error rather than misreading past the value",
+        error is not None and "hex digits" in str(error),
+        error,
+    )
+finally:
+    os.unlink(classes_yaml_short_hex)
+
+try:
+    _hand_parse_classes_yaml(write_tmp(
+        'classes:\n  - id: F1\n    title: Test\n    rules:\n      - look: added-lines\n        match: "\\d+"\n        say: "{n}"\n',
+        suffix=".yaml",
+    ))
+    check("invalid escape \\d is still rejected (regression check)", False, "no error raised")
+except ValueError as e:
+    check("invalid escape \\d is still rejected (regression check)", "unsupported escape" in str(e), e)
+
+# ══════════════════════════════════════════════════════════════
+# Follow-up review, round 2 — regressions introduced by round 1's fixes
+# ══════════════════════════════════════════════════════════════
+
+# Finding 1 of 3: an ordinary ASCII rename (differing, unquoted paths — the
+# common case the round-1 rewrite made ambiguous) must still show up as a
+# changed file, both when git omits +++/--- (100% similarity) and when it
+# doesn't (content changed alongside the rename).
+diff_rename_full_sim = (
+    "diff --git a/src/payments/old_name.ts b/src/payments/new_name.ts\n"
+    "similarity index 100%\n"
+    "rename from src/payments/old_name.ts\n"
+    "rename to src/payments/new_name.ts\n"
+)
+check(
+    "a 100%-similarity rename to a different bare (unquoted) name is still tracked",
+    _changed_files(diff_rename_full_sim) == ["src/payments/new_name.ts"],
+    _changed_files(diff_rename_full_sim),
+)
+
+diff_rename_with_content = (
+    "diff --git a/src/payments/old_name.ts b/src/payments/new_name.ts\n"
+    "similarity index 75%\n"
+    "rename from src/payments/old_name.ts\n"
+    "rename to src/payments/new_name.ts\n"
+    "index abc..def 100644\n"
+    "--- a/src/payments/old_name.ts\n"
+    "+++ b/src/payments/new_name.ts\n"
+    "@@ -1,2 +1,3 @@\n"
+    " line1\n"
+    " line2\n"
+    "+line3\n"
+)
+check(
+    "a rename with a content change alongside it is still tracked (regression check)",
+    _changed_files(diff_rename_with_content) == ["src/payments/new_name.ts"],
+    _changed_files(diff_rename_with_content),
+)
+
+diff_rename_mixed_quoting = (
+    "diff --git a/src/payments/old name.ts \"b/src/payments/caf\\303\\251.ts\"\n"
+    "similarity index 100%\n"
+    "rename from src/payments/old name.ts\n"
+    "rename to \"src/payments/caf\\303\\251.ts\"\n"
+)
+check(
+    "a rename from a spaced name to a quoted non-ASCII name resolves via 'rename to' (regression check)",
+    _changed_files(diff_rename_mixed_quoting) == ["src/payments/café.ts"],
+    _changed_files(diff_rename_mixed_quoting),
+)
+
+diff_identical_paths = "diff --git a/src/payments/service.ts b/src/payments/service.ts\n"
+check(
+    "a non-rename (identical bare paths) is unaffected by the rename-lookahead change",
+    _changed_files(diff_identical_paths) == ["src/payments/service.ts"],
+    _changed_files(diff_identical_paths),
+)
+
+# A non-renamed file whose own path contains the literal substring " b/"
+# (e.g. a directory named "foo b") defeats a single greedy regex split —
+# the correct a==b split must still be found by trying every " b/"
+# occurrence, not just the first/last one a backtracking regex happens to pick.
+diff_path_contains_marker = (
+    "diff --git a/foo b/bar.py b/foo b/bar.py\n"
+    "index abc..def 100644\n"
+    "--- a/foo b/bar.py\n"
+    "+++ b/foo b/bar.py\n"
+    "@@ -1 +1 @@\n"
+    "-old\n"
+    "+new\n"
+)
+check(
+    "a path containing the literal substring ' b/' is still correctly split, not mistaken for a rename",
+    _changed_files(diff_path_contains_marker) == ["foo b/bar.py"],
+    _changed_files(diff_path_contains_marker),
+)
+
+# Finding 2 of 3: _git_unquote's escape table must cover the full C-style
+# set git actually emits (\a \b \f \n \r \t \v \\ \"), not just a subset —
+# an escape letter outside the handled set previously fell through to the
+# literal letter itself, silently corrupting the decoded filename.
+for esc, expected in (("r", "\r"), ("a", "\a"), ("b", "\b"), ("f", "\f"), ("v", "\v")):
+    check(
+        f"_git_unquote decodes \\{esc} to its real control character (regression check)",
+        _git_unquote(f"foo\\{esc}bar.py") == f"foo{expected}bar.py",
+        _git_unquote(f"foo\\{esc}bar.py"),
+    )
+check(
+    "_git_unquote still decodes \\n, \\t, \\\", \\\\ correctly (existing behavior, unaffected)",
+    _git_unquote('foo\\n\\t\\"\\\\bar.py') == 'foo\n\t"\\bar.py',
+    _git_unquote('foo\\n\\t\\"\\\\bar.py'),
+)
+
+# Finding 3 of 3: a well-formed \UHHHHHHHH escape whose code point exceeds
+# the valid Unicode range (> U+10FFFF) must raise the function's own
+# classes.yaml-line-numbered ValueError, not an unlabeled internal error.
+classes_yaml_out_of_range_unicode = write_tmp(
+    'classes:\n'
+    '  - id: F1\n'
+    '    title: Test\n'
+    '    rules:\n'
+    '      - look: added-lines\n'
+    '        match: "\\U11000000"\n'
+    '        say: "{n}"\n',
+    suffix=".yaml",
+)
+try:
+    error = None
+    try:
+        _hand_parse_classes_yaml(classes_yaml_out_of_range_unicode)
+    except ValueError as e:
+        error = e
+    check(
+        "an out-of-range \\U escape raises a classes.yaml-line-numbered ValueError, not a bare internal error",
+        error is not None and "classes.yaml line" in str(error),
+        error,
+    )
+finally:
+    os.unlink(classes_yaml_out_of_range_unicode)
 
 # ══════════════════════════════════════════════════════════════
 # Summary
