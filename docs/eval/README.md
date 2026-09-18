@@ -84,7 +84,7 @@ mkdir -p .speed/features/payments/tasks
 ../workbench/speed eval -f payments --skip-judge --no-defects
 ```
 
-`speed.toml` and `specs/tests/payments.md` are not committed in the fixture yet; the commands above create them. Add `--strict` to get exit `2` on a not-accepted verdict for CI.
+`speed.toml` and `specs/tests/payments.md` are not committed in the fixture yet; the commands above create them. `workbench eval` is the same command: `workbench` is a thin forwarder that execs `speed` with the same arguments, so either name works. Add `--strict` to get exit `2` on a not-accepted verdict for CI.
 
 ```
 speed eval --feature <name> [--test-spec PATH] [--test-plan PATH]
