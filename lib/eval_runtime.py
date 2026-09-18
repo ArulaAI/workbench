@@ -324,20 +324,29 @@ def finish(run: Path, failed: bool = False) -> None:
     state_file = Path(context["state_file"])
     output = Path(context["output_dir"])
     root = Path(context["project_root"])
-    for path in (state_file, output):
+    # The YAML hand-off sits in the feature directory, beside the
+    # risk-surface.yaml that diagnose writes, so the next workflow step finds
+    # every step's artifact in one place. A task-scoped run must not pose as
+    # the feature verdict, so it gets its own name.
+    task_id = context["task_id"]
+    handoff = Path(context["feature_dir"]) / (f"evaluation-task-{task_id}.yaml" if task_id else "evaluation.yaml")
+    for path in (state_file, output, handoff):
         safe_path(path, root)
     if failed:
         atomic_json(run / "attempt.json", {"status": "failed", "finished_at": utc_now()})
     else:
         report = read_object(run / "report.json")
-        for name in ("report.json", "evaluation.yaml", "summary.md", "residue.json", "scenario-results.json", "test-plan.json"):
+        targets = {name: output / name
+                   for name in ("report.json", "summary.md", "residue.json", "scenario-results.json", "test-plan.json")}
+        targets["evaluation.yaml"] = handoff
+        for name, target in targets.items():
             source = run / name
             if source.is_file():
-                fd, temp = tempfile.mkstemp(dir=output)
+                fd, temp = tempfile.mkstemp(dir=target.parent)
                 os.close(fd)
                 try:
                     shutil.copyfile(source, temp)
-                    os.replace(temp, output / name)
+                    os.replace(temp, target)
                 finally:
                     if os.path.exists(temp):
                         os.unlink(temp)

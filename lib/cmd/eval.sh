@@ -91,7 +91,9 @@ _eval_print_summary() {
 
     echo ""
     log_step "Report written to ${COLOR_STEP}${output_dir}/summary.md${RESET}"
-    log_step "Evaluation written to ${COLOR_STEP}${output_dir}/evaluation.yaml${RESET}"
+    local handoff="${FEATURE_DIR}/evaluation.yaml"
+    [[ -z "${_eval_task_filter:-}" ]] || handoff="${FEATURE_DIR}/evaluation-task-${_eval_task_filter}.yaml"
+    log_step "Evaluation written to ${COLOR_STEP}${handoff}${RESET}"
 }
 
 # One line that says what the report supports, without a percentage.

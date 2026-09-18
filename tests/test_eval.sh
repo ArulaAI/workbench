@@ -348,17 +348,29 @@ test_task_scoped_eval_requires_existing_task() {
     assert_equals "$EXIT_CONFIG_ERROR" "$rc"
 }
 
-test_writes_evaluation_yaml_beside_the_report() {
+test_writes_evaluation_yaml_in_the_feature_directory() {
     local out run_id
     out=$(eval_clean --strict --no-defects --skip-judge 2>&1)
     run_id=$(jq -r '.run_id' "${FEATURE_DIR}/eval/latest-attempt.json")
     [[ -f "${FEATURE_DIR}/eval/runs/${run_id}/evaluation.yaml" ]]
-    [[ -f "${FEATURE_DIR}/eval/evaluation.yaml" ]]
-    cmp -s "${FEATURE_DIR}/eval/runs/${run_id}/evaluation.yaml" "${FEATURE_DIR}/eval/evaluation.yaml"
-    grep -q "^accepted: true$" "${FEATURE_DIR}/eval/evaluation.yaml"
-    grep -q "^  - id: AC-01$" "${FEATURE_DIR}/eval/evaluation.yaml"
-    grep -q "^    status: pass$" "${FEATURE_DIR}/eval/evaluation.yaml"
-    assert_equals "1" "$(printf '%s' "$out" | grep -c "Evaluation written to .*/eval/runs/${run_id}/evaluation.yaml")"
+    # The hand-off sits beside risk-surface.yaml, not under eval/.
+    [[ -f "${FEATURE_DIR}/evaluation.yaml" ]]
+    [[ ! -e "${FEATURE_DIR}/eval/evaluation.yaml" ]]
+    cmp -s "${FEATURE_DIR}/eval/runs/${run_id}/evaluation.yaml" "${FEATURE_DIR}/evaluation.yaml"
+    grep -q "^accepted: true$" "${FEATURE_DIR}/evaluation.yaml"
+    grep -q "^  - id: AC-01$" "${FEATURE_DIR}/evaluation.yaml"
+    grep -q "^    status: pass$" "${FEATURE_DIR}/evaluation.yaml"
+    assert_equals "1" "$(printf '%s' "$out" | grep -c "Evaluation written to .*/features/books/evaluation.yaml")"
+}
+
+test_task_scoped_yaml_does_not_pose_as_the_feature_verdict() {
+    add_task_two "pending"
+    local out
+    out=$(eval_clean --task-id 1 --strict --no-defects --skip-judge 2>&1)
+    [[ -f "${FEATURE_DIR}/evaluation-task-1.yaml" ]]
+    [[ ! -e "${FEATURE_DIR}/evaluation.yaml" ]]
+    grep -q '^task: "1"$' "${FEATURE_DIR}/evaluation-task-1.yaml"
+    assert_equals "1" "$(printf '%s' "$out" | grep -c "Evaluation written to .*/features/books/evaluation-task-1.yaml")"
 }
 
 run_test test_accepts_when_task_declared_scenarios_pass
@@ -379,7 +391,8 @@ run_test test_feature_eval_requires_all_tasks_done
 run_test test_task_scoped_eval_reports_only_that_task
 run_test test_task_scoped_eval_ignores_other_tasks_state
 run_test test_task_scoped_eval_requires_existing_task
-run_test test_writes_evaluation_yaml_beside_the_report
+run_test test_writes_evaluation_yaml_in_the_feature_directory
+run_test test_task_scoped_yaml_does_not_pose_as_the_feature_verdict
 
 echo "${PASS} passed, ${FAIL} failed"
 [[ "$FAIL" -eq 0 ]]

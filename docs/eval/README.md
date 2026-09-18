@@ -10,7 +10,7 @@ This page covers what eval reads, how to configure a project for it, how to run 
 - Compiles the mapping table into `.speed/features/<name>/eval/test-plan.json`, one entry per scenario selector.
 - Runs each selector under the configured test command, one scenario at a time, and records the exit code and gate log per scenario.
 - Runs any selectors that finished tasks declare in their task files the same way.
-- Builds `report.json`, `evaluation.yaml` and `summary.md`: one record per scenario with a status, an evidence type, and the requirements it traces to. Task acceptance criteria are appended as their own rows. The YAML is the hand-off `workbench define` reads, in the same shape as the `risk-surface.yaml` that `workbench diagnose` writes.
+- Builds `report.json`, `evaluation.yaml` and `summary.md`: one record per scenario with a status, an evidence type, and the requirements it traces to. Task acceptance criteria are appended as their own rows. The YAML is the hand-off `workbench define` reads. It lands at `.speed/features/<name>/evaluation.yaml`, beside the `risk-surface.yaml` that `workbench diagnose` writes, and follows the same shape.
 - Optionally hands the leftover manual criteria to the evaluator agent. Its verdicts are recorded as opinion and cannot change an executed result.
 - Marks the feature `accepted` only when every applicable result passed. A scenario with no test is reported as not examined, never as a pass. There is no score and no percentage.
 - Exit code is `0` whatever the verdict unless `--strict` is set. Configuration errors (no spec, missing mapping file, unknown task) exit `3`.
@@ -136,13 +136,13 @@ Change: main @ uncommitted-working-tree   spec: specs/tests/payments.md
       OOS-06     Not applicable               Spec owners
 
 Report written to <project-root>/.speed/features/payments/eval/runs/<run-id>/summary.md
-Evaluation written to <project-root>/.speed/features/payments/eval/runs/<run-id>/evaluation.yaml
+Evaluation written to <project-root>/.speed/features/payments/evaluation.yaml
 Not accepted. 7 never examined.
 ```
 
 21 scenarios, 17 pass, 4 not examined, plus three acceptance gates. The existing suite is fully green, so a plain test run reports nothing wrong; eval reports that four requirements were never checked. The `Acceptance gates` rows come from the runtime, not the spec: `COVERAGE-01` names a requirement row (TR12) that no scenario covers, `BUILD-COMMITTED` reports the uncommitted `speed.toml` and spec in the tested tree, and `BUILD-INTEGRATED` reports that no integration has completed for the feature. All three block acceptance until resolved. A `failed` block appears before the verdict when a mapped test fails.
 
-Each attempt has an immutable directory under `.speed/features/<name>/eval/runs/<run-id>/`. Completed attempts also update the files directly under `eval/`. Task-scoped runs use `eval/task-<id>/` as their output root.
+Each attempt has an immutable directory under `.speed/features/<name>/eval/runs/<run-id>/`. Completed attempts also update the files directly under `eval/`, and place the YAML hand-off in the feature directory itself. Task-scoped runs use `eval/task-<id>/` as their output root and name their hand-off `evaluation-task-<id>.yaml`, so a partial run never overwrites the feature verdict.
 
 Files written under `.speed/features/<name>/`:
 
@@ -151,18 +151,18 @@ Files written under `.speed/features/<name>/`:
 | `eval/test-plan.json` | The mapping compiled from the spec's table |
 | `eval/scenario-results.json` | Per-scenario status, command, evidence and timestamp |
 | `eval/report.json` | Every result with status, evidence type, traces, area and task; `out_of_scope`; `summary`; per-test execution detail |
-| `eval/evaluation.yaml` | The same verdict and results as YAML, without the per-test detail; the next workflow step reads this file |
 | `eval/summary.md` | The same as tables, with a Not examined by decision section |
 | `eval/residue.json` | Manual criteria still unverifiable, the evaluator agent's input |
 | `eval/runs/<run-id>/summary.md` | The attempt's summary, whose path is printed in the terminal |
-| `eval/runs/<run-id>/evaluation.yaml` | The attempt's YAML, also printed; `eval/evaluation.yaml` is a copy of the latest completed attempt's |
+| `eval/runs/<run-id>/evaluation.yaml` | The attempt's own copy of the YAML hand-off |
 | `eval/runs/<run-id>/commands/<execution-id>/output.log` | The runner's output; each result identifies its execution log |
 | `eval/latest-attempt.json` | The latest attempt ID and completion or failure status |
+| `evaluation.yaml` | The verdict and results as YAML, without the per-test detail, copied from the latest completed attempt; the next workflow step reads this file. Sits beside diagnose's `risk-surface.yaml`. Task-scoped runs write `evaluation-task-<id>.yaml` instead |
 | `state.json` | Evaluation metadata; `accepted` or `integrated_not_accepted` after a full run with verified integration |
 
 ### The evaluation YAML
 
-`evaluation.yaml` is the artifact the workflow carries forward: `workbench diagnose` writes `risk-surface.yaml`, `workbench eval` writes this file, and `workbench define` turns its failed and not-examined results into defect specs. Trimmed from the fixture run above (two results out of 24, one Out of Scope row out of six):
+`.speed/features/<name>/evaluation.yaml` is the artifact the workflow carries forward: `workbench diagnose` writes `risk-surface.yaml` in the same directory, `workbench eval` writes this file, and `workbench define` turns its failed and not-examined results into defect specs. Trimmed from the fixture run above (two results out of 24, one Out of Scope row out of six):
 
 ```yaml
 # Written by `speed eval`. Each result carries its evidence. Silence is not a pass.
@@ -312,4 +312,4 @@ python3 tests/test_eval_yaml.py                                     # evaluation
 bash tests/test_eval.sh                                             # CLI command
 ```
 
-Last verified: 36 + 10 + 19 = 65 tests passing, 0 failing.
+Last verified: 36 + 10 + 20 = 66 tests passing, 0 failing.
