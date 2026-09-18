@@ -22,7 +22,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from lib.criteria_verify import verify_criteria, _find_test_files
-from lib.eval_execution import aggregate_status, configured_commands, load_config, run_command
+from lib.eval_execution import aggregate_status, commands_for_file, load_config, run_command
 from lib.eval_runtime import build_snapshot, task_scenarios, read_object
 from lib.test_spec import (coverage_gaps, parse_evaluation_gates, parse_out_of_scope,
                            parse_scenarios, parse_traceability)
@@ -226,23 +226,27 @@ def _semantic_results(
             verify_by = criterion.get("verify_by", "manual")
             outcome = {"status": "unverifiable", "evidence": "Manual review required", "command": ""}
             if verify_by in ("test", "lint"):
-                commands = configured_commands(config, verify_by, task)
                 touched = task.get("files_touched", [])
                 files = (_find_test_files(touched, str(project_root))
                          if verify_by == "test" else _present_files(touched, project_root))
                 files = sorted(set(files))
-                if not commands:
-                    outcome["evidence"] = f"No configured {verify_by} command; required criterion remains unverified"
-                elif not files:
-                    # Nothing on disk to check leaves the criterion unverified.
-                    # Running a deleted path would report a product failure instead.
+                if not files:
+                    # Match the legacy verifier for a required test with no
+                    # test files. Deleted lint targets remain unverifiable.
+                    if verify_by == "test":
+                        outcome["status"] = "fail"
                     outcome["evidence"] = f"No files found for the required {verify_by} criterion"
                 elif any(not (project_root / name).resolve().is_relative_to(project_root.resolve()) for name in files):
                     outcome["evidence"] = "Criterion file leaves the project boundary"
                 else:
                     executions = []
-                    for command in commands:
-                        for name in files:
+                    for name in files:
+                        commands = commands_for_file(config, verify_by, task, name)
+                        if not commands:
+                            executions.append({"status": "unverifiable", "command": "",
+                                               "evidence": f"No unambiguous configured {verify_by} command for {name}; "
+                                                           "map the criterion to scenarios with explicit commands"})
+                        for command in commands:
                             try:
                                 executions.append(run_command(command, [str(project_root / name)], project_root,
                                                               evidence_dir, gate=verify_by))

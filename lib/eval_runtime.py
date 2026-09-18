@@ -176,13 +176,16 @@ def prepare(root: Path, feature_dir: Path, state_file: Path, test_spec: Path,
         if not any(str(t["id"]) == task_id for t in tasks):
             raise ValueError(f"Task {task_id} not found")
     selected = [t for t in tasks if task_id is None or str(t["id"]) == task_id]
-    if not selected:
-        raise ValueError("No tasks to evaluate")
     if any(t.get("status") != "done" for t in selected):
         raise RuntimeError("Evaluation requires done tasks")
     spec_text = test_spec.read_text(encoding="utf-8")
     scenarios = {s["id"] for s in parse_scenarios(spec_text)}
     plan = read_object(plan_path) if plan_path else {"test_cases": parse_execution_mapping(spec_text)}
+    # A feature whose tests already exist has no task files: the spec's
+    # Execution and Evidence table is what gets evaluated. Only a feature with
+    # neither tasks nor mapped scenarios has nothing to run.
+    if not selected and not plan["test_cases"]:
+        raise ValueError("No tasks or mapped scenarios to evaluate")
     validate_plan(plan, scenarios, tasks)
     if task_id is not None:
         owned = task_scenarios(selected[0])

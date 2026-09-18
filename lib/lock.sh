@@ -25,19 +25,50 @@ LOCK_INIT_GRACE_MIN=1
 # mkdir cannot succeed while the lock directory is still there.
 #
 # Returns 0 if the lock was removed or had already gone, 1 to keep waiting.
-_lock_break() {
+_lock_break() (
     local lock="$1" verdict="$2" guard="${1}.breaking" rc=1
+    local owner="" stale_owner stale_pid breaker_pid reclaimed=false
 
+    # Remove only a dead breaker's unique marker. Concurrent reapers must not
+    # delete another waiter's new guard, even if they observed the same orphan.
+    for stale_owner in "$guard"/owner.*; do
+        [[ -f "$stale_owner" && ! -L "$stale_owner" ]] || continue
+        stale_pid=$(cat "$stale_owner" 2>/dev/null || true)
+        if [[ "$stale_pid" =~ ^[0-9]+$ ]] && ! kill -0 "$stale_pid" 2>/dev/null; then
+            rm -f "$stale_owner"
+            reclaimed=true
+        elif [[ -z "$stale_pid" ]] &&
+             [[ -n "$(find "$stale_owner" -maxdepth 0 -mmin "+${LOCK_INIT_GRACE_MIN}" 2>/dev/null)" ]]; then
+            rm -f "$stale_owner"
+            reclaimed=true
+        fi
+    done
+    if $reclaimed; then
+        rmdir "$guard" 2>/dev/null || true
+    elif [[ -d "$guard" ]] &&
+       [[ -n "$(find "$guard" -maxdepth 0 -mmin "+${LOCK_INIT_GRACE_MIN}" 2>/dev/null)" ]]; then
+        # Legacy guards and death before the marker was written leave an
+        # empty directory. rmdir cannot remove a live breaker's marker.
+        rmdir "$guard" 2>/dev/null || true
+    fi
     mkdir "$guard" 2>/dev/null || return 1
+    # Isolate these traps from the caller's feature/merge cleanup handlers.
+    trap '[[ -z "$owner" ]] || rm -f "$owner"; rmdir "$guard" 2>/dev/null || true' EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    owner=$(mktemp "${guard}/owner.XXXXXXXX") || return 1
+    # $$ is the caller's PID in a bash subshell; PPID from an exec'd child is
+    # the breaker's actual PID, including on bash 3.2 without BASHPID.
+    breaker_pid=$(exec sh -c 'echo "$PPID"')
+    printf '%s\n' "$breaker_pid" > "$owner"
     if [[ ! -d "$lock" ]]; then
         rc=0
     elif "$verdict" "$lock"; then
         rm -rf "$lock"
         rc=0
     fi
-    rmdir "$guard" 2>/dev/null || rm -rf "$guard"
     return $rc
-}
+)
 
 # Internal: verdict for a lock whose recorded holder was seen dead.
 _lock_holder_still_dead() {

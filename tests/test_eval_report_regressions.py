@@ -7,6 +7,8 @@ producing a verdict, or turned absent evidence into an acceptance.
 
 import json
 import os
+import shlex
+import shutil
 import sys
 import tempfile
 import unittest
@@ -15,7 +17,8 @@ from pathlib import Path
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 
-from lib.eval_report import build_report, write_report
+from lib.eval_report import build_report, write_report, _semantic_results
+from lib.criteria_verify import verify_criteria
 
 
 TEST_SPEC = """# Test Spec: Books
@@ -57,6 +60,65 @@ class EvalReportRegressionTest(unittest.TestCase):
 
     def _by_id(self, report):
         return {result["id"]: result for result in report["results"]}
+
+    def test_legacy_test_criterion_preserves_existence_only_caveat(self):
+        (self.root / "test_books.py").write_text("def test_book():\n    assert False\n")
+        task = {"files_touched": ["test_books.py"], "acceptance_criteria": [
+            {"criterion": "Books tested", "verify_by": "test"}]}
+        result = verify_criteria(task, str(self.root))["criteria_results"][0]
+        self.assertEqual("pass", result["status"])
+        self.assertIn("file existence only", result["evidence"])
+        # Once configured, a failing runner must override the existence check.
+        result = verify_criteria(task, str(self.root), test_command="false")["criteria_results"][0]
+        self.assertEqual("fail", result["status"])
+
+    def test_legacy_test_criterion_without_test_files_fails(self):
+        task = {"files_touched": ["books.py"], "acceptance_criteria": [
+            {"criterion": "Books tested", "verify_by": "test"}]}
+        result = verify_criteria(task, str(self.root))["criteria_results"][0]
+        self.assertEqual("fail", result["status"])
+
+    def _test_criterion(self, files, commands):
+        task = {"id": "1", "files_touched": files, "acceptance_criteria": [
+            {"criterion": "Books tested", "verify_by": "test"}]}
+        return _semantic_results([task], self.root, {"test_commands": commands},
+                                 self.root / "evidence")[0]
+
+    @unittest.skipUnless(shutil.which("npm") and shutil.which("node"), "requires npm and Node")
+    def test_python_and_npm_receive_only_their_own_test_files(self):
+        (self.root / "test_books.py").write_text("def test_book():\n    assert 1 + 1 == 2\n")
+        (self.root / "books.test.js").write_text("module.exports = () => require('assert').equal(1 + 1, 2);\n")
+        (self.root / "package.json").write_text(json.dumps({"scripts": {"test": "node runner.cjs"}}))
+        (self.root / "runner.cjs").write_text("""
+const fs = require('fs');
+const tests = process.argv.slice(2).map(file => {
+    require('assert').equal(require('path').extname(file), '.js');
+    require(file)();
+    return {id: file, status: 'pass'};
+});
+fs.writeFileSync(process.env.SPEED_EVAL_RESULT_FILE, JSON.stringify({tests}));
+""")
+        commands = [shlex.quote(sys.executable) + " -m pytest -q", "npm test --"]
+        result = self._test_criterion(["test_books.py", "books.test.js"], commands)
+        self.assertEqual("pass", result["status"], result["evidence"])
+        self.assertEqual(2, len(result["executions"]))
+        self.assertTrue(all(len(run["tests"]) == 1 for run in result["executions"]))
+        # A real failure in the Python test still blocks acceptance.
+        (self.root / "test_books.py").write_text("def test_book():\n    assert False\n")
+        result = self._test_criterion(["test_books.py", "books.test.js"], commands)
+        self.assertEqual("fail", result["status"])
+
+    def test_ambiguous_custom_runners_do_not_execute_speculatively(self):
+        (self.root / "test_books.py").write_text("def test_book(): pass\n")
+        result = self._test_criterion(["test_books.py"], ["touch first", "touch second"])
+        self.assertEqual("unverifiable", result["status"])
+        self.assertFalse((self.root / "first").exists())
+        self.assertFalse((self.root / "second").exists())
+
+    def test_missing_test_files_fail_with_or_without_a_runner(self):
+        for commands in ([], ["pytest -q"]):
+            result = self._test_criterion(["books.py"], commands)
+            self.assertEqual("fail", result["status"])
 
     # ── Defect 1: build provenance ───────────────────────────
 

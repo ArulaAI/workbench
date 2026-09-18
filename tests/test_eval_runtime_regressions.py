@@ -19,7 +19,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from lib.criteria_verify import verify_criteria
 from lib.eval_runtime import prepare
-from lib.toml import _hand_parse, emit
+from lib.eval_report import _semantic_results
+from lib.toml import _hand_parse
 
 from test_eval_regressions import Project, project  # noqa: F401  (pytest fixture)
 
@@ -156,9 +157,9 @@ def test_read_path_outside_the_project_is_rejected(project, tmp_path):
 # ── criterion verification without a runner ──────────────────
 
 
-def test_test_criterion_without_a_runner_is_unverifiable_not_pass(tmp_path):
-    """A test file on disk is not a test that ran. Touching a test file used to
-    satisfy its own test criterion with nothing executed."""
+def test_legacy_test_criterion_without_a_runner_records_existence_only(tmp_path):
+    """Grounding and traceability retain their existence-only check. Eval
+    requires execution evidence through its separate criterion path."""
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests/test_thing.py").write_text("def test_ok():\n    assert True\n")
     task = {"id": "1", "files_touched": ["tests/test_thing.py"],
@@ -166,8 +167,11 @@ def test_test_criterion_without_a_runner_is_unverifiable_not_pass(tmp_path):
 
     result = verify_criteria(task, str(tmp_path))["criteria_results"][0]
 
-    assert result["status"] == "unverifiable"
-    assert result["status"] != "pass"
+    assert result["status"] == "pass"
+    assert "file existence only" in result["evidence"]
+    evaluated = _semantic_results([task], tmp_path, {"test_commands": [], "gates": []},
+                                  tmp_path / "evidence")[0]
+    assert evaluated["status"] == "unverifiable"
 
 
 def test_test_criterion_with_a_runner_still_passes(tmp_path):
@@ -214,11 +218,6 @@ def test_unterminated_array_is_an_error_not_a_silent_string(tmp_path):
 
     with pytest.raises(ValueError, match="Unterminated array"):
         _hand_parse(path)
-
-
-def test_emit_refuses_a_command_that_is_still_array_text(capsys):
-    with pytest.raises(ValueError, match="unparsed array"):
-        emit({"eval": {"test_command": '["pytest -q", "npm test"]'}})
 
 
 NEEDS_ARG = (shlex.quote(sys.executable)

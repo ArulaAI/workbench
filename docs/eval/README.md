@@ -40,10 +40,14 @@ Two things live in the project being evaluated, not in this repo.
 
 ```toml
 [eval]
-test_command = "node --experimental-strip-types --test"
+test_command = "node --experimental-strip-types --test --test-reporter=junit --test-reporter-destination=$SPEED_EVAL_JUNIT_FILE {selectors}"
 ```
 
-Plain shell, harness-agnostic: `pytest -q`, `go test`, `node --test`, whatever the project runs. Eval appends a selector to it, or substitutes the selector for a `{selectors}` placeholder. `test_commands = [...]` allows several when different scenarios need different invocations. When `[eval]` is absent, eval falls back to the `test:` line under `## Quality Gates` in the project's agent file. `package.json` scripts are never read, because `npm test` runs the whole suite and cannot take a selector.
+Plain shell, harness-agnostic: `pytest -q`, `go test`, `node --test`, whatever the project runs. Eval appends a selector to it, or substitutes the selector for a `{selectors}` placeholder. `test_commands = [...]` allows several when different scenarios need different invocations. When `[eval]` is absent, eval falls back to the `test:` line under `## Quality Gates` in the project's agent file. Eval does not infer `package.json` scripts; configure `npm test --` when the script accepts selectors.
+
+A zero exit on its own is not evidence. The runner must write a test report: JUnit XML to the path eval passes in `SPEED_EVAL_JUNIT_FILE`, or JSON of the form `{"tests": [{"id": "...", "status": "pass"}]}` to the `{report}` placeholder. pytest gets `--junitxml` added for it; Node needs the `--test-reporter=junit` flags shown above. A run that exits 0 without a report is reported as not examined, never as a pass.
+
+For task criteria that infer test files, eval selects commands per file using subsystem configuration and recognized Python or JavaScript runners. Ambiguous lists of custom runners leave the criterion unverified; map its scenarios to explicit commands in that case.
 
 ### The test spec
 
@@ -71,7 +75,7 @@ cd payments-validation-fixture
 
 cat > speed.toml <<'TOML'
 [eval]
-test_command = "node --experimental-strip-types --test"
+test_command = "node --experimental-strip-types --test --test-reporter=junit --test-reporter-destination=$SPEED_EVAL_JUNIT_FILE {selectors}"
 TOML
 
 ../workbench/speed new test-spec payments      # writes specs/tests/payments.md
@@ -105,19 +109,23 @@ speed eval --feature <name> [--test-spec PATH] [--test-plan PATH]
 The run on the fixture's `main`:
 
 ```
-Change: main @ 652a864   spec: specs/tests/payments.md
+Change: main @ uncommitted-working-tree   spec: specs/tests/payments.md
     Authorise                  3 pass, 1 not examined
     Capture                    3 pass, 2 not examined
     Refund and void            3 pass, 1 not examined
     Settlement and invariants  2 pass
     Money                      4 pass
     Ledger                     2 pass
+    Acceptance gates           3 not examined
 
     not examined
       RISK-01    TR11, Product risk, Critical    No test mapped to this scenario
       AC-12      ST6                             No test mapped to this scenario
       RISK-02    ST3, Product risk, High         No test mapped to this scenario
       EDGE-01    ST4                             No test mapped to this scenario
+      COVERAGE-01 -                              No scenario covers requirement: TR12: only scheme test BINs anywhere in the repository
+      BUILD-COMMITTED -                          The tested working tree has uncommitted changes
+      BUILD-INTEGRATED -                         Integration has not completed successfully for this feature
 
     not examined by decision
       OOS-01     Deferred                     payments-product to decide; release claim bounded until then
@@ -127,11 +135,13 @@ Change: main @ 652a864   spec: specs/tests/payments.md
       OOS-05     Not applicable to this spec  Course workflow
       OOS-06     Not applicable               Spec owners
 
-Report written to .speed/features/payments/eval/summary.md
-Not accepted. 4 never examined.
+Report written to <project-root>/.speed/features/payments/eval/runs/<run-id>/summary.md
+Not accepted. 7 never examined.
 ```
 
-21 scenarios, 17 pass, 4 not examined. The existing suite is fully green, so a plain test run reports nothing wrong; eval reports that four requirements were never checked. A `failed` block appears before the verdict when a mapped test fails.
+21 scenarios, 17 pass, 4 not examined, plus three acceptance gates. The existing suite is fully green, so a plain test run reports nothing wrong; eval reports that four requirements were never checked. The `Acceptance gates` rows come from the runtime, not the spec: `COVERAGE-01` names a requirement row (TR12) that no scenario covers, `BUILD-COMMITTED` reports the uncommitted `speed.toml` and spec in the tested tree, and `BUILD-INTEGRATED` reports that no integration has completed for the feature. All three block acceptance until resolved. A `failed` block appears before the verdict when a mapped test fails.
+
+Each attempt has an immutable directory under `.speed/features/<name>/eval/runs/<run-id>/`. Completed attempts also update the files directly under `eval/`. Task-scoped runs use `eval/task-<id>/` as their output root.
 
 Files written under `.speed/features/<name>/`:
 
@@ -142,8 +152,10 @@ Files written under `.speed/features/<name>/`:
 | `eval/report.json` | Every result with status, evidence type, traces, area and task; `out_of_scope`; `summary` |
 | `eval/summary.md` | The same as tables, with a Not examined by decision section |
 | `eval/residue.json` | Manual criteria still unverifiable, the evaluator agent's input |
-| `logs/gate-Scenario <ID>-<timestamp>.log` | The runner's output for each scenario |
-| `state.json` | `accepted` or `integrated_not_accepted` after a full run |
+| `eval/runs/<run-id>/summary.md` | The attempt's summary, whose path is printed in the terminal |
+| `eval/runs/<run-id>/commands/<execution-id>/output.log` | The runner's output; each result identifies its execution log |
+| `eval/latest-attempt.json` | The latest attempt ID and completion or failure status |
+| `state.json` | Evaluation metadata; `accepted` or `integrated_not_accepted` after a full run with verified integration |
 
 ## Reading the result
 
@@ -172,7 +184,7 @@ Execution produces only `pass` and `fail`. The other four come from the mapping,
 | `unverifiable` | not examined | Nothing ran: empty Selector, a task with the scenario but no selectors, a manual criterion skipped with `--skip-judge`, or a `verify_by: test` criterion with no test command | Yes |
 | `not_applicable` | n/a | A task criterion needs a tool the project does not declare, such as `verify_by: lint` with no lint command. Catalog scenarios never get it | No |
 
-`unverifiable` and `fail` both block acceptance, but only `fail` files a defect. A missing test is a gap in the spec, not a defect in the product.
+`unverifiable` and `fail` both block acceptance, but only `fail` files a defect. A catalog scenario with no mapped test is a coverage gap. A task that explicitly requires test verification but has no corresponding test files fails that criterion, matching the legacy criteria verifier.
 
 ### Evidence type
 
@@ -205,12 +217,12 @@ Acceptance needs at least one applicable result and every applicable result `pas
 | Exit code | When |
 |---|---|
 | `0` | Any verdict, unless `--strict` is set |
-| `2` | `--strict` and not accepted; or a task in the feature is not `done` |
-| `3` | No test spec found, `--test-plan` file missing, `--task-id` names an unknown task |
+| `2` | Evaluation completed with `--strict` and was not accepted |
+| `3` | Evaluation could not run: missing or invalid inputs, an unknown or unfinished task, a feature ownership conflict, a lock conflict, or an operational error |
 
 ## Known limits
 
-- Per-file selectors are safe. A per-test name pattern that matches nothing exits 0 in Node's runner and would read as a pass; a discovery guard is the next addition.
+- A runner that cannot write a JUnit or JSON report supplies no evidence, so its scenarios stay not examined. A selector that matches nothing is caught the same way: no tests in the report, no pass.
 - Eval reports what the tests assert. It will not find a defect no test looks at, and it does not run mutation, taint or differential checks.
 - The `speed` CLI runs its dependency preflight first; on a machine without the ast-grep grammars built, `speed help` exits `3` before eval starts.
 

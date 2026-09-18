@@ -23,7 +23,9 @@ _eval_print_summary() {
     local test_spec="$2"
     local output_dir="$3"
     local commit branch spec_rel
-    commit=$(jq -r '.commit // "uncommitted-working-tree"' "$report" | cut -c1-7)
+    # Only a real SHA is shortened; the dirty-tree label must survive intact.
+    commit=$(jq -r '(.commit // "uncommitted-working-tree")
+                   | if test("^[0-9a-f]{40}$") then .[0:7] else . end' "$report")
     branch=$(git -C "$PROJECT_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
     [[ -n "$branch" && "$branch" != "HEAD" ]] || branch="detached"
     spec_rel="${test_spec#"${PROJECT_ROOT}/"}"
@@ -234,7 +236,17 @@ _eval_test_spec_path() {
             # match and derive a bogus path for a checkout under a directory
             # that happens to be named 'tech'.
             path="${rfc%/tech/*}/tests/${rfc##*/tech/}"
+            # A derived sibling is optional; explicit paths above are not.
+            if [[ "$path" == /* ]]; then
+                [[ -f "$path" ]] || path=""
+            else
+                [[ -f "${PROJECT_ROOT}/${path}" ]] || path=""
+            fi
         fi
+    fi
+    if [[ -z "$path" && -n "${FEATURE_NAME:-}" && -f "${PROJECT_ROOT}/specs/tests/${FEATURE_NAME}.md" ]]; then
+        # The default the help text and the error message promise.
+        path="specs/tests/${FEATURE_NAME}.md"
     fi
     [[ -n "$path" ]] || return 1
     [[ "$path" == /* ]] || path="${PROJECT_ROOT}/${path}"
@@ -349,10 +361,14 @@ cmd_eval() (
         _eval_reject "$EXIT_CONFIG_ERROR" "Feature evaluation paths failed validation"
         return "$EXIT_CONFIG_ERROR"
     fi
-    if ! _require_feature "$feature_name"; then
+    # _require_feature exits the shell when the feature is missing or claimed
+    # by someone else, which would skip the reject handler and break the JSON
+    # contract. Check once in a subshell, then restore the selected paths.
+    if ! ( _require_feature "$feature_name" ) >/dev/null 2>&1; then
         _eval_reject "$EXIT_CONFIG_ERROR" "Feature ${feature_name} is not available for evaluation"
         return "$EXIT_CONFIG_ERROR"
     fi
+    feature_activate "$feature_name"
     if ! "$py" "${LIB_DIR}/eval_runtime.py" guard --root "$PROJECT_ROOT" \
         --path "$STATE_FILE" --path "$SPEED_LOCK"; then
         _eval_reject "$EXIT_CONFIG_ERROR" "Feature state or lock path failed validation"

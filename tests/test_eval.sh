@@ -305,6 +305,7 @@ test_test_spec_is_derived_from_rfc_path() {
 
 test_missing_test_spec_is_a_config_error() {
     rm -f "${FEATURE_DIR}/test_spec_path"
+    rm -f "${PROJECT_ROOT}/specs/tests/books.md"
     local rc=0
     eval_clean --skip-judge >/dev/null 2>&1 || rc=$?
     assert_equals "$EXIT_CONFIG_ERROR" "$rc"

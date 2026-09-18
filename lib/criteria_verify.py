@@ -344,9 +344,11 @@ def _verify_test(
 ) -> dict:
     """Verify via test: run the configured test command over the task's tests.
 
-    A test file sitting on disk is not a test that ran. Without a configured
-    runner there is nothing to execute, so the criterion is unverifiable and
-    never a pass, matching how _verify_lint treats an unconfigured linter.
+    With a runner configured the tests execute and decide the outcome. Without
+    one, the outcome is a pass on file existence with that caveat in the
+    evidence: grounding and spec traceability call this without a runner and
+    rely on it. speed eval never reaches here for test criteria; it runs the
+    configured command itself and treats a missing runner as silence.
 
     Whether the change ships any test at all is decided first, because that
     answer does not depend on a runner. "This change has no tests" is a finding;
@@ -364,13 +366,11 @@ def _verify_test(
             "evidence": f"No test files found for files: {', '.join(files_touched[:3])}",
         }
 
-    if not test_command:
-        return {
-            "status": "unverifiable",
-            "evidence": "Test runner not configured; file existence does not execute a test",
-        }
-
     evidence_parts = [f"Test file(s) found: {', '.join(test_files[:3])}"]
+
+    if not test_command:
+        evidence_parts.append("Test runner not configured; file existence only")
+        return {"status": "pass", "evidence": "; ".join(evidence_parts)}
 
     for test_file in test_files[:5]:  # Limit to 5 test files
         abs_test = os.path.join(project_root, test_file)

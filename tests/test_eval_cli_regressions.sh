@@ -236,6 +236,7 @@ test_rejected_acceptance_still_exits_with_the_gate_code() {
 
 test_json_missing_spec_emits_one_valid_object() {
     rm -f "${FEATURE_DIR}/test_spec_path"
+    rm -f "${PROJECT_ROOT}/specs/tests/books.md"
     local out="" rc=0
     out=$( JSON_OUTPUT=true; eval_clean --skip-judge 2>/dev/null ) || rc=$?
     assert_equals "$EXIT_CONFIG_ERROR" "$rc"
@@ -352,6 +353,48 @@ test_rfc_with_an_earlier_tech_segment_derives_the_right_spec() {
     eval_clean --strict --no-defects --skip-judge >/dev/null
     assert_equals "true" "$(jq -r '.accepted' "${FEATURE_DIR}/eval/report.json")"
 }
+
+test_default_spec_without_plan_metadata_runs() {
+    rm -f "${FEATURE_DIR}/test_spec_path"
+    eval_clean --strict --no-defects --skip-judge >/dev/null
+    assert_equals "true" "$(jq -r '.accepted' "${FEATURE_DIR}/eval/report.json")"
+}
+
+test_absent_derived_spec_falls_back_but_explicit_missing_path_does_not() {
+    rm -f "${FEATURE_DIR}/test_spec_path"
+    printf '%s\n' "${PROJECT_ROOT}/specs/tech/old-name.md" > "${FEATURE_DIR}/spec_path"
+    assert_equals "${PROJECT_ROOT}/specs/tests/books.md" "$(_eval_test_spec_path "")"
+    local rc=0
+    _eval_test_spec_path missing.md >/dev/null || rc=$?
+    assert_equals "1" "$rc"
+}
+
+test_json_feature_claimed_by_another_actor_emits_config_error() {
+    MP_ENABLED=true
+    ownership_check() { OWNERSHIP_OWNER="another-actor"; return 1; }
+    local out="" rc=0
+    out=$( JSON_OUTPUT=true; cmd_eval --skip-judge 2>/dev/null ) || rc=$?
+    assert_equals "$EXIT_CONFIG_ERROR" "$rc"
+    assert_equals "1" "$(printf '%s' "$out" | jq -s length)"
+    assert_equals "false" "$(printf '%s' "$out" | jq -r '.accepted')"
+    [[ -n "$(printf '%s' "$out" | jq -r '.error // empty')" ]]
+    assert_equals "" "$(captured_commands)"
+}
+
+test_summary_shortens_only_commit_hashes() {
+    local report="${PROJECT_ROOT}/display-report.json" out
+    printf '%s\n' '{"commit":null,"results":[]}' > "$report"
+    out=$(_eval_print_summary "$report" "specs/tests/books.md" "$FEATURE_DIR")
+    [[ "$out" == *"@ uncommitted-working-tree "* ]]
+    printf '%s\n' '{"commit":"034505bf724f3a52144ed0f10b068200467d76fd","results":[]}' > "$report"
+    out=$(_eval_print_summary "$report" "specs/tests/books.md" "$FEATURE_DIR")
+    [[ "$out" == *"@ 034505b "* ]]
+}
+
+run_test test_default_spec_without_plan_metadata_runs
+run_test test_absent_derived_spec_falls_back_but_explicit_missing_path_does_not
+run_test test_json_feature_claimed_by_another_actor_emits_config_error
+run_test test_summary_shortens_only_commit_hashes
 
 run_test test_verdict_line_survives_an_all_zero_summary
 run_test test_verdict_line_joins_parts_with_a_semicolon_and_a_space

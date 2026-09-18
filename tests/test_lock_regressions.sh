@@ -139,6 +139,77 @@ test_breaking_guard_is_released_for_the_next_waiter() {
     [[ ! -d "${MAIN_BRANCH_LOCK}.breaking" ]]
 }
 
+test_interrupted_breaker_releases_guard_and_preserves_callers_trap() {
+    interrupt_breaker() {
+        local breaker_pid
+        breaker_pid=$(cat "${MAIN_BRANCH_LOCK}.breaking"/owner.*)
+        kill -s "$signal" "$breaker_pid"
+    }
+    trap ':' INT TERM
+    local previous signal expected rc
+    previous=$(trap -p INT TERM)
+    for signal in INT TERM; do
+        mkdir -p "$MAIN_BRANCH_LOCK"
+        echo 4194303 > "${MAIN_BRANCH_LOCK}/pid"
+        expected=130
+        [[ "$signal" == INT ]] || expected=143
+        rc=0
+        _lock_break "$MAIN_BRANCH_LOCK" interrupt_breaker || rc=$?
+        assert_equals "$expected" "$rc"
+        assert_equals "$previous" "$(trap -p INT TERM)"
+        [[ ! -d "${MAIN_BRANCH_LOCK}.breaking" ]]
+        _lock_break "$MAIN_BRANCH_LOCK" _lock_holder_still_dead
+        [[ ! -d "$MAIN_BRANCH_LOCK" ]]
+    done
+}
+
+test_killed_breaker_is_recovered_on_retry() {
+    mkdir -p "$MAIN_BRANCH_LOCK"
+    echo 4194303 > "${MAIN_BRANCH_LOCK}/pid"
+    kill_breaker() { kill -s KILL "$(cat "${MAIN_BRANCH_LOCK}.breaking"/owner.*)"; }
+    local rc=0
+    _lock_break "$MAIN_BRANCH_LOCK" kill_breaker 2>/dev/null || rc=$?
+    assert_equals "137" "$rc"
+    [[ -d "${MAIN_BRANCH_LOCK}.breaking" ]]
+    _lock_break "$MAIN_BRANCH_LOCK" _lock_holder_still_dead
+    [[ ! -d "$MAIN_BRANCH_LOCK" && ! -d "${MAIN_BRANCH_LOCK}.breaking" ]]
+}
+
+test_dead_breaker_before_pid_write_is_recovered_after_grace() {
+    mkdir -p "$MAIN_BRANCH_LOCK" "${MAIN_BRANCH_LOCK}.breaking"
+    echo 4194303 > "${MAIN_BRANCH_LOCK}/pid"
+    touch -t 200001010000 "${MAIN_BRANCH_LOCK}.breaking/owner.empty"
+    _lock_break "$MAIN_BRANCH_LOCK" _lock_holder_still_dead
+    [[ ! -d "$MAIN_BRANCH_LOCK" && ! -d "${MAIN_BRANCH_LOCK}.breaking" ]]
+}
+
+test_dead_breaker_marker_is_recovered_without_manual_force() {
+    mkdir -p "$MAIN_BRANCH_LOCK" "${MAIN_BRANCH_LOCK}.breaking"
+    echo 4194303 > "${MAIN_BRANCH_LOCK}/pid"
+    echo 4194303 > "${MAIN_BRANCH_LOCK}.breaking/owner.abandoned"
+    _lock_break "$MAIN_BRANCH_LOCK" _lock_holder_still_dead
+    [[ ! -d "$MAIN_BRANCH_LOCK" && ! -d "${MAIN_BRANCH_LOCK}.breaking" ]]
+}
+
+test_aged_live_breaker_is_not_stolen() {
+    mkdir -p "$MAIN_BRANCH_LOCK" "${MAIN_BRANCH_LOCK}.breaking"
+    echo 4194303 > "${MAIN_BRANCH_LOCK}/pid"
+    echo $$ > "${MAIN_BRANCH_LOCK}.breaking/owner.live"
+    touch -t 200001010000 "${MAIN_BRANCH_LOCK}.breaking"
+    local rc=0
+    _lock_break "$MAIN_BRANCH_LOCK" _lock_holder_still_dead || rc=$?
+    assert_equals "1" "$rc"
+    [[ -d "$MAIN_BRANCH_LOCK" ]]
+}
+
+test_abandoned_legacy_guard_recovers() {
+    mkdir -p "$MAIN_BRANCH_LOCK" "${MAIN_BRANCH_LOCK}.breaking"
+    echo 4194303 > "${MAIN_BRANCH_LOCK}/pid"
+    touch -t 200001010000 "${MAIN_BRANCH_LOCK}.breaking"
+    _lock_break "$MAIN_BRANCH_LOCK" _lock_holder_still_dead
+    [[ ! -d "$MAIN_BRANCH_LOCK" && ! -d "${MAIN_BRANCH_LOCK}.breaking" ]]
+}
+
 # ── speed lock ───────────────────────────────────────────────
 
 test_speed_lock_acquires_and_releases() {
@@ -202,6 +273,12 @@ run_test test_main_lock_left_by_a_dead_process_is_broken
 run_test test_only_one_waiter_may_break_a_lock_at_a_time
 run_test test_breaker_does_not_delete_a_lock_reacquired_since_it_looked
 run_test test_breaking_guard_is_released_for_the_next_waiter
+run_test test_interrupted_breaker_releases_guard_and_preserves_callers_trap
+run_test test_killed_breaker_is_recovered_on_retry
+run_test test_dead_breaker_before_pid_write_is_recovered_after_grace
+run_test test_dead_breaker_marker_is_recovered_without_manual_force
+run_test test_aged_live_breaker_is_not_stolen
+run_test test_abandoned_legacy_guard_recovers
 run_test test_speed_lock_acquires_and_releases
 run_test test_speed_lock_refuses_while_a_live_process_holds_it
 run_test test_speed_lock_breaks_a_dead_holder_and_takes_over

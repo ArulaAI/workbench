@@ -40,6 +40,30 @@ def parse_toml(path: str) -> dict:
     return _hand_parse(path)
 
 
+def _strip_comment(text: str) -> str:
+    """Drop a trailing # comment that sits outside any string.
+
+    Comments were only recognised on whole lines. An inline comment on an
+    interior array item swallowed every later item, and a trailing comment
+    containing "]" produced a bogus "]" element that then ran as a command.
+    """
+    quote, i = None, 0
+    while i < len(text):
+        ch = text[i]
+        if quote:
+            if ch == "\\" and quote == '"':
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+        elif ch in "\"'":
+            quote = ch
+        elif ch == "#":
+            return text[:i].rstrip()
+        i += 1
+    return text
+
+
 def _array_complete(text: str) -> bool:
     """True once an array opened in text has been closed outside of a string."""
     depth, quote, i = 0, None, 0
@@ -140,12 +164,12 @@ def _hand_parse(path: str) -> dict:
         if "=" in line:
             key, _, value = line.partition("=")
             key = key.strip()
-            value = value.strip()
+            value = _strip_comment(value).strip()
 
             parsed: object
             if value.startswith("["):
                 while not _array_complete(value) and index < len(lines):
-                    value += " " + lines[index].strip()
+                    value += " " + _strip_comment(lines[index].strip())
                     index += 1
                 if not _array_complete(value):
                     raise ValueError(f"Unterminated array for key '{key}' in {path}")
@@ -267,34 +291,6 @@ def emit(data: dict) -> None:
             if val is not None:
                 var_name = f"TOML_CONTEXT_{key.upper()}"
                 print(f"{var_name}='{shell_escape(str(val))}'")
-
-
-    # [eval] section: the project's test runner command(s) for speed eval.
-    # `test_command` is a string (or list); `test_commands` is a list. Emitted
-    # newline-separated so commands may contain spaces. Selectors are appended
-    # or substituted for a {selectors} placeholder by speed eval.
-    evaluation = data.get("eval", {})
-    if isinstance(evaluation, dict):
-        commands: list[str] = []
-        for key in ("test_command", "test_commands"):
-            val = evaluation.get(key)
-            if isinstance(val, list):
-                commands.extend(str(item) for item in val)
-            elif val is not None:
-                commands.append(str(val))
-        for command in commands:
-            # An array that reached here as text means no parser understood it.
-            # Emitting it would hand bash a syntax error and mark every
-            # scenario failed, which reads as a code defect rather than a
-            # configuration one.
-            if command.startswith("[") and command.endswith("]"):
-                raise ValueError(
-                    "[eval] test command is an unparsed array; install tomli or "
-                    "write the command as a single quoted string"
-                )
-        if commands:
-            print(f"TOML_EVAL_TEST_COMMAND='{shell_escape(commands[0])}'")
-            print(f"TOML_EVAL_TEST_COMMANDS='{shell_escape(chr(10).join(commands))}'")
 
 
 def main() -> None:

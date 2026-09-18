@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from lib.toml import parse_toml
+from lib.quality_gates import read_gates, gate_applies as _gate_applies
 
 
 def utc_now() -> str:
@@ -43,15 +44,6 @@ def selected_agent_file(root: Path, config: dict) -> Path | None:
     return next((root / name for name in ("AGENTS.md", "CLAUDE.md") if (root / name).is_file()), None)
 
 
-def heading_level(line: str) -> int:
-    """ATX heading level of a stripped line, or 0 when it is not a heading.
-
-    "#hashtag" is prose; "###### x" and a bare "#" are headings.
-    """
-    match = re.match(r"^(#{1,6})(?:\s|$)", line)
-    return len(match[1]) if match else 0
-
-
 def load_config(root: Path) -> dict[str, Any]:
     data = parse_toml(str(root / "speed.toml")) if (root / "speed.toml").is_file() else {}
     evaluation = data.get("eval", {})
@@ -69,40 +61,7 @@ def load_config(root: Path) -> dict[str, Any]:
                 raise ValueError(f"eval.{key} must contain nonempty command strings")
             commands.extend(values)
     agent = selected_agent_file(root, data)
-    gates: list[dict[str, str]] = []
-    if agent:
-        # Gate commands reach bash -c, so only the section's own grammar counts
-        # as configuration: the "## Quality Gates" heading, optional "### <sub>"
-        # subsystem groups, and gate lines. A heading of any other level starts
-        # a new section and ends the scan, and fenced blocks are documentation
-        # everywhere in the file. Without both, an appendix or a shell example
-        # showing "- lint: rm -rf /" would be read as a configured command.
-        in_section = False
-        subsystem = ""
-        fence = ""
-        for raw in agent.read_text(encoding="utf-8").splitlines():
-            line = raw.strip()
-            if fence:
-                if line.startswith(fence) and set(line) == {fence[0]}:
-                    fence = ""
-                continue
-            opening = re.match(r"^(`{3,}|~{3,})", line)
-            if opening:
-                fence = opening[1]
-                continue
-            level = heading_level(line)
-            if not in_section:
-                in_section = bool(re.match(r"^##\s+Quality\s+Gates\s*$", line, re.I))
-                continue
-            if level == 3:
-                subsystem = line[3:].strip().lower()
-                continue
-            if level:
-                break
-            match = re.match(r"^(?:-\s*)?(test|lint):\s*(.+)$", line)
-            if match:
-                gates.append({"gate": match[1], "subsystem": subsystem,
-                              "command": match[2].strip().strip("`")})
+    gates = read_gates(agent) if agent else []
     return {"test_commands": commands, "gates": gates, "subsystems": data.get("subsystems", {}),
             "agent_file": str(agent) if agent else None}
 
@@ -136,25 +95,58 @@ def subsystem_for(task: dict, config: dict) -> str:
     return SUBSYSTEM_ANY if matched else SUBSYSTEM_NONE
 
 
-def _gate_applies(row: dict, subsystem: str) -> bool:
-    """A gate declared outside any subsystem heading is global and always
-    applies. The sentinels are checked before the name comparison so a heading
-    literally named "both" or "none" cannot impersonate one."""
-    if not row["subsystem"]:
-        return True
-    if subsystem == SUBSYSTEM_ANY:
-        return True
-    if subsystem == SUBSYSTEM_NONE:
-        return False
-    return subsystem == row["subsystem"]
-
-
 def configured_commands(config: dict, gate: str = "test", task: dict | None = None) -> list[str]:
     if gate == "test" and config.get("test_commands"):
         return config["test_commands"]
     subsystem = subsystem_for(task, config) if task else SUBSYSTEM_ANY
     return [row["command"] for row in config.get("gates", [])
             if row["gate"] == gate and _gate_applies(row, subsystem)]
+
+
+def commands_for_file(config: dict, gate: str, task: dict, name: str) -> list[str]:
+    """Route inferred criterion files by subsystem and known runner file types.
+
+    Custom runners work with one candidate. Ambiguous custom runner lists need
+    explicit scenario mappings, instead of trying every runner against a file.
+    """
+    file_task = {**task, "files_touched": [name]}
+    if subsystem_for(file_task, config) == SUBSYSTEM_NONE:
+        # Test peers may live outside a source subsystem's globs.
+        if subsystem_for(task, config) not in (SUBSYSTEM_ANY, SUBSYSTEM_NONE):
+            file_task = task
+    commands = configured_commands(config, gate, file_task)
+    commands = list(dict.fromkeys(commands))
+    if len(commands) <= 1:
+        return commands
+
+    python_types = {".py"}
+    js_types = {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts"}
+    supported = {
+        "pytest": python_types, "py.test": python_types,
+        "ruff": python_types, "flake8": python_types, "pylint": python_types,
+        "node": js_types, "npm": js_types, "npx": js_types,
+        "pnpm": js_types, "yarn": js_types, "bun": js_types,
+        "jest": js_types, "vitest": js_types, "eslint": js_types,
+    }
+    selected = []
+    for command in commands:
+        try:
+            tokens = shlex.split(command)
+        except ValueError:
+            return []
+        if len(tokens) > 3 and tokens[0] == "cd" and tokens[2] == "&&":
+            tokens = tokens[3:]
+        while tokens and re.match(r"^[A-Za-z_][A-Za-z_0-9]*=", tokens[0]):
+            tokens = tokens[1:]
+        runner = Path(tokens[0]).name if tokens else ""
+        if runner.startswith("python") and len(tokens) >= 3 and tokens[1] == "-m":
+            runner = tokens[2]
+        extensions = supported.get(runner)
+        if extensions is None:
+            return []
+        if Path(name).suffix.lower() in extensions:
+            selected.append(command)
+    return selected
 
 
 def resolve_command(config: dict, declared: str = "", task: dict | None = None) -> str:

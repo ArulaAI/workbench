@@ -25,6 +25,7 @@ Runs both as ``python3 tests/test_eval_execution_regressions.py`` and under
 import contextlib
 import os
 import shlex
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -32,7 +33,8 @@ from pathlib import Path
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 
-from lib.eval_execution import configured_commands, load_config, render_command, run_command
+from lib.eval_execution import (commands_for_file, configured_commands, load_config,
+                                render_command, run_command, subsystem_for)
 
 PYTEST = shlex.quote(sys.executable) + " -m pytest -q"
 # Written by a test that only a full, unscoped suite run would reach.
@@ -69,8 +71,19 @@ def pytest_project():
         yield root
 
 
-def gate_commands(root, gate):
-    return configured_commands(load_config(root), gate)
+def gate_commands(root, gate, task=None):
+    config = load_config(root)
+    commands = configured_commands(config, gate, task)
+    subsystem = subsystem_for(task, config) if task else "both"
+    shell = subprocess.run(
+        ["bash", "-c", 'source "$1/gates.sh"; '
+         '_context_python() { printf "%s\\n" "$TEST_PYTHON"; }; gates_get_config "$2" "$3"',
+         "gates-test", str(Path(PROJECT_ROOT) / "lib"), gate, subsystem],
+        env={**os.environ, "LIB_DIR": str(Path(PROJECT_ROOT) / "lib"),
+             "AGENT_FILE_PATH": str(root / "AGENTS.md"), "TEST_PYTHON": sys.executable},
+        text=True, capture_output=True, check=True)
+    assert shell.stdout.splitlines() == commands, (shell.stdout, commands)
+    return commands
 
 
 # ── Defect 1: the Quality Gates section must end at the next section ──────────
@@ -143,6 +156,20 @@ def test_subsystem_headings_and_h2_boundary_still_parse():
     with agent_project(agent) as root:
         assert gate_commands(root, "test") == ["backend-test-command", "frontend-test-command"]
         assert gate_commands(root, "lint") == []
+
+
+def test_shell_and_eval_share_global_gates_and_exact_subsystem_names():
+    agent = ("## Quality Gates\n"
+             "- typecheck: global-check\n"
+             "### Front\n"
+             "- typecheck: front-check\n"
+             "### Frontend\n"
+             "- typecheck: frontend-check\n")
+    with agent_project(agent) as root:
+        (root / "speed.toml").write_text('[subsystems]\nfront = ["src/front/*"]\n')
+        assert gate_commands(root, "typecheck", {"files_touched": ["src/front/a.ts"]}) == [
+            "global-check", "front-check"]
+        assert gate_commands(root, "typecheck", {"files_touched": ["README.md"]}) == ["global-check"]
 
 
 # ── Subsystem routing must be an exact match ─────────────────────────────────
@@ -253,6 +280,32 @@ def test_a_gate_declared_outside_any_subsystem_still_covers_an_unmatched_task():
         config = load_config(root)
         config["subsystems"] = {"frontend": ["src/frontend/*"]}
         assert configured_commands(config, "lint", {"files_touched": ["README.md"]}) == ["repo-lint"]
+
+
+def test_criterion_files_route_to_their_own_subsystem_in_a_mixed_task():
+    config = {"subsystems": {"api": ["api/*"], "web": ["web/*"]}, "gates": [
+        {"gate": "test", "subsystem": "api", "command": "api-custom-tests"},
+        {"gate": "test", "subsystem": "web", "command": "web-custom-tests"}]}
+    task = {"files_touched": ["api/test_books.py", "web/books.test.ts"]}
+    assert commands_for_file(config, "test", task, "api/test_books.py") == ["api-custom-tests"]
+    assert commands_for_file(config, "test", task, "web/books.test.ts") == ["web-custom-tests"]
+
+
+def test_test_peer_outside_the_source_glob_retains_the_tasks_subsystem():
+    config = {"subsystems": {"api": ["api/*"], "web": ["web/*"]}, "gates": [
+        {"gate": "test", "subsystem": "api", "command": "api-custom-tests"},
+        {"gate": "test", "subsystem": "web", "command": "web-custom-tests"}]}
+    task = {"files_touched": ["api/books.py"]}
+    assert commands_for_file(config, "test", task, "tests/test_books.py") == ["api-custom-tests"]
+
+
+def test_global_gate_does_not_hide_the_test_peers_subsystem_gate():
+    config = {"subsystems": {"api": ["api/*"]}, "gates": [
+        {"gate": "test", "subsystem": "", "command": "pytest -q -m smoke"},
+        {"gate": "test", "subsystem": "api", "command": "pytest -q"}]}
+    task = {"files_touched": ["api/books.py"]}
+    assert commands_for_file(config, "test", task, "tests/test_books.py") == [
+        "pytest -q -m smoke", "pytest -q"]
 
 
 # ── Standalone runner ────────────────────────────────────────────────────────
