@@ -181,6 +181,26 @@ test_branch_not_found_exits_config_error() {
     assert_output_contains "$output" "not found"
 }
 
+test_bad_main_branch_exits_config_error_not_crash() {
+    # A nonexistent MAIN_BRANCH makes the real `git diff` fail (exit 128,
+    # nothing on stdout). Simulate that here: git_diff_branch fails and
+    # writes nothing. Must produce a clean EXIT_CONFIG_ERROR, not the raw
+    # git exit code / an unguarded crash.
+    git_diff_branch() { return 128; }
+    local rc=0
+    local output
+    output=$(cmd_diagnose --task 1 2>&1) || rc=$?
+    assert_eq "3" "$rc" "exit code" &&
+    assert_output_contains "$output" "Could not diff"
+}
+
+test_bad_main_branch_writes_no_risk_surface() {
+    git_diff_branch() { return 128; }
+    local _out
+    _out=$(cmd_diagnose --task 1 2>&1) || true
+    [[ ! -f "${TEST_DIR}/.speed/features/test-feature/risk-surface.yaml" ]]
+}
+
 test_successful_run_exits_zero() {
     # cmd_diagnose calls `exit 0` directly on success. Command substitution
     # is not just for capturing output here — it's what contains that exit
@@ -325,6 +345,8 @@ run_test test_missing_classes_file_message_names_the_toml_key
 run_test test_task_with_no_branch_exits_config_error
 run_test test_task_not_found_exits_config_error
 run_test test_branch_not_found_exits_config_error
+run_test test_bad_main_branch_exits_config_error_not_crash
+run_test test_bad_main_branch_writes_no_risk_surface
 run_test test_successful_run_exits_zero
 run_test test_successful_run_exits_zero_even_with_signals_present
 run_test test_risk_surface_file_is_written

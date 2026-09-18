@@ -71,7 +71,11 @@ cmd_diagnose() {
 
     local diff_file
     diff_file=$(mktemp)
-    git_diff_branch "$branch" "$main_branch" > "$diff_file"
+    if ! git_diff_branch "$branch" "$main_branch" > "$diff_file" 2>/dev/null; then
+        rm -f "$diff_file"
+        log_error "Could not diff '${main_branch}...${branch}' — verify both refs exist (check MAIN_BRANCH if set)."
+        exit "$EXIT_CONFIG_ERROR"
+    fi
 
     # Optional: a spec file for new-names-absent-from-spec. Diagnose-specific
     # config wins; falls back to the project's existing [specs] vision_file

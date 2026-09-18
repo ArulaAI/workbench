@@ -104,7 +104,7 @@ def _hand_parse_classes_yaml(path):
     with open(path, "r") as f:
         lines = f.readlines()
 
-    for raw in lines:
+    for line_no, raw in enumerate(lines, start=1):
         line = raw.rstrip("\n")
         if not line.strip() or line.strip().startswith("#"):
             continue
@@ -130,6 +130,11 @@ def _hand_parse_classes_yaml(path):
             continue
 
         if stripped.startswith("- look:"):
+            if current_rules is None:
+                raise ValueError(
+                    f"classes.yaml line {line_no}: '- look:' found before any '- id:' class "
+                    "— check indentation (a class entry must be '- id:' at 2 spaces)"
+                )
             current_rule = {"look": _scalar(stripped[len("- look:"):]), "match": None, "say": ""}
             current_rules.append(current_rule)
             continue
@@ -168,7 +173,7 @@ def _added_lines_by_file(diff_text):
         if m:
             current_file = m.group(1)
             continue
-        if line.startswith("+++") or line.startswith("---"):
+        if line.startswith("+++ ") or line.startswith("--- "):
             continue
         if line.startswith("+") and current_file:
             result.append((current_file, line[1:]))

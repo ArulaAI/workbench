@@ -27,7 +27,7 @@ import tempfile
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 
-from lib.diagnose_engine import diagnose, _hand_parse_classes_yaml
+from lib.diagnose_engine import diagnose, _hand_parse_classes_yaml, _added_lines_by_file
 
 passed = 0
 failed = 0
@@ -430,6 +430,134 @@ check(
     result_rename["F7"]["signals"] == [] or result_rename["F7"]["signals"][0]["where"] == ["src/payments/new_name.ts"],
     result_rename["F7"],
 )
+
+# ══════════════════════════════════════════════════════════════
+# Regression: an added line beginning with "++" (e.g. a pre-increment
+# with no leading indentation) must not be mistaken for the "+++ b/..."
+# file header and dropped.
+# ══════════════════════════════════════════════════════════════
+
+diff_plusplus = (
+    "diff --git a/src/counter.c b/src/counter.c\n"
+    "+++ b/src/counter.c\n"
+    "@@ -1,2 +1,3 @@\n"
+    " int x = 0;\n"
+    "+++x;\n"
+    " return 0;\n"
+)
+check(
+    "an added line starting with ++ is preserved, not mistaken for the file header",
+    _added_lines_by_file(diff_plusplus) == [("src/counter.c", "++x;")],
+    _added_lines_by_file(diff_plusplus),
+)
+
+diff_deleted_dev_null = (
+    "diff --git a/src/old.c b/src/old.c\n"
+    "deleted file mode 100644\n"
+    "--- a/src/old.c\n"
+    "+++ /dev/null\n"
+    "@@ -1 +0,0 @@\n"
+    "-int x;\n"
+)
+check(
+    "the +++ /dev/null deletion header is still correctly skipped (no regression)",
+    _added_lines_by_file(diff_deleted_dev_null) == [],
+    _added_lines_by_file(diff_deleted_dev_null),
+)
+
+# ══════════════════════════════════════════════════════════════
+# Regression: non-standard classes.yaml indentation must raise a clear
+# configuration error, not crash with AttributeError.
+# ══════════════════════════════════════════════════════════════
+
+classes_yaml_4space_indent = write_tmp(
+    "classes:\n"
+    "    - id: F1\n"
+    "      title: Four-space indented class\n"
+    "      rules:\n"
+    "        - look: added-lines\n"
+    "          match: 'x'\n"
+    "          say: \"y\"\n",
+    suffix=".yaml",
+)
+try:
+    error = None
+    try:
+        _hand_parse_classes_yaml(classes_yaml_4space_indent)
+    except Exception as e:
+        error = e
+    check(
+        "4-space indentation raises ValueError, not AttributeError",
+        isinstance(error, ValueError) and not isinstance(error, AttributeError),
+        error,
+    )
+    check(
+        "the error names the offending line number",
+        error is not None and "line 5" in str(error),
+        error,
+    )
+finally:
+    os.unlink(classes_yaml_4space_indent)
+
+# A rule line at the very top of the file, before any class, is the same
+# underlying gap (current_rules is None) — must also raise cleanly.
+classes_yaml_rule_before_class = write_tmp(
+    "classes:\n"
+    "  - look: added-lines\n"
+    "    match: 'x'\n"
+    "    say: \"y\"\n",
+    suffix=".yaml",
+)
+try:
+    error = None
+    try:
+        _hand_parse_classes_yaml(classes_yaml_rule_before_class)
+    except Exception as e:
+        error = e
+    check(
+        "a rule before any '- id:' class raises ValueError, not AttributeError",
+        isinstance(error, ValueError) and not isinstance(error, AttributeError),
+        error,
+    )
+finally:
+    os.unlink(classes_yaml_rule_before_class)
+
+# The engine's public entry point must surface this as a clean config
+# error end-to-end when PyYAML is unavailable (the hand-parser's only
+# real audience), same as an actually-missing classes file — never an
+# unhandled traceback. PyYAML parses non-standard indentation just fine
+# on its own, so this has to force the fallback path to exercise it.
+malformed_path = write_tmp(
+    "classes:\n"
+    "    - id: F1\n"
+    "      rules:\n"
+    "        - look: added-lines\n",
+    suffix=".yaml",
+)
+try:
+    import builtins
+    real_import = builtins.__import__
+
+    def _no_yaml(name, *args, **kwargs):
+        if name == "yaml":
+            raise ImportError("blocked for test")
+        return real_import(name, *args, **kwargs)
+
+    error = None
+    builtins.__import__ = _no_yaml
+    try:
+        diagnose(malformed_path, "diff --git a/x b/x\n", [])
+    except Exception as e:
+        error = e
+    finally:
+        builtins.__import__ = real_import
+    check(
+        "diagnose() surfaces the malformed-indentation case as a ValueError, not a crash, when PyYAML is unavailable",
+        isinstance(error, ValueError),
+        error,
+    )
+finally:
+    os.unlink(malformed_path)
 
 # ══════════════════════════════════════════════════════════════
 # Summary
