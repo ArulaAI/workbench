@@ -197,5 +197,59 @@ class SilentScenarios(unittest.TestCase):
         self.assertEqual(set(), silent_scenarios(spec))
 
 
+SPLIT_MAPPING = """# Test Spec: Split mapping
+
+## Scenario Catalog
+| ID | Scenario | Level | Expected outcome |
+|---|---|---|---|
+| AC-01 | Read a book | unit | The book |
+| AC-02 | Write a book | integration | It is stored |
+
+## Execution and Evidence
+
+Unit scenarios:
+
+| Scenario | Selector | Command |
+|---|---|---|
+| AC-01 | `tests/test_read.py::test_read` | |
+
+Integration scenarios, whose table names its columns in another order:
+
+| Scenario | Command | Selector |
+|---|---|---|
+| AC-02 | make integration | `tests/test_write.py::test_write` |
+"""
+
+
+class SplitMappingTable(unittest.TestCase):
+    """Each table under Execution and Evidence carries its own header.
+
+    The section used to be flattened into one row list with the first header
+    kept for all of it, so a second table's rows were read through the first
+    table's column order. Here that put the Command cell where the selector
+    belonged and AC-02 was mapped to the words of "make integration".
+    """
+
+    def test_a_second_table_is_read_through_its_own_header(self):
+        mapping = {case["scenario_id"]: case["selector"]
+                   for case in parse_execution_mapping(SPLIT_MAPPING)}
+        self.assertEqual(
+            {"AC-01": "tests/test_read.py::test_read",
+             "AC-02": "tests/test_write.py::test_write"},
+            mapping,
+        )
+
+    def test_a_split_mapping_declares_no_silence(self):
+        self.assertEqual(set(), silent_scenarios(SPLIT_MAPPING))
+
+    def test_an_unreadable_mapping_table_is_an_error_not_a_dropped_table(self):
+        """Dropping it would leave its scenarios looking unmapped rather than
+        silent, and an unmapped scenario takes the task batch's outcome."""
+        spec = SPLIT_MAPPING.replace("| Scenario | Command | Selector |",
+                                     "| Scenario | Command | Notes |")
+        with self.assertRaisesRegex(ValueError, "Unreadable table"):
+            parse_execution_mapping(spec)
+
+
 if __name__ == "__main__":
     unittest.main()

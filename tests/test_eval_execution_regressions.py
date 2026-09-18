@@ -197,10 +197,62 @@ def test_quoted_metacharacters_stay_data_and_still_take_selectors():
     assert rendered.startswith("python3 -c 'import sys; sys.exit(0)'")
 
 
-def test_rendering_without_appending_accepts_compound_commands():
-    # lib/criteria_verify.py renders with append=False; that path stays usable.
-    rendered = render_command("cd src && ruff check .", ["app/x.py"], append=False)
-    assert rendered == "cd src && ruff check ."
+def test_a_placeholderless_command_never_drops_its_target():
+    """The renderer has no opt-out from placing the selectors.
+
+    lib/criteria_verify.py used to render with append=False, which returned the
+    command untouched whenever it declared no placeholder. The target file was
+    dropped, the configured suite ran unscoped, and the result was filed as
+    evidence for that one file - once per file, each a pass it never earned.
+    """
+    assert render_command("cd src && ruff check .", ["app/x.py"]) == \
+        "cd src && ruff check . app/x.py"
+    assert render_command("ruff check", ["app/x.py"]) == "ruff check app/x.py"
+
+    try:
+        render_command("ruff check . ; echo done", ["app/x.py"])
+    except ValueError as exc:
+        assert "{selectors}" in str(exc), exc
+    else:
+        raise AssertionError("a compound command took the target silently")
+
+
+def test_a_task_outside_every_subsystem_does_not_inherit_all_of_them():
+    """No configured glob matched the task's files.
+
+    That is not the same as a task spanning every subsystem, and folding the two
+    together ran the frontend, backend and plugin suites over a README change,
+    reporting their unrelated failures against it.
+    """
+    agent = ("## Quality Gates\n"
+             "### Frontend\n"
+             "- test: frontend-test-command\n"
+             "### Backend\n"
+             "- test: backend-test-command\n")
+    with agent_project(agent) as root:
+        config = load_config(root)
+        config["subsystems"] = {"frontend": ["src/frontend/*"], "backend": ["src/backend/*"]}
+
+        assert configured_commands(config, "test", {"files_touched": ["README.md"]}) == []
+        assert configured_commands(config, "test", {"files_touched": ["src/frontend/a.js"]}) == \
+            ["frontend-test-command"]
+        assert configured_commands(
+            config, "test",
+            {"files_touched": ["src/frontend/a.js", "src/backend/b.py"]}) == \
+            ["frontend-test-command", "backend-test-command"]
+
+
+def test_a_gate_declared_outside_any_subsystem_still_covers_an_unmatched_task():
+    """Guard against over-correcting: a repo-wide gate is not scoped to a
+    subsystem and applies whatever the task touched."""
+    agent = ("## Quality Gates\n"
+             "- lint: repo-lint\n"
+             "### Frontend\n"
+             "- lint: frontend-lint\n")
+    with agent_project(agent) as root:
+        config = load_config(root)
+        config["subsystems"] = {"frontend": ["src/frontend/*"]}
+        assert configured_commands(config, "lint", {"files_touched": ["README.md"]}) == ["repo-lint"]
 
 
 # ── Standalone runner ────────────────────────────────────────────────────────

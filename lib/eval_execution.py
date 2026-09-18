@@ -107,7 +107,21 @@ def load_config(root: Path) -> dict[str, Any]:
             "agent_file": str(agent) if agent else None}
 
 
+# A task's files either land in one configured subsystem, span several, or land
+# in none. The first two are names; these two stand for the other cases.
+SUBSYSTEM_ANY = "both"
+SUBSYSTEM_NONE = "none"
+
+
 def subsystem_for(task: dict, config: dict) -> str:
+    """Which subsystem's gates a task belongs to.
+
+    SUBSYSTEM_ANY means the task spans more than one, so every subsystem's gates
+    apply. SUBSYSTEM_NONE means no configured pattern matched any file it
+    touched. Folding that case into SUBSYSTEM_ANY made one README-only task, or
+    one typo in a glob, run the full frontend, backend and plugin suites and
+    report their unrelated failures against the change.
+    """
     import fnmatch
     files = task.get("files_touched", [])
     subsystems = config.get("subsystems") or {"frontend": ["src/frontend/*"],
@@ -117,16 +131,30 @@ def subsystem_for(task: dict, config: dict) -> str:
         for pattern in patterns if isinstance(patterns, list) else [patterns]:
             if any(fnmatch.fnmatch(f, pattern) for f in files):
                 matched.add(name.lower())
-    return next(iter(matched)) if len(matched) == 1 else "both"
+    if len(matched) == 1:
+        return next(iter(matched))
+    return SUBSYSTEM_ANY if matched else SUBSYSTEM_NONE
+
+
+def _gate_applies(row: dict, subsystem: str) -> bool:
+    """A gate declared outside any subsystem heading is global and always
+    applies. The sentinels are checked before the name comparison so a heading
+    literally named "both" or "none" cannot impersonate one."""
+    if not row["subsystem"]:
+        return True
+    if subsystem == SUBSYSTEM_ANY:
+        return True
+    if subsystem == SUBSYSTEM_NONE:
+        return False
+    return subsystem == row["subsystem"]
 
 
 def configured_commands(config: dict, gate: str = "test", task: dict | None = None) -> list[str]:
     if gate == "test" and config.get("test_commands"):
         return config["test_commands"]
-    subsystem = subsystem_for(task, config) if task else "both"
+    subsystem = subsystem_for(task, config) if task else SUBSYSTEM_ANY
     return [row["command"] for row in config.get("gates", [])
-            if row["gate"] == gate and (subsystem == "both" or not row["subsystem"]
-                                         or subsystem == row["subsystem"])]
+            if row["gate"] == gate and _gate_applies(row, subsystem)]
 
 
 def resolve_command(config: dict, declared: str = "", task: dict | None = None) -> str:
@@ -146,8 +174,7 @@ def aggregate_status(results: list[dict]) -> str:
     return "pass" if results and statuses == {"pass"} else "unverifiable"
 
 
-def render_command(base: str, selectors: list[str], report: Path | None = None,
-                   *, append: bool = True) -> str:
+def render_command(base: str, selectors: list[str], report: Path | None = None) -> str:
     """Replace whole argument placeholders, never text embedded in shell code.
 
     A quoted placeholder is replaced together with its quotes. Inserting a
@@ -160,6 +187,11 @@ def render_command(base: str, selectors: list[str], report: Path | None = None,
     done" they reach echo, pytest runs the whole suite, and the selected test
     turns up in that full report as a pass it never earned. A trailing comment
     swallows them outright. Such a command must say where the selectors go.
+
+    There is deliberately no way to render without placing the selectors. An
+    opt-out existed for the criterion verifiers and did the damage the check
+    exists to prevent: a command with no placeholder dropped its target and ran
+    the whole suite, once per file, each run recorded as evidence for that file.
     """
     # "cd <dir> && <runner>" is the documented shape for a gate in a subproject
     # (example/CLAUDE.md uses it) and run_command already reads that prefix to
@@ -219,7 +251,7 @@ def render_command(base: str, selectors: list[str], report: Path | None = None,
     if quote or escaped:
         raise ValueError("Unclosed quoting in configured command")
     command = prefix + "".join(rendered)
-    if not append or used_selectors:
+    if used_selectors:
         return command
     if compound:
         raise ValueError(

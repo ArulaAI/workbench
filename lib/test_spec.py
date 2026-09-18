@@ -398,18 +398,43 @@ def _mapping_selectors(cell: str) -> list[str]:
 def _mapping_rows(test_spec: str) -> Iterator[tuple[str, list[str], list[str], dict[str, int | None]]]:
     """Yield (scenario_id, selectors, row, columns) for each Execution and
     Evidence row whose Scenario cell holds a scenario ID. Both readers of that
-    table use this, so what executes and what is silent cannot drift apart."""
-    columns: dict[str, int | None] | None = None
-    for row in _table_rows(_section(test_spec, "Execution and Evidence")):
+    table use this, so what executes and what is silent cannot drift apart.
+
+    Every table in the section carries its own header, the way the gate reader
+    treats Exit Criteria and the catalog reader treats its sub-headings. Reading
+    the section as one flat row list and keeping the first header made a second
+    table's rows read through the first table's column order, pairing scenarios
+    with another column's text. An unreadable header raises rather than dropping
+    the table: its scenarios would then look unmapped rather than silent, and an
+    unmapped scenario still takes its outcome from the task's own test batch.
+    """
+    tables: list[tuple[dict[str, int | None], list[list[str]]]] = []
+    unreadable: list[list[str]] = []
+    for table in _tables(_section(test_spec, "Execution and Evidence")):
+        if not table:
+            continue
+        columns = _mapping_columns(table[0])
         if columns is None:
-            columns = _mapping_columns(row)
-            continue
-        if len(row) <= max(columns["selector"], columns["scenario"]):
-            continue
-        scenario_id = row[columns["scenario"]].strip().strip("`")
-        if not SCENARIO_ID_RE.fullmatch(scenario_id):
-            continue
-        yield scenario_id, _mapping_selectors(row[columns["selector"]]), row, columns
+            unreadable.append(table[0])
+        else:
+            tables.append((columns, table[1:]))
+    if unreadable:
+        raise ValueError(
+            "Unreadable table under Execution and Evidence: "
+            + "; ".join("| " + " | ".join(header) + " |" for header in unreadable)
+            + ". A mapping table is headed by a Scenario column and a Selector "
+            "column. Rename the columns, or move a table that is not a mapping "
+            "table to another section."
+        )
+
+    for columns, rows in tables:
+        for row in rows:
+            if len(row) <= max(columns["selector"], columns["scenario"]):
+                continue
+            scenario_id = row[columns["scenario"]].strip().strip("`")
+            if not SCENARIO_ID_RE.fullmatch(scenario_id):
+                continue
+            yield scenario_id, _mapping_selectors(row[columns["selector"]]), row, columns
 
 
 def parse_execution_mapping(test_spec: str) -> list[dict[str, object]]:

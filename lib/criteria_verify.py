@@ -347,13 +347,12 @@ def _verify_test(
     A test file sitting on disk is not a test that ran. Without a configured
     runner there is nothing to execute, so the criterion is unverifiable and
     never a pass, matching how _verify_lint treats an unconfigured linter.
-    """
-    if not test_command:
-        return {
-            "status": "unverifiable",
-            "evidence": "Test runner not configured; file existence does not execute a test",
-        }
 
+    Whether the change ships any test at all is decided first, because that
+    answer does not depend on a runner. "This change has no tests" is a finding;
+    filing it as unverifiable would move it into the not-examined column the
+    report keeps precisely to separate a gap from a silence.
+    """
     files_touched = task.get("files_touched", [])
 
     # Find test files related to files_touched
@@ -365,11 +364,26 @@ def _verify_test(
             "evidence": f"No test files found for files: {', '.join(files_touched[:3])}",
         }
 
+    if not test_command:
+        return {
+            "status": "unverifiable",
+            "evidence": "Test runner not configured; file existence does not execute a test",
+        }
+
     evidence_parts = [f"Test file(s) found: {', '.join(test_files[:3])}"]
 
     for test_file in test_files[:5]:  # Limit to 5 test files
         abs_test = os.path.join(project_root, test_file)
-        cmd = render_command(test_command, [abs_test], append=False)
+        # The renderer places the file itself, or refuses. Rendering without
+        # placing it ran the configured suite unscoped and filed the result as
+        # evidence for this one file.
+        try:
+            cmd = render_command(test_command, [abs_test])
+        except ValueError as exc:
+            return {
+                "status": "unverifiable",
+                "evidence": f"Test command cannot be scoped to {test_file}: {exc}",
+            }
         try:
             result = subprocess.run(
                 cmd, shell=True, capture_output=True, text=True,
@@ -468,7 +482,13 @@ def _verify_lint(
         if not os.path.isfile(abs_path):
             continue
 
-        cmd = render_command(lint_command, [abs_path], append=False)
+        try:
+            cmd = render_command(lint_command, [abs_path])
+        except ValueError as exc:
+            return {
+                "status": "unverifiable",
+                "evidence": f"Lint command cannot be scoped to {f}: {exc}",
+            }
         try:
             result = subprocess.run(
                 cmd, shell=True, capture_output=True, text=True,

@@ -8,6 +8,7 @@ failing test run.
 """
 import json
 import os
+import shlex
 import sys
 
 import pytest
@@ -218,6 +219,61 @@ def test_unterminated_array_is_an_error_not_a_silent_string(tmp_path):
 def test_emit_refuses_a_command_that_is_still_array_text(capsys):
     with pytest.raises(ValueError, match="unparsed array"):
         emit({"eval": {"test_command": '["pytest -q", "npm test"]'}})
+
+
+NEEDS_ARG = (shlex.quote(sys.executable)
+             + " -c 'import sys; sys.exit(0 if len(sys.argv) > 1 else 1)'")
+
+
+def _test_task():
+    return {"id": "1", "files_touched": ["tests/test_thing.py"],
+            "acceptance_criteria": [{"criterion": "it works", "verify_by": "test"}]}
+
+
+def _with_a_test_file(tmp_path):
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests/test_thing.py").write_text("def test_ok():\n    assert True\n")
+
+
+def test_a_change_with_no_test_file_is_a_failure_not_a_silence(tmp_path):
+    """Whether a change ships a test is knowable without a runner.
+
+    Checking the runner first sent this decisive finding to "unverifiable",
+    which the report counts as not examined. A missing test is a gap that was
+    examined, and it must stay in the failing column.
+    """
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src/thing.py").write_text("x = 1\n")
+    task = {"id": "1", "files_touched": ["src/thing.py"],
+            "acceptance_criteria": [{"criterion": "it works", "verify_by": "test"}]}
+
+    result = verify_criteria(task, str(tmp_path))["criteria_results"][0]
+
+    assert result["status"] == "fail", result
+
+
+def test_a_placeholderless_test_command_is_given_the_file_it_reports_on(tmp_path):
+    """The command declares no {file}, so the file is appended. It used to be
+    dropped: the configured suite ran unscoped, once per file, and each run was
+    recorded as "Tests pass: <that file>"."""
+    _with_a_test_file(tmp_path)
+
+    result = verify_criteria(_test_task(), str(tmp_path),
+                             test_command=NEEDS_ARG)["criteria_results"][0]
+
+    assert result["status"] == "pass", result
+
+
+def test_a_test_command_that_cannot_be_scoped_is_unverifiable(tmp_path):
+    """Nothing can be said about one file from a command whose selectors would
+    land on whichever simple command comes last."""
+    _with_a_test_file(tmp_path)
+
+    result = verify_criteria(_test_task(), str(tmp_path),
+                             test_command="pytest -q ; echo done")["criteria_results"][0]
+
+    assert result["status"] == "unverifiable", result
+    assert "{selectors}" in result["evidence"], result["evidence"]
 
 
 if __name__ == "__main__":
