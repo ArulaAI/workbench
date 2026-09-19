@@ -293,14 +293,20 @@ piece:
 | `round-0` | `ArulaAI/payments-validation-fixture` | The task branch being diagnosed |
 
 ```bash
-git clone https://github.com/ArulaAI/workbench.git
+# feat/301 carries the Diagnose implementation — a plain clone leaves you
+# on main, which doesn't have it.
+git clone -b feat/301 https://github.com/ArulaAI/workbench.git
 git clone https://github.com/ArulaAI/payments-validation-fixture.git
 cd payments-validation-fixture
 
 git checkout feat/301-config
 
-# round-0 only needs to be a resolvable ref, not checked out.
+# round-0 and main only need to be resolvable refs, not checked out. If you
+# cloned this repo directly with `git clone -b feat/301-config ...` instead
+# of the plain-clone-then-checkout above, main has no local branch either —
+# only origin/main — so create both explicitly:
 git branch round-0 origin/round-0   # if you don't already have a local round-0
+git branch main origin/main         # if you don't already have a local main
 
 # .speed/round-0-task.example.json is the tracked source of truth for this
 # task record — copy it in once per clone.
