@@ -417,7 +417,15 @@ def _has_matching_test_change(source_path, changed_files):
             continue
         if not _looks_like_test_file(f):
             continue
-        if _test_file_stem(f) != stem:
+        test_stem = _test_file_stem(f)
+        # Either the test's stem matches the source exactly (test_foo.py,
+        # foo.test.ts, foo_test.go), or the source's stem appears as one
+        # whole hyphen/underscore-delimited word within a feature-named
+        # test's stem (refund-retry.test.ts testing retry.ts) — a real
+        # naming convention, not a stem-equality fit. Splitting on
+        # separators (rather than substring search) keeps a raw
+        # substring like "pay" from matching "repay.test.ts".
+        if test_stem != stem and stem not in re.split(r"[-_]", test_stem):
             continue
         test_dirs = _non_test_dirs(f)
         # An empty test_dirs means a flat top-level test root (test/foo.test.ts

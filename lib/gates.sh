@@ -403,9 +403,43 @@ gates_get_config() {
         return
     fi
 
-    local py
-    py=$(_context_python)
-    "$py" "${LIB_DIR}/quality_gates.py" "$AGENT_FILE_PATH" "$gate_name" "$subsystem"
+    # Parse agent file for quality gate commands
+    local in_gates_section=false
+    local current_subsection=""
+    while IFS= read -r line; do
+        # Enter the Quality Gates section
+        if [[ "$line" =~ ^##[[:space:]]+Quality[[:space:]]+Gates ]]; then
+            in_gates_section=true
+            continue
+        fi
+        # Exit on the next h2 header (but NOT h3 subsection headers)
+        if $in_gates_section && [[ "$line" =~ ^##[[:space:]] ]] && [[ ! "$line" =~ ^###[[:space:]] ]]; then
+            break
+        fi
+        if $in_gates_section; then
+            # Track h3 subsection headers (### Frontend, ### Backend)
+            if [[ "$line" =~ ^###[[:space:]]+(.+)$ ]]; then
+                current_subsection="${BASH_REMATCH[1]}"
+                # Normalize to lowercase
+                current_subsection=$(echo "$current_subsection" | tr '[:upper:]' '[:lower:]')
+                continue
+            fi
+            # Match "- gate_name: `command`" or "gate_name: command"
+            if [[ "$line" =~ ^[-[:space:]]*${gate_name}:[[:space:]]*(.+)$ ]]; then
+                local cmd="${BASH_REMATCH[1]}"
+                # Strip backticks (Fix 10)
+                cmd="${cmd#\`}"
+                cmd="${cmd%\`}"
+                # Filter by subsystem
+                if [[ "$subsystem" == "both" ]]; then
+                    echo "$cmd"
+                elif [[ "$current_subsection" == *"$subsystem"* ]]; then
+                    echo "$cmd"
+                fi
+                # Do NOT return — continue to find ALL matching commands
+            fi
+        fi
+    done < "$AGENT_FILE_PATH"
 }
 
 # Build a list of test file paths scoped to a task's files_touched.

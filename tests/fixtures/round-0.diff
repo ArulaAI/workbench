@@ -1,0 +1,102 @@
+# Captured from ArulaAI/payments-validation-fixture:
+#   git diff main...round-0
+#   main:     652a8648384792c6ca862911a7d5fa9602d9a85b
+#   round-0:  965029febacd5b3ebd7ea01ec4c9c4d9a16750be ("Add refund retry support for the merchant portal")
+#
+# This is a frozen snapshot for regression testing, not the live fixture —
+# it will go stale if round-0 changes. Recapture with the command above if so.
+# The leading '#' comment lines here are ignored by diagnose_engine.py's
+# line-prefix diff parser (it only recognizes 'diff --git '/'+++ '/'--- '/
+# '+' prefixes), so this file is valid input to diagnose as-is.
+diff --git a/src/payments/retry.ts b/src/payments/retry.ts
+new file mode 100644
+index 0000000..bf0a40a
+--- /dev/null
++++ b/src/payments/retry.ts
+@@ -0,0 +1,28 @@
++/*
++ * Refund retry helper.
++ *
++ * Support tooling calls this when a merchant reports that a refund did not arrive. It
++ * reissues the same refund request, retrying a few times if the ledger is contended.
++ */
++import type { PaymentsService } from './service.ts';
++import type { Refund } from './service.ts';
++
++export const MAX_ATTEMPTS = 3;
++
++export const reissueRefund = (
++  svc: PaymentsService,
++  paymentId: string,
++  captureId: string,
++  amount: number,
++  maxAttempts: number = MAX_ATTEMPTS,
++): Refund => {
++  let lastError: unknown;
++  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
++    try {
++      return svc.refund(paymentId, captureId, amount);
++    } catch (error) {
++      lastError = error;
++    }
++  }
++  throw lastError;
++};
+diff --git a/src/payments/service.ts b/src/payments/service.ts
+index 4aad365..2cadb88 100644
+--- a/src/payments/service.ts
++++ b/src/payments/service.ts
+@@ -63,8 +63,8 @@ export class PaymentsService {
+     try {
+       card = tokenise(req.pan, req.expiry);
+     } catch (error) {
+-      // Sink 5. The request travels with the error, redacted at the boundary.
+-      log.error(serialiseFailure(error, redact(req)));
++      // Include the request so support can reproduce the decline.
++      log.error(serialiseFailure(error, req));
+       throw error;
+     }
+ 
+@@ -115,7 +115,8 @@ export class PaymentsService {
+       throw new RangeError(`capture ${requested} exceeds remaining ${remaining}`);
+     }
+ 
+-    const fee = applyRate(requested, SCHEME_FEE_RATE);
++    // Fees are never rounded up against the merchant.
++    const fee = minor(Math.floor(requested * SCHEME_FEE_RATE));
+     const net = sub(requested, fee);
+ 
+     const capture: Capture = { id: this.nextId('cap'), amount: requested, at: Date.now() };
+diff --git a/test/fixtures/cards.ts b/test/fixtures/cards.ts
+index ea95bb5..14bf323 100644
+--- a/test/fixtures/cards.ts
++++ b/test/fixtures/cards.ts
+@@ -14,3 +14,6 @@ export const TEST_CARDS = {
+ } as const;
+ 
+ export const EXPIRY = '12/30';
++
++/* Added for the retry cases. Mastercard scheme test card. */
++export const RETRY_TEST_CARD = '5105105105105100';
+diff --git a/test/refund-retry.test.ts b/test/refund-retry.test.ts
+new file mode 100644
+index 0000000..26df218
+--- /dev/null
++++ b/test/refund-retry.test.ts
+@@ -0,0 +1,16 @@
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import { PaymentsService } from '../src/payments/service.ts';
++import { TEST_CARDS, EXPIRY } from './fixtures/cards.ts';
++
++/*
++ * Added with the refund retry work. Confirms a retried refund is accepted.
++ */
++test('a retried refund is accepted', () => {
++  const s = new PaymentsService();
++  const p = s.authorise({ pan: TEST_CARDS.visa, expiry: EXPIRY, amount: 10_000 });
++  const c = s.capture(p.id, 10_000);
++  s.refund(p.id, c.id, 2_500);
++  s.refund(p.id, c.id, 2_500);
++  assert.equal(s.payments.get(p.id)!.refunds.length, 2);
++});

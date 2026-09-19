@@ -311,7 +311,6 @@ download_speed() {
     done
 
     chmod +x "${STAGING_DIR}/repo/speed"
-    [[ -f "${STAGING_DIR}/repo/workbench" ]] && chmod +x "${STAGING_DIR}/repo/workbench"
 
     INSTALLED_VERSION_HASH="$version_hash"
 
@@ -412,7 +411,6 @@ finalize_install() {
     # Atomic symlinks
     ln -sfn "$version_dir" "${SPEED_HOME}/current"
     ln -sf "../current/speed" "${SPEED_HOME}/bin/speed"
-    [[ -f "${version_dir}/workbench" ]] && ln -sf "../current/workbench" "${SPEED_HOME}/bin/workbench"
 
     INSTALLED_VERSION_DIR="$version_dir"
 
