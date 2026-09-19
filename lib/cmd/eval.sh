@@ -319,13 +319,13 @@ cmd_eval() (
             --strict) strict=true; shift ;;
             --no-defects) file_defects=false; shift ;;
             --skip-judge) skip_judge=true; shift ;;
-            --task-id|--test-spec|--test-plan|--manual-results)
+            --task|--task-id|--test-spec|--test-plan|--manual-results)
                 if [[ $# -lt 2 || -z "$2" || "$2" == --* ]]; then
                     _eval_reject "$EXIT_CONFIG_ERROR" "${1} requires a value"
                     return "$EXIT_CONFIG_ERROR"
                 fi
                 case "$1" in
-                    --task-id) _eval_task_filter="$2" ;;
+                    --task|--task-id) _eval_task_filter="$2" ;;
                     --test-spec) test_spec_override="$2" ;;
                     --test-plan) test_plan_override="$2" ;;
                     --manual-results) manual_results="$2" ;;

@@ -7,6 +7,7 @@ SPEED_EVAL_RESULT_FILE. A zero process exit without test evidence is unverified.
 from __future__ import annotations
 
 import json
+import fnmatch
 import os
 from pathlib import Path
 import re
@@ -62,8 +63,34 @@ def load_config(root: Path) -> dict[str, Any]:
             commands.extend(values)
     agent = selected_agent_file(root, data)
     gates = read_gates(agent) if agent else []
+    patterns = evaluation.get("test_file_patterns", ["test_*.py", "*_test.py", "*.test.*", "*.spec.*"])
+    if not isinstance(patterns, list) or any(not isinstance(p, str) or not p.strip() for p in patterns):
+        raise ValueError("eval.test_file_patterns must be an array of nonempty glob strings")
     return {"test_commands": commands, "gates": gates, "subsystems": data.get("subsystems", {}),
-            "agent_file": str(agent) if agent else None}
+            "agent_file": str(agent) if agent else None, "test_file_patterns": patterns}
+
+
+def test_candidates(task: dict, config: dict) -> list[str]:
+    return sorted({name for name in task.get("files_touched", [])
+                   if any(fnmatch.fnmatch(name, pattern) or fnmatch.fnmatch(Path(name).name, pattern)
+                          for pattern in config.get("test_file_patterns", []))})
+
+
+def runner_kind(base: str, declared: str = "") -> str:
+    if declared:
+        if declared not in ("pytest", "node", "vitest", "jest", "custom"):
+            raise ValueError(f"Unsupported test runner: {declared}")
+        return declared
+    tokens = shlex.split(base)
+    names = [Path(token).name for token in tokens]
+    if "pytest" in names or "py.test" in names:
+        return "pytest"
+    for kind in ("vitest", "jest"):
+        if any(name == kind or name == kind + ".mjs" or name == kind + ".js" for name in names):
+            return kind
+    if "node" in names and "--test" in tokens:
+        return "node"
+    return "custom"
 
 
 # A task's files either land in one configured subsystem, span several, or land
@@ -166,7 +193,8 @@ def aggregate_status(results: list[dict]) -> str:
     return "pass" if results and statuses == {"pass"} else "unverifiable"
 
 
-def render_command(base: str, selectors: list[str], report: Path | None = None) -> str:
+def render_command(base: str, selectors: list[str], report: Path | None = None,
+                   *, options: list[str] | None = None) -> str:
     """Replace whole argument placeholders, never text embedded in shell code.
 
     A quoted placeholder is replaced together with its quotes. Inserting a
@@ -195,7 +223,7 @@ def render_command(base: str, selectors: list[str], report: Path | None = None) 
     if lead and not re.search(r"[;&|()<>]", base[lead.end():]):
         prefix, base = base[:lead.end()], base[lead.end():]
 
-    quoted = " ".join(shlex.quote(s) for s in selectors)
+    quoted = " ".join(shlex.quote(s) for s in [*(options or []), *selectors])
     replacements = {"{selectors}": quoted, "{file}": quoted}
     if report is not None:
         replacements["{report}"] = shlex.quote(str(report))
@@ -254,9 +282,23 @@ def render_command(base: str, selectors: list[str], report: Path | None = None) 
     return command + " " + quoted
 
 
-def _tests_from_report(json_path: Path, xml_path: Path) -> list[dict]:
+def _tests_from_report(json_path: Path, xml_path: Path, runner: str = "") -> list[dict]:
     if json_path.exists():
         data = json.loads(json_path.read_text())
+        # Jest and Vitest JSON reporters share the assertionResults contract.
+        if isinstance(data, dict) and isinstance(data.get("testResults"), list):
+            for suite in data["testResults"]:
+                if not isinstance(suite, dict) or not isinstance(suite.get("assertionResults"), list):
+                    raise ValueError("Invalid Jest/Vitest suite evidence")
+                if any(not isinstance(test, dict) or not isinstance(test.get("fullName"), str)
+                       or not test["fullName"] or not isinstance(test.get("status"), str)
+                       for test in suite["assertionResults"]):
+                    raise ValueError("Invalid Jest/Vitest test evidence")
+            return [{"id": str(suite.get("name", "")) + "::" + test["fullName"],
+                     "name": test["fullName"], "file": suite.get("name", ""),
+                     "status": {"passed": "pass", "failed": "fail", "pending": "skipped",
+                                "todo": "not_run", "skipped": "skipped"}.get(test.get("status"), "not_run")}
+                    for suite in data["testResults"] for test in suite.get("assertionResults", [])]
         if not isinstance(data, dict) or not isinstance(data.get("tests"), list):
             raise ValueError("Test evidence must contain a tests array")
         tests = data["tests"]
@@ -270,19 +312,33 @@ def _tests_from_report(json_path: Path, xml_path: Path) -> list[dict]:
     if xml_path.exists():
         root = ET.parse(xml_path).getroot()
         tests = []
+        node_names = {}
+        if runner == "node":
+            def visit(element, suites):
+                if element.tag == "testsuite" and element.get("name"):
+                    suites = [*suites, element.get("name")]
+                if element.tag == "testcase":
+                    node_names[id(element)] = " ".join([*suites, element.get("name", "")])
+                for child in element:
+                    visit(child, suites)
+            visit(root, [])
         for i, case in enumerate(root.iter("testcase")):
             status = "pass"
             if case.find("failure") is not None or case.find("error") is not None:
                 status = "fail"
             elif case.find("skipped") is not None:
                 status = "skipped"
-            tests.append({"id": f"{case.get('classname', '')}::{case.get('name', i)}", "status": status})
+            name = node_names.get(id(case), case.get("name", str(i)))
+            tests.append({"id": f"{case.get('classname', '')}::{name}", "status": status,
+                          "name": name, "classname": case.get("classname", ""),
+                          "file": case.get("file", "")})
         return tests
     return []
 
 
 def run_command(base: str, selectors: list[str], root: Path, evidence_dir: Path,
-                *, gate: str = "test", timeout: int = 600) -> dict:
+                *, gate: str = "test", timeout: int = 600,
+                test_name: str = "", runner: str = "", exact: bool = False) -> dict:
     if not selectors or any(not valid_selector(s) for s in selectors):
         return {"status": "fail", "command": "", "evidence": "Rejected empty or option-like selector", "tests": []}
     try:
@@ -296,7 +352,24 @@ def run_command(base: str, selectors: list[str], root: Path, evidence_dir: Path,
     run_dir = evidence_dir / uuid.uuid4().hex
     json_path, xml_path = run_dir / "tests.json", run_dir / "junit.xml"
     try:
-        command = render_command(base, selectors, json_path)
+        kind = runner_kind(base, runner) if gate == "test" else "custom"
+        options = []
+        if test_name:
+            if kind not in ("node", "vitest", "jest"):
+                raise ValueError("Test name requires a node, vitest or jest runner; pytest uses file::test node IDs")
+            if len(selectors) != 1:
+                raise ValueError("A named test mapping must select exactly one file")
+            if not (cwd / selectors[0]).is_file():
+                raise ValueError("Named test mapping must reference an existing test file")
+            pattern = "^" + re.escape(test_name) + "$"
+            options += (["--test-name-pattern=" + pattern] if kind == "node"
+                        else ["--testNamePattern=" + pattern])
+        if kind == "node" and "--test-reporter" not in base:
+            options += ["--test-reporter=junit", "--test-reporter-destination=" + str(xml_path)]
+        elif kind in ("vitest", "jest"):
+            options += (["--reporter=json", "--outputFile=" + str(json_path)] if kind == "vitest"
+                        else ["--json", "--outputFile=" + str(json_path), "--runTestsByPath"])
+        command = render_command(base, selectors, json_path, options=options)
     except ValueError as exc:
         # A command that cannot carry the selectors is a configuration error, not
         # a verdict. Report it instead of running an unscoped suite.
@@ -305,7 +378,7 @@ def run_command(base: str, selectors: list[str], root: Path, evidence_dir: Path,
     run_dir.mkdir()
     env = os.environ.copy()
     env.update(SPEED_EVAL_RESULT_FILE=str(json_path), SPEED_EVAL_JUNIT_FILE=str(xml_path))
-    is_pytest = bool(re.search(r"(?:^|[\s/])pytest(?:\s|$)", base))
+    is_pytest = kind == "pytest"
     if is_pytest:
         env["PYTEST_ADDOPTS"] = (env.get("PYTEST_ADDOPTS", "") + " --junitxml="
                                  + shlex.quote(str(xml_path)))
@@ -333,18 +406,26 @@ def run_command(base: str, selectors: list[str], root: Path, evidence_dir: Path,
                 process.wait()
             raise
     try:
-        tests = _tests_from_report(json_path, xml_path)
-        if code != 0 or any(t["status"] in ("fail", "error") for t in tests):
+        tests = _tests_from_report(json_path, xml_path, kind)
+        selected = tests
+        if test_name:
+            expected_file = (cwd / selectors[0]).resolve()
+            selected = [t for t in tests if t.get("name", t["id"]) == test_name
+                        and (not t.get("file") or (cwd / t["file"]).resolve() == expected_file)]
+        if (code == 5 and is_pytest) or (not selected and code == 0 and gate == "test"):
+            detail = "Selected test was not discovered; no executed evidence for the declared mapping"
+        elif code != 0 or any(t["status"] in ("fail", "error") for t in selected):
             status, detail = "fail", f"Runner exited {code}; test failures: {sum(t['status'] in ('fail', 'error') for t in tests)}"
         elif gate == "lint":
             status, detail = "pass", "Configured lint command passed"
         elif not tests:
             detail = "No discovered test evidence; a zero process exit does not verify a scenario"
-        elif any(t["status"] != "pass" for t in tests):
+        elif any(t["status"] != "pass" for t in selected):
             detail = "Required tests were skipped, blocked, or not run"
         else:
-            status, detail = "pass", f"All {len(tests)} discovered tests executed and passed"
-            if is_pytest:
+            status, detail = "pass", f"All {len(selected)} selected tests executed and passed"
+            if is_pytest or (exact and not test_name):
+                matched_ids = set()
                 for selector in selectors:
                     path, *nodes = selector.split("::")
                     selected_path = Path(path)
@@ -357,9 +438,22 @@ def run_command(base: str, selectors: list[str], root: Path, evidence_dir: Path,
                                or identity.startswith(expected + ".") or "." + expected + "." in identity
                                or ("[" not in expected and
                                    (identity.startswith(expected + "[") or "." + expected + "[" in identity))]
+                    # Custom reporters may preserve the selector itself rather
+                    # than JUnit's dotted pytest classname convention.
+                    matches.extend(t["id"].replace("::", ".") for t in tests if t["id"] == selector)
                     if not matches:
                         status, detail = "unverifiable", f"Selected test was not discovered: {selector}"
                         break
+                    matched_ids.update(matches)
+                if exact and any(t["status"] in ("pass", "fail", "error")
+                                 and t["id"].replace("::", ".") not in matched_ids for t in tests):
+                    status, detail = "unverifiable", "Runner executed tests outside the declared selection"
+        if test_name and len(selected) > 1:
+            status = "fail" if any(t["status"] in ("fail", "error") for t in selected) else "unverifiable"
+            detail = "Test name is ambiguous; use a unique full test title"
+        if test_name and selected and any(t not in selected and t["status"] in ("pass", "fail", "error") for t in tests):
+            status = "fail" if any(t["status"] in ("fail", "error") for t in selected) else "unverifiable"
+            detail = "Runner executed tests outside the declared selection; " + detail
     except (ValueError, OSError, ET.ParseError) as exc:
         status = "fail" if code else "unverifiable"
         detail = f"Invalid test evidence: {exc}"

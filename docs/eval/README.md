@@ -8,8 +8,9 @@ This page covers what eval reads, how to configure a project for it, how to run 
 
 - Reads the feature's test spec (`specs/tests/<name>.md`): the Scenario Catalog, Acceptance Traceability, the Execution and Evidence mapping table, and Out of Scope.
 - Compiles the mapping table into `.speed/features/<name>/eval/test-plan.json`, one entry per scenario selector.
-- Runs each selector under the configured test command, one scenario at a time, and records the exit code and gate log per scenario.
-- Runs any selectors that finished tasks declare in their task files the same way.
+- Runs each selected test under its configured runner and retains individual test identities, status, exit code and logs. Identical command/selector/name mappings execute once per attempt and reuse the same evidence.
+- Without a task ID, evaluates the feature catalog. With `--task-id` (or `--task`), runs only individually mapped tests attributable to that task. Legacy task selectors are used only for one otherwise unmapped scenario and only when they identify individual tests.
+- Reports missing or ambiguous mappings without expanding to a whole-file task run. See [task-scoped evaluation](task-scoped-evaluation.md) for the mapping contract and migration examples.
 - Builds `report.json`, `evaluation.yaml` and `summary.md`: one record per scenario with a status, an evidence type, and the requirements it traces to. Task acceptance criteria are appended as their own rows. The YAML is the hand-off `workbench define` reads. It lands at `.speed/features/<name>/evaluation.yaml`, beside the `risk-surface.yaml` that `workbench diagnose` writes, and follows the same shape.
 - Optionally hands the leftover manual criteria to the evaluator agent. Its verdicts are recorded as opinion and cannot change an executed result.
 - Marks the feature `accepted` only when every applicable result passed. A scenario with no test is reported as not examined, never as a pass. There is no score and no percentage.
@@ -45,9 +46,9 @@ test_command = "node --experimental-strip-types --test --test-reporter=junit --t
 
 Plain shell, harness-agnostic: `pytest -q`, `go test`, `node --test`, whatever the project runs. Eval appends a selector to it, or substitutes the selector for a `{selectors}` placeholder. `test_commands = [...]` allows several when different scenarios need different invocations. When `[eval]` is absent, eval falls back to the `test:` line under `## Quality Gates` in the project's agent file. Eval does not infer `package.json` scripts; configure `npm test --` when the script accepts selectors.
 
-A zero exit on its own is not evidence. The runner must write a test report: JUnit XML to the path eval passes in `SPEED_EVAL_JUNIT_FILE`, or JSON of the form `{"tests": [{"id": "...", "status": "pass"}]}` to the `{report}` placeholder. pytest gets `--junitxml` added for it; Node needs the `--test-reporter=junit` flags shown above. A run that exits 0 without a report is reported as not examined, never as a pass.
+A zero exit on its own is not evidence. The runner must write a test report: JUnit XML to the path eval passes in `SPEED_EVAL_JUNIT_FILE`, or JSON of the form `{"tests": [{"id": "...", "status": "pass"}]}` to the `{report}` placeholder. pytest gets `--junitxml` added for it; Node gets JUnit flags when no reporter is already configured. Vitest and Jest get JSON reporter arguments. Existing explicitly configured Node reporters must write JUnit to `SPEED_EVAL_JUNIT_FILE`. A run that exits 0 without a report is reported as not examined, never as a pass.
 
-For task criteria that infer test files, eval selects commands per file using subsystem configuration and recognized Python or JavaScript runners. Ambiguous lists of custom runners leave the criterion unverified; map its scenarios to explicit commands in that case.
+Eval routes mapped files through configured commands using subsystem and runner information. Set Command explicitly when several commands could apply, and Runner for wrappers such as `npm test --`. A test-based task criterion must refer to scenarios through existing task references or the optional Criterion column in the spec; it reuses their results instead of invoking a whole file again. Unmapped automated criteria remain unverified and are never sent to the LLM evaluator.
 
 ### The test spec
 
@@ -57,10 +58,10 @@ For task criteria that infer test files, eval selects commands per file using su
 |---|---|
 | Scenario Catalog | Every `PREFIX-NN` row and the H3 area it sits under. Group by functional concern, never by whether a test exists yet |
 | Acceptance Traceability and Additional Coverage | The requirement labels (`ST3`, `TR4`, a risk row) whose covering-scenarios cell names each scenario |
-| Execution and Evidence | The `Scenario / Selector / Command` table. One row per scenario; several selectors in one cell separated by spaces; an empty Selector means no test yet. Command is optional and must equal a configured command |
+| Execution and Evidence | The `Scenario / Task / Selector / Test name / Runner / Command / Criterion` table. Older Scenario/Selector/Command tables remain readable. Repeat rows for multiple tests/files; an empty Selector records a missing test. Optional columns bind tasks and exact tests without task JSON changes |
 | Out of Scope | Rows with an ID, a disposition, a reason and an owner |
 
-Selectors are whatever the runner accepts after the command: a file path, `path::test_name`, a name pattern. Allowed characters are letters, digits and `_ . / : @ = , + -`. Anything else is rejected without running.
+Selector is a file path (or a pytest `file::test` node ID). Backticks preserve selectors containing spaces or parameter IDs. Test name is a literal full JavaScript test title; eval escapes and anchors it before passing it to the runner. Selectors cannot be empty, option-like, contain control characters, or leave the project. Whole-file selectors remain available for legacy feature runs, with an explicit attribution limitation; task runs require individual tests.
 
 Eval evaluates a feature, so `.speed/features/<name>/` must exist: from `speed plan`, or `mkdir -p .speed/features/<name>/tasks` when there is no plan. Any task files present must have status `done`.
 
@@ -88,7 +89,7 @@ mkdir -p .speed/features/payments/tasks
 ../workbench/speed eval -f payments --skip-judge --no-defects
 ```
 
-`speed.toml` and `specs/tests/payments.md` are not committed in the fixture yet; the commands above create them. `workbench eval` is the same command: `workbench` is a thin forwarder that execs `speed` with the same arguments, so either name works. Add `--strict` to get exit `2` on a not-accepted verdict for CI.
+The commands above describe initial setup; skip creation if your fixture branch already contains these files. For task-level execution, add Task and Test name mappings as shown in the task-scoped guide. `workbench eval` is the same command: `workbench` is a thin forwarder that execs `speed` with the same arguments, so either name works. Add `--strict` to get exit `2` on a not-accepted verdict for CI.
 
 ```
 speed eval --feature <name> [--test-spec PATH] [--test-plan PATH]
@@ -99,14 +100,14 @@ speed eval --feature <name> [--test-spec PATH] [--test-plan PATH]
 |---|---|
 | `--test-spec PATH` | Use this spec instead of `specs/tests/<name>.md` beside the RFC |
 | `--test-plan PATH` | Override the spec's mapping table with a JSON mapping (for tool-generated plans) |
-| `--task-id ID` | Evaluate one task's scenarios and criteria only; report goes to `eval/task-<id>/`, feature state untouched |
+| `--task-id ID`, `--task ID` | Execute only that task’s individually mapped tests and criteria; report goes to `eval/task-<id>/`, feature state untouched |
 | `--strict` | Exit `2` when not accepted. Default exit is `0` whatever the verdict |
 | `--no-defects` | Do not file P2 defect specs for failed scenarios |
 | `--skip-judge` | Leave manual criteria unverifiable instead of invoking the evaluator agent |
 
 ## Output
 
-The run on the fixture's `main`:
+Historical feature run using file-level mappings (task-scoped validation results are recorded in [the checklist](task-scope-checklist.md)):
 
 ```
 Change: main @ uncommitted-working-tree   spec: specs/tests/payments.md
@@ -157,7 +158,7 @@ Files written under `.speed/features/<name>/`:
 | `eval/runs/<run-id>/evaluation.yaml` | The attempt's own copy of the YAML hand-off |
 | `eval/runs/<run-id>/commands/<execution-id>/output.log` | The runner's output; each result identifies its execution log |
 | `eval/latest-attempt.json` | The latest attempt ID and completion or failure status |
-| `evaluation.yaml` | The verdict and results as YAML, without the per-test detail, copied from the latest completed attempt; the next workflow step reads this file. Sits beside diagnose's `risk-surface.yaml`. Task-scoped runs write `evaluation-task-<id>.yaml` instead |
+| `evaluation.yaml` | The verdict, selection scope, and individual test evidence as YAML, copied from the latest completed attempt; the next workflow step reads this file. Sits beside diagnose's `risk-surface.yaml`. Task-scoped runs write `evaluation-task-<id>.yaml` instead |
 | `state.json` | Evaluation metadata; `accepted` or `integrated_not_accepted` after a full run with verified integration |
 
 ### The evaluation YAML

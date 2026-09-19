@@ -380,6 +380,9 @@ def _mapping_columns(row: list[str]) -> dict[str, int | None] | None:
         "command": next((i for i, c in enumerate(lowered) if "command" in c), None),
         "depends": next((i for i, c in enumerate(lowered) if "depend" in c), None),
         "task": next((i for i, c in enumerate(lowered) if c in ("task", "task id")), None),
+        "test_name": next((i for i, c in enumerate(lowered) if c == "test name"), None),
+        "runner": next((i for i, c in enumerate(lowered) if c == "runner"), None),
+        "criterion": next((i for i, c in enumerate(lowered) if c == "criterion"), None),
     }
 
 
@@ -463,11 +466,36 @@ def parse_execution_mapping(test_spec: str) -> list[dict[str, object]]:
                     "selector": selector,
                     "command": command,
                     "depends_on_scenarios": depends,
-                    **({"task_id": row[columns["task"]].strip()} if columns["task"] is not None
-                       and len(row) > columns["task"] and row[columns["task"]].strip() else {}),
+                    **({"task_id": row[columns["task"]].strip().strip("`")} if columns["task"] is not None
+                       and len(row) > columns["task"] and row[columns["task"]].strip().strip("`").casefold() not in EMPTY_SELECTORS else {}),
+                    **{key: row[columns[key]].strip().strip("`") for key in ("test_name", "runner", "criterion")
+                       if columns[key] is not None and len(row) > columns[key]
+                       and row[columns[key]].strip().strip("`") not in EMPTY_SELECTORS},
                 }
             )
     return cases
+
+
+def mapping_tasks(test_spec: str) -> dict[str, list[str]]:
+    """Keep task ownership even for a declared scenario with no selector."""
+    assignments: dict[str, list[str]] = {}
+    for sid, _selectors, row, columns in _mapping_rows(test_spec):
+        index = columns["task"]
+        if index is not None and len(row) > index:
+            owner = row[index].strip().strip("`")
+            if owner and owner.casefold() not in EMPTY_SELECTORS:
+                assignments.setdefault(sid, []).append(owner)
+    return assignments
+
+
+def empty_mapping_rows(test_spec: str) -> list[dict[str, str]]:
+    rows = []
+    for sid, selectors, row, columns in _mapping_rows(test_spec):
+        if not selectors:
+            index = columns["task"]
+            owner = row[index].strip().strip("`") if index is not None and len(row) > index else ""
+            rows.append({"scenario_id": sid, "task_id": "" if owner.casefold() in EMPTY_SELECTORS else owner})
+    return rows
 
 
 def silent_scenarios(test_spec: str) -> set[str]:

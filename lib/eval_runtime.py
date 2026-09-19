@@ -16,7 +16,9 @@ import uuid
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from lib.eval_execution import load_config, resolve_command, run_command, utc_now, valid_selector
+from lib.eval_execution import (commands_for_file, load_config, resolve_command, run_command,
+                                utc_now, valid_selector)
+from lib.eval_selection import exact_selector, select_plan
 from lib.test_spec import (SCENARIO_ID_RE, manual_scenarios, parse_execution_mapping,
                            parse_scenarios, silent_scenarios)
 
@@ -117,6 +119,14 @@ def validate_plan(plan: dict, known: set[str], tasks: list[dict]) -> None:
             raise ValueError(f"Invalid mapping selector: {case.get('selector')!r}")
         if not isinstance(case.get("command", ""), str):
             raise ValueError("Mapping command must be a string")
+        for key in ("test_name", "runner"):
+            if key in case and (not isinstance(case[key], str) or not case[key].strip()
+                                or any(ord(c) < 32 or ord(c) == 127 for c in case[key])):
+                raise ValueError(f"Invalid mapping {key}")
+        if case.get("runner") and case["runner"] not in ("pytest", "node", "vitest", "jest", "custom"):
+            raise ValueError("Unknown mapping runner")
+        if "criterion" in case and not re.fullmatch(r"[1-9][0-9]*", str(case["criterion"])):
+            raise ValueError("Mapping Criterion must be the 1-based acceptance criterion index")
         owner = case.get("task_id", case.get("owner_task_id"))
         if owner is not None and str(owner) not in task_ids:
             raise ValueError(f"Mapping references unknown task: {owner}")
@@ -181,17 +191,13 @@ def prepare(root: Path, feature_dir: Path, state_file: Path, test_spec: Path,
     spec_text = test_spec.read_text(encoding="utf-8")
     scenarios = {s["id"] for s in parse_scenarios(spec_text)}
     plan = read_object(plan_path) if plan_path else {"test_cases": parse_execution_mapping(spec_text)}
-    # A feature whose tests already exist has no task files: the spec's
-    # Execution and Evidence table is what gets evaluated. Only a feature with
-    # neither tasks nor mapped scenarios has nothing to run.
-    if not selected and not plan["test_cases"]:
+    # A catalog is meaningful even when every required test is still missing.
+    # Report its gaps instead of refusing to produce the feature verdict.
+    if not selected and not plan["test_cases"] and not scenarios:
         raise ValueError("No tasks or mapped scenarios to evaluate")
     validate_plan(plan, scenarios, tasks)
-    if task_id is not None:
-        owned = task_scenarios(selected[0])
-        plan["test_cases"] = [case for case in plan["test_cases"]
-                              if case["scenario_id"] in owned or str(case.get("task_id", case.get("owner_task_id", ""))) == task_id]
     config = load_config(root)
+    plan = select_plan(plan, spec_text, tasks, config, task_id, task_scenarios, override=bool(plan_path))
     build = build_snapshot(root)
     manual = read_object(manual_path) if manual_path else {"results": []}
     if not isinstance(manual.get("results"), list):
@@ -208,7 +214,7 @@ def prepare(root: Path, feature_dir: Path, state_file: Path, test_spec: Path,
             raise ValueError("Invalid manual observation, reviewer, or scenario classification")
         seen.add(item["scenario_id"])
     if task_id is not None:
-        owned = task_scenarios(selected[0])
+        owned = set(plan["selection"]["scenario_ids"])
         manual["results"] = [r for r in manual["results"] if r["scenario_id"] in owned]
     output = feature_dir / "eval"
     if task_id:
@@ -250,7 +256,7 @@ def prepare(root: Path, feature_dir: Path, state_file: Path, test_spec: Path,
                "state_file": str(state_file), "output_dir": str(output), "task_id": task_id,
                "test_spec": str(test_spec), "test_spec_sha256": hashlib.sha256(spec_text.encode()).hexdigest(),
                "started_at": utc_now(), "build_before": build, "feature_state": state,
-               "unmerged_tasks": unmerged}
+               "unmerged_tasks": unmerged, "selection": plan["selection"]}
     atomic_json(run / "context.json", context)
     atomic_json(run / "attempt.json", {"status": "running", "started_at": context["started_at"]})
     if task_id is None:
@@ -269,19 +275,43 @@ def execute(run: Path) -> None:
     tasks = [read_object(p) for p in sorted((run / "tasks").glob("*.json"))]
     results = []
     timeout = int(os.environ.get("SPEED_TIMEOUT", "600"))
-    def invoke(command, selectors, task=None):
+    cache = {}
+    def invoke(command, selectors, task=None, case=None):
+        case = case or {}
         try:
+            if not command and len(selectors) == 1:
+                commands = commands_for_file(config, "test", task or {}, selectors[0].split("::", 1)[0])
+                if len(commands) != 1:
+                    raise ValueError("No unambiguous test command for selector; set Command in the mapping")
+                command = commands[0]
             base = resolve_command(config, command, task)
-            return run_command(base, selectors, root, run / "commands", timeout=timeout)
+            key = (base, tuple(selectors), case.get("test_name", ""), case.get("runner", ""))
+            if key not in cache:
+                cache[key] = run_command(base, selectors, root, run / "commands", timeout=timeout,
+                                         test_name=case.get("test_name", ""), runner=case.get("runner", ""),
+                                         exact=bool(context.get("task_id")) or bool(case and exact_selector(case)))
+            return dict(cache[key])
         except (ValueError, OSError, subprocess.TimeoutExpired) as exc:
             return {"status": "unverifiable", "evidence": str(exc), "command": "", "tests": []}
     for case in plan["test_cases"]:
         owner = str(case.get("task_id", case.get("owner_task_id", "")))
         task = next((t for t in tasks if str(t["id"]) == owner), None)
-        outcome = invoke(case.get("command", ""), [case["selector"]], task)
+        if context.get("task_id") and not exact_selector(case):
+            outcome = {"status": "unverifiable", "command": "", "tests": [],
+                       "evidence": "Task mapping selects a whole file/group; add an individual Test name or file::test selector"}
+        else:
+            outcome = invoke(case.get("command", ""), [case["selector"]], task, case)
+            if not exact_selector(case):
+                outcome["evidence"] += "; file-level evidence: individual scenario-to-test attribution is unavailable"
         results.append({**outcome, "scenario_id": case["scenario_id"], "task_id": owner,
-                        "source": "mapping", "run_id": run.name})
+                        "source": "mapping", "run_id": run.name, "selector": case["selector"],
+                        "test_name": case.get("test_name", ""), "runner": case.get("runner", ""),
+                        "selection_level": "test" if exact_selector(case) else "file"})
     mapped = {r["scenario_id"] for r in results}
+    for sid in set(context.get("selection", {}).get("missing_mappings", [])) & mapped:
+        results.append({"scenario_id": sid, "task_id": context.get("task_id"), "source": "mapping_missing",
+                        "run_id": run.name, "status": "unverifiable", "command": "", "tests": [],
+                        "evidence": "An additional declared mapping row has no selector"})
     mapped.update(r["scenario_id"] for r in read_object(run / "manual-results.json")["results"])
     # A mapping row with an empty Selector cell declares that nothing examines
     # this scenario. It carries no result of its own, so a task batch claiming
@@ -297,20 +327,18 @@ def execute(run: Path) -> None:
             # overwrite that evidence nor invent evidence of its own.
             attributed = sorted(owned - mapped - silent)
             selectors = task.get("test_selectors", [])
-            if selectors:
-                outcome = invoke(task.get("test_command", ""), selectors, task)
-                # A failure is the one outcome that still applies to every
-                # scenario the batch covers: passing evidence elsewhere must
-                # not hide it.
-                covered = sorted(owned - silent) if outcome["status"] == "fail" else attributed
-                if len(covered) > 1:
-                    outcome["evidence"] += "; task batch covers multiple scenarios; individual failure attribution is unavailable"
-                task_results = [{**outcome, "scenario_id": sid, "task_id": str(task["id"]),
-                                 "source": "task", "run_id": run.name} for sid in covered]
+            # Only an unmapped single scenario can inherit a legacy selector
+            # list. Mapping evidence is authoritative in both feature/task mode;
+            # an unrelated failed task batch cannot poison every scenario.
+            if len(attributed) == 1 and len(owned) == 1 and selectors and all(
+                    exact_selector({"selector": s}) for s in selectors):
+                task_results = [{**invoke(task.get("test_command", ""), [s], task),
+                                 "scenario_id": attributed[0], "task_id": str(task["id"]),
+                                 "source": "task", "selector": s, "run_id": run.name} for s in selectors]
             else:
                 task_results = [{"scenario_id": sid, "task_id": str(task["id"]), "source": "task",
                                  "run_id": run.name, "status": "unverifiable", "command": "",
-                                 "evidence": "No test selectors declared"} for sid in attributed]
+                                 "evidence": "No individual test mapping for this task scenario"} for sid in attributed]
         task["scenario_results"] = task_results
         atomic_json(run / "tasks" / f"{task['id']}.json", task)
         results.extend(task_results)

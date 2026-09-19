@@ -169,9 +169,22 @@ status codes, fields, and behavior.
 - **Runner configuration:** `speed.toml` `[eval] test_command`, or the agent file's `test:` entry under `## Quality Gates` when unset; identify CI jobs using it.
 - **Result report:** Location of per-scenario outcomes, run ID/time, application commit/build, source-spec revision, environment, actual command or manual procedure, and evidence or defect links.
 
-| Scenario | Selector | Command |
-|---|---|---|
-| | | |
+| Scenario | Task | Selector | Test name | Runner | Command | Criterion |
+|---|---|---|---|---|---|---|
+| | | | | | | |
+
+For task-scoped evaluation, put the existing task ID in Task; no task JSON
+schema change is required. Keep Task on rows whose test is still missing.
+Use `tests/test_payment.py::test_authorise` for pytest. For Node, Vitest or Jest,
+Selector is the test file and Test name is its exact full title (including
+describe/suite names, separated by spaces). Repeat rows for several tests or
+files. Runner is `pytest`, `node`, `vitest` or `jest`; declare it for npm/custom
+wrappers. Command must match an allowed command in the runner configuration.
+Criterion optionally names the 1-based acceptance-criterion index on that Task;
+test criteria reuse those scenario results without executing the file again.
+Shared files require explicit Task ownership. Files touched by only one task
+can establish ownership of an already mapped individual test. A task run never
+executes a whole-file selector as a fallback; incomplete mappings remain gaps.
 
 An automated scenario passes only when its mapped test is discovered, executes,
 and its assertions pass. An unrelated green suite or zero discovered tests is

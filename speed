@@ -172,7 +172,7 @@ speed_help() {
     echo -e "    --defect NAME               Integrate a defect instead of feature tasks"
     echo ""
     echo -e "${BOLD}EVAL OPTIONS${RESET}"
-    echo -e "    --task-id ID                Evaluate one task's scenarios and criteria only"
+    echo -e "    --task-id ID, --task ID     Evaluate only one task's individually mapped tests and criteria"
     echo -e "    --strict                    Return non-zero when the feature is not accepted"
     echo -e "    --no-defects                Do not file defects for failed or partial results"
     echo -e "    --skip-judge                Leave semantic criteria unverifiable without an evaluator"

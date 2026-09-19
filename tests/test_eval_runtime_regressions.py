@@ -56,11 +56,11 @@ def test_passing_task_batch_does_not_overwrite_a_failing_mapping_result(project)
     assert not report["accepted"]
 
 
-def test_failing_task_batch_still_reaches_a_mapped_scenario(project):
-    """The opposite direction: a failure must not be hidden either.
+def test_unmapped_legacy_batch_does_not_poison_a_mapped_scenario(project):
+    """Only declared scenario evidence may affect that scenario's verdict.
 
-    Mapped evidence passed, the task's own selectors failed. Skipping the
-    batch entirely for mapped scenarios would lose that failure.
+    The old fallback ran the task batch too and assigned an unrelated failure
+    to every mapped scenario. Extra required tests must be mapped explicitly.
     """
     project.mapping(selector="tests/test_books.py::test_pass")
     project.task["test_selectors"] = ["tests/test_books.py::test_fail"]
@@ -69,10 +69,10 @@ def test_failing_task_batch_still_reaches_a_mapped_scenario(project):
 
     run, report = project.evaluate()
 
-    assert [r["scenario_id"] for r in records(run, source="task")] == ["AC-01"]
-    assert records(run, source="task")[0]["status"] == "fail"
-    assert scenario(report, "AC-01")["status"] == "fail"
-    assert not report["accepted"]
+    assert records(run, source="task") == []
+    assert len(list((run / "commands").iterdir())) == 1
+    assert scenario(report, "AC-01")["status"] == "pass"
+    assert report["accepted"]
 
 
 TWO_SCENARIOS = """# Test Spec: Books

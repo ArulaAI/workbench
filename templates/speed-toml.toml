@@ -63,3 +63,10 @@
 # sync_interval = 30           # seconds between state sync pulls
 # approval_threshold = 1       # number of approvals required for spec ceremonies
 # prune_days = 30              # days before old events are pruned from the log
+
+[eval]
+# Configure allowed runners; each mapping may choose one with its Command cell.
+# test_commands = ["python3 -m pytest -q", "node --test", "cd frontend && npm test --"]
+# Patterns classify existing task files_touched as candidate test files.
+# They do not discover which individual tests belong to a shared task file.
+# test_file_patterns = ["test_*.py", "*_test.py", "*.test.*", "*.spec.*"]

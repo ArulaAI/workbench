@@ -97,10 +97,10 @@ class Project:
     def save_task(self):
         atomic_json(self.tasks / "1.json", self.task)
 
-    def mapping(self, selector="tests/test_books.py::test_pass"):
+    def mapping(self, selector="tests/test_books.py::test_pass", criterion=""):
         self.spec.write_text(self.spec.read_text() + "\n## Execution and Evidence\n"
-                             "| Scenario | Selector | Command |\n|---|---|---|\n"
-                             f"| AC-01 | `{selector}` | |\n")
+                             "| Scenario | Selector | Command | Criterion |\n|---|---|---|---|\n"
+                             f"| AC-01 | `{selector}` | | {criterion} |\n")
 
     def evaluate(self, **kwargs):
         run = prepare(self.root, self.feature, self.state, self.spec, **kwargs)
@@ -164,6 +164,10 @@ def test_noop_or_skip_never_passes(project, selector, base):
 
 def test_conflicting_mapping_preserves_failure(project):
     project.mapping()
+    # Both tests are explicitly required for this scenario. Legacy task batches
+    # no longer contribute unrelated failures to a fully mapped scenario.
+    with project.spec.open("a") as stream:
+        stream.write("| AC-01 | `tests/test_books.py::test_fail` | | |\n")
     project.task["test_selectors"] = ["tests/test_books.py::test_fail"]
     project.save_task()
     project.commit()
@@ -198,6 +202,7 @@ def test_criterion_filename_cannot_execute_shell(project):
     project.task["files_touched"] = ["tests/" + name]
     project.task["acceptance_criteria"] = [{"criterion": "safe", "verify_by": "test"}]
     project.save_task()
+    project.mapping(selector="tests/" + name + "::test_safe", criterion="1")
     project.commit()
     _, report = project.evaluate()
     assert result(report, "TASK-1-CRIT-01")["status"] == "pass"
@@ -340,6 +345,7 @@ def test_aborted_attempt_invalidates_state_and_retry_works(project):
 def test_criteria_share_effective_runner(project, monkeypatch, mode):
     project.task["acceptance_criteria"] = [{"criterion": "test", "verify_by": "test"}]
     project.save_task()
+    project.mapping(criterion="1")
     (project.root / "tests/test_books.py").write_text("def test_pass():\n    assert True\n")
     (project.root / "CLAUDE.md").write_text("## Quality Gates\ntest: false\n")
     if mode in ("toml", "env"):

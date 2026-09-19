@@ -224,6 +224,8 @@ def _semantic_results(
     project_root: Path,
     config: dict | None = None,
     evidence_dir: Path | None = None,
+    selection: dict | None = None,
+    scenario_results: list[dict] | None = None,
 ) -> list[dict[str, Any]]:
     config = config if config is not None else load_config(project_root)
     evidence_dir = evidence_dir or Path(tempfile.mkdtemp(prefix="speed-eval-criteria-"))
@@ -240,7 +242,18 @@ def _semantic_results(
                 continue
             verify_by = criterion.get("verify_by", "manual")
             outcome = {"status": "unverifiable", "evidence": "Manual review required", "command": ""}
-            if verify_by in ("test", "lint"):
+            if verify_by == "test" and selection is not None:
+                mapped_ids = set(selection.get("criterion_scenarios", {}).get(str(task["id"]), {}).get(str(index), []))
+                evidence = [r for r in scenario_results or [] if r["id"] in mapped_ids]
+                if evidence and {r["id"] for r in evidence} == mapped_ids:
+                    outcome = {"status": aggregate_status(evidence), "command": "",
+                               "evidence": "Reused declared criterion scenarios: " + ", ".join(sorted(mapped_ids)),
+                               "executions": [e for r in evidence for e in r.get("executions", [])]}
+                else:
+                    outcome = {"status": "unverifiable", "command": "",
+                               "evidence": "Test criterion has no explicit scenario association; set Criterion to its 1-based index in Execution and Evidence. "
+                                           "A whole-file test run cannot establish criterion coverage."}
+            elif verify_by in ("test", "lint"):
                 touched = task.get("files_touched", [])
                 files = (_find_test_files(touched, str(project_root))
                          if verify_by == "test" else _present_files(touched, project_root))
@@ -419,6 +432,11 @@ def build_report(
         if isinstance(item, dict) and item.get("scenario_id"):
             executed_by_id.setdefault(str(item["scenario_id"]), []).append(item)
     results = []
+    selection = (context or {}).get("selection")
+    if task_id is not None and selection is None:
+        selection = {"mode": "task", "task_id": task_id, "gaps": [],
+                     "scenario_ids": sorted(set().union(*(task_scenarios(t) for t in tasks))) if tasks else []}
+    selected_ids = set((selection or {}).get("scenario_ids", []))
     for scenario in scenarios:
         owners = [task for task in tasks if scenario["id"] in task_scenarios(task)]
         executions = list(executed_by_id.get(scenario["id"], []))
@@ -428,7 +446,7 @@ def build_report(
             for execution in owner.get("scenario_results", []):
                 if execution.get("scenario_id") == scenario["id"] and execution not in executions:
                     executions.append(execution)
-        if task_id is not None and not owners and not executions:
+        if task_id is not None and not owners and not executions and scenario["id"] not in selected_ids:
             continue
         if executions:
             combined = {"status": aggregate_status(executions),
@@ -462,6 +480,16 @@ def build_report(
             result["evidence"] += "; conflicting task owners"
         results.append(result)
 
+    for index, gap in enumerate((selection or {}).get("gaps", []), 1):
+        results.append(_gate_result(f"SELECTION-{index:02d}", gap))
+    for task in tasks:
+        criteria = _structured_criteria(task.get("acceptance_criteria", []))
+        count = len(criteria) if isinstance(criteria, list) else int(bool(criteria))
+        for index in (selection or {}).get("criterion_scenarios", {}).get(str(task["id"]), {}):
+            if int(index) > count:
+                results.append(_gate_result(f"CRITERION-{task['id']}-{index}",
+                    f"Mapping references absent acceptance criterion {index} on task {task['id']}"))
+
     known = {s["id"] for s in scenarios}
     missing = set().union(*(task_scenarios(t) for t in tasks)) - known if tasks else set()
     for sid in sorted(missing):
@@ -480,7 +508,7 @@ def build_report(
             results.append(result)
 
     if criteria_results is None:
-        criteria_results = _semantic_results(tasks, project_root, runner_config, evidence_dir)
+        criteria_results = _semantic_results(tasks, project_root, runner_config, evidence_dir, selection, results)
     # Do not mutate the cached deterministic results while applying a judgment.
     results.extend(json.loads(json.dumps(criteria_results)))
     _apply_judgment(results, judgment)
@@ -560,6 +588,7 @@ def build_report(
         "results": results,
         "out_of_scope": out_of_scope,
         "criteria_results": criteria_results,
+        "selection": selection,
     }
 
 
@@ -613,6 +642,15 @@ def _summary_markdown(report: dict[str, Any]) -> str:
             f"{result.get('task_id') or '-'} | {evidence} |"
         )
     out_of_scope = report.get("out_of_scope") or []
+    if report.get("selection"):
+        lines += ["", "## Execution scope", "",
+                  f"Mode: {report['selection']['mode']}. Only declared mappings are evidence for acceptance.", "",
+                  "| Scenario | Task | Selector | Test name | Status |", "|---|---|---|---|---|"]
+        for result in report["results"]:
+            for execution in result.get("executions", []):
+                values = [result["id"], execution.get("task_id", ""), execution.get("selector", ""),
+                          execution.get("test_name", ""), execution["status"]]
+                lines.append("| " + " | ".join(str(v).replace("|", "\\|").replace("\n", " ") for v in values) + " |")
     if out_of_scope:
         lines += [
             "",
@@ -661,9 +699,9 @@ def _evaluation_yaml(report: dict[str, Any]) -> str:
     """Render the report as evaluation.yaml, the hand-off the next workflow
     step (workbench define) reads.
 
-    Same verdict and per-result records as report.json. The per-test
-    execution detail stays in report.json and in the logs each `log` field
-    names, so the YAML stays readable at a glance.
+    Same verdict and per-result records as report.json. Scoped runtime reports
+    also carry selection metadata and individual test evidence; legacy standalone
+    reports retain their original shape. Logs remain in the attempt directory.
     """
     build = (report.get("build") or {}).get("before")
     build = build if isinstance(build, dict) else {}
@@ -687,6 +725,9 @@ def _evaluation_yaml(report: dict[str, Any]) -> str:
     for key in ("total", "examined", "not_examined", "pass", "fail", "partial",
                 "blocked_upstream", "unverifiable", "not_applicable"):
         lines.append(f"  {key}: {_yaml_scalar(int(summary.get(key) or 0))}")
+    if report.get("selection"):
+        # JSON flow collections are valid YAML and preserve arbitrary test names.
+        lines.append("selection: " + json.dumps(report["selection"], ensure_ascii=True))
     results = report.get("results") or []
     lines.append("results:" if results else "results: []")
     for result in results:
@@ -712,6 +753,12 @@ def _evaluation_yaml(report: dict[str, Any]) -> str:
         lines.append(f"    task: {_yaml_scalar(result.get('task_id') or None)}")
         lines.append(f"    command: {_yaml_scalar(result.get('command') or None)}")
         lines.append(f"    log: {_yaml_scalar(log)}")
+        if report.get("selection"):
+            records = [{"selector": e.get("selector"), "test_name": e.get("test_name"),
+                        "selection_level": e.get("selection_level"),
+                        "status": e.get("status"), "tests": e.get("tests", [])}
+                       for e in executions]
+            lines.append("    tests: " + json.dumps(records, ensure_ascii=True))
     out_of_scope = report.get("out_of_scope") or []
     lines.append("out_of_scope:" if out_of_scope else "out_of_scope: []")
     for row in out_of_scope:
