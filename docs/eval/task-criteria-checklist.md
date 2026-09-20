@@ -25,3 +25,12 @@ Initial mapping validation evidence: 233 distinct Python cases plus 3 subtests, 
 - [x] Migrate tracked payment task fixtures to arrays, rerun eval and inspect real generated task JSON and summary tables.
 
 Follow-up evidence: Workbench `462767d`, fixture `44d1baf`; 237 eval/parser cases plus 3 subtests, 126 dashboard cases, 92 shell checks. Fresh live tables were parsed as Markdown and checked for exactly three columns, correct scenario rows, expected behavior and statuses. See the latest section of [validation](validation.md).
+
+## Follow-up: terminal scenario table
+
+- [x] Replace the CLI's area-count display with the three-column scenario/test/expected-evidence table.
+- [x] Show missing and failed selected tests, multiple tests/files, and output-log references without treating criterion rows as extra executions.
+- [x] Keep JSON mode unchanged and validate real non-JSON task/feature CLI runs in copies of the payments fixture.
+- [x] Verify the user's existing manual-run artifacts remain byte-for-byte unchanged.
+
+Terminal validation: 8 renderer tests and 6 copied-payment CLI integration cases passed (14 total), plus 20 eval shell checks and 19 CLI regression checks. Both new non-JSON CLI cases exercise the real `speed` entrypoint. All 35 files in the user's manual payment run were fingerprinted before/after and remained unchanged.

@@ -16,8 +16,8 @@ _eval_build_report() {
     "$(_context_python)" "${args[@]}"
 }
 
-# Terminal summary in the shape of speed diagnose: one row per catalog area,
-# then what was not examined and why, then failures, then the report path.
+# Terminal report: individual scenario/test evidence first, followed by gaps,
+# failures and artifact paths. Criterion rows must not look like extra tests.
 _eval_print_summary() {
     local report="$1"
     local test_spec="$2"
@@ -32,32 +32,7 @@ _eval_print_summary() {
 
     echo ""
     log_step "Change: ${branch} @ ${commit}   spec: ${spec_rel}"
-    local width
-    width=$(jq -r '
-      def area_of:
-        if (.area // "") != "" then .area
-        elif .kind == "criterion" then "Task criteria"
-        else "Scenario Catalog" end;
-      [.results[] | area_of | length] | max // 20' "$report")
-    [[ "$width" -ge 20 ]] || width=20
-    jq -r '
-      def area_of:
-        if (.area // "") != "" then .area
-        elif .kind == "criterion" then "Task criteria"
-        else "Scenario Catalog" end;
-      def count(f): map(select(f)) | length;
-      (reduce .results[] as $r ([]; if index($r | area_of) then . else . + [$r | area_of] end)) as $areas
-      | $areas[] as $area
-      | [.results[] | select(area_of == $area)] as $rs
-      | [ $area,
-          ([ (($rs | count(.status == "pass")) as $n | if $n > 0 then "\($n) pass" else empty end),
-             (($rs | count(.status == "fail" or .status == "partial" or .status == "blocked_upstream")) as $n | if $n > 0 then "\($n) fail" else empty end),
-             (($rs | count(.status == "unverifiable")) as $n | if $n > 0 then "\($n) not examined" else empty end),
-             (($rs | count(.status == "not_applicable")) as $n | if $n > 0 then "\($n) n/a" else empty end)
-           ] | join(", ")) ]
-      | @tsv' "$report" | while IFS=$'\t' read -r area counts; do
-        printf "    %-${width}s  %s\n" "$area" "$counts"
-    done
+    "$(_context_python)" "${LIB_DIR}/eval_display.py" "$report" --evidence-root "$output_dir"
 
     local rows
     rows=$(jq -r '.results[] | select(.status == "unverifiable")

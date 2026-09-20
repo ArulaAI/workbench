@@ -1,5 +1,14 @@
 # Task-derived eval validation
 
+## Latest follow-up: the table in the actual CLI
+
+The prior change rendered the requested table in `summary.md` but left the CLI's old area counts intact. The CLI now calls `lib/eval_display.py` to print each scenario's mapped file/test results, expected behavior, runner evidence and log references. Criterion rows do not become additional scenario rows; a sentence explains reused evidence. Missing and failed scenarios remain visible. JSON mode is unchanged.
+
+Validation for this display change: **14 Python tests passed** (8 renderer tests and 6 copied-payment integration cases), **20 eval shell checks**, and **19 CLI regression checks**. Renderer checks cover multiple files, failures, missing/skipped tests, unrelated deselected tests, empty reports and long text at 72/120/180 columns. New integration checks run the real non-JSON `speed eval` task and feature commands in temporary copies and compare the terminal scenario IDs/expected outcomes with the generated report. Shell syntax and patch whitespace passed.
+
+The user's original manual task-1 run `204ad76de6c946d4ae1429e5b8d2a5a8` was used only for read-only display inspection. All 35 files under the payments feature state had identical fingerprints before and after. No reset or eval rerun was performed in the original payment checkout during this follow-up.
+
+
 ## Latest follow-up: structured criteria and scenario table
 
 Validated on 2026-09-20 with Workbench `462767d` and clean payment fixture input commit `44d1baf`.

@@ -114,6 +114,7 @@ All source paths above are relative to the Workbench repository. The responsibil
 | [eval_execution.py](../../lib/eval_execution.py) | Route runners, render exact filters and parse execution evidence. |
 | [eval_runtime.py](../../lib/eval_runtime.py), [eval.sh](../../lib/cmd/eval.sh) | Validate state, orchestrate execution, snapshot and publish artifacts. |
 | [eval_report.py](../../lib/eval_report.py) | Aggregate evidence, acceptance, semantic residue and JSON/Markdown/YAML outputs. |
+| [eval_display.py](../../lib/eval_display.py) | Render the three-column scenario table directly in the normal CLI output, with wrapped test names, expectations, evidence and log references. |
 | [regression tests](../../tests/test_eval_task_criteria.py) | Verify task isolation, planner persistence and missing-evidence behavior. |
 
 ## Your five-test example
@@ -187,6 +188,8 @@ summary:
   fail: 0
   unverifiable: 0
 ```
+
+The same scenario information now appears directly in normal CLI output, replacing the old Authorise/Money/Task criteria area counts. Only scenario rows enter this table; a separate sentence explains when task criteria reuse evidence. `--json` is unchanged.
 
 The scenario table includes missing tests as unverified rows and shows each selected test when a scenario spans several files. It separates the expected outcome from runner evidence and does not claim to independently compare them.
 

@@ -11,7 +11,7 @@ speed eval --feature payments --strict --skip-judge --no-defects
 
 With a task ID, only its individually mapped tests execute. Without one, every catalog scenario is evaluated and all mapped feature tests execute. Missing tests remain unverified in either scope. `--task-id` is an alias for `--task`. An explicit `--test-plan` overrides automatic mapping; `--test-spec` selects a different catalog. Use supported runners and configured test file patterns in `speed.toml`.
 
-Completed results are written as `report.json`, `summary.md` and `evaluation.yaml`, with immutable attempt evidence. The Markdown summary starts with a three-column scenario table showing exact test results alongside the spec's expected behavior and execution evidence. Task outputs are separate from the feature verdict. Strict exit 2 means evaluation completed but was not accepted; exit 3 means it could not run.
+Completed results are written as `report.json`, `summary.md` and `evaluation.yaml`, with immutable attempt evidence. Both the normal CLI output and Markdown summary show a three-column scenario table with exact test results alongside the spec's expected behavior and execution evidence. The CLI wraps long values to the terminal width and identifies criteria that reuse scenario evidence, rather than counting them as extra test runs. `--json` still emits only the report object. Task outputs are separate from the feature verdict. Strict exit 2 means evaluation completed but was not accepted; exit 3 means it could not run.
 
 - [Implementation and validation checklist](task-criteria-checklist.md)
 - [Validation results](validation.md)

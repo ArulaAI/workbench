@@ -151,3 +151,44 @@ def test_unmodified_cli_payment_task_and_feature(payment_copy):
     feature_report=json.loads((feature/'eval/report.json').read_text())
     assert feature_report['task_id'] is None
     assert len([r for r in feature_report['results'] if r['kind']=='scenario'])==len(parse_scenarios(payment_copy[2].read_text()))
+
+
+@pytest.mark.parametrize('task_id,expected_code',[('1',0),(None,2)])
+def test_human_cli_payment_scenario_table(payment_copy,task_id,expected_code):
+    if not os.environ.get('SPEED_TEST_FULL_CLI'):
+        pytest.skip('Set SPEED_TEST_FULL_CLI=1 with SPEED_PYTHON and installed CLI dependencies')
+    root,feature,_=payment_copy
+    entry=Path(__file__).resolve().parents[1]/'speed'
+    command=['bash',str(entry),'eval','--feature','payments','--strict','--skip-judge','--no-defects']
+    if task_id:command+=['--task',task_id]
+    completed=subprocess.run(command,cwd=root,env={**os.environ,'SPEED_PROJECT_ROOT':str(root),'COLUMNS':'160'},
+                             text=True,capture_output=True,timeout=60)
+    assert completed.returncode==expected_code,completed.stdout+completed.stderr
+    output=completed.stdout
+    for heading in ('Scenario ID','Test file / case / result','Expected behavior / execution evidence'):
+        assert heading in output
+    table=output.split('Scenario results\n',1)[1].split('PASS means',1)[0]
+    rows={}
+    current=None
+    for line in table.splitlines():
+        if not line.startswith('| '):continue
+        parts=[part.strip() for part in line.split('|')[1:-1]]
+        assert len(parts)==3
+        if parts[0]=='Scenario ID':continue
+        if parts[0]:current=parts[0];rows[current]=[]
+        if current:rows[current].append(parts[2])
+    directory=feature/'eval' if task_id is None else feature/'eval'/f'task-{task_id}'
+    report=json.loads((directory/'report.json').read_text())
+    scenarios=[r for r in report['results'] if r['kind']=='scenario']
+    assert set(rows)=={r['id'] for r in scenarios}
+    for result in scenarios:
+        assert result['expected'] in ' '.join(rows[result['id']]),result
+    assert 'test/service.test.ts' in table and 'test/money.test.ts' in table
+    assert 'task criteria reuse scenario evidence' in output
+    assert 'Task criteria          3 pass' not in output
+    if task_id:
+        assert set(rows)=={'AC-01','AC-02','VAL-01'}
+        assert len(list((directory/'runs'/report['run_id']/'commands').iterdir()))==3
+    else:
+        assert {'RISK-01','RISK-02','AC-12','EDGE-01'}<=rows.keys()
+        assert 'UNVERIFIABLE' in table and 'No individual test' in table
