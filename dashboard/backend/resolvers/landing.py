@@ -653,7 +653,9 @@ def _read_criteria_verify(feature_dir: Path) -> tuple[float, int, int, int]:
         if task.get("status") != "done":
             continue
         ac_text = task.get("acceptance_criteria", "")
-        ac_items = [line for line in ac_text.split("\n") if line.strip().startswith("- ")]
+        ac_items = ac_text if isinstance(ac_text, list) else [
+            line for line in (ac_text or "").split("\n") if line.strip().startswith("- ")
+        ]
         criteria_total += len(ac_items)
 
         checks = {c["name"]: c["status"] for c in task.get("gate_results", {}).get("checks", []) if "name" in c}
