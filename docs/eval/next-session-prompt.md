@@ -12,9 +12,10 @@ Branch: `feat/eval-test-spec-template`, originally based on `ff04f50`. The share
 
 Read these repository files first:
 
-1. `docs/eval/task-scoped-evaluation.md`: implemented design, examples, source-file responsibilities and limitations.
-2. `docs/eval/task-scope-checklist.md`: every requirement and its validating test.
-3. `docs/eval/validation.md`: observed counts, real payment fixture outcomes, runner versions and reproduction commands.
+1. `docs/eval/end-to-end-walkthrough.md`: lead-facing explanation of the goal, input/output shapes, flow diagrams, exact code excerpts and the payment example. This document was added after implementation; its source links, example data and mapping were checked against the code.
+2. `docs/eval/task-scoped-evaluation.md`: implemented design, examples, source-file responsibilities and limitations.
+3. `docs/eval/task-scope-checklist.md`: every requirement and its validating test.
+4. `docs/eval/validation.md`: observed counts, real payment fixture outcomes, runner versions and reproduction commands.
 
 User requirements already implemented:
 

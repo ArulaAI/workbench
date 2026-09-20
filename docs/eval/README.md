@@ -4,6 +4,8 @@
 
 This page covers what eval reads, how to configure a project for it, how to run it against `payments-validation-fixture`, and what every word in its output means. It assumes the tests already exist; eval writes none.
 
+For a lead-facing explanation of the goal, input/output shapes, flow diagrams and code evidence, start with the [end-to-end walkthrough](/Users/mohitpatel/Desktop/inrhythm/Workbench/.claude/worktrees/task-scoped-eval/docs/eval/end-to-end-walkthrough.md).
+
 ## What it does
 
 - Reads the feature's test spec (`specs/tests/<name>.md`): the Scenario Catalog, Acceptance Traceability, the Execution and Evidence mapping table, and Out of Scope.
