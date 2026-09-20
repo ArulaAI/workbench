@@ -9,7 +9,6 @@ acceptance criteria and executable tests. The following sections are machine-rea
   requirement rows cite each scenario ID.
 - Execution and Evidence: the Scenario / Selector / Command table that maps
   each scenario to the test selector that executes it.
-- Out of Scope: rows the spec deliberately does not examine, with their owner.
 - Exit Criteria: the Gate table whose rows gate merge and release.
 
 Header rows, placeholder rows and rows with too few cells are ignored.
@@ -18,7 +17,6 @@ Scenario IDs remain stable once written.
 CLI:
     python3 lib/test_spec.py list specs/tests/<name>.md
     python3 lib/test_spec.py traceability specs/tests/<name>.md
-    python3 lib/test_spec.py out-of-scope specs/tests/<name>.md
     python3 lib/test_spec.py mapping specs/tests/<name>.md
 """
 
@@ -36,7 +34,6 @@ SECTION_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 TABLE_DIVIDER_RE = re.compile(r"^:?-{3,}:?$")
 SCENARIO_ID_RE = re.compile(r"[A-Z][A-Z0-9_-]*-\d{2,}")
-OUT_OF_SCOPE_ID_RE = re.compile(r"^([A-Z][A-Z0-9_]*-\d+)\b\s*(.*)$", re.DOTALL)
 EMPTY_SELECTORS = {"", "-", "none", "n/a"}
 # Exit Criteria gate table: the first column names the gate, and the status and
 # evidence columns are found by these header names, in this order of preference.
@@ -201,10 +198,10 @@ def scenario_references(text: str, prefixes: set[str] | None = None) -> list[str
     """Scenario IDs cited in a cell, in order, expanding PREFIX-NN to PREFIX-NN ranges.
 
     A traceability cell carries prose as well as IDs, and prose cites things
-    that are not scenarios: an RFC, an open decision, an Out of Scope row.
+    that are not scenarios: an RFC, an open decision, a deferral note.
     `prefixes` keeps only IDs whose prefix the Scenario Catalog actually uses,
-    so "None. GAP-01: no reorder operation. See OOS-10" cites no scenario, while
-    a typo such as AC-99 stays a reference and is still reported as missing.
+    so "None. GAP-01: no reorder operation" cites no scenario, while a typo
+    such as AC-99 stays a reference and is still reported as missing.
     Pass None, or nothing, to accept every PREFIX-NN token.
     """
     ids = SCENARIO_ID_RE.findall(text)
@@ -340,30 +337,6 @@ def manual_scenarios(test_spec: str) -> set[str]:
         if len(row) >= 4 and row[3].lower().startswith("manual"):
             manual.add(row[0])
     return manual
-
-
-def parse_out_of_scope(test_spec: str) -> list[dict[str, str]]:
-    """Rows of the Out of Scope table: what is deliberately not examined, whether
-    it is deferred or not applicable, why, and who owns the decision."""
-    rows: list[dict[str, str]] = []
-    for row in _table_rows(_section(test_spec, "Out of Scope")):
-        if len(row) < 2:
-            continue
-        first = row[0].strip()
-        if not first or first.casefold().startswith("excluded"):
-            continue
-        match = OUT_OF_SCOPE_ID_RE.match(first)
-        oos_id, excluded = (match.group(1), match.group(2).strip()) if match else ("", first)
-        rows.append(
-            {
-                "id": oos_id,
-                "excluded": excluded,
-                "disposition": row[1].strip(),
-                "reason": row[2].strip() if len(row) > 2 else "",
-                "owner": row[3].strip() if len(row) > 3 else "",
-            }
-        )
-    return rows
 
 
 def _mapping_columns(row: list[str]) -> dict[str, int | None] | None:
@@ -521,7 +494,6 @@ def main() -> None:
     for name, help_text in (
         ("list", "print the Scenario Catalog as JSON"),
         ("traceability", "print scenario ID to requirement labels as JSON"),
-        ("out-of-scope", "print the Out of Scope rows as JSON"),
         ("mapping", "print the Execution and Evidence mapping as a test-plan JSON"),
     ):
         sub = subparsers.add_parser(name, help=help_text)
@@ -531,8 +503,6 @@ def main() -> None:
     text = Path(args.test_spec).read_text(encoding="utf-8")
     if args.command == "traceability":
         result: object = parse_traceability(text)
-    elif args.command == "out-of-scope":
-        result = parse_out_of_scope(text)
     elif args.command == "mapping":
         result = {"test_spec": args.test_spec, "test_cases": parse_execution_mapping(text)}
     else:

@@ -24,10 +24,10 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from lib.criteria_verify import verify_criteria, _find_test_files
-from lib.eval_criteria import normalize_criteria as _structured_criteria
-from lib.eval_execution import aggregate_status, commands_for_file, load_config, run_command
+from lib.eval_criteria import criteria_items, criterion_ids, normalize_criteria as _structured_criteria
+from lib.eval_execution import aggregate_status, commands_for_file, evidence_artifact, load_config, run_command
 from lib.eval_runtime import build_snapshot, task_scenarios, read_object
-from lib.test_spec import (coverage_gaps, parse_evaluation_gates, parse_out_of_scope,
+from lib.test_spec import (coverage_gaps, parse_evaluation_gates,
                            parse_scenarios, parse_traceability)
 
 
@@ -207,14 +207,17 @@ def _semantic_results(
             criterion = item if isinstance(item, dict) else {"criterion": str(item), "verify_by": "manual"}
             # Mapped criteria are established by their scenarios, not a second
             # hidden invocation of the entire task's test suite.
-            if criterion.get("scenario_ids"):
-                continue
             verify_by = criterion.get("verify_by", "manual")
+            if criterion.get("scenario_ids") and verify_by != "test":
+                # Preserve the legacy mapped non-test path; presenting test
+                # criteria must not introduce additional verifier executions.
+                continue
             outcome = {"status": "unverifiable", "evidence": "Manual review required", "command": ""}
-            if verify_by == "test" and selection is not None:
-                mapped_ids = set(selection.get("criterion_scenarios", {}).get(str(task["id"]), {}).get(str(index), []))
+            if verify_by == "test" and (selection is not None or criterion.get("scenario_ids")):
+                mapped_ids = set((selection or {}).get("criterion_scenarios", {}).get(str(task["id"]), {}).get(
+                    str(index), criterion_ids(criterion)))
                 evidence = [r for r in scenario_results or [] if r["id"] in mapped_ids]
-                if selection.get("source") == "task_criteria":
+                if (selection or {}).get("source") == "task_criteria":
                     # A feature scenario may span several tasks. A criterion
                     # inherits only the executions owned by its own task.
                     evidence = [{**r, "executions": own,
@@ -275,6 +278,38 @@ def _semantic_results(
                 "executions": outcome.get("executions", []),
             })
     return results
+
+
+def _counts(results: list[dict]) -> dict:
+    counts = {status: sum(r["status"] == status for r in results)
+              for status in ("pass", "partial", "fail", "unverifiable", "not_applicable", "blocked_upstream")}
+    return {"total": len(results), **counts,
+            "applicable": len(results) - counts["not_applicable"],
+            "examined": len(results) - counts["unverifiable"],
+            "not_examined": counts["unverifiable"]}
+
+
+def _fold_criteria(results: list[dict], tasks: list[dict], selection: dict | None) -> list[dict]:
+    """Present one-to-one test claims on their scenario without losing status."""
+    associations = {}
+    for task in tasks:
+        for index, criterion in enumerate(criteria_items(task), 1):
+            ids = (selection or {}).get("criterion_scenarios", {}).get(str(task["id"]), {}).get(
+                str(index), criterion_ids(criterion))
+            associations[f"TASK-{task['id']}-CRIT-{index:02d}"] = set(ids)
+    scenarios = {r["id"]: r for r in results if r["kind"] == "scenario"}
+    kept = []
+    for result in results:
+        ids = associations.get(result["id"], set())
+        if result["kind"] == "criterion" and result["level"] == "test" and len(ids) == 1:
+            scenario = scenarios.get(next(iter(ids)))
+            if scenario is not None:
+                # Full criterion evidence remains inspectable, including its
+                # task-specific status when multiple tasks share a scenario.
+                scenario.setdefault("criteria", []).append(result)
+                continue
+        kept.append(result)
+    return kept
 
 
 def _apply_judgment(
@@ -356,16 +391,6 @@ def reclassify_blocked_upstream(
     return results
 
 
-def _named_reviewer(execution: dict[str, Any]) -> bool:
-    """Whether a manual observation names who made it.
-
-    eval_runtime.prepare() requires a reviewer, but a hand-written or externally
-    produced scenario-results.json is not held to that validation.
-    """
-    reviewer = execution.get("reviewer")
-    return isinstance(reviewer, str) and bool(reviewer.strip())
-
-
 def _gate_result(name: str, evidence: str, status: str = "unverifiable") -> dict:
     return {"id": name, "kind": "gate", "area": "Acceptance gates", "title": evidence,
             "expected": evidence, "level": "gate", "task_id": None, "tier": "deterministic",
@@ -402,7 +427,6 @@ def build_report(
     spec_text = test_spec_path.read_text(encoding="utf-8")
     scenarios = parse_scenarios(spec_text)
     traces = parse_traceability(spec_text)
-    out_of_scope = parse_out_of_scope(spec_text)
     scenario_counts = Counter(scenario["id"] for scenario in scenarios)
     executed_by_id: dict[str, list[dict[str, Any]]] = {}
     for item in scenario_results or []:
@@ -434,19 +458,6 @@ def build_report(
                         "executed_at": max((e.get("executed_at") or "" for e in executions), default="")}
             result = _mapped_scenario_result(scenario, combined)
             result["executions"] = executions
-            if all(e.get("source") == "manual" for e in executions):
-                result["tier"] = "manual"
-                result["reviewers"] = sorted({str(e["reviewer"]).strip() for e in executions
-                                              if _named_reviewer(e)})
-                unattributed = sum(1 for e in executions if not _named_reviewer(e))
-                if unattributed:
-                    # A manual observation nobody signed is unattributed evidence.
-                    # It cannot carry acceptance, and an executed failure stays a
-                    # failure rather than being softened into silence.
-                    result["unattributed"] = unattributed
-                    result["evidence"] += f"; {unattributed} manual result(s) identify no reviewer"
-                    if result["status"] not in ("fail", "partial", "blocked_upstream"):
-                        result["status"] = "unverifiable"
         else:
             result = _scenario_result(scenario, owners)
         if scenario_counts[scenario["id"]] > 1:
@@ -530,11 +541,6 @@ def build_report(
         # em-dashes so it can be quoted in course material as is.
         result["evidence"] = str(result.get("evidence", "")).replace(" \u2014 ", ", ").replace("\u2014", ",")
 
-    counts = {
-        status: sum(1 for result in results if result["status"] == status)
-        for status in ("pass", "partial", "fail", "unverifiable", "not_applicable", "blocked_upstream")
-    }
-    total = len(results)
     # Unavailable required tools are coverage gaps and block acceptance.
     applicable = [
         result for result in results
@@ -543,6 +549,14 @@ def build_report(
     accepted = bool(applicable) and all(
         result["status"] == "pass" for result in applicable
     )
+    criteria = [r for r in results if r["kind"] == "criterion"]
+    criteria_summary = {**_counts(criteria), "discharged": sum(r["status"] == "pass" for r in criteria),
+                        "reused": sum(r["level"] == "test" and r["evidence"].startswith(
+                            "Reused declared criterion scenarios:") for r in criteria)}
+    results = _fold_criteria(results, tasks, selection)
+    # Headline counts describe scenarios. The verdict still includes every
+    # criterion and gate, without counting identical folded outcomes twice.
+    checks = results + [c for r in results for c in r.get("criteria", []) if c["status"] != r["status"]]
     return {
         "feature": feature,
         "task_id": task_id,
@@ -553,17 +567,11 @@ def build_report(
         "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "test_spec": (context or {}).get("test_spec") or str(test_spec_path),
         "accepted": accepted,
-        "summary": {
-            "total": total,
-            **counts,
-            "applicable": len(applicable),
-            # Coverage, not a grade: how many results carry executed or judged
-            # evidence, and how many are silence. No percentage on purpose.
-            "examined": total - counts["unverifiable"],
-            "not_examined": counts["unverifiable"],
-        },
+        "summary": _counts([r for r in results if r["kind"] == "scenario"]),
+        "criteria_summary": criteria_summary,
+        "gate_summary": _counts([r for r in results if r["kind"] == "gate"]),
+        "checks_summary": _counts(checks),
         "results": results,
-        "out_of_scope": out_of_scope,
         "criteria_results": criteria_results,
         "selection": selection,
     }
@@ -614,10 +622,11 @@ def _scenario_table(report: dict[str, Any]) -> list[str]:
                 tests.append(f"{cell(identity)}: **{cell(execution.get('status', 'unverifiable').upper())}** (no individual test result)")
             detail = str(execution.get("evidence", ""))
             link = ""
-            if execution.get("artifact_dir"):
-                log = str(Path(execution["artifact_dir"]) / "output.log")
-                detail = detail.replace(f" (log: {log})", "")
-                link = f" [Output log](<{quote(log, safe='/')}>)"
+            artifact = evidence_artifact(execution)
+            if artifact:
+                for label, name in (("log", "output.log"), ("evidence", "result.json")):
+                    detail = detail.replace(f" ({label}: {Path(execution['artifact_dir']) / name})", "")
+                link = f" [Execution evidence](<{quote(str(artifact), safe='/')}>)"
             if detail or link:
                 evidence.append(cell(detail) + link)
         if not tests:
@@ -634,16 +643,17 @@ def _scenario_table(report: dict[str, Any]) -> list[str]:
 
 def _summary_markdown(report: dict[str, Any]) -> str:
     summary = report["summary"]
-    failed = summary["fail"] + summary["partial"] + summary["blocked_upstream"]
+    checks = report.get("checks_summary", summary)
+    failed = checks["fail"] + checks["partial"] + checks["blocked_upstream"]
     if report["accepted"]:
         outcome = "ACCEPTED for the declared scenarios, criteria, and recorded gates."
     else:
         parts = []
         if failed:
             parts.append(f"{failed} failed")
-        if summary["not_examined"]:
-            parts.append(f"{summary['not_examined']} never examined")
-        outcome = "NOT ACCEPTED. " + "; ".join(parts) + "."
+        if checks["not_examined"]:
+            parts.append(f"{checks['not_examined']} never examined")
+        outcome = "NOT ACCEPTED. " + ("; ".join(parts) or "nothing applicable was examined") + "."
     lines = [
         f"# Evaluation: {report['feature']}",
         "",
@@ -654,7 +664,13 @@ def _summary_markdown(report: dict[str, Any]) -> str:
         f"Build fingerprint: `{_fingerprint(report) or 'unavailable'}`",
         f"Attempt: `{report.get('run_id') or 'standalone report'}`",
         "",
-        "| Total | Examined | Pass | Fail | Partial | Blocked | Not examined | N/A |",
+        f"**Scenarios:** {summary['total']} scenarios, {summary['pass']} pass",
+        *([f"**Criteria:** {report['criteria_summary']['discharged']} of {report['criteria_summary']['total']} criteria discharged"]
+          if "criteria_summary" in report else []),
+        *([f"**Gates:** {report['gate_summary']['total']} total, {report['gate_summary']['pass']} pass, "
+           f"{report['gate_summary']['not_examined']} not examined"] if "gate_summary" in report else []),
+        "",
+        "| Scenarios | Examined | Pass | Fail | Partial | Blocked | Not examined | N/A |",
         "|------:|---------:|-----:|-----:|--------:|--------:|-------------:|----:|",
         (
             f"| {summary['total']} | {summary['examined']} | {summary['pass']} | "
@@ -665,40 +681,33 @@ def _summary_markdown(report: dict[str, Any]) -> str:
         *_scenario_table(report),
         "## Results",
         "",
-        "| ID | Area | Status | Evidence type | Traces to | Task | Evidence |",
-        "|----|------|--------|---------------|-----------|------|----------|",
+        "| ID | Area | Status | Evidence type | Traces to | Task | Criteria | Evidence |",
+        "|----|------|--------|---------------|-----------|------|----------|----------|",
     ]
     for result in report["results"]:
         evidence = str(result.get("evidence", "")).replace("|", "\\|").replace("\n", " ")
         traces = ", ".join(result.get("traces") or []) or "-"
+        criteria = "<br>".join(str(c['title']).replace("|", "\\|").replace("\n", " ")
+                              + f" ({c['status']})" for c in result.get("criteria", [])) or "-"
         lines.append(
             f"| {result['id']} | {result.get('area') or '-'} | {result['status']} | "
             f"{result.get('evidence_type', '')} | {traces} | "
-            f"{result.get('task_id') or '-'} | {evidence} |"
+            f"{result.get('task_id') or '-'} | {criteria} | {evidence} |"
         )
-    out_of_scope = report.get("out_of_scope") or []
     if report.get("selection"):
         lines += ["", "## Execution scope", "",
                   f"Mode: {report['selection']['mode']}. Only declared mappings are evidence for acceptance.", "",
                   "| Scenario | Task | Selector | Test name | Status |", "|---|---|---|---|---|"]
+        seen = set()
         for result in report["results"]:
             for execution in result.get("executions", []):
+                identity = json.dumps(execution, sort_keys=True)
+                if result["kind"] == "criterion" and identity in seen:
+                    continue
+                seen.add(identity)
                 values = [result["id"], execution.get("task_id", ""), execution.get("selector", ""),
                           execution.get("test_name", ""), execution["status"]]
                 lines.append("| " + " | ".join(str(v).replace("|", "\\|").replace("\n", " ") for v in values) + " |")
-    if out_of_scope:
-        lines += [
-            "",
-            "## Not examined by decision",
-            "",
-            "| ID | Excluded | Disposition | Owner |",
-            "|----|----------|-------------|-------|",
-        ]
-        for row in out_of_scope:
-            lines.append(
-                f"| {row.get('id') or '-'} | {row.get('excluded', '')} | "
-                f"{row.get('disposition', '')} | {row.get('owner') or '-'} |"
-            )
     lines.append("")
     return "\n".join(lines)
 
@@ -767,8 +776,8 @@ def _evaluation_yaml(report: dict[str, Any]) -> str:
     lines.append("results:" if results else "results: []")
     for result in results:
         executions = [e for e in (result.get("executions") or []) if isinstance(e, dict)]
-        artifact_dir = executions[-1].get("artifact_dir") if executions else None
-        log = str(Path(artifact_dir) / "output.log") if artifact_dir else None
+        artifact = evidence_artifact(executions[-1]) if executions else None
+        log = str(artifact) if artifact else None
         fields = [
             ("id", result.get("id")),
             ("kind", result.get("kind")),
@@ -794,26 +803,11 @@ def _evaluation_yaml(report: dict[str, Any]) -> str:
                         "status": e.get("status"), "tests": e.get("tests", [])}
                        for e in executions]
             lines.append("    tests: " + json.dumps(records, ensure_ascii=True))
-    out_of_scope = report.get("out_of_scope") or []
-    lines.append("out_of_scope:" if out_of_scope else "out_of_scope: []")
-    for row in out_of_scope:
-        fields = [
-            ("id", row.get("id") or None),
-            ("excluded", row.get("excluded")),
-            ("disposition", row.get("disposition")),
-            ("reason", row.get("reason") or None),
-            ("owner", row.get("owner") or None),
-        ]
-        for index, (key, value) in enumerate(fields):
-            prefix = "  - " if index == 0 else "    "
-            lines.append(f"{prefix}{key}: {_yaml_scalar(value)}")
     lines.append("")
     return "\n".join(lines)
 
 
 def write_report(report: dict[str, Any], output_dir: Path) -> None:
-    _atomic_json(output_dir / "report.json", report)
-    _atomic_text(output_dir / "evaluation.yaml", _evaluation_yaml(report))
     residue = {
         "feature": report["feature"],
         "results": [
@@ -822,6 +816,9 @@ def write_report(report: dict[str, Any], output_dir: Path) -> None:
             if result["tier"] == "semantic" and result["status"] == "unverifiable"
         ],
     }
+    report["residue"] = residue
+    _atomic_json(output_dir / "report.json", report)
+    _atomic_text(output_dir / "evaluation.yaml", _evaluation_yaml(report))
     _atomic_json(output_dir / "residue.json", residue)
     (output_dir / "summary.md").write_text(
         _summary_markdown(report),

@@ -49,7 +49,6 @@ Traceability and covers requirements and risks beyond the RFC acceptance list.
 | Fixtures and Test Data | Named datasets, fixed clocks, dependency responses, and setup/reset/cleanup rules. | Makes checks repeatable and prevents results from depending on leftover data or the day they run. |
 | Execution and Evidence | Links from scenario IDs to tests or manual procedures, runner configuration, and reports for the tested build. | Shows what actually ran and supplies evidence for each result. |
 | Exit Criteria | Required merge/release checks, quality limits, coverage review, and rules for exceptions and flaky tests. | Defines what must be satisfied before the work can be accepted. |
-| Out of Scope | Excluded or deferred behavior, reasons, risks, and follow-up ownership. | Prevents an untested area from being mistaken for verified behavior. |
 
 Sources and Review records agreement on the test design. Execution and Evidence
 points to the results of running it. Keeping these separate avoids treating a

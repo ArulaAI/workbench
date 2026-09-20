@@ -336,6 +336,17 @@ def _tests_from_report(json_path: Path, xml_path: Path, runner: str = "") -> lis
     return []
 
 
+def evidence_artifact(execution: dict) -> Path | None:
+    """Prefer structured evidence; an empty stdout log is not a useful link."""
+    directory = execution.get("artifact_dir")
+    if directory:
+        for name in ("result.json", "junit.xml", "tests.json", "output.log"):
+            path = Path(directory) / name
+            if path.is_file() and path.stat().st_size:
+                return path
+    return None
+
+
 def run_command(base: str, selectors: list[str], root: Path, evidence_dir: Path,
                 *, gate: str = "test", timeout: int = 600,
                 test_name: str = "", runner: str = "", exact: bool = False) -> dict:
@@ -457,7 +468,7 @@ def run_command(base: str, selectors: list[str], root: Path, evidence_dir: Path,
     except (ValueError, OSError, ET.ParseError) as exc:
         status = "fail" if code else "unverifiable"
         detail = f"Invalid test evidence: {exc}"
-    result = {"status": status, "evidence": detail + f" (log: {run_dir / 'output.log'})",
+    result = {"status": status, "evidence": detail + f" (evidence: {run_dir / 'result.json'})",
               "command": command, "tests": tests, "executed_at": utc_now(), "exit_code": code,
               "artifact_dir": str(run_dir)}
     (run_dir / "result.json").write_text(json.dumps(result, indent=2) + "\n")

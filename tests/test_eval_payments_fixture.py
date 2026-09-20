@@ -91,7 +91,10 @@ def evaluate(copy,task_id=None):
         assert completed.returncode==0,completed.stdout+completed.stderr
         report=json.loads(completed.stdout)
         output=feature/'eval' if task_id is None else feature/'eval'/f'task-{task_id}'
-        return output/'runs'/report['run_id'],report
+        assert report == json.loads((output/'report.json').read_text())
+        assert all(set(row) == {'id','status'} for row in report['results'])
+        run=output/'runs'/report['run_id']
+        return run,json.loads((run/'report.json').read_text())
     pytest.importorskip('tree_sitter_typescript')
     run=prepare(root,feature,feature/'state.json',spec,task_id=task_id)
     execute(run)
@@ -113,6 +116,26 @@ def test_payment_task_three_tests_in_two_files(payment_copy):
     assert len(executions)==3
     assert all(len(e['tests'])==1 for e in executions),executions
     assert len(list((run/'commands').iterdir()))==3
+    assert len(report['results']) == report['summary']['total'] == report['summary']['pass'] == 3
+    assert report['criteria_summary']['total'] == report['criteria_summary']['discharged'] == 3
+    output = run.parent.parent
+    assert {p.name for p in output.iterdir()} == {'runs','summary.md','report.json','latest-attempt.json'}
+    public = json.loads((output/'report.json').read_text())
+    assert public['results'] == [{'id':sid,'status':'pass'} for sid in ('AC-01','AC-02','VAL-01')]
+    assert 'TASK-1-CRIT-' not in json.dumps(public)
+    summary = (output/'summary.md').read_text()
+    assert '3 scenarios, 3 pass' in summary and '3 of 3 criteria discharged' in summary
+    for section in ('Scenario results','Results','Execution scope'):
+        table = summary.split('## '+section+'\n',1)[1].split('\n## ',1)[0]
+        assert table.count('| AC-01 |') == 1
+        assert '| TASK-1-CRIT-01 |' not in table
+    assert all((Path(e['artifact_dir'])/'result.json').stat().st_size for e in executions)
+    yaml = pytest.importorskip('yaml')
+    handoff = yaml.safe_load((payment_copy[1]/'evaluation-task-1.yaml').read_text())
+    assert handoff['task'] == '1' and handoff['accepted'] is True
+    assert handoff['summary']['total'] == 3 and handoff['selection']['mode'] == 'task'
+    assert {r['id'] for r in handoff['results']} == {'AC-01','AC-02','VAL-01'}
+    assert all(r['evidence'] and r['tests'] and Path(r['log']).stat().st_size for r in handoff['results'])
 
 
 def test_payment_feature_all_17_tests_and_four_declared_gaps(payment_copy):
@@ -146,11 +169,12 @@ def test_unmodified_cli_payment_task_and_feature(payment_copy):
         assert completed.returncode==expected_code,completed.stdout+completed.stderr
         report=json.loads(completed.stdout)
         assert report['accepted']==(expected_code==0)
+        assert all(set(row) == {'id','status'} for row in report['results'])
         if extra:
             assert report['task_id']==extra[1]
     feature_report=json.loads((feature/'eval/report.json').read_text())
     assert feature_report['task_id'] is None
-    assert len([r for r in feature_report['results'] if r['kind']=='scenario'])==len(parse_scenarios(payment_copy[2].read_text()))
+    assert len(feature_report['results'])==len(parse_scenarios(payment_copy[2].read_text()))
 
 
 @pytest.mark.parametrize('task_id,expected_code',[('1',0),(None,2)])
@@ -179,12 +203,15 @@ def test_human_cli_payment_scenario_table(payment_copy,task_id,expected_code):
         if current:rows[current].append(parts[2])
     directory=feature/'eval' if task_id is None else feature/'eval'/f'task-{task_id}'
     report=json.loads((directory/'report.json').read_text())
+    report=json.loads((directory/'runs'/report['run_id']/'report.json').read_text())
     scenarios=[r for r in report['results'] if r['kind']=='scenario']
     assert set(rows)=={r['id'] for r in scenarios}
     for result in scenarios:
         assert result['expected'] in ' '.join(rows[result['id']]),result
     assert 'test/service.test.ts' in table and 'test/money.test.ts' in table
     assert 'task criteria reuse scenario evidence' in output
+    if task_id:
+        assert '3 scenarios, 3 pass · 3 of 3 criteria discharged' in output
     assert 'Task criteria          3 pass' not in output
     if task_id:
         assert set(rows)=={'AC-01','AC-02','VAL-01'}

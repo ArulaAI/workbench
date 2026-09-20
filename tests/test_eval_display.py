@@ -19,14 +19,21 @@ def execution(file='tests/api.py', name='test_ac_01_invalid', status='pass'):
             'tests':[{'id':name,'status':status}]}
 
 
-def test_scenario_table_has_tests_expectations_and_evidence_without_duplicate_criteria():
-    report={'results':[scenario(executions=[execution()]),
+def test_scenario_table_has_tests_expectations_and_evidence_without_duplicate_criteria(tmp_path):
+    artifact = tmp_path/'commands/first'
+    artifact.mkdir(parents=True)
+    (artifact/'result.json').write_text('{"status":"pass"}')
+    (artifact/'output.log').touch()
+    item = execution()
+    item['artifact_dir'] = str(artifact)
+    item['evidence'] = f'Selected assertion pass (evidence: {artifact}/result.json)'
+    report={'results':[scenario(executions=[item]),
         {'id':'TASK-1-CRIT-01','kind':'criterion','status':'pass',
          'evidence':'Reused declared criterion scenarios: AC-01'}]}
-    output=scenario_table(report,columns=160,evidence_root=Path('/project/eval'))
+    output=scenario_table(report,columns=160,evidence_root=tmp_path)
     for expected in ('Scenario ID','Test file / case / result','Expected behavior / execution evidence',
                      'AC-01','tests/api.py','test_ac_01_invalid','Result: PASS','Invalid input returns 400',
-                     'Selected assertion pass','[1] commands/first/output.log'):
+                     'Selected assertion pass','[1] commands/first/result.json'):
         assert expected in output
     assert output.count('| AC-01 ')==1
     assert 'TASK-1-CRIT-01' not in output
@@ -70,4 +77,4 @@ def test_skipped_test_is_not_presented_as_passing():
 
 
 def test_empty_report_renders_without_inventing_scenarios():
-    assert scenario_table({'results':[]})=='No scenario results in this evaluation.'
+    assert scenario_table({'results':[]})=='0 scenarios, 0 pass\nNo scenario results in this evaluation.'

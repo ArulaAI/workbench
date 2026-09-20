@@ -45,15 +45,6 @@ _eval_print_summary() {
         done <<< "$rows"
     fi
 
-    rows=$(jq -r '.out_of_scope[]? | [(.id // "-"), .disposition, (.owner // "-")] | @tsv' "$report")
-    if [[ -n "$rows" ]]; then
-        echo ""
-        echo "    not examined by decision"
-        while IFS=$'\t' read -r id disposition owner; do
-            printf '      %-10s %-26s %s\n' "$id" "$disposition" "$owner"
-        done <<< "$rows"
-    fi
-
     rows=$(jq -r '.results[] | select(.status == "fail" or .status == "partial" or .status == "blocked_upstream")
                   | [.id, .evidence_type, .evidence] | @tsv' "$report")
     if [[ -n "$rows" ]]; then
@@ -65,7 +56,9 @@ _eval_print_summary() {
     fi
 
     echo ""
-    log_step "Report written to ${COLOR_STEP}${output_dir}/summary.md${RESET}"
+    local summary_dir="${FEATURE_DIR}/eval"
+    [[ -z "${_eval_task_filter:-}" ]] || summary_dir+="/task-${_eval_task_filter}"
+    log_step "Report written to ${COLOR_STEP}${summary_dir}/summary.md${RESET}"
     local handoff="${FEATURE_DIR}/evaluation.yaml"
     [[ -z "${_eval_task_filter:-}" ]] || handoff="${FEATURE_DIR}/evaluation-task-${_eval_task_filter}.yaml"
     log_step "Evaluation written to ${COLOR_STEP}${handoff}${RESET}"
@@ -79,8 +72,8 @@ _eval_print_summary() {
 _eval_verdict_line() {
     local report="$1"
     local failed silent line=""
-    failed=$(jq '.summary.fail + .summary.partial + .summary.blocked_upstream' "$report")
-    silent=$(jq '.summary.unverifiable' "$report")
+    failed=$(jq '(.checks_summary // .summary) | .fail + .partial + .blocked_upstream' "$report")
+    silent=$(jq '(.checks_summary // .summary).unverifiable' "$report")
     [[ "$failed" -gt 0 ]] && line="${failed} failed"
     if [[ "$silent" -gt 0 ]]; then
         [[ -z "$line" ]] || line="${line}; "
@@ -253,7 +246,7 @@ _eval_reject() {
               --arg feature "${FEATURE_NAME:-${GLOBAL_FEATURE:-}}" \
               --argjson code "$code" \
               '{accepted: false, evaluated: false, error: $reason,
-                feature: $feature, exit_code: $code, results: [], out_of_scope: [],
+                feature: $feature, exit_code: $code, results: [],
                 summary: {total: 0, pass: 0, partial: 0, fail: 0, unverifiable: 0,
                           not_applicable: 0, blocked_upstream: 0, applicable: 0,
                           examined: 0, not_examined: 0}}' >&3
@@ -287,14 +280,14 @@ cmd_eval() (
     fi
     local strict="${SPEED_EVAL_STRICT:-false}"
     local file_defects="${SPEED_EVAL_FILE_DEFECTS:-true}"
-    local skip_judge=false _eval_task_filter="" test_spec_override="" test_plan_override="" manual_results=""
+    local skip_judge=false _eval_task_filter="" test_spec_override="" test_plan_override=""
     local _eval_run_dir="" _eval_complete=false _eval_runtime_err=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --strict) strict=true; shift ;;
             --no-defects) file_defects=false; shift ;;
             --skip-judge) skip_judge=true; shift ;;
-            --task|--task-id|--test-spec|--test-plan|--manual-results)
+            --task|--task-id|--test-spec|--test-plan)
                 if [[ $# -lt 2 || -z "$2" || "$2" == --* ]]; then
                     _eval_reject "$EXIT_CONFIG_ERROR" "${1} requires a value"
                     return "$EXIT_CONFIG_ERROR"
@@ -303,7 +296,6 @@ cmd_eval() (
                     --task|--task-id) _eval_task_filter="$2" ;;
                     --test-spec) test_spec_override="$2" ;;
                     --test-plan) test_plan_override="$2" ;;
-                    --manual-results) manual_results="$2" ;;
                 esac
                 shift 2 ;;
             *) _eval_reject "$EXIT_CONFIG_ERROR" "Unknown eval option: $1"
@@ -388,14 +380,6 @@ cmd_eval() (
         fi
         prepare+=(--test-plan "$test_plan_override")
     fi
-    if [[ -n "$manual_results" ]]; then
-        [[ "$manual_results" == /* ]] || manual_results="${PROJECT_ROOT}/${manual_results}"
-        if ! _eval_guard_path "$py" "$manual_results"; then
-            _eval_reject "$EXIT_CONFIG_ERROR" "Manual results path is outside the project or crosses a symlink: ${manual_results}"
-            return "$EXIT_CONFIG_ERROR"
-        fi
-        prepare+=(--manual-results "$manual_results")
-    fi
     # An evaluation that could not run is not a failed acceptance. eval_runtime
     # exits 2 on RuntimeError (an operational stop such as "requires done
     # tasks") and 3 on invalid input; both mean "did not evaluate", so both
@@ -439,7 +423,9 @@ cmd_eval() (
     fi
     _eval_complete=true
     if [[ "${JSON_OUTPUT:-false}" == true ]]; then
-        cat "$report_file" >&3
+        local public_report="${FEATURE_DIR}/eval"
+        [[ -z "$_eval_task_filter" ]] || public_report+="/task-${_eval_task_filter}"
+        cat "${public_report}/report.json" >&3
     else
         _eval_print_summary "$report_file" "$test_spec" "$_eval_run_dir"
         if [[ "$accepted" == true ]]; then

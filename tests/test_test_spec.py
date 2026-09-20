@@ -7,7 +7,6 @@ from pathlib import Path
 
 from lib.test_spec import (
     parse_execution_mapping,
-    parse_out_of_scope,
     parse_scenarios,
     parse_traceability,
 )
@@ -46,7 +45,7 @@ SPEC = """# Test Spec: Books
 | Source requirement / risk | Covering scenarios | Gap or deferral reference |
 |---|---|---|
 | TR4: lists stay ordered | LIST-02 covers the happy path | none |
-| TR9: no PAN at rest | none | OOS-01 |
+| TR9: no PAN at rest | none | Deferred; no decision yet |
 
 ## Execution and Evidence
 
@@ -57,13 +56,6 @@ SPEC = """# Test Spec: Books
 | AC-01 | tests/test_books.py::test_delete tests/test_books.py::test_gone | |
 | LIST-02 | | |
 | {PREFIX}-01 | tests/ignored.py | |
-
-## Out of Scope
-
-| Excluded behavior / category | Not applicable or deferred | Reason and risk | Decision owner / follow-up |
-|---|---|---|---|
-| OOS-01 Refund idempotency | Deferred | Unspecified in 1.3 | payments-product |
-| Chargebacks | Not applicable | Out of scope for 1.3 | Spec owners |
 """
 
 
@@ -80,17 +72,6 @@ class ParseScenariosTest(unittest.TestCase):
 
     def test_traceability_maps_requirement_labels_to_scenarios(self):
         self.assertEqual({"AC-01": ["ST1"], "LIST-02": ["TR4"]}, parse_traceability(SPEC))
-
-    def test_out_of_scope_rows_keep_id_disposition_and_owner(self):
-        rows = parse_out_of_scope(SPEC)
-        self.assertEqual(2, len(rows))
-        self.assertEqual(
-            {"id": "OOS-01", "excluded": "Refund idempotency", "disposition": "Deferred",
-             "reason": "Unspecified in 1.3", "owner": "payments-product"},
-            rows[0],
-        )
-        self.assertEqual("", rows[1]["id"])
-        self.assertEqual("Chargebacks", rows[1]["excluded"])
 
     def test_execution_mapping_yields_one_entry_per_selector(self):
         cases = parse_execution_mapping(SPEC)

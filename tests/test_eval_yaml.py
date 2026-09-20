@@ -60,11 +60,6 @@ def _report(**overrides):
              "evidence": "No test mapped to this scenario", "command": "", "required": True,
              "traces": ["TR11", "Product risk, Critical"], "evidence_type": "silence"},
         ],
-        "out_of_scope": [
-            {"id": "OOS-01", "excluded": "Refund idempotency: one refund or two",
-             "disposition": "Deferred", "reason": "ST6 covers authorise and capture only",
-             "owner": "payments-product to decide; release claim bounded until then"},
-        ],
         "criteria_results": None,
     }
     report.update(overrides)
@@ -106,7 +101,6 @@ class EvaluationYamlTest(unittest.TestCase):
         self.assertIn("\naccepted: false\n", text)
         self.assertIn("\n  - id: AC-01\n", text)
         self.assertIn("\n  - id: RISK-01\n", text)
-        self.assertIn("\n  - id: OOS-01\n", text)
 
     @unittest.skipUnless(yaml, "PyYAML not installed; structure check needs a parser")
     def test_parses_to_the_facts_in_report_json(self):
@@ -129,17 +123,12 @@ class EvaluationYamlTest(unittest.TestCase):
                           "level": "integration", "status": "pass", "evidence_type": "statistical",
                           "evidence": report["results"][0]["evidence"], "traces": ["ST1", "TR5"],
                           "task": None, "command": "node --test {selectors}",
-                          "log": "/repo/.speed/eval/commands/729c/output.log"}, passed)
+                          "log": None}, passed)
         self.assertEqual("unverifiable", silent["status"])
         self.assertEqual("silence", silent["evidence_type"])
         self.assertEqual(["TR11", "Product risk, Critical"], silent["traces"])
         self.assertIsNone(silent["command"])
         self.assertIsNone(silent["log"])
-        self.assertEqual([{"id": "OOS-01", "excluded": "Refund idempotency: one refund or two",
-                           "disposition": "Deferred",
-                           "reason": "ST6 covers authorise and capture only",
-                           "owner": "payments-product to decide; release claim bounded until then"}],
-                         data["out_of_scope"])
 
     @unittest.skipUnless(yaml, "PyYAML not installed; structure check needs a parser")
     def test_hostile_free_text_cannot_change_the_document(self):
@@ -148,23 +137,20 @@ class EvaluationYamlTest(unittest.TestCase):
         report["results"][1]["evidence"] = evidence
         report["results"][1]["title"] = "yes"
         report["results"][1]["traces"] = ["null", "2024", "on"]
-        report["out_of_scope"][0]["reason"] = "reason: with colon"
         data = yaml.safe_load(_evaluation_yaml(report))
         self.assertEqual(2, len(data["results"]))
         self.assertEqual(evidence, data["results"][1]["evidence"])
         self.assertEqual("yes", data["results"][1]["title"])
         self.assertEqual(["null", "2024", "on"], data["results"][1]["traces"])
-        self.assertEqual("reason: with colon", data["out_of_scope"][0]["reason"])
 
     @unittest.skipUnless(yaml, "PyYAML not installed; structure check needs a parser")
-    def test_empty_results_and_out_of_scope_are_empty_lists(self):
-        report = _report(results=[], out_of_scope=[],
+    def test_empty_results_is_an_empty_list(self):
+        report = _report(results=[],
                          summary={"total": 0, "pass": 0, "partial": 0, "fail": 0, "unverifiable": 0,
                                   "not_applicable": 0, "blocked_upstream": 0, "applicable": 0,
                                   "examined": 0, "not_examined": 0})
         data = yaml.safe_load(_evaluation_yaml(report))
         self.assertEqual([], data["results"])
-        self.assertEqual([], data["out_of_scope"])
 
     @unittest.skipUnless(yaml, "PyYAML not installed; structure check needs a parser")
     def test_missing_build_snapshot_is_null_not_clean(self):

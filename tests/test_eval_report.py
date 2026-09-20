@@ -20,12 +20,6 @@ TEST_SPEC = """# Test Spec: Books
 | RFC acceptance criterion | Covering scenarios |
 |---|---|
 | ST1: a book can be deleted | AC-01 |
-
-## Out of Scope
-
-| Excluded behavior / category | Not applicable or deferred | Reason and risk | Decision owner / follow-up |
-|---|---|---|---|
-| OOS-01 Bulk delete | Deferred | Not in 1.0 | product |
 """
 
 
@@ -106,10 +100,21 @@ class EvalReportTest(unittest.TestCase):
         self.assertTrue((output / "report.json").is_file())
         self.assertTrue((output / "summary.md").is_file())
 
+    def test_report_embeds_nonempty_residue(self):
+        self._write_task([])
+        report = build_report("books", self.root, self.tasks, self.test_spec)
+        output = self.root / "eval"
+        output.mkdir()
+        write_report(report, output)
+        saved = json.loads((output / "report.json").read_text())
+        self.assertEqual(saved["residue"], json.loads((output / "residue.json").read_text()))
+        self.assertEqual(["TASK-1-CRIT-01"], [r["id"] for r in saved["residue"]["results"]])
+
     def test_missing_execution_is_unverifiable(self):
         self._write_task([])
         report = build_report("books", self.root, self.tasks, self.test_spec)
-        self.assertEqual(3, report["summary"]["unverifiable"])
+        self.assertEqual(2, report["summary"]["unverifiable"])
+        self.assertEqual(1, report["criteria_summary"]["unverifiable"])
         self.assertFalse(report["accepted"])
 
     def _write_task_with_test_criterion(self):
@@ -260,7 +265,7 @@ class EvalReportTest(unittest.TestCase):
         by_id = {result["id"]: result for result in report["results"]}
         self.assertEqual("No test mapped to this scenario", by_id["AC-01"]["evidence"])
 
-    def test_results_carry_evidence_types_traces_and_out_of_scope(self):
+    def test_results_carry_evidence_types_and_traces(self):
         self._write_task(
             [
                 {"scenario_id": "AC-01", "status": "pass", "evidence": "passed"},
@@ -275,21 +280,19 @@ class EvalReportTest(unittest.TestCase):
         self.assertEqual("opinion", by_id["TASK-1-CRIT-01"]["evidence_type"])
         self.assertEqual(["ST1"], by_id["AC-01"]["traces"])
         self.assertEqual([], by_id["EDGE-01"]["traces"])
-        self.assertEqual("OOS-01", report["out_of_scope"][0]["id"])
-        self.assertEqual("product", report["out_of_scope"][0]["owner"])
 
     def test_summary_counts_examined_and_not_examined_without_a_score(self):
         self._write_task([])
         report = build_report("books", self.root, self.tasks, self.test_spec)
         self.assertNotIn("score", report["summary"])
         self.assertEqual(0, report["summary"]["examined"])
-        self.assertEqual(3, report["summary"]["not_examined"])
+        self.assertEqual(2, report["summary"]["not_examined"])
+        self.assertEqual(3, report["checks_summary"]["not_examined"])
         by_id = {result["id"]: result for result in report["results"]}
         self.assertEqual("silence", by_id["AC-01"]["evidence_type"])
         write_report(report, self.root / "eval")
         summary = (self.root / "eval" / "summary.md").read_text(encoding="utf-8")
         self.assertIn("NOT ACCEPTED. 3 never examined.", summary)
-        self.assertIn("## Not examined by decision", summary)
         self.assertNotIn("\u2014", summary)
 
     def test_legacy_text_criteria_are_expanded_per_bullet(self):

@@ -129,21 +129,16 @@ def test_unmapped_owned_scenario_still_uses_the_task_batch(project):
 # ── read paths leaving the project ───────────────────────────
 
 
-@pytest.mark.parametrize("keyword", ["test_spec", "manual_path"])
-def test_symlinked_read_path_is_rejected(project, tmp_path, keyword):
+def test_symlinked_read_path_is_rejected(project, tmp_path):
     """A symlinked spec was read and pasted into the evaluator prompt verbatim,
     so anything the link pointed at was shipped to the model provider."""
     secret = tmp_path / "outside-the-project.txt"
     secret.write_text("PRIVATE KEY MATERIAL")
-    link = project.root / f"specs/tests/linked-{keyword}.md"
+    link = project.root / "specs/tests/linked-test-spec.md"
     link.symlink_to(secret)
 
-    kwargs = {"test_spec": project.spec, "manual_path": None}
-    kwargs[keyword] = link
-
     with pytest.raises(ValueError, match="symlink|leaves the project"):
-        prepare(project.root, project.feature, project.state, kwargs["test_spec"],
-                manual_path=kwargs["manual_path"])
+        prepare(project.root, project.feature, project.state, link)
 
 
 def test_read_path_outside_the_project_is_rejected(project, tmp_path):

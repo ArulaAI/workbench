@@ -82,7 +82,7 @@ def test_missing_test_cannot_be_hidden_by_other_passing_test(project,scope):
     _,report=project.evaluate(task_id=scope)
     assert result(report)['status']=='pass'
     assert result(report,'AC-02')['status']=='unverifiable'
-    assert result(report,'TASK-1-CRIT-02')['status']=='unverifiable'
+    assert result(report,'AC-02')['criteria'][0]['status']=='unverifiable'
     assert not report['accepted']
 
 
@@ -108,8 +108,9 @@ def test_shared_scenario_across_tasks_does_not_borrow_evidence(project):
     catalog(project,['AC-01'],[task('1',['AC-01']),task('2',['AC-01'],['tests/test_second.py'])])
     report=project.evaluate()[1]
     assert result(report)['status']=='unverifiable'
-    assert result(report,'TASK-1-CRIT-01')['status']=='pass'
-    assert result(report,'TASK-2-CRIT-01')['status']=='unverifiable'
+    criteria = {c['id']: c for c in result(report)['criteria']}
+    assert criteria['TASK-1-CRIT-01']['status']=='pass'
+    assert criteria['TASK-2-CRIT-01']['status']=='unverifiable'
     assert project.evaluate(task_id='1')[1]['accepted']
 
 
@@ -339,9 +340,9 @@ def test_summary_table_expected_behavior_and_actual_evidence(project,body,status
     assert '**Evidence:**' in table and f'**{status}**' in table
     assert 'does not independently verify' in table
     if status=='UNVERIFIABLE':
-        assert 'No individual test result' in table and '[Output log]' not in table
+        assert 'No individual test result' in table and '[Execution evidence]' not in table
     else:
-        assert 'tests/test\\_books.py' in table and '[Output log]' in table
+        assert 'tests/test\\_books.py' in table and '[Execution evidence]' in table
         assert 'test\\_ac\\_01\\_behavior' in table
         assert str(run).replace(' ', '%20') in table
     assert result(report)['status'].upper()==status
@@ -363,3 +364,95 @@ def test_summary_table_retains_all_individual_results_and_escapes_cells(project)
     assert '**PASS**' in table and '**FAIL**' in table
     assert 'A \\| B &lt;tag&gt;<br>second line' in table
     assert len(list((run/'commands').iterdir()))==2
+
+
+def test_one_to_one_criteria_fold_and_promoted_files_are_pruned(project):
+    from urllib.parse import unquote
+    import re
+    (project.root/'tests/test_books.py').write_text('def test_ac_01_present(): pass\n')
+    catalog(project,['AC-01'],[task('1',['AC-01'])])
+    first, report = project.evaluate(task_id='1')
+    output = first.parent.parent
+    archived = {p.relative_to(first): p.read_bytes() for p in first.rglob('*') if p.is_file()}
+    for name in ('test-plan.json', 'scenario-results.json', 'residue.json'):
+        shutil.copyfile(first/name, output/name)  # Simulate the previous promotion layout.
+    run, report = project.evaluate(task_id='1')
+    assert {p.name for p in output.iterdir()} == {'runs','summary.md','report.json','latest-attempt.json'}
+    assert archived == {p.relative_to(first): p.read_bytes() for p in first.rglob('*') if p.is_file()}
+    assert (project.feature/'evaluation-task-1.yaml').is_file()
+    assert report['summary']['total'] == report['summary']['pass'] == 1
+    assert report['criteria_summary']['total'] == report['criteria_summary']['discharged'] == 1
+    assert len(report['results']) == 1
+    assert result(report)['criteria'][0]['title'] == '[AC-01] Behavior AC-01'
+    public = json.loads((output/'report.json').read_text())
+    assert public['results'] == [{'id':'AC-01','status':'pass'}]
+    assert 'TASK-1-CRIT-01' not in json.dumps(public)
+    archived_report = json.loads((run/'report.json').read_text())
+    assert archived_report['results'][0]['executions']
+    assert archived_report['results'][0]['criteria'][0]['id'] == 'TASK-1-CRIT-01'
+    summary = (output/'summary.md').read_text()
+    assert '1 scenarios, 1 pass' in summary and '1 of 1 criteria discharged' in summary
+    for section in ('Scenario results','Results','Execution scope'):
+        table = summary.split('## '+section+'\n',1)[1].split('\n## ',1)[0]
+        assert table.count('| AC-01 |') == 1
+        assert '| TASK-1-CRIT-01 |' not in table
+    links = re.findall(r'\]\(<([^>]+)>\)', summary)
+    assert links and all(Path(unquote(p)).is_file() and Path(unquote(p)).stat().st_size for p in links)
+    assert all(p.endswith('/result.json') for p in links)
+    assert json.loads((output/'report.json').read_text())['residue'] == json.loads((run/'residue.json').read_text())
+
+
+def test_non_one_to_one_criteria_remain_distinct_and_block_acceptance(project):
+    (project.root/'tests/test_books.py').write_text('def test_ac_01_first(): pass\ndef test_ac_02_second(): pass\n')
+    one = task('1',[])
+    one['acceptance_criteria'] = [
+        {'criterion':'[AC-01] [AC-02] Joint behavior','verify_by':'test'},
+        {'criterion':'[AC-01] Human review','verify_by':'manual'},
+        {'criterion':'No scenario ID','verify_by':'test'},
+    ]
+    catalog(project,['AC-01','AC-02'],[one])
+    run, report = project.evaluate(task_id='1')
+    assert not report['accepted']
+    assert report['summary']['total'] == report['summary']['pass'] == 2
+    assert report['criteria_summary']['total'] == 3
+    assert report['criteria_summary']['discharged'] == 1
+    assert result(report,'TASK-1-CRIT-01')['status'] == 'pass'
+    assert result(report,'TASK-1-CRIT-02')['status'] == 'unverifiable'
+    assert result(report,'TASK-1-CRIT-03')['status'] == 'unverifiable'
+    assert any(r['id'].startswith('SELECTION-') for r in report['results'])
+    assert [r['id'] for r in report['residue']['results']] == ['TASK-1-CRIT-02']
+    scope = (run/'summary.md').read_text().split('## Execution scope\n',1)[1]
+    assert scope.count('| AC-01 |') == scope.count('| AC-02 |') == 1
+    assert 'TASK-1-CRIT-01' not in scope
+    public = json.loads((run.parent.parent/'report.json').read_text())
+    assert public['results'] == [{'id':sid,'status':'pass'} for sid in ('AC-01','AC-02')]
+    assert not public['accepted']
+    assert {row['id'] for row in public['checks']} == {
+        row['id'] for row in report['results'] if row['kind'] != 'scenario'}
+
+
+def test_absent_criterion_gate_survives_folding(project):
+    from lib.eval_report import build_report
+    (project.root/'tests/test_books.py').write_text('def test_ac_01_first(): pass\n')
+    catalog(project,['AC-01'],[task('1',['AC-01'])])
+    run, _ = project.evaluate(task_id='1')
+    context = json.loads((run/'context.json').read_text())
+    context['selection']['criterion_scenarios']['1']['2'] = ['AC-01']
+    report = build_report('books',project.root,run/'tasks',run/'test-spec.md',task_id='1',
+        scenario_results=json.loads((run/'scenario-results.json').read_text())['results'],context=context)
+    assert result(report,'CRITERION-1-2')['status'] == 'unverifiable'
+    assert not report['accepted'] and report['summary']['total'] == 1
+
+
+def test_legacy_mapped_non_test_criteria_do_not_gain_verifier_executions(project, monkeypatch):
+    from lib import eval_report
+    def unexpected(*args, **kwargs):
+        pytest.fail('Report presentation must not introduce verifier executions')
+    monkeypatch.setattr(eval_report, 'run_command', unexpected)
+    monkeypatch.setattr(eval_report, 'verify_criteria', unexpected)
+    one = task('1', [])
+    one['acceptance_criteria'] = [
+        {'criterion': 'Mapped legacy check', 'verify_by': mode, 'scenario_ids': ['AC-01']}
+        for mode in ('lint', 'schema')
+    ]
+    assert eval_report._semantic_results([one], project.root, evidence_dir=project.feature) == []

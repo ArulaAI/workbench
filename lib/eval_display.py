@@ -6,7 +6,13 @@ import json
 from pathlib import Path
 import re
 import shutil
+import sys
 import textwrap
+
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from lib.eval_execution import evidence_artifact
 
 
 def _text(value: object) -> str:
@@ -37,8 +43,14 @@ def _grid(rows: list[tuple[str, str, str]], columns: int) -> list[str]:
 def scenario_table(report: dict, *, columns: int = 120, evidence_root: Path | None = None) -> str:
     """Render only scenario rows; criterion rows are not extra test runs."""
     scenarios = [r for r in report.get("results", []) if r.get("kind") == "scenario"]
+    summary = report.get("summary", {})
+    passed = summary.get('pass', sum(r['status'] == 'pass' for r in scenarios))
+    headline = f"{summary.get('total', len(scenarios))} scenarios, {passed} pass"
+    criteria = report.get("criteria_summary")
+    if criteria is not None:
+        headline += f" · {criteria['discharged']} of {criteria['total']} criteria discharged"
     if not scenarios:
-        return "No scenario results in this evaluation."
+        return headline + "\nNo scenario results in this evaluation."
     rows = [("Scenario ID", "Test file / case / result", "Expected behavior / execution evidence")]
     logs: list[str] = []
     for result in scenarios:
@@ -63,12 +75,14 @@ def scenario_table(report: dict, *, columns: int = 120, evidence_root: Path | No
                     tests.append("Mapped: " + (name or selector))
                 tests.append("No individual test result: " + str(execution.get("status", "unverifiable")).upper())
             detail = str(execution.get("evidence") or "No runner evidence recorded")
-            if execution.get("artifact_dir"):
-                path = str(Path(execution["artifact_dir"]) / "output.log")
-                detail = detail.replace(f" (log: {path})", "")
+            artifact = evidence_artifact(execution)
+            if artifact:
+                path = str(artifact)
+                for label, name in (("log", "output.log"), ("evidence", "result.json")):
+                    detail = detail.replace(f" ({label}: {Path(execution['artifact_dir']) / name})", "")
                 if path not in logs:
                     logs.append(path)
-                detail += f" [log {logs.index(path) + 1}]"
+                detail += f" [evidence {logs.index(path) + 1}]"
             evidence.append(detail)
         if len(tests) == 1:
             tests.append("No individual test evidence")
@@ -77,15 +91,16 @@ def scenario_table(report: dict, *, columns: int = 120, evidence_root: Path | No
         rows.append((result["id"], "\n".join(tests),
                      "Expected: " + (result.get("expected") or "Not specified")
                      + "\n\nEvidence: " + "\n".join(dict.fromkeys(evidence))))
-    lines = ["", "Scenario results", "", *_grid(rows, columns),
+    lines = ["", headline, "", "Scenario results", "", *_grid(rows, columns),
              "PASS means the mapped test assertions passed. Expected behavior is from the test spec.",
              "Whether those assertions correctly implement the spec still requires review."]
-    reused = sum(r.get("kind") == "criterion" and str(r.get("evidence", "")).startswith(
-        "Reused declared criterion scenarios:") for r in report.get("results", []))
+    reused = criteria.get("reused", 0) if criteria is not None else sum(
+        r.get("kind") == "criterion" and str(r.get("evidence", "")).startswith(
+            "Reused declared criterion scenarios:") for r in report.get("results", []))
     if reused:
         lines.append(f"{reused} task criteria reuse scenario evidence; they are not additional test executions.")
     if logs:
-        lines.extend(["", "Execution logs" + (f" (relative to {evidence_root})" if evidence_root else "") + ":"])
+        lines.extend(["", "Execution evidence" + (f" (relative to {evidence_root})" if evidence_root else "") + ":"])
         for index, path in enumerate(logs, 1):
             display = path
             if evidence_root:

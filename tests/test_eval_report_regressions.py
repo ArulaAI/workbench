@@ -34,12 +34,6 @@ TEST_SPEC = """# Test Spec: Books
 | RFC acceptance criterion | Covering scenarios |
 |---|---|
 | ST1: a book can be deleted | AC-01 |
-
-## Out of Scope
-
-| Excluded behavior / category | Not applicable or deferred | Reason and risk | Decision owner / follow-up |
-|---|---|---|---|
-| OOS-01 Bulk delete | Deferred | Not in 1.0 | product |
 """
 
 
@@ -170,35 +164,6 @@ fs.writeFileSync(process.env.SPEED_EVAL_RESULT_FILE, JSON.stringify({tests}));
         summary = (output / "summary.md").read_text(encoding="utf-8")
         self.assertIn("NOT ACCEPTED", summary)
         self.assertIn("BUILD-PROVENANCE", summary)
-
-    # ── Defect 2: manual result without a reviewer ───────────
-
-    def test_manual_result_without_reviewer_does_not_crash_or_pass(self):
-        """Hand-written manual evidence with no reviewer is unattributed."""
-        self._write_task({"id": "1", "required_test_cases": ["AC-01"],
-                          "scenario_results": [], "acceptance_criteria": []})
-        scenario_results = [{"scenario_id": "AC-01", "status": "pass",
-                             "evidence": "ok", "source": "manual"}]
-        report = build_report("books", self.root, self.tasks, self.test_spec,
-                              scenario_results=scenario_results)
-        result = self._by_id(report)["AC-01"]
-        self.assertNotEqual("pass", result["status"],
-                            "unattributed manual evidence must not count as a pass")
-        self.assertEqual("unverifiable", result["status"])
-        self.assertIn("reviewer", result["evidence"])
-        self.assertFalse(report["accepted"])
-
-    def test_named_reviewer_still_attributed(self):
-        """An identified reviewer keeps the existing manual attribution."""
-        self._write_task({"id": "1", "required_test_cases": ["AC-01"],
-                          "scenario_results": [], "acceptance_criteria": []})
-        scenario_results = [{"scenario_id": "AC-01", "status": "pass", "evidence": "ok",
-                             "source": "manual", "reviewer": "dana"}]
-        report = build_report("books", self.root, self.tasks, self.test_spec,
-                              scenario_results=scenario_results)
-        result = self._by_id(report)["AC-01"]
-        self.assertEqual("pass", result["status"])
-        self.assertEqual(["dana"], result["reviewers"])
 
     # ── Defect 3: lint criteria on deleted paths ─────────────
 

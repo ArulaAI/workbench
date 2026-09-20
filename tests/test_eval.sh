@@ -157,7 +157,7 @@ drop_task_ownership() {
 test_accepts_when_task_declared_scenarios_pass() {
     eval_clean --strict --no-defects --skip-judge >/dev/null
     assert_equals "python3 runner.py tests/test_books.py::test_delete" "$(captured_commands | head -1)"
-    assert_equals "pass" "$(jq -r '.results[0].status' "${FEATURE_DIR}/eval/scenario-results.json")"
+    assert_equals "pass" "$(jq -r '.results[0].status' "${FEATURE_DIR}/eval/report.json")"
     assert_equals "true" "$(jq -r '.accepted' "${FEATURE_DIR}/eval/report.json")"
     assert_equals "accepted" "$(jq -r '.status' "$STATE_FILE")"
     assert_equals "false" "$(jq 'has("integration_failure")' "$STATE_FILE")"
@@ -186,7 +186,7 @@ test_unverifiable_residue_blocks_without_filing_defect() {
     local rc=0
     eval_clean --strict --skip-judge >/dev/null 2>&1 || rc=$?
     assert_equals "$EXIT_GATE_FAILURE" "$rc"
-    assert_equals "1" "$(jq '.summary.unverifiable' "${FEATURE_DIR}/eval/report.json")"
+    assert_equals "1" "$(jq '.criteria_summary.unverifiable' "${FEATURE_DIR}/eval/report.json")"
     assert_equals "integrated_not_accepted" "$(jq -r '.status' "$STATE_FILE")"
     [[ ! -d "$DEFECTS_DIR" ]] || [[ -z "$(find "$DEFECTS_DIR" -mindepth 1 -print -quit)" ]]
 }
@@ -200,7 +200,7 @@ test_task_without_selectors_fails_its_scenarios() {
     eval_clean --strict --no-defects --skip-judge >/dev/null 2>&1 || rc=$?
     assert_equals "$EXIT_GATE_FAILURE" "$rc"
     assert_equals "" "$(captured_commands)"
-    assert_equals "unverifiable" "$(jq -r '.results[0].status' "${FEATURE_DIR}/eval/scenario-results.json")"
+    assert_equals "unverifiable" "$(jq -r '.results[0].status' "${FEATURE_DIR}/eval/report.json")"
 }
 
 test_option_selector_is_rejected() {
@@ -229,9 +229,11 @@ test_spec_mapping_table_is_executed() {
 
     eval_clean --strict --no-defects --skip-judge >/dev/null
     assert_equals "python3 runner.py tests/test_books.py::test_delete" "$(captured_commands | head -1)"
-    assert_equals "pass" "$(jq -r '.results[0].status' "${FEATURE_DIR}/eval/scenario-results.json")"
+    assert_equals "pass" "$(jq -r '.results[0].status' "${FEATURE_DIR}/eval/report.json")"
     assert_equals "true" "$(jq -r '.accepted' "${FEATURE_DIR}/eval/report.json")"
-    assert_equals "1" "$(jq '.test_cases | length' "${FEATURE_DIR}/eval/test-plan.json")"
+    local run_id
+    run_id=$(jq -r '.run_id' "${FEATURE_DIR}/eval/report.json")
+    assert_equals "1" "$(jq '.test_cases | length' "${FEATURE_DIR}/eval/runs/${run_id}/test-plan.json")"
 }
 
 test_test_plan_override_wins_over_the_spec_table() {
@@ -258,7 +260,7 @@ test_spec_mapping_rejects_unconfigured_commands() {
     eval_clean --strict --no-defects --skip-judge >/dev/null 2>&1 || rc=$?
     assert_equals "$EXIT_GATE_FAILURE" "$rc"
     assert_equals "" "$(captured_commands)"
-    assert_equals "unverifiable" "$(jq -r '.results[0].status' "${FEATURE_DIR}/eval/scenario-results.json")"
+    assert_equals "unverifiable" "$(jq -r '.results[0].status' "${FEATURE_DIR}/eval/report.json")"
 }
 
 test_empty_selector_cell_leaves_the_scenario_unexamined() {
@@ -327,7 +329,7 @@ test_task_scoped_eval_reports_only_that_task() {
 
     local report="${FEATURE_DIR}/eval/task-1/report.json"
     assert_equals "1" "$(jq -r '.task_id' "$report")"
-    assert_equals "AC-01" "$(jq -r '[.results[] | select(.kind == "scenario") | .id] | join(",")' "$report")"
+    assert_equals "AC-01" "$(jq -r '[.results[].id] | join(",")' "$report")"
     assert_equals "true" "$(jq -r '.accepted' "$report")"
     assert_equals "1" "$(printf '%s' "$(captured_commands)" | grep -c 'test_delete')"
     assert_equals "0" "$(printf '%s' "$(captured_commands)" | grep -c 'test_missing' || true)"

@@ -7,7 +7,7 @@
 #   2. Operational runtime failures exited 2, the same code as a real gate
 #      failure, so CI could not tell "did not run" from "did not accept".
 #   3. --json produced empty stdout on every error path.
-#   4. --test-spec / --test-plan / --manual-results skipped path validation,
+#   4. --test-spec / --test-plan skipped path validation,
 #      so a symlink or a traversal could read files outside the project, and
 #      the RFC -> test-spec derivation replaced the leftmost '/tech/'.
 #
@@ -317,18 +317,6 @@ test_symlinked_test_plan_outside_the_project_is_rejected() {
     assert_equals "" "$(captured_commands)"
 }
 
-test_manual_results_traversing_out_of_the_project_is_rejected() {
-    printf '%s\n' '{"results": []}' > "${OUTSIDE_DIR}/manual.json"
-    local relative="../${OUTSIDE_DIR##*/}/manual.json"
-
-    local rc=0
-    eval_clean --strict --no-defects --skip-judge --manual-results "$relative" \
-        >/dev/null 2>&1 || rc=$?
-    assert_equals "$EXIT_CONFIG_ERROR" "$rc"
-    [[ ! -f "${FEATURE_DIR}/eval/report.json" ]] \
-        || fail_with "evaluation ran with manual evidence from outside the project"
-}
-
 # An in-project test plan must keep working.
 test_in_project_test_plan_override_is_accepted() {
     drop_task_ownership
@@ -408,7 +396,6 @@ run_test test_json_success_path_still_emits_the_report
 run_test test_symlinked_test_spec_outside_the_project_is_rejected
 run_test test_test_spec_override_outside_the_project_is_rejected
 run_test test_symlinked_test_plan_outside_the_project_is_rejected
-run_test test_manual_results_traversing_out_of_the_project_is_rejected
 run_test test_in_project_test_plan_override_is_accepted
 run_test test_rfc_with_an_earlier_tech_segment_derives_the_right_spec
 

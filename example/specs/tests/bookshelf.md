@@ -33,7 +33,7 @@ Open decisions are listed below. Scenarios against each are written to the settl
 |---|---|---|---|
 | GAP-01 | No mutation reorders books within a list, yet F2-5 requires reordering | Tech spec GraphQL API has no reorder or move operation | F2-5 has no covering scenario |
 | GAP-02 | Error contract for rejected mutations: message text, error code, extensions shape | Tech spec Validation Rules say what is rejected, not how | VAL-01 to VAL-09 and EDGE-03 assert "a GraphQL error and no write" only |
-| GAP-03 | Whether `%` and `_` in a `searchBooks` query are escaped or act as ILIKE wildcards | Tech spec Search | No scenario; see OOS-08 |
+| GAP-03 | Whether `%` and `_` in a `searchBooks` query are escaped or act as ILIKE wildcards | Tech spec Search | No scenario; the escaping rule is undefined |
 | GAP-04 | Product spec F3-2 requires a want-to-read count; the design spec's stats row shows only total, reading, finished | Product spec vs Design spec | AC-15 asserts the three designed cards only |
 | GAP-05 | Default `position` when `addBookToList` omits it; behavior on position collision; whether positions compact after removal | Tech spec API and Validation Rules | AC-05 and AC-12 assert remaining items and relative order, not exact positions |
 | GAP-06 | Whether `authorName` reuse is case-insensitive; whether whitespace-only titles count as empty; whether `updatedAt` changes on update | Design spec AddBookForm, tech spec VR-1, Data Model | EDGE-06 uses an identical string; VAL-01 uses the empty string; nothing asserts `updatedAt` changes |
@@ -194,7 +194,7 @@ All backend scenarios are planned for automation under the existing pytest gate.
 | EDGE-09 | functional, data integrity | High | Automated |
 | EDGE-10 | ui, responsive | Low | Automated (blocked by EC-04) |
 
-Categories deliberately absent: permissions and tenant boundaries (single-user app, OOS-01), performance (OOS-07), accessibility (not specified by the design spec, OOS-09).
+Categories deliberately absent: permissions and tenant boundaries (single-user app), performance (no workload or latency target is defined), accessibility (not specified by the design spec).
 
 ## Acceptance Traceability
 
@@ -212,7 +212,7 @@ The tech spec has no Acceptance Criteria section. Rows below are the product spe
 | F2-2: add any book to a reading list | AC-10 |
 | F2-3: a book cannot appear in the same list twice | VAL-05, RISK-02 |
 | F2-4: books in a list have a position | AC-10, AC-11, VAL-07 |
-| F2-5: reorder books within a list via drag or move controls | None. GAP-01: the tech spec defines no reorder operation. See OOS-10 |
+| F2-5: reorder books within a list via drag or move controls | None. GAP-01: the tech spec defines no reorder operation |
 | F2-6: remove a book from a list without deleting the book | AC-12, EDGE-09 |
 | F2-7: deleting a reading list does not delete its books | AC-13, RISK-04 |
 | F3-1: dashboard shows total book count | AC-15, EDGE-07 |
@@ -236,15 +236,15 @@ The tech spec has no Acceptance Criteria section. Rows below are the product spe
 | Data Model: `authors` reused across books (many-to-one) | EDGE-06 | Case-insensitive match: GAP-06 |
 | API: `book(id)` nullable return | EDGE-01 | None |
 | API: `ReadingList.bookCount` | AC-05, AC-09, AC-10, AC-11, AC-12 | None |
-| Search: case-insensitive substring on title and author name | SEARCH-01 to SEARCH-04 | Wildcard escaping: GAP-03, OOS-08 |
+| Search: case-insensitive substring on title and author name | SEARCH-01 to SEARCH-04 | Wildcard escaping: GAP-03 |
 | Product vision: search is Should-have | SEARCH-01 to SEARCH-04 | None |
 | Design: Books page empty and filtered-empty states | AC-07, EDGE-02 | None |
 | Design: Dashboard empty state | EDGE-07 | None |
 | Design: Reading List page empty and populated states | AC-14, EDGE-08 | None |
 | Design: StatusBadge labels | AC-08, AC-14 | None |
 | Design: Responsive grid columns | EDGE-10 | Desktop "3 to 4 columns" is asserted as a range |
-| Design: loading and error states on all three pages | None | Deferred: no frontend failure-injection harness; OOS-11 |
-| Design: AddBookForm inline validation errors | None | Deferred: no field-level copy defined; OOS-12 |
+| Design: loading and error states on all three pages | None | Deferred: no frontend failure-injection harness |
+| Design: AddBookForm inline validation errors | None | Deferred: no field-level copy defined |
 
 ## Fixtures and Test Data
 
@@ -297,20 +297,3 @@ Before implementation, each mapped test must be executed and recorded as failing
 | Exception | A failed, blocked, skipped, or not-run scenario stays non-passing. Any exception names the scenario IDs, the risk, the rationale, the decision owner, and the follow-up target | Recorded with the release evidence. None granted |
 | Flaky outcome | Inconsistent results are preserved and investigated; rerunning until green does not count | Test owner tracks the defect |
 
-## Out of Scope
-
-| Excluded behavior / category | Not applicable or deferred | Reason and risk | Decision owner / follow-up |
-|---|---|---|---|
-| OOS-01: accounts, authentication, multi-user isolation | Not applicable | Product spec excludes them; the app is single-user. A multi-user version needs a permissions contract and tests | Product owner, before any multi-user scope |
-| OOS-02: cover images and thumbnails | Not applicable | Product spec out of scope | None |
-| OOS-03: notes and annotations | Not applicable | Product spec out of scope | None |
-| OOS-04: tags or categories beyond status | Not applicable | Product spec out of scope | None |
-| OOS-05: ordering of `books`, `authors`, and `readingLists` results | Not applicable | Product spec excludes sorting by date; no source defines an order, so no scenario asserts one | Product owner, if a default order is wanted |
-| OOS-06: sharing reading lists | Not applicable | Product spec out of scope | None |
-| OOS-07: performance and load | Deferred | No workload, data volume, or latency target exists in any source | Engineering owner sets a workload contract first |
-| OOS-08: `%` and `_` handling in `searchBooks` | Deferred | GAP-03. Unescaped input would let "%" match every book. A scenario is written once the tech spec states the rule | Tech spec owner |
-| OOS-09: accessibility and keyboard interaction | Deferred | The design spec defines none. Not asserted rather than invented | Design owner |
-| OOS-10: reordering books within a list | Deferred | GAP-01. F2-5 is a Must-have with no API. Its absence is a visible gap, not covered behavior | Tech spec owner defines the mutation; AC and VAL scenarios follow |
-| OOS-11: loading and error states on pages | Deferred | Needs a frontend failure-injection harness that EC-04 does not yet provide | Frontend owner after EC-04 |
-| OOS-12: AddBookForm inline validation copy | Deferred | The design spec requires inline errors but gives no text or field-level rule beyond "required" | Design owner supplies copy; e2e scenarios follow |
-| OOS-13: author deletion | Not applicable | No `deleteAuthor` mutation exists; the `authors` cascade cannot be reached through the API | None |

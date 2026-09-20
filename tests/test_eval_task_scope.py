@@ -226,7 +226,7 @@ def test_test_criterion_reuses_named_scenario_and_does_not_rerun_file(project):
     project.commit()
     run,report=project.evaluate(task_id='1')
     assert report['accepted'],report
-    assert result(report,'TASK-1-CRIT-01')['status']=='pass'
+    assert result(report)['criteria'][0]['status']=='pass'
     assert len(list((run/'commands').iterdir()))==1
     assert not (run/'criteria-commands').exists()
 

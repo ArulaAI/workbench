@@ -16,7 +16,7 @@ import pytest
 
 from lib.eval_execution import run_command
 from lib.eval_report import build_report, write_report
-from lib.eval_runtime import atomic_json, build_snapshot, execute, finish, prepare
+from lib.eval_runtime import atomic_json, execute, finish, prepare
 
 
 REPO = Path(__file__).resolve().parents[1]
@@ -205,7 +205,7 @@ def test_criterion_filename_cannot_execute_shell(project):
     project.mapping(selector="tests/" + name + "::test_safe", criterion="1")
     project.commit()
     _, report = project.evaluate()
-    assert result(report, "TASK-1-CRIT-01")["status"] == "pass"
+    assert result(report)["criteria"][0]["status"] == "pass"
     assert not (project.root / "injected-marker").exists()
 
 
@@ -357,18 +357,21 @@ def test_criteria_share_effective_runner(project, monkeypatch, mode):
     project.commit()
     _, report = project.evaluate()
     assert report["accepted"], report
-    assert result(report, "TASK-1-CRIT-01")["status"] == "pass"
+    assert result(report)["criteria"][0]["status"] == "pass"
 
 
 def test_json_cli_and_strict_exit_codes(project, cli):
     success = invoke(project, cli, "--json", "--strict", "--no-defects")
     assert success.returncode == 0, success.stderr
     assert json.loads(success.stdout)["accepted"] is True
+    assert json.loads(success.stdout)["results"] == [{"id": "AC-01", "status": "pass"}]
+    assert json.loads(success.stdout) == json.loads((project.feature / "eval/report.json").read_text())
     project.task["test_selectors"] = ["tests/test_books.py::test_fail"]
     project.save_task()
     failure = invoke(project, cli, "--json", "--strict", "--no-defects")
     assert failure.returncode == 2, failure.stderr
     assert json.loads(failure.stdout)["accepted"] is False
+    assert json.loads(failure.stdout)["results"] == [{"id": "AC-01", "status": "fail"}]
     diagnostic = invoke(project, cli, "--json", "--no-defects")
     assert diagnostic.returncode == 0 and not json.loads(diagnostic.stdout)["accepted"]
 
@@ -513,26 +516,6 @@ def test_dependency_cycle_keeps_both_failures_and_defects(project, cli):
     for sid in ("AC-01", "AC-02"):
         assert result(report, sid)["status"] == "fail"
         assert (project.root / f"specs/defects/eval-books-{sid.lower()}.md").is_file()
-
-
-def test_manual_observations_require_matching_build_and_reviewer(project):
-    project.task["test_selectors"] = []
-    project.save_task()
-    project.spec.write_text(SPEC + "\n## Scenario Classification\n"
-                             "| Scenario ID | Categories | Priority | Execution mode |\n|---|---|---|---|\n"
-                             "| AC-01 | functional | high | Manual |\n")
-    project.commit()
-    evidence = project.feature / "manual.json"
-    observation = {"build_fingerprint": build_snapshot(project.root)["fingerprint"], "results": [
-        {"scenario_id": "AC-01", "status": "pass", "reviewer": "Reviewer", "evidence": "Observed saved book",
-         "executed_at": "2026-09-17T12:00:00Z"}]}
-    atomic_json(evidence, observation)
-    _, report = project.evaluate(manual_path=evidence)
-    assert report["accepted"] and result(report)["evidence_type"] == "opinion"
-    observation["build_fingerprint"] = "wrong"
-    atomic_json(evidence, observation)
-    with pytest.raises(ValueError, match="fingerprint"):
-        project.evaluate(manual_path=evidence)
 
 
 def test_declared_exit_gate_and_missing_linter_block_acceptance(project):

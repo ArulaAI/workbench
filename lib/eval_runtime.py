@@ -20,7 +20,7 @@ from lib.eval_execution import (commands_for_file, load_config, resolve_command,
                                 utc_now, valid_selector)
 from lib.eval_selection import exact_selector, select_plan, select_task_plan
 from lib.eval_criteria import task_scenarios, has_tagged_criteria
-from lib.test_spec import (SCENARIO_ID_RE, manual_scenarios, parse_execution_mapping,
+from lib.test_spec import (SCENARIO_ID_RE, parse_execution_mapping,
                            parse_scenarios, silent_scenarios)
 
 IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,79}\Z")
@@ -154,15 +154,14 @@ def build_snapshot(root: Path) -> dict:
 
 
 def prepare(root: Path, feature_dir: Path, state_file: Path, test_spec: Path,
-            task_id: str | None = None, plan_path: Path | None = None,
-            manual_path: Path | None = None) -> Path:
+            task_id: str | None = None, plan_path: Path | None = None) -> Path:
     root = root.resolve()
     for path in (feature_dir, feature_dir / "tasks", feature_dir / "eval", state_file):
         safe_path(path, root)
     # These three are read, not written, and were exempt from validation. A
     # symlinked test spec was read and pasted verbatim into the evaluator
     # prompt, so any file the user could link to was shipped to the model.
-    for path in (test_spec, plan_path, manual_path):
+    for path in (test_spec, plan_path):
         if path is not None:
             safe_path(path, root)
     state = read_object(state_file)
@@ -194,23 +193,6 @@ def prepare(root: Path, feature_dir: Path, state_file: Path, test_spec: Path,
     if not from_tasks:
         plan = select_plan(plan, spec_text, tasks, config, task_id, task_scenarios, override=bool(plan_path))
     build = build_snapshot(root)
-    manual = read_object(manual_path) if manual_path else {"results": []}
-    if not isinstance(manual.get("results"), list):
-        raise ValueError("Manual evidence must contain a results array")
-    if manual["results"] and (not build["fingerprint"] or manual.get("build_fingerprint") != build["fingerprint"]):
-        raise ValueError("Manual evidence does not identify this working tree fingerprint")
-    allowed_manual = manual_scenarios(spec_text)
-    seen = set()
-    for item in manual["results"]:
-        if (not isinstance(item, dict) or item.get("scenario_id") not in allowed_manual
-                or item.get("scenario_id") in seen or item.get("status") not in ("pass", "fail", "unverifiable")
-                or any(not isinstance(item.get(k), str) or not item[k].strip()
-                       for k in ("reviewer", "evidence", "executed_at"))):
-            raise ValueError("Invalid manual observation, reviewer, or scenario classification")
-        seen.add(item["scenario_id"])
-    if task_id is not None:
-        owned = set(plan["selection"]["scenario_ids"])
-        manual["results"] = [r for r in manual["results"] if r["scenario_id"] in owned]
     output = feature_dir / "eval"
     if task_id:
         output /= "task-" + task_id
@@ -235,7 +217,6 @@ def prepare(root: Path, feature_dir: Path, state_file: Path, test_spec: Path,
         atomic_json(run / "tasks" / f"{task['id']}.json", task)
     atomic_json(run / "test-plan.json", plan)
     atomic_json(run / "runner-config.json", config)
-    atomic_json(run / "manual-results.json", manual)
     unmerged = []
     for task in selected:
         if task.get("branch"):
@@ -312,7 +293,6 @@ def execute(run: Path) -> None:
             results.append({"scenario_id": sid, "task_id": owner, "source": "task_criteria_missing",
                             "run_id": run.name, "status": "unverifiable", "command": "", "tests": [],
                             "evidence": f"Task {owner}: no discoverable test tagged for {sid} in its candidate test files"})
-    mapped.update(r["scenario_id"] for r in read_object(run / "manual-results.json")["results"])
     # A mapping row with an empty Selector cell declares that nothing examines
     # this scenario. It carries no result of its own, so a task batch claiming
     # it would turn declared silence into a pass.
@@ -322,10 +302,10 @@ def execute(run: Path) -> None:
         owned = task_scenarios(task)
         task_results = []
         if owned and context.get("selection", {}).get("source") != "task_criteria":
-            # A scenario the mapping executed, or manual evidence covers,
-            # already has per-scenario evidence. A task batch cannot attribute
-            # its outcome to one scenario, so a passing batch must neither
-            # overwrite that evidence nor invent evidence of its own.
+            # A scenario the mapping executed already has per-scenario
+            # evidence. A task batch cannot attribute its outcome to one
+            # scenario, so a passing batch must neither overwrite that
+            # evidence nor invent evidence of its own.
             attributed = sorted(owned - mapped - silent)
             selectors = task.get("test_selectors", [])
             # Only an unmapped single scenario can inherit a legacy selector
@@ -343,9 +323,22 @@ def execute(run: Path) -> None:
         task["scenario_results"] = task_results
         atomic_json(run / "tasks" / f"{task['id']}.json", task)
         results.extend(task_results)
-    for observation in read_object(run / "manual-results.json")["results"]:
-        results.append({**observation, "source": "manual", "run_id": run.name, "command": ""})
     atomic_json(run / "scenario-results.json", {"results": results})
+
+
+def public_report(report: dict) -> dict:
+    """Expose one verdict per scenario; the attempt retains full evidence."""
+    public = {key: value for key, value in report.items()
+              if key not in ("results", "criteria_results")}
+    rows = report.get("results", [])
+    public["results"] = [{"id": row["id"], "status": row["status"]}
+                         for row in rows if row.get("kind") == "scenario"]
+    checks = [row for row in rows if row.get("kind") != "scenario"]
+    checks.extend(criterion for row in rows for criterion in row.get("criteria", [])
+                  if criterion["status"] != row["status"])
+    if checks:
+        public["checks"] = checks
+    return public
 
 
 def finish(run: Path, failed: bool = False) -> None:
@@ -365,12 +358,14 @@ def finish(run: Path, failed: bool = False) -> None:
         atomic_json(run / "attempt.json", {"status": "failed", "finished_at": utc_now()})
     else:
         report = read_object(run / "report.json")
-        targets = {name: output / name
-                   for name in ("report.json", "summary.md", "residue.json", "scenario-results.json", "test-plan.json")}
+        targets = {name: output / name for name in ("report.json", "summary.md")}
         targets["evaluation.yaml"] = handoff
         for name, target in targets.items():
             source = run / name
             if source.is_file():
+                if name == "report.json":
+                    atomic_json(target, public_report(report))
+                    continue
                 fd, temp = tempfile.mkstemp(dir=target.parent)
                 os.close(fd)
                 try:
@@ -379,6 +374,12 @@ def finish(run: Path, failed: bool = False) -> None:
                 finally:
                     if os.path.exists(temp):
                         os.unlink(temp)
+        # Older versions promoted these intermediates too. Retire only those
+        # known aliases after publishing; their attempt copies remain intact.
+        for name in ("residue.json", "scenario-results.json", "test-plan.json"):
+            stale = output / name
+            safe_path(stale, root)
+            stale.unlink(missing_ok=True)
         atomic_json(run / "attempt.json", {"status": "completed", "accepted": report["accepted"], "finished_at": utc_now()})
     atomic_json(output / "latest-attempt.json", {"run_id": run.name, **read_object(run / "attempt.json")})
     if context["task_id"] is None:
@@ -407,7 +408,6 @@ def main():
         prep.add_argument("--" + name, type=Path, required=True)
     prep.add_argument("--task-id")
     prep.add_argument("--test-plan", type=Path)
-    prep.add_argument("--manual-results", type=Path)
     for name in ("execute", "finish", "abort"):
         p = sub.add_parser(name)
         p.add_argument("run", type=Path)
@@ -418,7 +418,7 @@ def main():
                 safe_path(path, args.root)
         elif args.command == "prepare":
             print(prepare(args.root, args.feature_dir, args.state_file, args.test_spec,
-                          args.task_id, args.test_plan, args.manual_results))
+                          args.task_id, args.test_plan))
         elif args.command == "execute":
             execute(args.run)
         else:

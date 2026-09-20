@@ -111,7 +111,7 @@ status codes, fields, and behavior.
 | | | | Automated / Manual |
 
 <!-- Consider the following only where relevant. Map applicable checks to
-     scenarios; record exclusions and their reasons under Out of Scope.
+     scenarios; record any exclusion and its reason beside the check.
      - Valid/invalid inputs, empty and maximum values, and state transitions.
      - Permissions, tenant boundaries, input abuse, and sensitive-data exposure.
      - Concurrent changes, duplicate requests, retries, timeouts, and cancellation.
@@ -141,7 +141,7 @@ status codes, fields, and behavior.
      requirements not already represented by an RFC acceptance criterion.
      Every catalog scenario must have a source or a stated risk rationale.
      A missing mapping is a visible gap, not implicit coverage. If evaluation
-     is intentionally deferred, reference its Out of Scope entry and decision. -->
+     is intentionally deferred, record the decision under Exit Criteria. -->
 
 | Source requirement / risk | Covering scenarios | Gap or deferral reference |
 |---|---|---|
@@ -208,13 +208,3 @@ earlier failures and retry history; prose review cannot override failing tests.
 | Coverage review | Required source mappings are complete; source changes and unresolved decisions have been reviewed | Who reviews the mappings, and when |
 | Exceptions | A failed, blocked, skipped, not-run, or unverified scenario is not a pass. Any permitted release exception records affected IDs, risk, rationale, decision owner, and follow-up target | Where the exception and its follow-up are recorded |
 | Flaky tests | Inconsistent outcomes and the repair owner are recorded. Rerunning until green does not erase earlier failures or establish reliable coverage | Who tracks the repair |
-
-## Out of Scope
-<!-- State what is not evaluated and why so an intentional boundary is not
-     mistaken for missing coverage. Separate not-applicable checks from deferred
-     work. Deferrals of required coverage need an explicit decision under Exit
-     Criteria; moving a failed test here does not make it pass. -->
-
-| Excluded behavior / category | Not applicable or deferred | Reason and risk | Decision owner / follow-up |
-|---|---|---|---|
-| | | | |
