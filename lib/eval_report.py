@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+import html
 import json
 import os
 import re
@@ -17,6 +18,7 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -573,6 +575,63 @@ def _fingerprint(report: dict[str, Any]) -> str | None:
     return before.get("fingerprint") if isinstance(before, dict) else None
 
 
+def _scenario_table(report: dict[str, Any]) -> list[str]:
+    """Show the human-authored expectation beside actual runner evidence.
+
+    A passing assertion is not an independent review of spec/test alignment.
+    Do not invent actual application values that the runner never recorded.
+    """
+    def cell(value: Any) -> str:
+        text = html.escape(str(value or ""), quote=False)
+        text = re.sub(r"([\\`*_{}\[\]])", r"\\\1", text)
+        return text.replace("|", "\\|").replace("\r", " ").replace("\n", "<br>")
+
+    scenarios = [r for r in report["results"] if r.get("kind") == "scenario"]
+    if not scenarios:
+        return []
+    lines = ["## Scenario results", "",
+             "Expected behavior comes from the test spec. Evidence reports the selected tests' assertions; "
+             "it does not independently verify that those assertions match the spec.", "",
+             "| Scenario ID | Test cases in files and result | Expected behavior and execution evidence |",
+             "|---|---|---|"]
+    for result in scenarios:
+        tests, evidence = [], []
+        for execution in result.get("executions", []):
+            selector = execution.get("selector", "")
+            file = selector.split("::", 1)[0] or "File not recorded"
+            records = execution.get("tests") or []
+            # Jest/Vitest can include unrelated deselected tests in a report.
+            # Their raw records remain available in JSON, not as this
+            # scenario's tests in the user-facing table.
+            if execution.get("test_name"):
+                records = [t for t in records
+                           if t.get("name", t.get("id")) == execution["test_name"]]
+            for test in records:
+                identity = test.get("name") or test.get("id") or execution.get("test_name") or selector
+                tests.append(f"{cell(file)}: {cell(identity)}: **{cell(test.get('status', 'unverifiable').upper())}**")
+            if not records and selector:
+                identity = execution.get("test_name") or selector
+                tests.append(f"{cell(identity)}: **{cell(execution.get('status', 'unverifiable').upper())}** (no individual test result)")
+            detail = str(execution.get("evidence", ""))
+            link = ""
+            if execution.get("artifact_dir"):
+                log = str(Path(execution["artifact_dir"]) / "output.log")
+                detail = detail.replace(f" (log: {log})", "")
+                link = f" [Output log](<{quote(log, safe='/')}>)"
+            if detail or link:
+                evidence.append(cell(detail) + link)
+        if not tests:
+            tests = [f"No individual test result: **{cell(result['status'].upper())}**"]
+        if not evidence:
+            evidence = [cell(result.get("evidence", "No execution evidence recorded"))]
+        expected = cell(result.get("expected") or "Not specified")
+        lines.append("| " + cell(result["id"]) + " | **Scenario: " + cell(result['status'].upper())
+                     + "**<br>" + "<br>".join(dict.fromkeys(tests))
+                     + " | **Expected:** " + expected + "<br>**Evidence:** "
+                     + "<br>".join(dict.fromkeys(evidence)) + " |")
+    return [*lines, ""]
+
+
 def _summary_markdown(report: dict[str, Any]) -> str:
     summary = report["summary"]
     failed = summary["fail"] + summary["partial"] + summary["blocked_upstream"]
@@ -603,6 +662,7 @@ def _summary_markdown(report: dict[str, Any]) -> str:
             f"{summary['not_examined']} | {summary.get('not_applicable', 0)} |"
         ),
         "",
+        *_scenario_table(report),
         "## Results",
         "",
         "| ID | Area | Status | Evidence type | Traces to | Task | Evidence |",

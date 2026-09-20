@@ -649,11 +649,15 @@ cmd_plan() {
     # ── Architect agent ───────────────────────────────────────────
     local parsed_architect
 
-    # Include phase count in cache key so re-runs with different sizing don't serve stale results
+    # Schemas affect the task shape as well as phase sizing. Do not reuse an
+    # old string-criteria plan after switching to structured criterion arrays.
     local phase_count=1
     [[ "$audit_sizing_rec" == "split" ]] && phase_count=2
     local architect_cache_hash
-    architect_cache_hash=$(printf '%s:%s' "$spec_hash" "$phase_count" | shasum -a 256 | cut -d' ' -f1)
+    architect_cache_hash=$({
+        printf '%s:%s' "$spec_hash" "$phase_count"
+        cat "${TEMPLATES_DIR}/architect-output.json" "${TEMPLATES_DIR}/architect-enrich-output.json"
+    } | shasum -a 256 | cut -d' ' -f1)
 
     if [[ "$force_plan" != "true" ]] && _plan_cache_valid "architect" "$architect_cache_hash"; then
         parsed_architect=$(_plan_cache_read "architect")

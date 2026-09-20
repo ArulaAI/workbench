@@ -15,8 +15,8 @@ _TAG = re.compile(r"\[([A-Z][A-Z0-9_-]*-\d{2,})\]")
 def normalize_criteria(value: Any) -> Any:
     if not isinstance(value, str):
         return value
-    # task_create stores its argument as a string, including structured
-    # architect output serialized by jq. Do not mistake that JSON for prose.
+    # Older task_create versions stored structured architect output as a
+    # JSON-encoded string. Keep those tasks readable without rewriting them.
     try:
         decoded = json.loads(value)
         if isinstance(decoded, list):

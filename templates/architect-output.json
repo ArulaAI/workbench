@@ -23,8 +23,31 @@
             "description": "Detailed implementation description: file paths, function signatures, technical approach"
           },
           "acceptance_criteria": {
-            "type": "string",
-            "description": "Bullet-pointed conditions. Preserve catalog IDs as [AC-03] in test criteria and add an indented verify_by: test line."
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": [
+                "criterion",
+                "verify_by"
+              ],
+              "properties": {
+                "criterion": {
+                  "type": "string"
+                },
+                "verify_by": {
+                  "type": "string",
+                  "enum": [
+                    "test",
+                    "schema_check",
+                    "file_exists",
+                    "lint",
+                    "manual"
+                  ]
+                }
+              }
+            },
+            "description": "Structured conditions to verify. Preserve catalog scenario IDs such as [AC-03] in criterion and use verify_by: test for automated behavior."
           },
           "depends_on": {
             "type": "array",

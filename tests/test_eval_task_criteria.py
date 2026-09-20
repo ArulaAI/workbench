@@ -12,7 +12,6 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_eval_regressions import project, result, PYTEST
-from lib.eval_criteria import normalize_criteria
 from lib.eval_discovery import discover_tests
 
 
@@ -150,13 +149,12 @@ def test_task_ids_in_legacy_spec_do_not_override_tagged_criteria(project):
     assert project.evaluate(task_id='1')[1]['accepted']
 
 
-def test_actual_task_create_string_roundtrip(project):
+def test_actual_task_create_preserves_structured_criteria(project):
     criteria=json.dumps(task('1',['AC-01'])['acceptance_criteria'])
     script='source "$1/lib/tasks.sh"; TASKS_DIR="$2"; BRANCH_PREFIX=speed/books; task_create 1 title description "$3" "[]" sonnet'
     subprocess.run(['bash','-c',script,'test',str(Path(__file__).resolve().parents[1]),str(project.tasks),criteria],check=True,capture_output=True)
     saved=json.loads((project.tasks/'1.json').read_text())
-    assert isinstance(saved['acceptance_criteria'],str)
-    assert normalize_criteria(saved['acceptance_criteria'])==task('1',['AC-01'])['acceptance_criteria']
+    assert saved['acceptance_criteria']==task('1',['AC-01'])['acceptance_criteria']
     saved['status']='done';saved['files_touched']=['tests/test_books.py'];saved.pop('branch')
     (project.root/'tests/test_books.py').write_text('def test_ac_01_pass(): pass\n')
     catalog(project,['AC-01'],[saved])
@@ -211,6 +209,8 @@ def test_frontend_runner_and_python_backend(project,runner):
     run,report=project.evaluate(task_id='1')
     assert report['accepted'],report
     assert len(list((run/'commands').iterdir()))==2
+    table=(run/'summary.md').read_text().split('## Scenario results\n',1)[1].split('## Results\n',1)[0]
+    assert 'other task' not in table and 'frontend' in table and 'backend' in table
 
 
 @pytest.mark.parametrize('body',[
@@ -274,8 +274,7 @@ cmd_plan "$2" --skip-audit --single-pass
         if attempt:assert 'Catalog revision two' in prompt.read_text()
         else:assert project.spec.read_bytes()==before
     saved=json.loads((project.tasks/'9.json').read_text())
-    assert isinstance(saved['acceptance_criteria'],str)
-    assert normalize_criteria(saved['acceptance_criteria'])==planned['acceptance_criteria']
+    assert saved['acceptance_criteria']==planned['acceptance_criteria']
     project.git('branch',saved['branch'])
     saved['status']='done';(project.tasks/'9.json').write_text(json.dumps(saved))
     project.commit()
@@ -319,3 +318,48 @@ def test_task_discovery_routes_relative_selectors_under_cd(project):
     run,report=project.evaluate(task_id='1')
     assert report['accepted'],report
     assert json.loads((run/'test-plan.json').read_text())['test_cases'][0]['selector']=='tests/test_api.py::test_ac_01_api'
+
+
+@pytest.mark.parametrize('body,status',[
+    ('def test_ac_01_behavior(): pass\n','PASS'),
+    ('def test_ac_01_behavior(): assert False\n','FAIL'),
+    ('def test_other_behavior(): pass\n','UNVERIFIABLE'),
+])
+def test_summary_table_expected_behavior_and_actual_evidence(project,body,status):
+    (project.root/'tests/test_books.py').write_text(body)
+    catalog(project,['AC-01'],[task('1',['AC-01'])])
+    project.spec.write_text(project.spec.read_text().replace('| Correct behavior |','| Invalid input returns HTTP 400 |'))
+    project.commit()
+    run,report=project.evaluate(task_id='1')
+    summary=(run/'summary.md').read_text()
+    table=summary.split('## Scenario results\n',1)[1].split('## Results\n',1)[0]
+    assert '| Scenario ID | Test cases in files and result | Expected behavior and execution evidence |' in table
+    assert table.count('| AC-01 |')==1 and 'TASK-1-CRIT' not in table
+    assert '**Expected:** Invalid input returns HTTP 400' in table
+    assert '**Evidence:**' in table and f'**{status}**' in table
+    assert 'does not independently verify' in table
+    if status=='UNVERIFIABLE':
+        assert 'No individual test result' in table and '[Output log]' not in table
+    else:
+        assert 'tests/test\\_books.py' in table and '[Output log]' in table
+        assert 'test\\_ac\\_01\\_behavior' in table
+        assert str(run).replace(' ', '%20') in table
+    assert result(report)['status'].upper()==status
+
+
+def test_summary_table_retains_all_individual_results_and_escapes_cells(project):
+    (project.root/'tests/test_books.py').write_text('def test_ac_01_first(): pass\n')
+    (project.root/'tests/second.py').write_text('def test_ac_01_second(): assert False\n')
+    catalog(project,['AC-01'],[task('1',['AC-01'],['tests/test_books.py','tests/second.py'])])
+    # Explicitly include this second file in the configured test patterns.
+    (project.root/'speed.toml').write_text('[eval]\ntest_command = '+json.dumps(PYTEST)+'\ntest_file_patterns = ["tests/*.py"]\n')
+    project.commit()
+    run,report=project.evaluate(task_id='1')
+    from lib.eval_report import _scenario_table
+    result(report)['expected']='A | B <tag>\nsecond line'
+    table='\n'.join(_scenario_table(report))
+    assert table.count('| AC-01 |')==1
+    assert 'test\\_ac\\_01\\_first' in table and 'test\\_ac\\_01\\_second' in table
+    assert '**PASS**' in table and '**FAIL**' in table
+    assert 'A \\| B &lt;tag&gt;<br>second line' in table
+    assert len(list((run/'commands').iterdir()))==2

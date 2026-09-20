@@ -43,9 +43,9 @@ criterion, for example `[AC-03] Invalid input returns 400`, with `verify_by: tes
 Task criteria establish scenario ownership; the earlier test spec has no task IDs.
 Cover every required automated catalog scenario in the plan and list its intended
 test files in `files_touched`. Keep missing tests as required work. Never invent
-new scenario IDs to disguise a missing requirement. If the output schema uses a
-string, retain the same data as bullet text followed by an indented
-`verify_by: test` line. Do not add fields to the task schema.
+new scenario IDs to disguise a missing requirement. Emit `acceptance_criteria`
+as an array of objects with `criterion` and `verify_by`, never bullet text or a
+JSON-encoded string. Keep scenario IDs within the existing `criterion` field.
 
 **`spec_references`** — array of `{spec, section, requirement}` pointers. Every task must reference at least one spec requirement. These enable exact spec section injection into developer context.
 
