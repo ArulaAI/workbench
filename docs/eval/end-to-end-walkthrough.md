@@ -22,18 +22,21 @@ This is the required behavior, not an execution plan. It does not need task IDs,
 
 ### 2. Task JSON: `.speed/features/payments/tasks/<id>.json`
 
-Illustrative existing fields, with no schema additions:
+Illustrative task using the existing field names and structured criteria:
 
 ```json
 {
   "id": "9",
   "status": "done",
   "files_touched": ["src/payments/service.ts", "test/service.test.ts"],
-  "acceptance_criteria": "- [AC-03] Repeated authorisation returns the original payment\n  verify_by: test\n- [AC-04] Capture posts fee and net\n  verify_by: test"
+  "acceptance_criteria": [
+    {"criterion": "[AC-03] Repeated authorisation returns the original payment", "verify_by": "test"},
+    {"criterion": "[AC-04] Capture posts fee and net", "verify_by": "test"}
+  ]
 }
 ```
 
-The task store currently persists criteria as a string. Structured criterion arrays and JSON arrays serialized inside that string are also read. The equivalent structured item is `{"criterion":"[AC-03] Repeated authorisation returns the original payment","verify_by":"test"}`. Eval normalizes these forms in memory; it does not rewrite task files.
+The planner schemas now require an array of objects, and the task writer preserves that array in JSON. Earlier bullet strings and JSON arrays serialized inside strings remain readable for compatibility. Eval normalizes legacy inputs in memory; it does not rewrite task files.
 
 `files_touched` identifies candidate files. The bracketed ID establishes scenario ownership. `verify_by: test` says execution evidence is required. The prose need not exactly equal a test title.
 
@@ -135,7 +138,7 @@ Feature outputs live under `.speed/features/payments/`. Task outputs use `eval/t
 | `eval/runs/<id>/commands/<id>/` | Runner command result, output log and JUnit/JSON evidence for an actual execution. |
 | `eval/scenario-results.json` | `execute` records evidence per scenario, including missing mappings and execution status. |
 | `eval/report.json` | Aggregated scenario, criterion and gate results; selection, provenance, summaries and accepted verdict. |
-| `eval/summary.md` | Readable presentation of the report. |
+| `eval/summary.md` | Readable report, beginning with a three-column table: scenario ID; test/file results and scenario verdict; expected behavior alongside runner evidence and output-log links. |
 | `eval/residue.json` | Remaining semantic/manual criteria for optional evaluator judgment. Missing automated tests are not handed to an LLM to turn into passes. |
 | `evaluation.yaml` | The report serialized as a workflow handoff, consumed downstream when defining defects. It carries evidence, scope, results and verdict. |
 | `eval/latest-attempt.json` | Latest attempt ID and completion/failure information. Failed attempts do not replace a completed report with partial output. |
@@ -176,7 +179,7 @@ The live payments task-1 report has three passing scenario rows and three passin
 ```yaml
 feature: payments
 task: "1"
-run_id: "9b8818c518cf4fb3b4a426f395f0773d"
+run_id: "95439694d7d34f1da7fc0259d9b459e5"
 accepted: true
 summary:
   total: 6
@@ -184,6 +187,8 @@ summary:
   fail: 0
   unverifiable: 0
 ```
+
+The scenario table includes missing tests as unverified rows and shows each selected test when a scenario spans several files. It separates the expected outcome from runner evidence and does not claim to independently compare them.
 
 The JSON report uses `task_id`; the YAML uses `task`. Both include the same result statuses and verdict. With no unresolved semantic criteria, this run's residue is `{"feature":"payments","results":[]}`. The feature can still have missing automated tests while residue is empty, because those gaps belong in deterministic results.
 

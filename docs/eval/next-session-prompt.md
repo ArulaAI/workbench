@@ -8,11 +8,11 @@ Continue reviewing task-derived SPEED evaluation. Do not revert to putting task 
 
 Workbench implementation checkout:
 `/Users/mohitpatel/Desktop/inrhythm/Workbench/.claude/worktrees/task-scoped-eval`
-Branch: `feat/eval-test-spec-template`. Implementation commit: `ee22459`, followed by documentation commits. Read current git status/log first. The shared Workbench main checkout was not switched or modified for this task.
+Branch: `feat/eval-test-spec-template`. Latest implementation commit: `462767d` (structured criteria and scenario table; initial mapping implementation `ee22459`), followed by documentation commits. Read current git status/log first. The shared Workbench main checkout was not switched or modified for this task.
 
 Live payment fixture:
 `/Users/mohitpatel/Desktop/inrhythm/payments-validation-fixture`
-Branch: `test/speed-eval`, based on `round-0` (`965029f`). Task-derived fixture inputs were committed as `924a28e`; later commits document results. Do not use the separate `payments-validation-fixture-defect-synthesis` checkout to review these new runs.
+Branch: `test/speed-eval`, based on `round-0` (`965029f`). Structured task fixture inputs were committed as `44d1baf`; later commits document results. Do not use the separate `payments-validation-fixture-defect-synthesis` checkout to review these new runs.
 
 Read:
 1. Workbench `docs/eval/end-to-end-walkthrough.md`: goal, shapes, diagram, source responsibilities and example.
@@ -23,17 +23,18 @@ Read:
 Implemented flow:
 - Scenario catalog contains stable IDs/outcomes, no required task ownership mapping.
 - `speed plan` supplies the catalog to architect phases, coverage checking/repair and cache hashing. Existing task criteria retain `[AC-03] ...` plus `verify_by: test`; `files_touched` declares candidate files.
-- `lib/eval_criteria.py` reads structured, string and serialized-array criteria without changing persisted task JSON.
+- New task/planner schemas require an array of `{criterion, verify_by}` objects. `task_create` stores the actual array instead of JSON-encoding it into a string. Legacy strings remain supported by `lib/eval_criteria.py`; eval itself never rewrites task inputs. Dashboard text fields/counts handle structured criteria.
 - `lib/eval_discovery.py` discovers Python AST and JS/TS tree-sitter declarations. Python tests use `test_ac_03_...`; Node/Jest/Vitest literal titles use `[AC-03] ...`.
 - `lib/eval_selection.py::select_task_plan` generates exact per-task/per-scenario selectors from criteria and discovered tests. Task runs never widen to entire files as a fallback. Feature mode checks the complete catalog, including planner omissions.
+- `summary.md` begins with a three-column scenario table: scenario ID; test/file results and scenario verdict; expected outcome from the spec beside execution evidence/output-log links. It does not independently establish spec-to-assertion correctness. Actual rendered tables were parsed to check column/row counts and expected/status values.
 - Runtime/report layers retain individual evidence and reuse executions for task criteria. Shared scenario owners cannot borrow another task's missing evidence. Legacy mapping tables remain compatible when no tagged criteria exist; explicit `--test-plan` deliberately overrides discovery.
 
-Validated: 233 distinct Python cases plus 3 subtests across Python 3.10 and dependency-complete 3.12, and 132 shell checks. Regression tests prove tests 3 and 4 execute alone when unrelated test 2 fails, multiple tests/files per scenario, mixed frontend/backend runners, missing tests, skips, duplicate/dynamic identities, task/spec immutability and actual planner persistence with a controlled provider response. No actual LLM planning run is claimed.
+Validated: 237 eval/parser cases plus 3 subtests and 126 dashboard cases (363 Python cases overall) across Python 3.10 and dependency-complete 3.12, and 92 shell checks in the latest follow-up. Regression tests prove tests 3 and 4 execute alone when unrelated test 2 fails, multiple tests/files per scenario, mixed frontend/backend runners, missing tests, skips, duplicate/dynamic identities, task/spec immutability and actual planner persistence with a controlled provider response. No actual LLM planning run is claimed.
 
 Fresh live outputs in the payment fixture (ignored `.speed`, not committed):
-- Task 1: run `9b8818c518cf4fb3b4a426f395f0773d`, 3 tests passed, accepted, strict exit 0.
-- Feature: run `db577c75b0f843a68997b896c047806d`, 18 tests passed; 4 missing scenarios plus coverage/integration gates, strict exit 2.
-- Task 2: run `61607ceb2f0d4d21a3b59442a3ddf9dd`, 15 tests passed; 4 missing scenarios, strict exit 2.
+- Task 1: run `95439694d7d34f1da7fc0259d9b459e5`, 3 tests passed, accepted, strict exit 0.
+- Feature: run `9006a99835824f36b9a357a36cb299b3`, 18 tests passed; 4 missing scenarios plus coverage/integration gates, strict exit 2.
+- Task 2: run `df1089adf46349549c899d79fd77b883`, 15 tests passed; 4 missing scenarios, strict exit 2.
 - Report rows additionally include criteria reusing the same evidence. Full report totals: task 1 = 6 pass; task 2 = 30 pass/8 unverified; feature = 36 pass/10 unverified.
 - Paths: `.speed/features/payments/eval/test-plan.json`, `report.json`, `summary.md`, and `.speed/features/payments/evaluation.yaml`. Task variants use `eval/task-1/`, `eval/task-2/`, and `evaluation-task-1.yaml`/`evaluation-task-2.yaml`.
 - Validation metadata: `.speed/features/payments/logs/validation.json`; logs and raw JUnit evidence remain in this repository. Task inputs/spec were unchanged during eval, and task 2 did not overwrite the feature verdict.

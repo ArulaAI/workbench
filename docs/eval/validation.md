@@ -1,5 +1,32 @@
 # Task-derived eval validation
 
+## Latest follow-up: structured criteria and scenario table
+
+Validated on 2026-09-20 with Workbench `462767d` and clean payment fixture input commit `44d1baf`.
+
+- New planner schemas require arrays of `{criterion, verify_by}` objects; the task writer preserves them as JSON arrays. Legacy text remains readable. Planner cache keys include the output schemas.
+- Dashboard text fields render structured criteria without serialization errors, and criterion counts accept arrays.
+- `summary.md` now starts with the requested three-column scenario table: scenario ID; individual test/file results and scenario verdict; expected behavior beside execution evidence and output-log links.
+- The table does not invent observed values or independently certify that assertions implement the spec. Unrelated deselected tests from Jest/Vitest reports are excluded from scenario rows.
+
+Validation: **237 eval/parser Python cases plus 3 subtests**, **126 dashboard cases**, and **92 shell checks** passed (363 distinct Python cases overall). The primary run reported 229 passes/8 skips; those eight JS/TS cases passed under the dependency-complete runtime together with 126 dashboard cases. Focused table and mixed-runner checks passed again after the final display adjustment. Shell checks were task CRUD (53), eval (20) and CLI regressions (19). All three task/planner schemas accept object arrays and reject strings.
+
+Fresh live evaluations:
+
+| Scope | Tests executed | Scenario table rows | Strict exit | Run ID |
+|---|---:|---:|---:|---|
+| task-1 | 3 | 3 | 0 | `95439694d7d34f1da7fc0259d9b459e5` |
+| feature | 18 | 22 | 2 | `9006a99835824f36b9a357a36cb299b3` |
+| task-2 | 15 | 19 | 2 | `df1089adf46349549c899d79fd77b883` |
+
+Each Markdown table was parsed with `markdown-it-py`: exactly three columns; scenario IDs, verdicts and expected outcomes agreed with report JSON. Both generated task files contain arrays of objects. JSON/YAML verdicts agree, each Node invocation reports exactly one selected test, task/spec inputs remain unchanged during eval, and task 2 leaves the feature outputs unchanged.
+
+`npm test` passes all 18 tests. The existing course-corpus `npm run verify` failure remains unchanged. Four missing scenarios and feature coverage/integration gates remain visible. Current paths and validation metadata are in the fixture's `docs/speed-eval.md` and `.speed/features/payments/logs/validation.json`.
+
+The earlier validation below is retained as historical context; its previous run IDs were replaced when the payments runtime was reset for this follow-up.
+
+## Prior task-derived mapping validation
+
 Validated 2026-09-20. Workbench implementation: `ee22459` on `feat/eval-test-spec-template`, checkout `/Users/mohitpatel/Desktop/inrhythm/Workbench/.claude/worktrees/task-scoped-eval`.
 
 ## Automated checks
