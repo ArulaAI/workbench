@@ -15,6 +15,7 @@ import pytest
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from lib.eval_runtime import atomic_json, execute, finish, prepare
 from lib.eval_report import build_report, write_report
+from lib.test_spec import parse_scenarios
 
 NAMES = {
  'AC-01':'authorise records the amount and posts a balanced pair',
@@ -46,22 +47,31 @@ def payment_copy(tmp_path,monkeypatch):
     shutil.copytree(source,root,ignore=shutil.ignore_patterns('.git','.speed','node_modules','.DS_Store'))
     spec=root/'specs/tests/payments.md'
     text=spec.read_text()
-    a=text.index('| Scenario | Selector | Command |',text.index('## Execution and Evidence'))
-    b=text.index('\n\n',a)
-    rows=['| Scenario | Task | Selector | Test name | Runner |','|---|---|---|---|---|']
-    for line in text[a:b].splitlines()[2:]:
-        parts=[x.strip() for x in line.strip('|').split('|')]
-        sid,selector=parts[:2]
-        # Task 1 spans two service tests and one money test; task 2 shares both
-        # files and includes the four missing declared scenarios.
-        owner='1' if sid in ('AC-01','AC-02','VAL-01') else '2'
-        rows.append(f'| {sid} | {owner} | {selector} | {NAMES.get(sid, "")} | node |')
-    spec.write_text(text[:a]+'\n'.join(rows)+text[b:])
+    # The test spec is a catalog authored before planning. Ownership comes
+    # from existing task criteria, and the test names retain scenario IDs.
+    a=text.index('## Execution and Evidence')
+    b=text.index('## Exit Criteria',a)
+    text=text[:a]+'## Execution and Evidence\n\nTask criteria and tagged test names generate the execution plan.\n\n'+text[b:]
+    spec.write_text(text)
+    names=dict(NAMES)
+    if (root/'test/refund-retry.test.ts').exists():
+        names['RETRY-01']='a retried refund is accepted'
+    for sid,name in names.items():
+        filename='refund-retry' if sid=='RETRY-01' else 'service' if sid.startswith('AC-') else 'money' if sid.startswith('VAL-') else 'ledger'
+        path=root/f'test/{filename}.test.ts'
+        contents=path.read_text()
+        contents=contents.replace("test('"+name+"',", "test('["+sid+"] "+name+"',")
+        assert "test('["+sid+"] "+name+"'," in contents
+        path.write_text(contents)
+    scenarios=parse_scenarios(text)
     feature=root/'.speed/features/payments'
     (feature/'tasks').mkdir(parents=True)
     for owner in ('1','2'):
-        atomic_json(feature/'tasks'/f'{owner}.json',dict(id=owner,status='done',
-            files_touched=['test/service.test.ts','test/money.test.ts']+(['test/ledger.test.ts'] if owner=='2' else []),acceptance_criteria=[]))
+        ids=[row['id'] for row in scenarios if ('1' if row['id'] in ('AC-01','AC-02','VAL-01') else '2')==owner]
+        files=['test/service.test.ts','test/money.test.ts']+(['test/ledger.test.ts'] if owner=='2' else [])
+        if owner=='2' and 'RETRY-01' in names:files.append('test/refund-retry.test.ts')
+        criteria='\n'.join(f'- [{sid}] {names.get(sid, "Required catalog scenario")}\n  verify_by: test' for sid in ids)
+        atomic_json(feature/'tasks'/f'{owner}.json',dict(id=owner,status='done',files_touched=files,acceptance_criteria=criteria))
     atomic_json(feature/'state.json',dict(status='completed'))
     (feature/'test_spec_path').write_text(str(spec))
     subprocess.run(['git','init','-q',str(root)],check=True)
@@ -73,6 +83,16 @@ def payment_copy(tmp_path,monkeypatch):
 
 def evaluate(copy,task_id=None):
     root,feature,spec=copy
+    if os.environ.get('SPEED_TEST_FULL_CLI'):
+        entry=Path(__file__).resolve().parents[1]/'speed'
+        command=['bash',str(entry),'eval','--feature','payments','--json','--skip-judge','--no-defects']
+        if task_id:command.extend(['--task',task_id])
+        completed=subprocess.run(command,cwd=root,env={**os.environ,'SPEED_PROJECT_ROOT':str(root)},text=True,capture_output=True,timeout=60)
+        assert completed.returncode==0,completed.stdout+completed.stderr
+        report=json.loads(completed.stdout)
+        output=feature/'eval' if task_id is None else feature/'eval'/f'task-{task_id}'
+        return output/'runs'/report['run_id'],report
+    pytest.importorskip('tree_sitter_typescript')
     run=prepare(root,feature,feature/'state.json',spec,task_id=task_id)
     execute(run)
     read=lambda name:json.loads((run/name).read_text())
@@ -88,8 +108,8 @@ def evaluate(copy,task_id=None):
 def test_payment_task_three_tests_in_two_files(payment_copy):
     run,report=evaluate(payment_copy,'1')
     assert report['accepted'],report
-    assert {r['id'] for r in report['results']}=={'AC-01','AC-02','VAL-01'}
-    executions=[e for r in report['results'] for e in r.get('executions',[])]
+    assert {r['id'] for r in report['results'] if r['kind']=='scenario'}=={'AC-01','AC-02','VAL-01'}
+    executions=[e for r in report['results'] if r['kind']=='scenario' for e in r.get('executions',[])]
     assert len(executions)==3
     assert all(len(e['tests'])==1 for e in executions),executions
     assert len(list((run/'commands').iterdir()))==3
@@ -102,7 +122,7 @@ def test_payment_feature_all_17_tests_and_four_declared_gaps(payment_copy):
     for sid in ('RISK-01','RISK-02','AC-12','EDGE-01'):
         assert results[sid]['status']=='unverifiable'
     assert not report['accepted']
-    assert len(list((run/'commands').iterdir()))==17
+    assert len(list((run/'commands').iterdir()))==len(NAMES)+int('RETRY-01' in results)
 
 
 def test_payment_task_missing_tests_are_not_hidden(payment_copy):
@@ -130,4 +150,4 @@ def test_unmodified_cli_payment_task_and_feature(payment_copy):
             assert report['task_id']==extra[1]
     feature_report=json.loads((feature/'eval/report.json').read_text())
     assert feature_report['task_id'] is None
-    assert len([r for r in feature_report['results'] if r['kind']=='scenario'])==21
+    assert len([r for r in feature_report['results'] if r['kind']=='scenario'])==len(parse_scenarios(payment_copy[2].read_text()))

@@ -161,30 +161,20 @@ status codes, fields, and behavior.
 | | | | |
 
 ## Execution and Evidence
-<!-- Map every catalog scenario to the selector that executes it in the table
-     below; `speed eval` reads this table. Keep changing run results outside
-     this spec. -->
+<!-- This spec is authored before task planning. Declare stable scenario IDs
+     and expected behavior here. Do not add task IDs or predict execution
+     selectors: task criteria and implemented tests provide those later. -->
 
-- **Execution mapping:** The table below. One row per scenario; separate several selectors in one cell with spaces. Leave Selector empty while no test exists so the gap stays visible; `speed eval` reports such a scenario as not examined, never as a pass. Command is optional and must equal a configured test command. Manual checks leave Selector empty and record their owner and procedure under Scenario Classification.
-- **Runner configuration:** `speed.toml` `[eval] test_command`, or the agent file's `test:` entry under `## Quality Gates` when unset; identify CI jobs using it.
-- **Result report:** Location of per-scenario outcomes, run ID/time, application commit/build, source-spec revision, environment, actual command or manual procedure, and evidence or defect links.
+- **Task ownership:** `speed plan` preserves catalog IDs in the existing task criteria, such as `[AC-03] Invalid input returns 400` with `verify_by: test`. Its `files_touched` lists the intended test files. Keep scenarios with no test yet in the catalog.
+- **Test identity:** Python functions use `test_ac_03_<behavior>`; Node, Vitest, and Jest use literal test titles `[AC-03] <behavior>`. Several tests across files may carry the same scenario ID. IDs belong on individual tests, not just comments or suite titles.
+- **Runner configuration:** `speed.toml` `[eval] test_command` or `test_commands`, with `test_file_patterns` for candidate files; configured subsystem gates can route frontend and backend tests.
+- **Generated execution plan:** `speed eval` reads the task criteria and discovers tagged tests, then writes `test-plan.json`. It reads this spec without rewriting it. A task filter selects that task's criteria and tests; feature mode also reports catalog scenarios the planner omitted.
+- **Result report:** Per-scenario and per-criterion outcomes, actual commands, test evidence, source revision, and build identity in `report.json`, `summary.md`, and evaluation YAML.
 
-| Scenario | Task | Selector | Test name | Runner | Command | Criterion |
-|---|---|---|---|---|---|---|
-| | | | | | | |
-
-For task-scoped evaluation, put the existing task ID in Task; no task JSON
-schema change is required. Keep Task on rows whose test is still missing.
-Use `tests/test_payment.py::test_authorise` for pytest. For Node, Vitest or Jest,
-Selector is the test file and Test name is its exact full title (including
-describe/suite names, separated by spaces). Repeat rows for several tests or
-files. Runner is `pytest`, `node`, `vitest` or `jest`; declare it for npm/custom
-wrappers. Command must match an allowed command in the runner configuration.
-Criterion optionally names the 1-based acceptance-criterion index on that Task;
-test criteria reuse those scenario results without executing the file again.
-Shared files require explicit Task ownership. Files touched by only one task
-can establish ownership of an already mapped individual test. A task run never
-executes a whole-file selector as a fallback; incomplete mappings remain gaps.
+Older specs with explicit Execution and Evidence mapping tables remain readable
+when tasks have no tagged criteria. Task-derived selection takes precedence once
+criteria carry scenario IDs. An explicit `--test-plan` remains a deliberate
+execution override. New specs do not need a Task, Selector, or Test name table.
 
 An automated scenario passes only when its mapped test is discovered, executes,
 and its assertions pass. An unrelated green suite or zero discovered tests is

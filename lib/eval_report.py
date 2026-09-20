@@ -22,6 +22,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from lib.criteria_verify import verify_criteria, _find_test_files
+from lib.eval_criteria import normalize_criteria as _structured_criteria
 from lib.eval_execution import aggregate_status, commands_for_file, load_config, run_command
 from lib.eval_runtime import build_snapshot, task_scenarios, read_object
 from lib.test_spec import (coverage_gaps, parse_evaluation_gates, parse_out_of_scope,
@@ -172,40 +173,6 @@ def _mapped_scenario_result(
     }
 
 
-_BULLET_RE = re.compile(r"^\s*[-*]\s+(.*\S)\s*$")
-_VERIFY_BY_RE = re.compile(r"^\s*verify_by:\s*([A-Za-z_]+)\s*$")
-
-
-def _structured_criteria(criteria: Any) -> Any:
-    """Expand the legacy text form of acceptance_criteria.
-
-    Tasks written by speed plan store the Architect's criteria as one string:
-
-        - Book model has a status field
-          verify_by: schema_check
-        - borrow_book() rejects a checked-out book
-          verify_by: test
-
-    Each bullet becomes one criterion with its own verify_by so eval can
-    execute them individually. Structured lists pass through unchanged, and a
-    string without bullets stays a single manual criterion. Grounding does not
-    use this expansion, so speed run gates are unaffected.
-    """
-    if not isinstance(criteria, str):
-        return criteria
-    items: list[dict[str, Any]] = []
-    for line in criteria.splitlines():
-        bullet = _BULLET_RE.match(line)
-        verify_by = _VERIFY_BY_RE.match(line)
-        if bullet:
-            items.append({"criterion": bullet.group(1), "verify_by": "manual", "scenario_ids": []})
-        elif verify_by and items:
-            items[-1]["verify_by"] = verify_by.group(1).lower()
-        elif line.strip() and items:
-            items[-1]["criterion"] += " " + line.strip()
-    return items or criteria
-
-
 def _present_files(files: Any, project_root: Path) -> list[str]:
     """Touched paths that still exist, selected the way _verify_lint selects them.
 
@@ -245,13 +212,21 @@ def _semantic_results(
             if verify_by == "test" and selection is not None:
                 mapped_ids = set(selection.get("criterion_scenarios", {}).get(str(task["id"]), {}).get(str(index), []))
                 evidence = [r for r in scenario_results or [] if r["id"] in mapped_ids]
+                if selection.get("source") == "task_criteria":
+                    # A feature scenario may span several tasks. A criterion
+                    # inherits only the executions owned by its own task.
+                    evidence = [{**r, "executions": own,
+                                 "status": aggregate_status(own)}
+                                for r in evidence
+                                for own in [[e for e in r.get("executions", [])
+                                             if str(e.get("task_id")) == str(task["id"])]]]
                 if evidence and {r["id"] for r in evidence} == mapped_ids:
                     outcome = {"status": aggregate_status(evidence), "command": "",
                                "evidence": "Reused declared criterion scenarios: " + ", ".join(sorted(mapped_ids)),
                                "executions": [e for r in evidence for e in r.get("executions", [])]}
                 else:
                     outcome = {"status": "unverifiable", "command": "",
-                               "evidence": "Test criterion has no explicit scenario association; set Criterion to its 1-based index in Execution and Evidence. "
+                               "evidence": "Test criterion has no explicit scenario association; include [SCENARIO-ID] in the task criterion and tag its individual test. "
                                            "A whole-file test run cannot establish criterion coverage."}
             elif verify_by in ("test", "lint"):
                 touched = task.get("files_touched", [])
@@ -475,7 +450,7 @@ def build_report(
         if scenario_counts[scenario["id"]] > 1:
             result["status"] = "fail"
             result["evidence"] = "Duplicate scenario ID in test spec"
-        if len(owners) > 1:
+        if len(owners) > 1 and (selection or {}).get("source") != "task_criteria":
             result["status"] = "fail"
             result["evidence"] += "; conflicting task owners"
         results.append(result)

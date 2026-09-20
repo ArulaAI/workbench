@@ -65,8 +65,8 @@
 # prune_days = 30              # days before old events are pruned from the log
 
 [eval]
-# Configure allowed runners; each mapping may choose one with its Command cell.
+# Configure allowed runners. Eval routes each candidate file to one runner.
 # test_commands = ["python3 -m pytest -q", "node --test", "cd frontend && npm test --"]
 # Patterns classify existing task files_touched as candidate test files.
-# They do not discover which individual tests belong to a shared task file.
+# Task criteria and stable IDs in test names identify the individual tests.
 # test_file_patterns = ["test_*.py", "*_test.py", "*.test.*", "*.spec.*"]

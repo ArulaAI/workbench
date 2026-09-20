@@ -18,7 +18,8 @@ if __package__ in (None, ""):
 
 from lib.eval_execution import (commands_for_file, load_config, resolve_command, run_command,
                                 utc_now, valid_selector)
-from lib.eval_selection import exact_selector, select_plan
+from lib.eval_selection import exact_selector, select_plan, select_task_plan
+from lib.eval_criteria import task_scenarios, has_tagged_criteria
 from lib.test_spec import (SCENARIO_ID_RE, manual_scenarios, parse_execution_mapping,
                            parse_scenarios, silent_scenarios)
 
@@ -65,16 +66,6 @@ def safe_path(path: Path, root: Path) -> None:
         if current.resolve() == root:
             break
         current = current.parent
-
-
-def task_scenarios(task: dict) -> set[str]:
-    ids = set(task.get("required_test_cases", []))
-    criteria = task.get("acceptance_criteria", [])
-    if isinstance(criteria, list):
-        for criterion in criteria:
-            if isinstance(criterion, dict):
-                ids.update(criterion.get("scenario_ids", []))
-    return ids
 
 
 def validate_task(task: dict, path: Path, root: Path) -> None:
@@ -190,14 +181,18 @@ def prepare(root: Path, feature_dir: Path, state_file: Path, test_spec: Path,
         raise RuntimeError("Evaluation requires done tasks")
     spec_text = test_spec.read_text(encoding="utf-8")
     scenarios = {s["id"] for s in parse_scenarios(spec_text)}
-    plan = read_object(plan_path) if plan_path else {"test_cases": parse_execution_mapping(spec_text)}
+    config = load_config(root)
+    from_tasks = not plan_path and has_tagged_criteria(tasks)
+    plan = (read_object(plan_path) if plan_path else
+            select_task_plan(root, spec_text, tasks, config, task_id) if from_tasks else
+            {"test_cases": parse_execution_mapping(spec_text)})
     # A catalog is meaningful even when every required test is still missing.
     # Report its gaps instead of refusing to produce the feature verdict.
     if not selected and not plan["test_cases"] and not scenarios:
         raise ValueError("No tasks or mapped scenarios to evaluate")
     validate_plan(plan, scenarios, tasks)
-    config = load_config(root)
-    plan = select_plan(plan, spec_text, tasks, config, task_id, task_scenarios, override=bool(plan_path))
+    if not from_tasks:
+        plan = select_plan(plan, spec_text, tasks, config, task_id, task_scenarios, override=bool(plan_path))
     build = build_snapshot(root)
     manual = read_object(manual_path) if manual_path else {"results": []}
     if not isinstance(manual.get("results"), list):
@@ -304,7 +299,7 @@ def execute(run: Path) -> None:
             if not exact_selector(case):
                 outcome["evidence"] += "; file-level evidence: individual scenario-to-test attribution is unavailable"
         results.append({**outcome, "scenario_id": case["scenario_id"], "task_id": owner,
-                        "source": "mapping", "run_id": run.name, "selector": case["selector"],
+                        "source": case.get("source", "mapping"), "run_id": run.name, "selector": case["selector"],
                         "test_name": case.get("test_name", ""), "runner": case.get("runner", ""),
                         "selection_level": "test" if exact_selector(case) else "file"})
     mapped = {r["scenario_id"] for r in results}
@@ -312,15 +307,21 @@ def execute(run: Path) -> None:
         results.append({"scenario_id": sid, "task_id": context.get("task_id"), "source": "mapping_missing",
                         "run_id": run.name, "status": "unverifiable", "command": "", "tests": [],
                         "evidence": "An additional declared mapping row has no selector"})
+    for owner, ids in context.get("selection", {}).get("missing_task_mappings", {}).items():
+        for sid in ids:
+            results.append({"scenario_id": sid, "task_id": owner, "source": "task_criteria_missing",
+                            "run_id": run.name, "status": "unverifiable", "command": "", "tests": [],
+                            "evidence": f"Task {owner}: no discoverable test tagged for {sid} in its candidate test files"})
     mapped.update(r["scenario_id"] for r in read_object(run / "manual-results.json")["results"])
     # A mapping row with an empty Selector cell declares that nothing examines
     # this scenario. It carries no result of its own, so a task batch claiming
     # it would turn declared silence into a pass.
-    silent = silent_scenarios((run / "test-spec.md").read_text(encoding="utf-8"))
+    silent = (set() if context.get("selection", {}).get("source") == "task_criteria" else
+              silent_scenarios((run / "test-spec.md").read_text(encoding="utf-8")))
     for task in tasks:
         owned = task_scenarios(task)
         task_results = []
-        if owned:
+        if owned and context.get("selection", {}).get("source") != "task_criteria":
             # A scenario the mapping executed, or manual evidence covers,
             # already has per-scenario evidence. A task batch cannot attribute
             # its outcome to one scenario, so a passing batch must neither

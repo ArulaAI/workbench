@@ -30,6 +30,15 @@ Implement the task described below completely and correctly. You are working on 
 
 6. **Write tests** — Every new function or module should have corresponding tests. Match the testing patterns already established in the project.
 
+   Preserve scenario IDs from task criteria in individual test identities. For
+   `[AC-03] ...` with `verify_by: test`, name Python tests `test_ac_03_<behavior>`
+   and Node/Jest/Vitest tests `[AC-03] <behavior>`. Use literal JS/TS test and
+   describe titles so eval can discover their full names without executing them.
+   Keep these tests in the task's declared `files_touched`; one scenario may
+   require several tagged tests across files. Do not put IDs only in comments
+   or suite names. Do not edit the test spec to insert task IDs. Eval generates
+   its execution plan from the task criteria and the resulting test identities.
+
 7. **Handle errors** — Don't just implement the happy path. Consider edge cases, invalid inputs, and failure scenarios.
 
 ## Constraints

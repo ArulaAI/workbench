@@ -24,7 +24,7 @@
           },
           "acceptance_criteria": {
             "type": "string",
-            "description": "Bullet-pointed list of testable conditions that define done"
+            "description": "Bullet-pointed conditions. Preserve catalog IDs as [AC-03] in test criteria and add an indented verify_by: test line."
           },
           "depends_on": {
             "type": "array",
