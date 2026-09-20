@@ -4,7 +4,7 @@
 # reports; this command retains provider dispatch and the normal CLI display.
 
 _eval_build_report() {
-    local output_dir="$1" judgment="${2:-}"
+    local output_dir="$1"
     local args=("${LIB_DIR}/eval_report.py"
         --feature "$FEATURE_NAME" --project-root "$PROJECT_ROOT"
         --tasks-dir "${output_dir}/tasks" --test-spec "${output_dir}/test-spec.md"
@@ -12,7 +12,6 @@ _eval_build_report() {
         --scenario-results "${output_dir}/scenario-results.json"
         --context "${output_dir}/context.json" --runner-config "${output_dir}/runner-config.json")
     [[ -n "${_eval_task_filter:-}" ]] && args+=(--task-id "$_eval_task_filter")
-    [[ -n "$judgment" ]] && args+=(--judgment "$judgment")
     "$(_context_python)" "${args[@]}"
 }
 
@@ -81,115 +80,6 @@ _eval_verdict_line() {
     fi
     [[ -n "$line" ]] || line="nothing applicable was examined"
     printf '%s' "$line"
-}
-
-_eval_run_semantic_judge() {
-    local test_spec="$1"
-    local output_dir="$2"
-    local residue_file="${output_dir}/residue.json"
-    local judgment_file="${output_dir}/judgment.json"
-    local residue_count
-    residue_count=$(jq '.results | length' "$residue_file")
-    [[ "$residue_count" -gt 0 ]] || return 2
-
-    local rfc_content=""
-    local spec_file
-    spec_file=$(_get_spec_path)
-    [[ -n "$spec_file" ]] && [[ -f "$spec_file" ]] && rfc_content=$(cat "$spec_file")
-
-    local prompt="## Semantic Acceptance Residue
-
-Project root: ${PROJECT_ROOT}
-Feature: ${FEATURE_NAME}
-
-### RFC
-${rfc_content}
-
-### Test Spec
-$(cat "$test_spec")
-
-### Criteria Requiring Judgment
-$(cat "$residue_file")
-
-Inspect the read-only project when evidence is available. Return one result for
-each supplied criterion ID. Do not judge or override executable scenarios."
-
-    local output parsed
-    if ! output=$(provider_run_json \
-        "${AGENTS_DIR}/evaluator.md" \
-        "$prompt" \
-        "${TEMPLATES_DIR}/evaluator-output.json" \
-        "$MODEL_SUPPORT" \
-        "$DEFAULT_JSON_MAX_TURNS" \
-        "$AGENT_TOOLS_READONLY" \
-        "Evaluator" \
-        "$DEFAULT_AGENT_TIMEOUT"); then
-        log_warn "Evaluator agent failed; semantic criteria remain unverifiable"
-        return 1
-    fi
-    if ! parsed=$(parse_agent_json "$output"); then
-        log_warn "Evaluator returned invalid JSON; semantic criteria remain unverifiable"
-        return 1
-    fi
-    if ! echo "$parsed" | jq -e '
-        type == "object" and (.results | type == "array") and
-        all(.results[]; type == "object" and (.id | type == "string") and
-            (.status == "pass" or .status == "partial" or .status == "fail" or .status == "unverifiable") and
-            (.evidence | type == "string" and length > 0))' >/dev/null; then
-        log_warn "Evaluator returned invalid result records; semantic criteria remain unverifiable"
-        return 1
-    fi
-    echo "$parsed" | jq '.' > "$judgment_file"
-    printf '%s\n' "$judgment_file"
-}
-
-_eval_file_defects() {
-    local report_file="$1"
-    local count=0
-    mkdir -p "${PROJECT_ROOT}/specs/defects"
-
-    while IFS= read -r result; do
-        [[ -n "$result" ]] || continue
-        local id title status evidence slug defect_file
-        id=$(echo "$result" | jq -r '.id')
-        title=$(echo "$result" | jq -r '.title')
-        status=$(echo "$result" | jq -r '.status')
-        evidence=$(echo "$result" | jq -r '.evidence')
-        slug=$(printf 'eval-%s-%s' "$FEATURE_NAME" "$id" \
-            | tr '[:upper:]' '[:lower:]' \
-            | sed 's/[^a-z0-9-]/-/g; s/--*/-/g' \
-            | cut -c1-80)
-        defect_file="${PROJECT_ROOT}/specs/defects/${slug}.md"
-
-        if [[ -d "$(_defect_dir "$slug")" ]]; then
-            continue
-        fi
-
-        if [[ -e "$defect_file" || -L "$defect_file" ]]; then
-            log_warn "Existing defect spec preserved: ${defect_file}"
-            continue
-        fi
-        if ! (set -C; printf '%s\n' \
-            "Severity: P2" \
-            "Related Feature: ${FEATURE_NAME}" \
-            "Tags: evaluation, acceptance" \
-            "Classification-Override: moderate" \
-            "" \
-            "Observed: Evaluation result ${id} is ${status}. ${evidence}" \
-            "Expected: ${title}" \
-            "Repro: Run speed eval --feature ${FEATURE_NAME} and inspect ${report_file}" \
-            > "$defect_file"); then
-            log_warn "Could not create defect spec without overwriting: ${defect_file}"
-            continue
-        fi
-
-        if defect_init "$slug" "$defect_file"; then
-            count=$((count + 1))
-        fi
-    done < <(jq -c '.results[] | select(.status == "fail" or .status == "partial")' "$report_file")
-
-    [[ "$count" -gt 0 ]] && log_warn "Filed ${count} evaluation defect(s)"
-    return 0
 }
 
 _eval_test_spec_path() {
@@ -278,15 +168,10 @@ cmd_eval() (
         exec 3>&1
         exec 1>&2
     fi
-    local strict="${SPEED_EVAL_STRICT:-false}"
-    local file_defects="${SPEED_EVAL_FILE_DEFECTS:-true}"
-    local skip_judge=false _eval_task_filter="" test_spec_override="" test_plan_override=""
+    local _eval_task_filter="" test_spec_override="" test_plan_override=""
     local _eval_run_dir="" _eval_complete=false _eval_runtime_err=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --strict) strict=true; shift ;;
-            --no-defects) file_defects=false; shift ;;
-            --skip-judge) skip_judge=true; shift ;;
             --task|--task-id|--test-spec|--test-plan)
                 if [[ $# -lt 2 || -z "$2" || "$2" == --* ]]; then
                     _eval_reject "$EXIT_CONFIG_ERROR" "${1} requires a value"
@@ -402,16 +287,6 @@ cmd_eval() (
         _eval_reject "$EXIT_CONFIG_ERROR" "Could not build the evaluation report"
         return "$EXIT_CONFIG_ERROR"
     fi
-    if [[ "$skip_judge" != true ]]; then
-        local judgment=""
-        judgment=$(_eval_run_semantic_judge "${_eval_run_dir}/test-spec.md" "$_eval_run_dir") || true
-        if [[ -n "$judgment" && -f "$judgment" ]]; then
-            if ! _eval_build_report "$_eval_run_dir" "$judgment" >/dev/null; then
-                _eval_reject "$EXIT_CONFIG_ERROR" "Could not build the evaluation report with semantic judgment"
-                return "$EXIT_CONFIG_ERROR"
-            fi
-        fi
-    fi
     local report_file="${_eval_run_dir}/report.json" accepted
     if ! accepted=$(jq -r '.accepted' "$report_file"); then
         _eval_reject "$EXIT_CONFIG_ERROR" "Evaluation report is unreadable: ${report_file}"
@@ -434,17 +309,11 @@ cmd_eval() (
             log_error "Not accepted. $(_eval_verdict_line "$report_file")."
         fi
     fi
-    if [[ -z "$_eval_task_filter" ]]; then
-        if [[ "$accepted" != true && "$file_defects" == true ]]; then
-            if ! "$py" "${LIB_DIR}/eval_runtime.py" guard --root "$PROJECT_ROOT" \
-                --path "${PROJECT_ROOT}/specs/defects" --path "$DEFECTS_DIR"; then
-                log_error "Defect directory failed validation; no defects filed"
-                return "$EXIT_CONFIG_ERROR"
-            fi
-            _eval_file_defects "$report_file"
-        fi
-        [[ "${MP_ENABLED:-}" == true ]] && event_emit "eval.completed" "$FEATURE_NAME" "{\"accepted\":${accepted}}" || true
+    if [[ -z "$_eval_task_filter" && "${MP_ENABLED:-}" == true ]]; then
+        event_emit "eval.completed" "$FEATURE_NAME" "{\"accepted\":${accepted}}" || true
     fi
-    [[ "$strict" == true && "$accepted" != true ]] && return "$EXIT_GATE_FAILURE"
+    # A completed evaluation that was not accepted is a gate failure. Exit 3
+    # stays reserved for an evaluation that could not run at all.
+    [[ "$accepted" != true ]] && return "$EXIT_GATE_FAILURE"
     return 0
 )

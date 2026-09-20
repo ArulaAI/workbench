@@ -118,7 +118,7 @@ class Project:
 
 @pytest.fixture
 def project(tmp_path, monkeypatch):
-    for name in ("SPEED_AGENT_FILE", "SPEED_EVAL_TEST_COMMAND", "SPEED_EVAL_STRICT", "SPEED_EVAL_FILE_DEFECTS"):
+    for name in ("SPEED_AGENT_FILE", "SPEED_EVAL_TEST_COMMAND"):
         monkeypatch.delenv(name, raising=False)
     root = tmp_path / "project with spaces"
     root.mkdir()
@@ -139,7 +139,7 @@ def cli(tmp_path):
 def command(project, cli, *args):
     env = os.environ.copy()
     env.update(SPEED_PROJECT_ROOT=str(project.root), SPEED_PYTHON=sys.executable, PYTHONDONTWRITEBYTECODE="1")
-    return ["bash", str(cli), "eval", "--feature", "books", "--skip-judge", *args], env
+    return ["bash", str(cli), "eval", "--feature", "books", *args], env
 
 
 def invoke(project, cli, *args):
@@ -271,7 +271,7 @@ def test_task_scope_uses_owned_spec_mapping(project):
 def test_malformed_explicit_plan_fails_before_execution(project, cli, text):
     plan = project.feature / "override.json"
     plan.write_text(text)
-    run = invoke(project, cli, "--strict", "--no-defects", "--test-plan", str(plan))
+    run = invoke(project, cli, "--test-plan", str(plan))
     assert run.returncode == 3, run.stderr
     assert not (project.feature / "eval/report.json").exists()
     assert json.loads(project.state.read_text())["status"] == "completed"
@@ -281,7 +281,7 @@ def test_malformed_explicit_plan_fails_before_execution(project, cli, text):
 def test_corrupted_runtime_state_does_not_accept(project, cli, target):
     path = project.state if target == "state" else project.tasks / "1.json"
     path.write_text("{broken")
-    run = invoke(project, cli, "--strict", "--no-defects")
+    run = invoke(project, cli)
     assert run.returncode == 3
     assert not (project.feature / "eval/report.json").exists()
 
@@ -360,20 +360,18 @@ def test_criteria_share_effective_runner(project, monkeypatch, mode):
     assert result(report)["criteria"][0]["status"] == "pass"
 
 
-def test_json_cli_and_strict_exit_codes(project, cli):
-    success = invoke(project, cli, "--json", "--strict", "--no-defects")
+def test_json_cli_and_exit_codes(project, cli):
+    success = invoke(project, cli, "--json")
     assert success.returncode == 0, success.stderr
     assert json.loads(success.stdout)["accepted"] is True
     assert json.loads(success.stdout)["results"] == [{"id": "AC-01", "status": "pass"}]
     assert json.loads(success.stdout) == json.loads((project.feature / "eval/report.json").read_text())
     project.task["test_selectors"] = ["tests/test_books.py::test_fail"]
     project.save_task()
-    failure = invoke(project, cli, "--json", "--strict", "--no-defects")
+    failure = invoke(project, cli, "--json")
     assert failure.returncode == 2, failure.stderr
     assert json.loads(failure.stdout)["accepted"] is False
     assert json.loads(failure.stdout)["results"] == [{"id": "AC-01", "status": "fail"}]
-    diagnostic = invoke(project, cli, "--json", "--no-defects")
-    assert diagnostic.returncode == 0 and not json.loads(diagnostic.stdout)["accepted"]
 
 
 @pytest.mark.parametrize("args", [("--task-id",), ("--test-plan",), ("--unknown",),
@@ -387,7 +385,7 @@ def test_invalid_cli_arguments_do_not_write(project, cli, args):
 def test_concurrent_eval_cannot_read_another_verdict(project, cli):
     project.task["test_selectors"] = ["tests/test_books.py::test_wait"]
     project.save_task()
-    argv, env = command(project, cli, "--strict", "--json", "--no-defects")
+    argv, env = command(project, cli, "--json")
     first = subprocess.Popen(argv, cwd=project.root, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     try:
         deadline = time.monotonic() + 15
@@ -395,7 +393,7 @@ def test_concurrent_eval_cannot_read_another_verdict(project, cli):
             assert first.poll() is None, first.communicate()
             assert time.monotonic() < deadline
             time.sleep(0.05)
-        second = invoke(project, cli, "--strict", "--json", "--no-defects")
+        second = invoke(project, cli, "--json")
         # --json owes stdout exactly one object on every exit, error paths
         # included, so a caller piping into jq never sees a truncated stream.
         assert second.returncode == 3
@@ -417,7 +415,7 @@ def test_symlink_state_and_selector_boundaries(project, cli, tmp_path):
     outside.mkdir()
     (outside / "sentinel").write_text("keep")
     (project.feature / "eval").symlink_to(outside, target_is_directory=True)
-    rejected = invoke(project, cli, "--strict", "--no-defects")
+    rejected = invoke(project, cli)
     assert rejected.returncode == 3
     assert list(outside.iterdir()) == [outside / "sentinel"]
     (project.root / "external").symlink_to(outside, target_is_directory=True)
@@ -430,7 +428,7 @@ def test_dangling_state_symlink_is_rejected_before_initialization(project, cli, 
     target = tmp_path / "outside-state.json"
     project.state.unlink()
     project.state.symlink_to(target)
-    run = invoke(project, cli, "--strict", "--no-defects")
+    run = invoke(project, cli)
     assert run.returncode == 3
     assert not target.exists()
 
@@ -438,13 +436,13 @@ def test_dangling_state_symlink_is_rejected_before_initialization(project, cli, 
 def test_empty_lock_is_not_stolen(project, cli):
     lock = project.feature / "speed.lock"
     lock.mkdir()
-    run = invoke(project, cli, "--strict", "--no-defects")
+    run = invoke(project, cli)
     assert run.returncode == 3 and lock.is_dir()
     assert not (project.feature / "eval").exists()
 
 
 def test_report_failure_aborts_attempt_and_keeps_old_evidence(project, cli):
-    initial = invoke(project, cli, "--strict", "--json", "--no-defects")
+    initial = invoke(project, cli, "--json")
     assert initial.returncode == 0
     old = json.loads(initial.stdout)
     # Simulate a partial filesystem failure after execution, before reporting.
@@ -454,7 +452,7 @@ def test_report_failure_aborts_attempt_and_keeps_old_evidence(project, cli):
                     "    run = Path(os.environ['SPEED_EVAL_RESULT_FILE']).parents[2]\n"
                     "    (run / 'test-plan.json').write_text('{broken')\n")
     project.commit()
-    failed = invoke(project, cli, "--strict", "--json", "--no-defects")
+    failed = invoke(project, cli, "--json")
     assert failed.returncode == 3
     assert json.loads(failed.stdout)["accepted"] is False
     state = json.loads(project.state.read_text())
@@ -466,7 +464,7 @@ def test_report_failure_aborts_attempt_and_keeps_old_evidence(project, cli):
     assert not (project.feature / "speed.lock").exists()
     test.write_text(TESTS)
     project.commit()
-    retry = invoke(project, cli, "--strict", "--json", "--no-defects")
+    retry = invoke(project, cli, "--json")
     assert retry.returncode == 0 and json.loads(retry.stdout)["accepted"]
 
 
@@ -495,12 +493,12 @@ def test_existing_authored_defect_is_preserved(project, cli):
     project.commit()
     project.task["test_selectors"] = ["tests/test_books.py::test_fail"]
     project.save_task()
-    run = invoke(project, cli, "--strict")
+    run = invoke(project, cli)
     assert run.returncode == 2, run.stderr
     assert document.read_text() == "Human investigation with valuable evidence\n"
 
 
-def test_dependency_cycle_keeps_both_failures_and_defects(project, cli):
+def test_dependency_cycle_keeps_both_failures(project, cli):
     project.spec.write_text(SPEC.replace("## Acceptance", "| AC-02 | Other failure | unit | Correct result |\n\n## Acceptance"))
     project.task["required_test_cases"] = ["AC-01", "AC-02"]
     project.task["test_selectors"] = []
@@ -510,12 +508,12 @@ def test_dependency_cycle_keeps_both_failures_and_defects(project, cli):
         {"scenario_id": sid, "selector": "tests/test_books.py::test_fail", "depends_on_scenarios": [dep]}
         for sid, dep in (("AC-01", "AC-02"), ("AC-02", "AC-01"))]})
     project.commit()
-    run = invoke(project, cli, "--json", "--strict", "--test-plan", str(plan))
+    run = invoke(project, cli, "--json", "--test-plan", str(plan))
     assert run.returncode == 2, run.stderr
     report = json.loads(run.stdout)
     for sid in ("AC-01", "AC-02"):
         assert result(report, sid)["status"] == "fail"
-        assert (project.root / f"specs/defects/eval-books-{sid.lower()}.md").is_file()
+    assert not (project.root / "specs/defects").exists(), "eval must not write defect specs"
 
 
 def test_declared_exit_gate_and_missing_linter_block_acceptance(project):

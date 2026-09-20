@@ -155,7 +155,7 @@ drop_task_ownership() {
 }
 
 test_accepts_when_task_declared_scenarios_pass() {
-    eval_clean --strict --no-defects --skip-judge >/dev/null
+    eval_clean >/dev/null
     assert_equals "python3 runner.py tests/test_books.py::test_delete" "$(captured_commands | head -1)"
     assert_equals "pass" "$(jq -r '.results[0].status' "${FEATURE_DIR}/eval/report.json")"
     assert_equals "true" "$(jq -r '.accepted' "${FEATURE_DIR}/eval/report.json")"
@@ -163,18 +163,18 @@ test_accepts_when_task_declared_scenarios_pass() {
     assert_equals "false" "$(jq 'has("integration_failure")' "$STATE_FILE")"
 }
 
-test_rejects_and_files_defect_on_failure() {
+test_rejects_on_failure_without_filing_defects() {
     SCENARIO_STATUS="fail"
     local rc=0
-    eval_clean --strict --skip-judge >/dev/null 2>&1 || rc=$?
+    eval_clean >/dev/null 2>&1 || rc=$?
     assert_equals "$EXIT_GATE_FAILURE" "$rc"
     assert_equals "false" "$(jq -r '.accepted' "${FEATURE_DIR}/eval/report.json")"
     assert_equals "integrated_not_accepted" "$(jq -r '.status' "$STATE_FILE")"
-    [[ -f "${PROJECT_ROOT}/specs/defects/eval-books-ac-01.md" ]]
-    [[ -f "${DEFECTS_DIR}/eval-books-ac-01/state.json" ]]
+    [[ ! -f "${PROJECT_ROOT}/specs/defects/eval-books-ac-01.md" ]]
+    [[ ! -d "$DEFECTS_DIR" ]] || [[ -z "$(find "$DEFECTS_DIR" -mindepth 1 -print -quit)" ]]
 }
 
-test_unverifiable_residue_blocks_without_filing_defect() {
+test_unverifiable_semantic_criterion_blocks_without_filing_defect() {
     local tmp
     tmp=$(mktemp)
     jq '.acceptance_criteria += [{
@@ -184,7 +184,7 @@ test_unverifiable_residue_blocks_without_filing_defect() {
     }]' "${TASKS_DIR}/1.json" > "$tmp" && mv "$tmp" "${TASKS_DIR}/1.json"
 
     local rc=0
-    eval_clean --strict --skip-judge >/dev/null 2>&1 || rc=$?
+    eval_clean >/dev/null 2>&1 || rc=$?
     assert_equals "$EXIT_GATE_FAILURE" "$rc"
     assert_equals "1" "$(jq '.criteria_summary.unverifiable' "${FEATURE_DIR}/eval/report.json")"
     assert_equals "integrated_not_accepted" "$(jq -r '.status' "$STATE_FILE")"
@@ -197,7 +197,7 @@ test_task_without_selectors_fails_its_scenarios() {
     jq '.test_selectors = []' "${TASKS_DIR}/1.json" > "$tmp" && mv "$tmp" "${TASKS_DIR}/1.json"
 
     local rc=0
-    eval_clean --strict --no-defects --skip-judge >/dev/null 2>&1 || rc=$?
+    eval_clean >/dev/null 2>&1 || rc=$?
     assert_equals "$EXIT_GATE_FAILURE" "$rc"
     assert_equals "" "$(captured_commands)"
     assert_equals "unverifiable" "$(jq -r '.results[0].status' "${FEATURE_DIR}/eval/report.json")"
@@ -210,7 +210,7 @@ test_option_selector_is_rejected() {
         && mv "$tmp" "${TASKS_DIR}/1.json"
 
     local rc=0
-    eval_clean --strict --no-defects --skip-judge >/dev/null 2>&1 || rc=$?
+    eval_clean >/dev/null 2>&1 || rc=$?
     assert_equals "$EXIT_GATE_FAILURE" "$rc"
     assert_equals "" "$(captured_commands)"
 }
@@ -227,7 +227,7 @@ test_spec_mapping_table_is_executed() {
     drop_task_ownership
     add_spec_mapping '| AC-01 | tests/test_books.py::test_delete | |'
 
-    eval_clean --strict --no-defects --skip-judge >/dev/null
+    eval_clean >/dev/null
     assert_equals "python3 runner.py tests/test_books.py::test_delete" "$(captured_commands | head -1)"
     assert_equals "pass" "$(jq -r '.results[0].status' "${FEATURE_DIR}/eval/report.json")"
     assert_equals "true" "$(jq -r '.accepted' "${FEATURE_DIR}/eval/report.json")"
@@ -242,13 +242,13 @@ test_test_plan_override_wins_over_the_spec_table() {
     printf '%s\n' '{"test_cases": [{"scenario_id": "AC-01", "selector": "tests/from_override.py"}]}' \
         > "${TEST_DIR}/override.json"
 
-    eval_clean --strict --no-defects --skip-judge --test-plan "${TEST_DIR}/override.json" >/dev/null
+    eval_clean --test-plan "${TEST_DIR}/override.json" >/dev/null
     assert_equals "python3 runner.py tests/from_override.py" "$(captured_commands | head -1)"
 }
 
 test_missing_test_plan_override_is_a_config_error() {
     local rc=0
-    eval_clean --skip-judge --test-plan "${TEST_DIR}/missing.json" >/dev/null 2>&1 || rc=$?
+    eval_clean --test-plan "${TEST_DIR}/missing.json" >/dev/null 2>&1 || rc=$?
     assert_equals "$EXIT_CONFIG_ERROR" "$rc"
 }
 
@@ -257,7 +257,7 @@ test_spec_mapping_rejects_unconfigured_commands() {
     add_spec_mapping '| AC-01 | tests/test_books.py | rm -rf / |'
 
     local rc=0
-    eval_clean --strict --no-defects --skip-judge >/dev/null 2>&1 || rc=$?
+    eval_clean >/dev/null 2>&1 || rc=$?
     assert_equals "$EXIT_GATE_FAILURE" "$rc"
     assert_equals "" "$(captured_commands)"
     assert_equals "unverifiable" "$(jq -r '.results[0].status' "${FEATURE_DIR}/eval/report.json")"
@@ -268,7 +268,7 @@ test_empty_selector_cell_leaves_the_scenario_unexamined() {
     add_spec_mapping '| AC-01 | | |'
 
     local rc=0
-    eval_clean --strict --no-defects --skip-judge >/dev/null 2>&1 || rc=$?
+    eval_clean >/dev/null 2>&1 || rc=$?
     assert_equals "$EXIT_GATE_FAILURE" "$rc"
     assert_equals "" "$(captured_commands)"
     assert_equals "unverifiable" "$(jq -r '.results[] | select(.id == "AC-01") | .status' "${FEATURE_DIR}/eval/report.json")"
@@ -276,7 +276,7 @@ test_empty_selector_cell_leaves_the_scenario_unexamined() {
 
 test_toml_test_command_is_preferred_over_the_agent_file() {
     printf '[eval]\ntest_command = "python3 runner.py --configured"\n' > "${PROJECT_ROOT}/speed.toml"
-    eval_clean --strict --no-defects --skip-judge >/dev/null
+    eval_clean >/dev/null
     assert_equals "python3 runner.py --configured tests/test_books.py::test_delete" "$(captured_commands | head -1)"
 }
 
@@ -284,7 +284,7 @@ test_unmapped_scenario_is_unverifiable_without_defect() {
     drop_task_ownership
 
     local rc=0
-    eval_clean --strict --skip-judge >/dev/null 2>&1 || rc=$?
+    eval_clean >/dev/null 2>&1 || rc=$?
     assert_equals "$EXIT_GATE_FAILURE" "$rc"
     assert_equals "0" "$(jq '.summary.fail' "${FEATURE_DIR}/eval/report.json")"
     assert_equals "unverifiable" "$(jq -r '.results[] | select(.id == "AC-01") | .status' "${FEATURE_DIR}/eval/report.json")"
@@ -298,7 +298,7 @@ test_test_spec_is_derived_from_rfc_path() {
     printf '# RFC: Books\n' > "${PROJECT_ROOT}/specs/tech/books.md"
     printf '%s\n' "${PROJECT_ROOT}/specs/tech/books.md" > "${FEATURE_DIR}/spec_path"
 
-    eval_clean --strict --no-defects --skip-judge >/dev/null
+    eval_clean >/dev/null
     assert_equals "true" "$(jq -r '.accepted' "${FEATURE_DIR}/eval/report.json")"
     # The report stores a resolved path; compare the spec-relative suffix so
     # macOS /var -> /private/var symlinks do not matter.
@@ -309,14 +309,14 @@ test_missing_test_spec_is_a_config_error() {
     rm -f "${FEATURE_DIR}/test_spec_path"
     rm -f "${PROJECT_ROOT}/specs/tests/books.md"
     local rc=0
-    eval_clean --skip-judge >/dev/null 2>&1 || rc=$?
+    eval_clean >/dev/null 2>&1 || rc=$?
     assert_equals "$EXIT_CONFIG_ERROR" "$rc"
 }
 
 test_feature_eval_requires_all_tasks_done() {
     add_task_two "pending"
     local rc=0
-    eval_clean --skip-judge >/dev/null 2>&1 || rc=$?
+    eval_clean >/dev/null 2>&1 || rc=$?
     # Evaluation never ran, so this is not a gate failure. Sharing code 2 with
     # a real rejection told CI that acceptance had failed.
     assert_equals "$EXIT_CONFIG_ERROR" "$rc"
@@ -325,7 +325,7 @@ test_feature_eval_requires_all_tasks_done() {
 
 test_task_scoped_eval_reports_only_that_task() {
     add_task_two
-    eval_clean --task-id 1 --strict --no-defects --skip-judge >/dev/null
+    eval_clean --task-id 1 >/dev/null
 
     local report="${FEATURE_DIR}/eval/task-1/report.json"
     assert_equals "1" "$(jq -r '.task_id' "$report")"
@@ -340,19 +340,19 @@ test_task_scoped_eval_reports_only_that_task() {
 
 test_task_scoped_eval_ignores_other_tasks_state() {
     add_task_two "pending"
-    eval_clean --task-id 1 --strict --no-defects --skip-judge >/dev/null
+    eval_clean --task-id 1 >/dev/null
     assert_equals "true" "$(jq -r '.accepted' "${FEATURE_DIR}/eval/task-1/report.json")"
 }
 
 test_task_scoped_eval_requires_existing_task() {
     local rc=0
-    eval_clean --task-id 9 --skip-judge >/dev/null 2>&1 || rc=$?
+    eval_clean --task-id 9 >/dev/null 2>&1 || rc=$?
     assert_equals "$EXIT_CONFIG_ERROR" "$rc"
 }
 
 test_writes_evaluation_yaml_in_the_feature_directory() {
     local out run_id
-    out=$(eval_clean --strict --no-defects --skip-judge 2>&1)
+    out=$(eval_clean 2>&1)
     run_id=$(jq -r '.run_id' "${FEATURE_DIR}/eval/latest-attempt.json")
     [[ -f "${FEATURE_DIR}/eval/runs/${run_id}/evaluation.yaml" ]]
     # The hand-off sits beside risk-surface.yaml, not under eval/.
@@ -368,7 +368,7 @@ test_writes_evaluation_yaml_in_the_feature_directory() {
 test_task_scoped_yaml_does_not_pose_as_the_feature_verdict() {
     add_task_two "pending"
     local out
-    out=$(eval_clean --task-id 1 --strict --no-defects --skip-judge 2>&1)
+    out=$(eval_clean --task-id 1 2>&1)
     [[ -f "${FEATURE_DIR}/evaluation-task-1.yaml" ]]
     [[ ! -e "${FEATURE_DIR}/evaluation.yaml" ]]
     grep -q '^task: "1"$' "${FEATURE_DIR}/evaluation-task-1.yaml"
@@ -376,8 +376,8 @@ test_task_scoped_yaml_does_not_pose_as_the_feature_verdict() {
 }
 
 run_test test_accepts_when_task_declared_scenarios_pass
-run_test test_rejects_and_files_defect_on_failure
-run_test test_unverifiable_residue_blocks_without_filing_defect
+run_test test_rejects_on_failure_without_filing_defects
+run_test test_unverifiable_semantic_criterion_blocks_without_filing_defect
 run_test test_task_without_selectors_fails_its_scenarios
 run_test test_option_selector_is_rejected
 run_test test_spec_mapping_table_is_executed

@@ -312,43 +312,16 @@ def _fold_criteria(results: list[dict], tasks: list[dict], selection: dict | Non
     return kept
 
 
-def _apply_judgment(
-    results: list[dict[str, Any]],
-    judgment: dict[str, Any] | None,
-) -> None:
-    if not isinstance(judgment, dict) or not isinstance(judgment.get("results"), list):
-        return
-    by_id = {
-        item.get("id"): item
-        for item in judgment.get("results", [])
-        if isinstance(item, dict)
-    }
-    for result in results:
-        judged = by_id.get(result["id"])
-        if (
-            result["tier"] != "semantic"
-            or result["status"] != "unverifiable"
-            or not judged
-        ):
-            continue
-        status = judged.get("status")
-        if status not in {"pass", "partial", "fail", "unverifiable"} or not judged.get("evidence"):
-            continue
-        result["status"] = status
-        result["evidence"] = judged.get("evidence", result["evidence"])
-        result["judged_by"] = "evaluator"
-
-
 def _evidence_type(result: dict[str, Any]) -> str:
     """What a result can support, in the course's own words.
 
     An executed failure is a counterexample. An executed pass is statistical
     (this example passed), except a deterministic check such as file existence,
     a schema match or a clean lint run, which is proof within its ruleset. A
-    judge's verdict is an opinion. No execution is silence.
+    human gate's verdict is an opinion. No execution is silence.
     """
     status = result.get("status")
-    if result.get("judged_by") or result.get("tier") == "manual":
+    if result.get("tier") == "manual":
         return "opinion"
     if status == "unverifiable":
         return "silence"
@@ -402,13 +375,11 @@ def build_report(
     project_root: Path,
     tasks_dir: Path,
     test_spec_path: Path,
-    judgment: dict[str, Any] | None = None,
     scenario_results: list[dict[str, Any]] | None = None,
     task_id: str | None = None,
     test_plan_path: Path | None = None,
     runner_config: dict | None = None,
     evidence_dir: Path | None = None,
-    criteria_results: list[dict] | None = None,
     context: dict | None = None,
 ) -> dict[str, Any]:
     """Assemble the acceptance report.
@@ -495,11 +466,7 @@ def build_report(
             result["tier"] = "manual"
             results.append(result)
 
-    if criteria_results is None:
-        criteria_results = _semantic_results(tasks, project_root, runner_config, evidence_dir, selection, results)
-    # Do not mutate the cached deterministic results while applying a judgment.
-    results.extend(json.loads(json.dumps(criteria_results)))
-    _apply_judgment(results, judgment)
+    results.extend(_semantic_results(tasks, project_root, runner_config, evidence_dir, selection, results))
     if test_plan_path is None:
         test_plan_path = tasks_dir.parent / "test-plan.json"
     edges: dict[str, list[str]] = {}
@@ -572,7 +539,6 @@ def build_report(
         "gate_summary": _counts([r for r in results if r["kind"] == "gate"]),
         "checks_summary": _counts(checks),
         "results": results,
-        "criteria_results": criteria_results,
         "selection": selection,
     }
 
@@ -808,18 +774,8 @@ def _evaluation_yaml(report: dict[str, Any]) -> str:
 
 
 def write_report(report: dict[str, Any], output_dir: Path) -> None:
-    residue = {
-        "feature": report["feature"],
-        "results": [
-            result
-            for result in report["results"]
-            if result["tier"] == "semantic" and result["status"] == "unverifiable"
-        ],
-    }
-    report["residue"] = residue
     _atomic_json(output_dir / "report.json", report)
     _atomic_text(output_dir / "evaluation.yaml", _evaluation_yaml(report))
-    _atomic_json(output_dir / "residue.json", residue)
     (output_dir / "summary.md").write_text(
         _summary_markdown(report),
         encoding="utf-8",
@@ -833,7 +789,6 @@ def main() -> None:
     parser.add_argument("--tasks-dir", type=Path, required=True)
     parser.add_argument("--test-spec", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--judgment", type=Path)
     parser.add_argument("--context", type=Path)
     parser.add_argument("--runner-config", type=Path)
     parser.add_argument("--task-id", help="limit the report to one task")
@@ -849,7 +804,6 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    judgment = _read_json(args.judgment, {}) if args.judgment else None
     scenario_results = None
     if args.scenario_results:
         loaded = _read_json(args.scenario_results, {})
@@ -859,16 +813,13 @@ def main() -> None:
         args.project_root.resolve(),
         args.tasks_dir.resolve(),
         args.test_spec.resolve(),
-        judgment,
         scenario_results,
         task_id=args.task_id,
         test_plan_path=args.test_plan,
         runner_config=read_object(args.runner_config) if args.runner_config else None,
         evidence_dir=args.output_dir / "commands",
-        criteria_results=_read_json(args.output_dir / "criteria-results.json", None),
         context=read_object(args.context) if args.context else None,
     )
-    _atomic_json(args.output_dir / "criteria-results.json", report.pop("criteria_results"))
     write_report(report, args.output_dir.resolve())
     print(json.dumps(report))
 

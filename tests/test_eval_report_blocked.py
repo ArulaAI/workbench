@@ -77,7 +77,7 @@ def test_build_report_preserves_failures_and_stays_unaccepted(tmp_path):
         ],
     }), encoding="utf-8")
 
-    report = build_report("feat", tmp_path, tasks, spec, None)
+    report = build_report("feat", tmp_path, tasks, spec)
     by = {r["id"]: r for r in report["results"] if r["kind"] == "scenario"}
     assert by["AC-01"]["status"] == "fail"
     assert by["AC-04"]["status"] == "fail"

@@ -85,7 +85,7 @@ def evaluate(copy,task_id=None):
     root,feature,spec=copy
     if os.environ.get('SPEED_TEST_FULL_CLI'):
         entry=Path(__file__).resolve().parents[1]/'speed'
-        command=['bash',str(entry),'eval','--feature','payments','--json','--skip-judge','--no-defects']
+        command=['bash',str(entry),'eval','--feature','payments','--json',]
         if task_id:command.extend(['--task',task_id])
         completed=subprocess.run(command,cwd=root,env={**os.environ,'SPEED_PROJECT_ROOT':str(root)},text=True,capture_output=True,timeout=60)
         assert completed.returncode==0,completed.stdout+completed.stderr
@@ -164,8 +164,8 @@ def test_unmodified_cli_payment_task_and_feature(payment_copy):
     entry=Path(__file__).resolve().parents[1]/'speed'
     env={**os.environ,'SPEED_PROJECT_ROOT':str(root)}
     for extra,expected_code in [(['--task','1'],0),([],2),(['--task-id','2'],2)]:
-        completed=subprocess.run(['bash',str(entry),'eval','--feature','payments','--strict','--json',
-            '--skip-judge','--no-defects',*extra],cwd=root,env=env,text=True,capture_output=True,timeout=60)
+        completed=subprocess.run(['bash',str(entry),'eval','--feature','payments','--json',
+            *extra],cwd=root,env=env,text=True,capture_output=True,timeout=60)
         assert completed.returncode==expected_code,completed.stdout+completed.stderr
         report=json.loads(completed.stdout)
         assert report['accepted']==(expected_code==0)
@@ -183,7 +183,7 @@ def test_human_cli_payment_scenario_table(payment_copy,task_id,expected_code):
         pytest.skip('Set SPEED_TEST_FULL_CLI=1 with SPEED_PYTHON and installed CLI dependencies')
     root,feature,_=payment_copy
     entry=Path(__file__).resolve().parents[1]/'speed'
-    command=['bash',str(entry),'eval','--feature','payments','--strict','--skip-judge','--no-defects']
+    command=['bash',str(entry),'eval','--feature','payments',]
     if task_id:command+=['--task',task_id]
     completed=subprocess.run(command,cwd=root,env={**os.environ,'SPEED_PROJECT_ROOT':str(root),'COLUMNS':'160'},
                              text=True,capture_output=True,timeout=60)

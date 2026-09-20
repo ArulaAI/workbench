@@ -175,7 +175,7 @@ def test_custom_patterns_find_missing_touched_test_file(project):
 
 def test_task_alias_dispatches_real_cli(project,cli):
     configure(project,[row()])
-    completed=invoke(project,cli,'--task','1','--strict','--no-defects')
+    completed=invoke(project,cli,'--task','1')
     assert completed.returncode==0,completed.stdout+completed.stderr
     report=json.loads((project.feature/'eval/task-1/report.json').read_text())
     assert report['task_id']=='1' and report['accepted']

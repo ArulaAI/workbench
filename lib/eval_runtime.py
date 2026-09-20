@@ -205,7 +205,7 @@ def prepare(root: Path, feature_dir: Path, state_file: Path, test_spec: Path,
     if (output / "report.json").exists() and not any(runs.iterdir()):
         legacy = runs / ("legacy-" + uuid.uuid4().hex)
         legacy.mkdir()
-        for name in ("report.json", "summary.md", "scenario-results.json", "residue.json", "judgment.json", "test-plan.json"):
+        for name in ("report.json", "summary.md", "scenario-results.json", "test-plan.json"):
             if (output / name).is_file():
                 shutil.copyfile(output / name, legacy / name)
     run = runs / uuid.uuid4().hex
@@ -376,7 +376,7 @@ def finish(run: Path, failed: bool = False) -> None:
                         os.unlink(temp)
         # Older versions promoted these intermediates too. Retire only those
         # known aliases after publishing; their attempt copies remain intact.
-        for name in ("residue.json", "scenario-results.json", "test-plan.json"):
+        for name in ("residue.json", "judgment.json", "criteria-results.json", "scenario-results.json", "test-plan.json"):
             stale = output / name
             safe_path(stale, root)
             stale.unlink(missing_ok=True)

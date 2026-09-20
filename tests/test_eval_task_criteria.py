@@ -374,8 +374,9 @@ def test_one_to_one_criteria_fold_and_promoted_files_are_pruned(project):
     first, report = project.evaluate(task_id='1')
     output = first.parent.parent
     archived = {p.relative_to(first): p.read_bytes() for p in first.rglob('*') if p.is_file()}
-    for name in ('test-plan.json', 'scenario-results.json', 'residue.json'):
+    for name in ('test-plan.json', 'scenario-results.json'):
         shutil.copyfile(first/name, output/name)  # Simulate the previous promotion layout.
+    (output/'residue.json').write_text('{}')      # A stale copy from an older version.
     run, report = project.evaluate(task_id='1')
     assert {p.name for p in output.iterdir()} == {'runs','summary.md','report.json','latest-attempt.json'}
     assert archived == {p.relative_to(first): p.read_bytes() for p in first.rglob('*') if p.is_file()}
@@ -399,7 +400,6 @@ def test_one_to_one_criteria_fold_and_promoted_files_are_pruned(project):
     links = re.findall(r'\]\(<([^>]+)>\)', summary)
     assert links and all(Path(unquote(p)).is_file() and Path(unquote(p)).stat().st_size for p in links)
     assert all(p.endswith('/result.json') for p in links)
-    assert json.loads((output/'report.json').read_text())['residue'] == json.loads((run/'residue.json').read_text())
 
 
 def test_non_one_to_one_criteria_remain_distinct_and_block_acceptance(project):
@@ -420,7 +420,6 @@ def test_non_one_to_one_criteria_remain_distinct_and_block_acceptance(project):
     assert result(report,'TASK-1-CRIT-02')['status'] == 'unverifiable'
     assert result(report,'TASK-1-CRIT-03')['status'] == 'unverifiable'
     assert any(r['id'].startswith('SELECTION-') for r in report['results'])
-    assert [r['id'] for r in report['residue']['results']] == ['TASK-1-CRIT-02']
     scope = (run/'summary.md').read_text().split('## Execution scope\n',1)[1]
     assert scope.count('| AC-01 |') == scope.count('| AC-02 |') == 1
     assert 'TASK-1-CRIT-01' not in scope

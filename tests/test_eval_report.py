@@ -50,65 +50,37 @@ class EvalReportTest(unittest.TestCase):
         }
         (self.tasks / "1.json").write_text(json.dumps(task), encoding="utf-8")
 
-    def test_executable_failure_cannot_be_overridden_by_judge(self):
+    def test_executable_failure_blocks_acceptance(self):
         self._write_task(
             [
                 {"scenario_id": "AC-01", "status": "fail", "evidence": "failed"},
                 {"scenario_id": "EDGE-01", "status": "pass", "evidence": "passed"},
             ]
         )
-        judgment = {
-            "results": [
-                {"id": "AC-01", "status": "pass", "evidence": "ignore failure"},
-                {
-                    "id": "TASK-1-CRIT-01",
-                    "status": "pass",
-                    "evidence": "README documents delete behavior",
-                },
-            ]
-        }
-        report = build_report(
-            "books", self.root, self.tasks, self.test_spec, judgment
-        )
+        report = build_report("books", self.root, self.tasks, self.test_spec)
         statuses = {result["id"]: result["status"] for result in report["results"]}
         self.assertEqual("fail", statuses["AC-01"])
-        self.assertEqual("pass", statuses["TASK-1-CRIT-01"])
         self.assertFalse(report["accepted"])
 
-    def test_all_required_results_must_pass(self):
+    def test_unresolved_semantic_criterion_blocks_acceptance(self):
+        """Every scenario passes, but a criterion needing human judgment does
+        not, so the feature is not accepted. Nothing discharges it now that
+        evaluation is fully deterministic."""
         self._write_task(
             [
                 {"scenario_id": "AC-01", "status": "pass", "evidence": "passed"},
                 {"scenario_id": "EDGE-01", "status": "pass", "evidence": "passed"},
             ]
         )
-        judgment = {
-            "results": [
-                {
-                    "id": "TASK-1-CRIT-01",
-                    "status": "pass",
-                    "evidence": "documented",
-                }
-            ]
-        }
-        report = build_report(
-            "books", self.root, self.tasks, self.test_spec, judgment
-        )
-        self.assertTrue(report["accepted"])
+        report = build_report("books", self.root, self.tasks, self.test_spec)
+        statuses = {result["id"]: result["status"] for result in report["results"]}
+        self.assertEqual("pass", statuses["AC-01"])
+        self.assertEqual("unverifiable", statuses["TASK-1-CRIT-01"])
+        self.assertFalse(report["accepted"])
         output = self.root / "eval"
         write_report(report, output)
         self.assertTrue((output / "report.json").is_file())
         self.assertTrue((output / "summary.md").is_file())
-
-    def test_report_embeds_nonempty_residue(self):
-        self._write_task([])
-        report = build_report("books", self.root, self.tasks, self.test_spec)
-        output = self.root / "eval"
-        output.mkdir()
-        write_report(report, output)
-        saved = json.loads((output / "report.json").read_text())
-        self.assertEqual(saved["residue"], json.loads((output / "residue.json").read_text()))
-        self.assertEqual(["TASK-1-CRIT-01"], [r["id"] for r in saved["residue"]["results"]])
 
     def test_missing_execution_is_unverifiable(self):
         self._write_task([])
@@ -244,7 +216,7 @@ class EvalReportTest(unittest.TestCase):
             {"scenario_id": "EDGE-01", "status": "fail",
              "command": "pytest -q tests/test_books.py::test_missing", "evidence": "assertion failed"},
         ]
-        report = build_report("books", self.root, self.tasks, self.test_spec, None, mapped)
+        report = build_report("books", self.root, self.tasks, self.test_spec, mapped)
         by_id = {result["id"]: result for result in report["results"]}
         self.assertEqual("pass", by_id["AC-01"]["status"])
         self.assertEqual("1", by_id["AC-01"]["task_id"])
@@ -272,12 +244,11 @@ class EvalReportTest(unittest.TestCase):
                 {"scenario_id": "EDGE-01", "status": "fail", "evidence": "failed"},
             ]
         )
-        judgment = {"results": [{"id": "TASK-1-CRIT-01", "status": "pass", "evidence": "documented"}]}
-        report = build_report("books", self.root, self.tasks, self.test_spec, judgment)
+        report = build_report("books", self.root, self.tasks, self.test_spec)
         by_id = {result["id"]: result for result in report["results"]}
         self.assertEqual("statistical", by_id["AC-01"]["evidence_type"])
         self.assertEqual("counterexample", by_id["EDGE-01"]["evidence_type"])
-        self.assertEqual("opinion", by_id["TASK-1-CRIT-01"]["evidence_type"])
+        self.assertEqual("silence", by_id["TASK-1-CRIT-01"]["evidence_type"])
         self.assertEqual(["ST1"], by_id["AC-01"]["traces"])
         self.assertEqual([], by_id["EDGE-01"]["traces"])
 

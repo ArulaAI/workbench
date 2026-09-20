@@ -218,7 +218,7 @@ test_verdict_line_reports_a_single_part_without_a_separator() {
 test_unrunnable_evaluation_is_not_reported_as_a_gate_failure() {
     add_task_two "pending"
     local rc=0
-    eval_clean --strict --no-defects --skip-judge >/dev/null 2>&1 || rc=$?
+    eval_clean >/dev/null 2>&1 || rc=$?
     assert_not_equals "$EXIT_GATE_FAILURE" "$rc"
     assert_equals "$EXIT_CONFIG_ERROR" "$rc"
     assert_equals "" "$(captured_commands)"
@@ -228,7 +228,7 @@ test_unrunnable_evaluation_is_not_reported_as_a_gate_failure() {
 test_rejected_acceptance_still_exits_with_the_gate_code() {
     SCENARIO_STATUS="fail"
     local rc=0
-    eval_clean --strict --no-defects --skip-judge >/dev/null 2>&1 || rc=$?
+    eval_clean >/dev/null 2>&1 || rc=$?
     assert_equals "$EXIT_GATE_FAILURE" "$rc"
 }
 
@@ -238,7 +238,7 @@ test_json_missing_spec_emits_one_valid_object() {
     rm -f "${FEATURE_DIR}/test_spec_path"
     rm -f "${PROJECT_ROOT}/specs/tests/books.md"
     local out="" rc=0
-    out=$( JSON_OUTPUT=true; eval_clean --skip-judge 2>/dev/null ) || rc=$?
+    out=$( JSON_OUTPUT=true; eval_clean 2>/dev/null ) || rc=$?
     assert_equals "$EXIT_CONFIG_ERROR" "$rc"
     printf '%s' "$out" | jq -e . >/dev/null 2>&1 \
         || fail_with "stdout was not valid JSON: '${out}'"
@@ -262,7 +262,7 @@ test_json_lock_conflict_emits_one_valid_object() {
     printf 'run\n' > "${SPEED_LOCK}/command"
     printf 'now\n' > "${SPEED_LOCK}/acquired_at"
     local out="" rc=0
-    out=$( JSON_OUTPUT=true; eval_clean --skip-judge 2>/dev/null ) || rc=$?
+    out=$( JSON_OUTPUT=true; eval_clean 2>/dev/null ) || rc=$?
     rm -rf "$SPEED_LOCK"
     assert_equals "$EXIT_CONFIG_ERROR" "$rc"
     printf '%s' "$out" | jq -e . >/dev/null 2>&1 \
@@ -273,7 +273,7 @@ test_json_lock_conflict_emits_one_valid_object() {
 # Guard: the success path must keep emitting the report itself.
 test_json_success_path_still_emits_the_report() {
     local out=""
-    out=$( JSON_OUTPUT=true; eval_clean --strict --no-defects --skip-judge 2>/dev/null )
+    out=$( JSON_OUTPUT=true; eval_clean 2>/dev/null )
     assert_equals "true" "$(printf '%s' "$out" | jq -r '.accepted')"
     assert_equals "null" "$(printf '%s' "$out" | jq -r '.error // "null"')"
 }
@@ -288,7 +288,7 @@ test_symlinked_test_spec_outside_the_project_is_rejected() {
     ln -s "${OUTSIDE_DIR}/books.md" "${PROJECT_ROOT}/specs/tests/books.md"
 
     local rc=0
-    eval_clean --strict --no-defects --skip-judge >/dev/null 2>&1 || rc=$?
+    eval_clean >/dev/null 2>&1 || rc=$?
     assert_equals "$EXIT_CONFIG_ERROR" "$rc"
     [[ ! -f "${FEATURE_DIR}/eval/report.json" ]] \
         || fail_with "evaluation ran against a spec that resolves outside the project"
@@ -297,7 +297,7 @@ test_symlinked_test_spec_outside_the_project_is_rejected() {
 test_test_spec_override_outside_the_project_is_rejected() {
     cp "${PROJECT_ROOT}/specs/tests/books.md" "${OUTSIDE_DIR}/books.md"
     local rc=0
-    eval_clean --strict --no-defects --skip-judge --test-spec "${OUTSIDE_DIR}/books.md" \
+    eval_clean --test-spec "${OUTSIDE_DIR}/books.md" \
         >/dev/null 2>&1 || rc=$?
     assert_equals "$EXIT_CONFIG_ERROR" "$rc"
     [[ ! -f "${FEATURE_DIR}/eval/report.json" ]] \
@@ -312,7 +312,7 @@ test_symlinked_test_plan_outside_the_project_is_rejected() {
     ln -s "${OUTSIDE_DIR}/plan.json" "${PROJECT_ROOT}/plan.json"
 
     local rc=0
-    eval_clean --strict --no-defects --skip-judge --test-plan plan.json >/dev/null 2>&1 || rc=$?
+    eval_clean --test-plan plan.json >/dev/null 2>&1 || rc=$?
     assert_equals "$EXIT_CONFIG_ERROR" "$rc"
     assert_equals "" "$(captured_commands)"
 }
@@ -324,7 +324,7 @@ test_in_project_test_plan_override_is_accepted() {
     printf '%s\n' '{"test_cases": [{"scenario_id": "AC-01", "selector": "tests/from_override.py"}]}' \
         > "${PROJECT_ROOT}/override.json"
 
-    eval_clean --strict --no-defects --skip-judge --test-plan override.json >/dev/null
+    eval_clean --test-plan override.json >/dev/null
     assert_equals "python3 runner.py tests/from_override.py" "$(captured_commands | head -1)"
 }
 
@@ -338,13 +338,13 @@ test_rfc_with_an_earlier_tech_segment_derives_the_right_spec() {
     printf '%s\n' "${PROJECT_ROOT}/tech/specs/tech/books.md" > "${FEATURE_DIR}/spec_path"
 
     assert_equals "${PROJECT_ROOT}/tech/specs/tests/books.md" "$(_eval_test_spec_path "")"
-    eval_clean --strict --no-defects --skip-judge >/dev/null
+    eval_clean >/dev/null
     assert_equals "true" "$(jq -r '.accepted' "${FEATURE_DIR}/eval/report.json")"
 }
 
 test_default_spec_without_plan_metadata_runs() {
     rm -f "${FEATURE_DIR}/test_spec_path"
-    eval_clean --strict --no-defects --skip-judge >/dev/null
+    eval_clean >/dev/null
     assert_equals "true" "$(jq -r '.accepted' "${FEATURE_DIR}/eval/report.json")"
 }
 
@@ -361,7 +361,7 @@ test_json_feature_claimed_by_another_actor_emits_config_error() {
     MP_ENABLED=true
     ownership_check() { OWNERSHIP_OWNER="another-actor"; return 1; }
     local out="" rc=0
-    out=$( JSON_OUTPUT=true; cmd_eval --skip-judge 2>/dev/null ) || rc=$?
+    out=$( JSON_OUTPUT=true; cmd_eval 2>/dev/null ) || rc=$?
     assert_equals "$EXIT_CONFIG_ERROR" "$rc"
     assert_equals "1" "$(printf '%s' "$out" | jq -s length)"
     assert_equals "false" "$(printf '%s' "$out" | jq -r '.accepted')"
