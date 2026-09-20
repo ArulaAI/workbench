@@ -1,4 +1,6 @@
-# Task-scoped eval implementation checklist
+# Historical task-scoped eval implementation checklist
+
+> Historical record of the original spec-owned mapping design. The current task-derived mapping contract and validation are in [task-criteria-checklist.md](task-criteria-checklist.md) and [end-to-end-walkthrough.md](end-to-end-walkthrough.md). The Task-column decision below has been superseded.
 
 Started 2026-09-20 from `feat/eval-test-spec-template` at `ff04f50`.
 Implementation checkout: `.claude/worktrees/task-scoped-eval` (shared main checkout left alone).

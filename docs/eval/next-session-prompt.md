@@ -4,54 +4,42 @@ Copy the following into a new session:
 
 ---
 
-Continue reviewing the completed task-scoped `speed eval` implementation. First use this checkout:
+Continue reviewing task-derived SPEED evaluation. Do not revert to putting task IDs in the test specification: it is authored before task planning.
 
+Workbench implementation checkout:
 `/Users/mohitpatel/Desktop/inrhythm/Workbench/.claude/worktrees/task-scoped-eval`
+Branch: `feat/eval-test-spec-template`. Implementation commit: `ee22459`, followed by documentation commits. Read current git status/log first. The shared Workbench main checkout was not switched or modified for this task.
 
-Branch: `feat/eval-test-spec-template`, originally based on `ff04f50`. The shared `/Users/mohitpatel/Desktop/inrhythm/Workbench` checkout was left clean on `main`; do not switch or alter it to find this work. Read this branch's latest local commit and git status before changing anything. Changes were not pushed.
-
-Read these repository files first:
-
-1. `docs/eval/end-to-end-walkthrough.md`: lead-facing explanation of the goal, input/output shapes, flow diagrams, exact code excerpts and the payment example. This document was added after implementation; its source links, example data and mapping were checked against the code.
-2. `docs/eval/task-scoped-evaluation.md`: implemented design, examples, source-file responsibilities and limitations.
-3. `docs/eval/task-scope-checklist.md`: every requirement and its validating test.
-4. `docs/eval/validation.md`: observed counts, real payment fixture outcomes, runner versions and reproduction commands.
-
-User requirements already implemented:
-
-- Preserve the existing task JSON schema. Use Task/Test name/Runner/optional Criterion columns in the test spec and generated test-plan JSON for mapping.
-- No task argument means all declared feature scenarios. `--task-id ID` and `--task ID` mean only that task's exact mapped tests and criteria.
-- Select individual tests within files shared by different tasks. Support several tests across several files for one task and mixed frontend/backend runners.
-- Attribute a failure only to scenarios mapped to that test. Reuse identical execution evidence once per attempt.
-- Report missing mappings/files/individual tests, empty discovery, selected skips and ambiguity in both scopes. Do not guess ownership or expand a task to a whole-file run.
-- Keep unresolved manual criteria in residue for optional review. Missing automated evidence cannot become an LLM pass.
-- Preserve source/build provenance and separate task reports/YAML from the feature verdict.
-
-Important implementation details:
-
-- `lib/test_spec.py` parses extended mapping columns and retains owners for empty mapping rows.
-- `lib/eval_selection.py` resolves explicit Task, existing scenario references, or unique file ownership using configured test patterns. Shared file ownership requires an explicit Task mapping. It records coverage/selection gaps and criterion associations.
-- `lib/eval_execution.py` applies pytest node IDs or exact escaped JavaScript full-title filters, captures JUnit/JSON evidence and verifies selected identities.
-- `lib/eval_runtime.py` prepares immutable attempts, filters scope, caches identical executions, suppresses unrelated task batches and preserves missing mapping rows.
-- `lib/eval_report.py` reuses criterion scenario results and writes scope/per-test evidence to JSON, Markdown and YAML. Test criteria without associations remain unverified.
-- No changes were needed in task creation/persistence (`lib/tasks.sh` or plan's task schema).
-
-Validation completed: 204 distinct Python tests plus 3 subtests, 81 shell checks. This includes real pytest, Node, Vitest and Jest runs, an unmodified CLI with dependency preflight, Node 22 compatibility, and copied payments-fixture integrations. The final catalog-only guard regression was added and run separately after the 203-test combined pass; see the exact record in validation.md. Do not install dependencies or repeatedly rerun all suites without a new change or unresolved concern.
-
-Original payment fixture:
-
+Live payment fixture:
 `/Users/mohitpatel/Desktop/inrhythm/payments-validation-fixture`
+Branch: `test/speed-eval`, based on `round-0` (`965029f`). Task-derived fixture inputs were committed as `924a28e`; later commits document results. Do not use the separate `payments-validation-fixture-defect-synthesis` checkout to review these new runs.
 
-It was only read/copied and remains unchanged on `codex/payments-test-spec` (inspected at `307cd00`). The test-only copy maps task 1 to AC-01 + AC-02 in service.test.ts and VAL-01 in money.test.ts: exactly three tests pass. Feature eval runs all 17 implemented scenario tests and flags RISK-01, RISK-02, AC-12 and EDGE-01 plus the existing TR12 coverage gap. The original fixture still uses coarse file-level mappings and has not been migrated to the new task mappings.
+Read:
+1. Workbench `docs/eval/end-to-end-walkthrough.md`: goal, shapes, diagram, source responsibilities and example.
+2. `docs/eval/task-scoped-evaluation.md` and `task-criteria-checklist.md`: contract and requirement coverage.
+3. `docs/eval/validation.md`: exact checks/results and limitations.
+4. Payment fixture `docs/speed-eval.md`: reset commands and links to actual generated artifacts.
 
-Next steps with me:
+Implemented flow:
+- Scenario catalog contains stable IDs/outcomes, no required task ownership mapping.
+- `speed plan` supplies the catalog to architect phases, coverage checking/repair and cache hashing. Existing task criteria retain `[AC-03] ...` plus `verify_by: test`; `files_touched` declares candidate files.
+- `lib/eval_criteria.py` reads structured, string and serialized-array criteria without changing persisted task JSON.
+- `lib/eval_discovery.py` discovers Python AST and JS/TS tree-sitter declarations. Python tests use `test_ac_03_...`; Node/Jest/Vitest literal titles use `[AC-03] ...`.
+- `lib/eval_selection.py::select_task_plan` generates exact per-task/per-scenario selectors from criteria and discovered tests. Task runs never widen to entire files as a fallback. Feature mode checks the complete catalog, including planner omissions.
+- Runtime/report layers retain individual evidence and reuse executions for task criteria. Shared scenario owners cannot borrow another task's missing evidence. Legacy mapping tables remain compatible when no tagged criteria exist; explicit `--test-plan` deliberately overrides discovery.
 
-1. Walk me through the design so I can explain it to my lead, using the three-test/two-file task example.
-2. Review whether this Task/Test name/optional Criterion spec format is the desired authoring contract. Shared-file ownership cannot be inferred from files_touched alone.
-3. If I request migration, apply the explicit mappings to the real fixture using its actual task IDs, then rerun task and feature eval. Do not copy synthetic task IDs 1/2 from tests into a real plan without checking it.
-4. Keep RISK-01, RISK-02, AC-12, EDGE-01 and TR12 visibly incomplete until actual tests/spec work closes them; do not invent passing evidence.
-5. Consider future runner adapters or authoring automation only if requested. Reviewers still check assertion quality and missing business requirements. Legacy file mappings remain feature-level aggregates, and shared test setup/hooks still run.
+Validated: 233 distinct Python cases plus 3 subtests across Python 3.10 and dependency-complete 3.12, and 132 shell checks. Regression tests prove tests 3 and 4 execute alone when unrelated test 2 fails, multiple tests/files per scenario, mixed frontend/backend runners, missing tests, skips, duplicate/dynamic identities, task/spec immutability and actual planner persistence with a controlled provider response. No actual LLM planning run is claimed.
 
-Do not send messages, push branches, open PRs or change the original fixture merely because this handoff mentions them. Review the current branch and continue with my next explicit request.
+Fresh live outputs in the payment fixture (ignored `.speed`, not committed):
+- Task 1: run `9b8818c518cf4fb3b4a426f395f0773d`, 3 tests passed, accepted, strict exit 0.
+- Feature: run `db577c75b0f843a68997b896c047806d`, 18 tests passed; 4 missing scenarios plus coverage/integration gates, strict exit 2.
+- Task 2: run `61607ceb2f0d4d21a3b59442a3ddf9dd`, 15 tests passed; 4 missing scenarios, strict exit 2.
+- Report rows additionally include criteria reusing the same evidence. Full report totals: task 1 = 6 pass; task 2 = 30 pass/8 unverified; feature = 36 pass/10 unverified.
+- Paths: `.speed/features/payments/eval/test-plan.json`, `report.json`, `summary.md`, and `.speed/features/payments/evaluation.yaml`. Task variants use `eval/task-1/`, `eval/task-2/`, and `evaluation-task-1.yaml`/`evaluation-task-2.yaml`.
+- Validation metadata: `.speed/features/payments/logs/validation.json`; logs and raw JUnit evidence remain in this repository. Task inputs/spec were unchanged during eval, and task 2 did not overwrite the feature verdict.
 
----
+Unresolved baseline issues: RISK-01, RISK-02, AC-12 and EDGE-01 have no tests; TR12 lacks scenario coverage; fixture setup has not run `speed integrate`. Existing tests/assertions and source remain round-0 except test-title IDs. RETRY-01 does not settle refund idempotency or prove the retry helper. `npm test` has 18 passes; `npm run verify` has the known course-corpus F1/F4/F5/F6 failure, also reproduced previously on untouched round-0.
+
+Next steps: review the live generated plan/report/YAML with the lead; decide whether to implement the four missing tests and resolve the TR12 gate under a separate agreed scope; try the real planner against an intended feature with LLM access if desired. Add adapters if dynamic JS titles or other test runners are required. No packages were installed and no branches pushed.
+
+Do not claim `.speed` regenerates just by switching branches. The fixture reset script explicitly replaces only payments runtime state and seeds done fixture tasks; eval regenerates artifacts from current inputs. Read current status before resetting again, because local runtime evidence would be replaced.
