@@ -119,6 +119,7 @@ speed_help() {
     echo -e "    ${COLOR_STEP}defect${RESET} <spec-file>            Run the full defect pipeline (triage → fix → review)"
     echo -e "    ${COLOR_STEP}coherence${RESET} [--resolve]         Cross-task consistency check pre-integration"
     echo -e "    ${COLOR_STEP}integrate${RESET}                    Merge completed branches + regression + contract"
+    echo -e "    ${COLOR_STEP}review${RESET} [--task ID]            Run clean-context review for one task"
     echo -e "    ${COLOR_STEP}review${RESET} [--task-id ID]        Run code review on completed tasks"
     echo -e "    ${COLOR_STEP}fix-nits${RESET} [--task-id ID]      Create a task to fix reviewer nits"
     echo -e "    ${COLOR_STEP}retry${RESET}  --task-id ID --context Retry a failed task with human guidance"

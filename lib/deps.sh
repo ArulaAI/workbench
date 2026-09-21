@@ -82,6 +82,7 @@ _platform_ext() {
     case "$(uname -s)" in
         Darwin) echo "dylib" ;;
         Linux)  echo "so" ;;
+        MINGW*|MSYS*|CYGWIN*) echo "dll" ;;
         *)      echo "so" ;;
     esac
 }
@@ -410,6 +411,13 @@ _check_sgconfig() {
     local py="$_deps_python"
     [[ -z "$py" ]] && return 0
 
+    local config_for_python="$config"
+    local speed_dir_for_python="$SPEED_DIR"
+    if command -v cygpath &>/dev/null; then
+        config_for_python=$(cygpath -w "$config")
+        speed_dir_for_python=$(cygpath -w "$SPEED_DIR")
+    fi
+
     local check_result
     check_result=$("$py" -c "
 import sys, pathlib
@@ -419,8 +427,8 @@ except ImportError:
     # PyYAML not installed; skip deep validation
     sys.exit(0)
 
-config_path = pathlib.Path('${config}')
-speed_dir = pathlib.Path('${SPEED_DIR}')
+config_path = pathlib.Path(r'''${config_for_python}''')
+speed_dir = pathlib.Path(r'''${speed_dir_for_python}''')
 platform_ext = '${ext}'
 
 try:
@@ -430,6 +438,7 @@ except Exception as e:
     sys.exit(1)
 
 errors = []
+warnings = []
 
 # Check ruleDirs
 for rd in config.get('ruleDirs', []):
@@ -450,10 +459,13 @@ for lang, spec in config.get('customLanguages', {}).items():
             if full.is_file():
                 found = True
             else:
-                errors.append(f'{lang}: grammar library missing: {lib_path}')
+                warnings.append(f'{lang}: grammar library missing: {lib_path}')
             break
-    if not found and not errors:
-        errors.append(f'{lang}: no grammar library for .{platform_ext} platform')
+    if not found and not errors and not any(lang in warning for warning in warnings):
+        warnings.append(f'{lang}: no grammar library for .{platform_ext} platform')
+
+if warnings:
+    print('WARNING: ' + '; '.join(warnings), file=sys.stderr)
 
 if errors:
     print('; '.join(errors))
@@ -489,14 +501,22 @@ _check_ast_grep_rules() {
         local lang
         lang=$(basename "$lang_dir")
 
+        # Custom languages require platform-native grammar libraries. They are
+        # optional, so do not fail startup when a library is not installed.
+        case "$lang" in
+            graphql|prisma|protobuf|zig)
+                [[ -f "${SPEED_DIR}/lib/context/data/grammars/${lang}.$(_platform_ext)" ]] || continue
+                ;;
+        esac
+
         local rule_file
         local config="${SPEED_DIR}/sgconfig.yml"
         for rule_file in "$lang_dir"*.yml; do
             [[ -f "$rule_file" ]] || continue
             local probe_output
-            # --config needed so ast-grep can resolve custom language grammars
-            # (prisma, graphql, protobuf, zig) regardless of working directory
-            if [[ -f "$config" ]]; then
+            # Custom grammar libraries are optional. Only load sgconfig for a
+            # custom language when its platform-specific library is available.
+            if [[ -f "$config" ]] && [[ -f "${SPEED_DIR}/lib/context/data/grammars/${lang}.$(_platform_ext)" ]]; then
                 probe_output=$("$sg" scan --config "$config" --rule "$rule_file" --json /dev/null 2>&1)
             else
                 probe_output=$("$sg" scan --rule "$rule_file" --json /dev/null 2>&1)

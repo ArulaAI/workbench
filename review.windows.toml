@@ -1,0 +1,22 @@
+# Windows-compatible SPEED review route
+# This keeps the review command on the Bash-based CLI path while avoiding PowerShell
+# execution-policy issues on Windows.
+
+[review]
+feature = "payments"
+task_id = 1
+command = "bash"
+working_directory = "."
+use_git_bash = true
+shell = "git-bash"
+compatibility = "windows"
+
+[review.command_args]
+# Use the native Bash CLI from Git for Windows.
+# This matches the same runtime the SPEED script expects.
+args = ["-lc", "./speed review -f payments --task 1"]
+
+[review.windows]
+script_runner = "C:/Program Files/Git/bin/bash.exe"
+execution_policy = "bypass-process"
+notes = "Run through Git Bash rather than PowerShell because the SPEED CLI is a bash script."
