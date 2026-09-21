@@ -311,10 +311,34 @@ download_speed() {
     done
 
     chmod +x "${STAGING_DIR}/repo/speed"
+    [[ -f "${STAGING_DIR}/repo/workbench" ]] && chmod +x "${STAGING_DIR}/repo/workbench"
 
     INSTALLED_VERSION_HASH="$version_hash"
 
     info "Downloaded SPEED ${version_hash}"
+}
+
+# ── Custom Language Grammars ───────────────────────────────────
+# ast-grep's custom languages (prisma, graphql, protobuf, zig) need
+# platform-native grammar libraries that scripts/build-grammars.sh
+# compiles from source — pip/uv never installs these, since they aren't
+# Python packages. Without them, sgconfig.yml validation (lib/deps.sh)
+# fails even though every other component installed cleanly.
+
+build_custom_grammars() {
+    if ! command_exists tree-sitter; then
+        error "tree-sitter CLI not found (needed to build ast-grep's custom-language grammars). Install with:
+  npm install -g tree-sitter-cli
+  cargo install tree-sitter-cli
+Then re-run this installer."
+    fi
+
+    info "Building custom language grammars (prisma, graphql, protobuf, zig)..."
+    if ! bash "${STAGING_DIR}/repo/scripts/build-grammars.sh" 2>/dev/null; then
+        error "Grammar build failed. Run manually for details: ${STAGING_DIR}/repo/scripts/build-grammars.sh"
+    fi
+
+    info "Custom grammars built"
 }
 
 # ── Python Environment ────────────────────────────────────────
@@ -368,6 +392,14 @@ import tree_sitter_typescript
         failed+=("tree-sitter-grammars")
     fi
 
+    # Verify the custom-language grammar libraries built (prisma, graphql,
+    # protobuf, zig) — these are what sgconfig.yml validation actually checks.
+    local grammar_ext="so"
+    [[ "$PLATFORM_OS" == "macos" ]] && grammar_ext="dylib"
+    for lang in prisma graphql protobuf zig; do
+        [[ -f "${STAGING_DIR}/repo/lib/context/data/grammars/${lang}.${grammar_ext}" ]] || failed+=("grammar-${lang}")
+    done
+
     # Verify ast-grep CLI is available via pip install
     if ! "$venv_python" -m ast_grep_cli --help &>/dev/null; then
         # ast-grep-cli may install as a binary in the venv
@@ -411,6 +443,7 @@ finalize_install() {
     # Atomic symlinks
     ln -sfn "$version_dir" "${SPEED_HOME}/current"
     ln -sf "../current/speed" "${SPEED_HOME}/bin/speed"
+    [[ -f "${version_dir}/workbench" ]] && ln -sf "../current/workbench" "${SPEED_HOME}/bin/workbench"
 
     INSTALLED_VERSION_DIR="$version_dir"
 
@@ -536,6 +569,7 @@ main() {
     check_existing_install
     ensure_uv
     download_speed
+    build_custom_grammars
     setup_python_env
     verify_installation
     finalize_install

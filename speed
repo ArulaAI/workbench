@@ -14,6 +14,7 @@
 #   status                  Show SPEED state and progress
 #   coherence [--resolve]    Check cross-task consistency before integration
 #   integrate               Merge completed branches into main
+#   eval                    Run test spec scenarios and decide acceptance
 #   review [--task-id ID]   Run code review on completed tasks
 #   defect <spec-file>      Run full defect pipeline (triage → fix → review)
 #   learn [options]         Extract observations and discover conventions
@@ -107,6 +108,7 @@ speed_help() {
     echo -e "    ${COLOR_DIM}6.${RESET} ${COLOR_STEP}review${RESET}     → ${COLOR_DIM}Code review + Guardian gate on completed tasks${RESET}"
     echo -e "    ${COLOR_DIM}7.${RESET} ${COLOR_STEP}coherence${RESET}  → ${COLOR_DIM}Cross-task consistency check${RESET}"
     echo -e "    ${COLOR_DIM}8.${RESET} ${COLOR_STEP}integrate${RESET}  → ${COLOR_DIM}Merge + regression + contract + Guardian gate${RESET}"
+    echo -e "    ${COLOR_DIM}9.${RESET} ${COLOR_STEP}eval${RESET}       → ${COLOR_DIM}Run test spec scenarios and decide feature acceptance${RESET}"
     echo ""
     echo -e "${BOLD}COMMANDS${RESET}"
     echo -e "    ${COLOR_STEP}init${RESET}                        Initialize project for SPEED development"
@@ -119,6 +121,7 @@ speed_help() {
     echo -e "    ${COLOR_STEP}defect${RESET} <spec-file>            Run the full defect pipeline (triage → fix → review)"
     echo -e "    ${COLOR_STEP}coherence${RESET} [--resolve]         Cross-task consistency check pre-integration"
     echo -e "    ${COLOR_STEP}integrate${RESET}                    Merge completed branches + regression + contract"
+    echo -e "    ${COLOR_STEP}eval${RESET} [options]                Evaluate the integrated feature against its test spec"
     echo -e "    ${COLOR_STEP}review${RESET} [--task-id ID]        Run code review on completed tasks"
     echo -e "    ${COLOR_STEP}fix-nits${RESET} [--task-id ID]      Create a task to fix reviewer nits"
     echo -e "    ${COLOR_STEP}retry${RESET}  --task-id ID --context Retry a failed task with human guidance"
@@ -129,6 +132,7 @@ speed_help() {
     echo -e "    ${COLOR_STEP}learn${RESET}  [options]              Extract observations and discover conventions"
     echo -e "    ${COLOR_STEP}security${RESET} [--create-defects]   Run security audit on completed task diffs"
     echo -e "    ${COLOR_STEP}new${RESET} <type> <name>           Scaffold a new spec from template"
+    echo -e "        types: prd, rfc, design, defect, test-spec"
     echo -e "    ${COLOR_STEP}gates${RESET}   --task ID             Run quality gates for a task (used by Developer Agent mid-task)"
     echo -e "    ${COLOR_STEP}add-language${RESET} <lang>          Generate ast-grep rules for a new language"
     echo -e "    ${COLOR_STEP}test-rules${RESET}  [lang|--all]     Verify ast-grep rules against fixture files"
@@ -168,6 +172,11 @@ speed_help() {
     echo -e "${BOLD}INTEGRATE OPTIONS${RESET}"
     echo -e "    --skip-tests                Skip post-integration regression tests"
     echo -e "    --defect NAME               Integrate a defect instead of feature tasks"
+    echo ""
+    echo -e "${BOLD}EVAL OPTIONS${RESET}"
+    echo -e "    --task-id ID, --task ID     Evaluate only one task's individually mapped tests and criteria"
+    echo -e "    --test-spec PATH            Test spec to evaluate (default: specs/tests/<name>.md beside the RFC)"
+    echo -e "    --test-plan PATH            Override the spec's Execution and Evidence mapping table with a JSON mapping"
     echo ""
     echo -e "${BOLD}RETRY OPTIONS${RESET}"
     echo -e "    --task-id ID                Target a specific failed task (required)"
@@ -227,9 +236,11 @@ speed_help() {
     echo "    speed review --feature auth"
     echo "    speed coherence"
     echo "    speed integrate"
+    echo "    speed eval --feature auth"
     echo "    speed clean feature auth"
     echo "    speed new prd my-feature"
     echo "    speed new defect invite-failure"
+    echo "    speed new test-spec my-feature"
     echo ""
 }
 
@@ -257,7 +268,12 @@ main() {
     local args=()
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --feature|-f)  GLOBAL_FEATURE="$2"; shift 2 ;;
+            --feature|-f)
+                if [[ $# -lt 2 || -z "$2" || "$2" == --* ]]; then
+                    log_error "$1 requires a feature name"
+                    return "$EXIT_CONFIG_ERROR"
+                fi
+                GLOBAL_FEATURE="$2"; shift 2 ;;
             --quiet)       VERBOSITY=0; shift ;;
             --verbose)     VERBOSITY=2; shift ;;
             --debug)       VERBOSITY=3; shift ;;
@@ -283,6 +299,7 @@ main() {
         defect)    cmd_defect "$@" ;;
         coherence) cmd_coherence "$@" ;;
         integrate) cmd_integrate "$@" ;;
+        eval)      cmd_eval "$@" ;;
         review)    cmd_review "$@" ;;
         fix-nits)  cmd_fix_nits "$@" ;;
         retry)     cmd_retry "$@" ;;
