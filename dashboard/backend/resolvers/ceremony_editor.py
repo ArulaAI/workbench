@@ -26,7 +26,6 @@ from ..ceremony_validator import (
     save_validation_state,
     validate_spec,
 )
-from ..criteria_display import criteria_text
 from ..paths import get_paths
 from ..subscriptions import DashboardEvent, EventType, SubscriptionManager
 from .ceremony_authz import CeremonyAbility
@@ -292,7 +291,7 @@ def get_decomposition_result(
         ArchitectTask(
             id=t["id"], title=t["title"],
             description=t.get("description", ""),
-            acceptance_criteria=criteria_text(t.get("acceptance_criteria", "")) or "",
+            acceptance_criteria=t.get("acceptance_criteria", ""),
             depends_on=t.get("depends_on", []),
             agent_model=t.get("agent_model", "sonnet"),
             files_touched=t.get("files_touched", []),
@@ -517,7 +516,7 @@ def decompose_draft_sync(
             id=t["id"],
             title=t["title"],
             description=t.get("description", ""),
-            acceptance_criteria=criteria_text(t.get("acceptance_criteria", "")) or "",
+            acceptance_criteria=t.get("acceptance_criteria", ""),
             depends_on=t.get("depends_on", []),
             agent_model=t.get("agent_model", "sonnet"),
             files_touched=t.get("files_touched", []),

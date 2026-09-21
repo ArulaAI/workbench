@@ -38,15 +38,6 @@ Every task requires: `id`, `title`, `description`, `acceptance_criteria`, `depen
 
 Prefer `test` and `schema_check` — they enable automated verification. A plan where every criterion is `manual` provides no automated verification.
 
-When a test scenario catalog is provided, preserve its IDs in each relevant
-criterion, for example `[AC-03] Invalid input returns 400`, with `verify_by: test`.
-Task criteria establish scenario ownership; the earlier test spec has no task IDs.
-Cover every required automated catalog scenario in the plan and list its intended
-test files in `files_touched`. Keep missing tests as required work. Never invent
-new scenario IDs to disguise a missing requirement. Emit `acceptance_criteria`
-as an array of objects with `criterion` and `verify_by`, never bullet text or a
-JSON-encoded string. Keep scenario IDs within the existing `criterion` field.
-
 **`spec_references`** — array of `{spec, section, requirement}` pointers. Every task must reference at least one spec requirement. These enable exact spec section injection into developer context.
 
 **`rationale`** — why this task exists with these boundaries. Not what it does (that's `description`), but why it's structured this way. Good rationale answers: "Why is this separate from task N?" or "Why does this depend on task M?"

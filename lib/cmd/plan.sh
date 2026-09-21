@@ -101,10 +101,6 @@ _run_architect_phase() {
     local phase_label="$1"
     local message="$2"
 
-    if [[ -n "${test_spec_content:-}" ]]; then
-        message+="\n\n## Test Scenario Catalog (created before task planning)\n\n${test_spec_content}\n\nKeep these scenario IDs stable. Assign each required automated scenario to task acceptance criteria using [SCENARIO-ID] and verify_by: test. List the intended test files in files_touched. Do not add task IDs or execution mappings to the test spec."
-    fi
-
     # Inject model tier names so the architect uses the active provider's vocabulary
     message+="\n\n## Model Tiers\n\nSupport model: ${MODEL_SUPPORT}\nPlanning model: ${MODEL_PLANNING}\nUse \`${MODEL_SUPPORT}\` as the default \`agent_model\`. Use \`${MODEL_PLANNING}\` only for architecturally complex tasks."
 
@@ -167,9 +163,7 @@ _run_coverage_check() {
     local task_summary
     task_summary=$(echo "$parsed_architect" | jq -c '[.tasks[] | {
         id, title, description, spec_references,
-        acceptance_criteria: (if (.acceptance_criteria | type) == "array"
-                              then [.acceptance_criteria[] | if type == "object" then .criterion else . end]
-                              else .acceptance_criteria end)
+        acceptance_criteria: [.acceptance_criteria[]? | .criterion]
     }]')
 
     local msg=""
@@ -177,7 +171,6 @@ _run_coverage_check() {
     msg+="## Tech Spec\n\n${tech_spec_content}"
     [[ -n "$design_spec_content" ]] && msg+="\n\n## Design Spec\n\n${design_spec_content}"
     msg+="\n\n## Planned Tasks\n\n\`\`\`json\n${task_summary}\n\`\`\`"
-    [[ -n "${test_spec_content:-}" ]] && msg+="\n\n## Test Scenario Catalog\n\n${test_spec_content}"
 
     local output rc=0
     output=$(provider_run_json \
@@ -231,7 +224,7 @@ _repair_coverage_gaps() {
     start_id=$((max_id + 1))
 
     local task_summary
-    task_summary=$(echo "$parsed_architect" | jq -c '[.tasks[] | {id, title, files_touched, depends_on, acceptance_criteria}]')
+    task_summary=$(echo "$parsed_architect" | jq -c '[.tasks[] | {id, title, files_touched, depends_on}]')
 
     local gap_text
     gap_text=$(echo "$_cov_gaps" | jq -r '.[] | "- [\(.severity)] \(.spec): \(.section) — \(.requirement)\n  Explanation: \(.explanation)"')
@@ -242,7 +235,6 @@ _repair_coverage_gaps() {
     msg+="## Tech Spec\n\n${tech_spec_content}\n\n"
     [[ -n "$design_spec_content" ]] && msg+="## Design Spec\n\n${design_spec_content}\n\n"
     msg+="## Coverage Gaps\n\n${gap_text}\n\n"
-    [[ -n "${test_spec_content:-}" ]] && msg+="## Test Scenario Catalog\n\n${test_spec_content}\n\nPreserve [SCENARIO-ID] in task test criteria; do not rewrite the test spec.\n\n"
     msg+="## Instructions\n\nAdd task(s) for the gaps above. "
     msg+="IDs start at ${start_id}. Do not recreate existing tasks. "
     msg+="Set depends_on where needed. Only output NEW tasks.\n"
@@ -437,23 +429,9 @@ cmd_plan() {
         design_spec_content=$(cat "$design_spec_file")
     fi
 
-    # Test scenarios exist before task IDs. Make them a planning input, not
-    # a document the planner must rewrite after deciding ownership.
-    local test_spec_content=""
-    local test_spec_file="${PROJECT_ROOT}/specs/tests/$(basename "$spec_file")"
-    if [[ -f "${FEATURE_DIR}/test_spec_path" ]]; then
-        test_spec_file=$(cat "${FEATURE_DIR}/test_spec_path")
-        [[ "$test_spec_file" == /* ]] || test_spec_file="${PROJECT_ROOT}/${test_spec_file}"
-    fi
-    if [[ -f "$test_spec_file" ]]; then
-        "$(_context_python)" "${LIB_DIR}/eval_runtime.py" guard --root "$PROJECT_ROOT" --path "$test_spec_file" || return "$EXIT_CONFIG_ERROR"
-        test_spec_content=$(cat "$test_spec_file")
-        log_step "Test spec:    ${COLOR_STEP}${test_spec_file}${RESET}"
-    fi
-
     # ── Spec hash for stage caching ───────────────────────────────
     local spec_hash
-    spec_hash=$(printf '%s' "${tech_spec_content}${product_spec_content}${design_spec_content}${test_spec_content}" | shasum -a 256 | cut -d' ' -f1)
+    spec_hash=$(printf '%s' "${tech_spec_content}${product_spec_content}${design_spec_content}" | shasum -a 256 | cut -d' ' -f1)
 
     # ── Pre-Plan Guardian Gate ─────────────────────────────────────
     # Check: does this spec belong in the product?
@@ -649,15 +627,11 @@ cmd_plan() {
     # ── Architect agent ───────────────────────────────────────────
     local parsed_architect
 
-    # Schemas affect the task shape as well as phase sizing. Do not reuse an
-    # old string-criteria plan after switching to structured criterion arrays.
+    # Include phase count in cache key so re-runs with different sizing don't serve stale results
     local phase_count=1
     [[ "$audit_sizing_rec" == "split" ]] && phase_count=2
     local architect_cache_hash
-    architect_cache_hash=$({
-        printf '%s:%s' "$spec_hash" "$phase_count"
-        cat "${TEMPLATES_DIR}/architect-output.json" "${TEMPLATES_DIR}/architect-enrich-output.json"
-    } | shasum -a 256 | cut -d' ' -f1)
+    architect_cache_hash=$(printf '%s:%s' "$spec_hash" "$phase_count" | shasum -a 256 | cut -d' ' -f1)
 
     if [[ "$force_plan" != "true" ]] && _plan_cache_valid "architect" "$architect_cache_hash"; then
         parsed_architect=$(_plan_cache_read "architect")
@@ -809,15 +783,13 @@ cmd_plan() {
             p1_len=$(echo "$phase1_tasks" | jq 'length')
             local p1_i=0
             while [[ $p1_i -lt $p1_len ]]; do
-                local p1_id p1_title p1_files p1_deps p1_desc p1_criteria
+                local p1_id p1_title p1_files p1_deps p1_desc
                 p1_id=$(echo "$phase1_tasks" | jq -r ".[$p1_i].id")
                 p1_title=$(echo "$phase1_tasks" | jq -r ".[$p1_i].title")
                 p1_deps=$(echo "$phase1_tasks" | jq -r ".[$p1_i].depends_on | join(\",\")")
                 p1_files=$(echo "$phase1_tasks" | jq -r ".[$p1_i].files_touched | join(\", \")")
                 p1_desc=$(echo "$phase1_tasks" | jq -r ".[$p1_i].description | split(\"\n\")[0]" | cut -c1-120)
-                p1_criteria=$(echo "$phase1_tasks" | jq -c ".[$p1_i].acceptance_criteria")
                 phase1_summary+="- Task ${p1_id}: ${p1_title} — depends on: [${p1_deps}] — files: ${p1_files}\n  ${p1_desc}\n"
-                phase1_summary+="  Acceptance criteria: ${p1_criteria}\n"
                 ((p1_i++)) || true
             done
 

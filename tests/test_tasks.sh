@@ -128,22 +128,6 @@ test_create_basic() {
         { echo "    ASSERT: created_at '${created}' is not a valid timestamp" >&2; return 1; }
 }
 
-test_create_structured_criteria() {
-    local result criteria
-    criteria='[{"criterion":"[AC-01] Invalid input returns 400","verify_by":"test"},{"criterion":"Copy says \"Try again\"","verify_by":"manual"}]'
-    result=$(task_create "1" "API" "Validate input" "$criteria" '[]')
-    assert_json_field "$(cat "$result")" '.acceptance_criteria | type' 'array'
-    assert_json_field "$(cat "$result")" '.acceptance_criteria[0].verify_by' 'test'
-    assert_json_field "$(cat "$result")" '.acceptance_criteria[1].criterion' 'Copy says "Try again"'
-}
-
-test_create_empty_criteria_array() {
-    local result
-    result=$(task_create "1" "API" "Validate input" '[]' '[]')
-    assert_json_field "$(cat "$result")" '.acceptance_criteria | type' 'array'
-    assert_json_field "$(cat "$result")" '.acceptance_criteria | length' '0'
-}
-
 test_create_with_dependencies() {
     local result
     result=$(task_create "3" "Wire Up API" "Connect frontend" "API works" '["1","2"]')
@@ -871,8 +855,6 @@ echo "────────────────────────�
 
 # task_create
 run_test test_create_basic
-run_test test_create_structured_criteria
-run_test test_create_empty_criteria_array
 run_test test_create_with_dependencies
 run_test test_create_custom_model
 run_test test_create_slug_special_chars

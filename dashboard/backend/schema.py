@@ -9,7 +9,6 @@ from typing import Any, AsyncGenerator, Optional
 
 import strawberry
 
-from .criteria_display import criteria_text
 from .resolvers import token_burn, mission_control, topology, budget
 from .resolvers import landing as landing_resolver
 from .resolvers import define
@@ -682,7 +681,7 @@ class Query:
                 agent_model=t.get("agent_model"),
                 depends_on=t.get("depends_on", []),
                 branch=t.get("branch"),
-                acceptance_criteria=criteria_text(t.get("acceptance_criteria")),
+                acceptance_criteria=t.get("acceptance_criteria"),
                 files_touched=t.get("files_touched", []),
                 error=t.get("error"),
                 review_feedback=t.get("review_feedback"),

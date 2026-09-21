@@ -182,7 +182,6 @@ via `SPEED_PROJECT_ROOT`).
 - **[Writing Specs](docs/writing-specs.md)** — How to write specs SPEED executes well
 - **[Troubleshooting](docs/troubleshooting.md)** — Failures, logs, recovery
 - **[Example Project](example/)** — Bookshelf app with pre-written specs
-- **[Diagnose](docs/diagnose/README.md)** — Failure-class signal counting on a task's diff
 
 ### Quick start
 
@@ -272,70 +271,6 @@ SPEED_ASCII=true ./speed/speed status
 ```
 
 Both can be configured permanently in `speed.toml` under `[ui]`.
-
-## Diagnose
-
-`speed diagnose` counts mechanical F1–F8 failure-class signals on a task's diff and
-writes a `risk-surface.yaml` — a routing hint, never a verdict. Full contract:
-[docs/diagnose/README.md](docs/diagnose/README.md).
-
-### Round 0 example
-
-The real, verified example is diagnosing the `round-0` course round of
-[`ArulaAI/payments-validation-fixture`](https://github.com/ArulaAI/payments-validation-fixture)
-against that project's own `main`. Three branches are involved, each owning a distinct
-piece:
-
-| Branch | Repository | Owns |
-|---|---|---|
-| `feat/301` | `ArulaAI/workbench` (this repo) | The Diagnose implementation itself |
-| `feat/301-config` | `ArulaAI/payments-validation-fixture` | `speed.toml` + `.speed/classes.yaml` — the project's own F1–F8 rules |
-| `round-0` | `ArulaAI/payments-validation-fixture` | The task branch being diagnosed |
-
-```bash
-# feat/301 carries the Diagnose implementation — a plain clone leaves you
-# on main, which doesn't have it.
-git clone -b feat/301 https://github.com/ArulaAI/workbench.git
-git clone https://github.com/ArulaAI/payments-validation-fixture.git
-cd payments-validation-fixture
-
-git checkout feat/301-config
-
-# round-0 and main only need to be resolvable refs, not checked out. If you
-# cloned this repo directly with `git clone -b feat/301-config ...` instead
-# of the plain-clone-then-checkout above, main has no local branch either —
-# only origin/main — so create both explicitly:
-git branch round-0 origin/round-0   # if you don't already have a local round-0
-git branch main origin/main         # if you don't already have a local main
-
-# .speed/round-0-task.example.json is the tracked source of truth for this
-# task record — copy it in once per clone.
-mkdir -p .speed/features/payments/tasks
-cp .speed/round-0-task.example.json .speed/features/payments/tasks/1.json
-
-../workbench/speed diagnose -f payments --task 1
-```
-
-No `MAIN_BRANCH` override is needed — `round-0` branched off the fixture's real `main`
-before any SPEED config existed on any branch, so `main` is already the correct baseline.
-This diffs exactly `main...round-0` and writes
-`.speed/features/payments/risk-surface.yaml` with:
-
-```
-F1  1 signal(s)
-F2  2 signal(s)
-F3  1 signal(s)
-F4  1 signal(s)
-F5  0 signal(s)
-F6  0 signal(s)
-F7  1 signal(s)
-F8  1 signal(s)
-```
-
-A frozen copy of the real `main...round-0` diff and a regression test asserting these
-exact counts live in this repo at `tests/fixtures/round-0.diff` and
-`tests/test_diagnose_round0_fixture.py` — run `python3 tests/test_diagnose_round0_fixture.py`
-to verify without needing the fixture repo cloned.
 
 ## Project structure
 
