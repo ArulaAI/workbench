@@ -247,7 +247,7 @@ grounding_check_diff_nonempty() {
     fi
 
     local main_branch
-    main_branch=$(git_main_branch)
+    main_branch=$(git_task_base_branch)
 
     # Primary check: three-dot diff against integration branch.
     local diff
@@ -280,7 +280,7 @@ grounding_check_diff_nonempty() {
 # ── Branch audit: check for prior agent work on a task branch ─────
 # Called during recovery to evaluate interrupted tasks without spawning
 # a new agent. Uses merge-base to detect only the agent's commits,
-# not commits the task branch inherited from git_main_branch().
+# not commits the task branch inherited from git_task_base_branch().
 #
 # Always returns 0. Control flow is via stdout:
 #   "empty" — no agent commits on the branch (or branch missing)
@@ -332,7 +332,7 @@ branch_audit() {
     # Without this, merge-base returns the branch tip, diff is empty,
     # and the run loop spawns a needless agent that redoes finished work.
     local main_branch
-    main_branch=$(git_main_branch)
+    main_branch=$(git_task_base_branch)
     if _git merge-base --is-ancestor "$branch" "$main_branch" 2>/dev/null; then
         echo "pass"
         return 0
@@ -454,7 +454,7 @@ grounding_check_scope() {
     # Get actual files changed on branch (two-dot diff from fork point,
     # same as branch_audit — excludes content inherited via refresh merges)
     local main_branch
-    main_branch=$(git_main_branch)
+    main_branch=$(git_task_base_branch)
     local fork_point
     fork_point=$(_git merge-base "$main_branch" "$branch" 2>/dev/null) || true
     local actual_files
@@ -542,7 +542,7 @@ grounding_check_python_imports() {
 
     # Get Python files changed on this branch
     local py_files
-    py_files=$(_git diff "$(git_main_branch)...${branch}" --name-only 2>/dev/null | grep '\.py$' || true)
+    py_files=$(_git diff "$(git_task_base_branch)...${branch}" --name-only 2>/dev/null | grep '\.py$' || true)
 
     if [[ -z "$py_files" ]]; then
         return 0  # No Python files, nothing to check
@@ -632,14 +632,14 @@ _test_files_covered_by_siblings() {
 
     # Get newly added files
     local new_files
-    new_files=$(_git diff "$(git_main_branch)...${branch}" --diff-filter=A --name-only 2>/dev/null || true)
+    new_files=$(_git diff "$(git_task_base_branch)...${branch}" --diff-filter=A --name-only 2>/dev/null || true)
     if [[ -z "$new_files" ]]; then
         return 0
     fi
 
     # All files in the branch diff
     local diff_files
-    diff_files=$(_git diff "$(git_main_branch)...${branch}" --name-only 2>/dev/null || true)
+    diff_files=$(_git diff "$(git_task_base_branch)...${branch}" --name-only 2>/dev/null || true)
 
     # Collect testable source files that lack convention-matched tests
     local missing_files=()
@@ -880,7 +880,7 @@ grounding_check_test_coverage() {
 
     # Only examine newly added files (not modified/deleted)
     local new_files
-    new_files=$(_git diff "$(git_main_branch)...${branch}" --diff-filter=A --name-only 2>/dev/null || true)
+    new_files=$(_git diff "$(git_task_base_branch)...${branch}" --diff-filter=A --name-only 2>/dev/null || true)
 
     if [[ -z "$new_files" ]]; then
         return 0  # No new files — nothing to check
@@ -915,7 +915,7 @@ grounding_check_test_coverage() {
 
     # All files in the branch diff
     local diff_files
-    diff_files=$(_git diff "$(git_main_branch)...${branch}" --name-only 2>/dev/null || true)
+    diff_files=$(_git diff "$(git_task_base_branch)...${branch}" --name-only 2>/dev/null || true)
 
     # Identify declared test files via _is_test_file (go-enry conventions + speed.toml)
     local declared_test_files=()
@@ -1547,7 +1547,7 @@ grounding_check_secrets() {
 
     # ── Get changed files on the feature branch ──────────
     local changed_files
-    changed_files=$(_git diff "$(git_main_branch)...${branch}" --name-only 2>/dev/null)
+    changed_files=$(_git diff "$(git_task_base_branch)...${branch}" --name-only 2>/dev/null)
 
     if [[ -z "$changed_files" ]]; then
         return 0  # No changed files — nothing to scan

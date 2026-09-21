@@ -47,6 +47,23 @@ git_current_branch() {
     _git rev-parse --abbrev-ref HEAD
 }
 
+# Resolve the branch task branches actually fork from.
+#
+# git_create_worktree() bases every new task branch on whatever is HEAD
+# in the main checkout at creation time (`git worktree add -b <branch>`
+# with no explicit start-point defaults to current HEAD), and that
+# checkout doesn't move again for the rest of the run. That base is not
+# always the repo's main branch — a long-lived integration/course branch
+# that has itself diverged from main is a normal case. Grounding checks
+# must diff task branches against this real fork point, not
+# git_main_branch(): using git_main_branch() there makes every commit
+# by which the base branch itself has diverged from main look like part
+# of the task's own diff, which false-positives as scope/coverage
+# violations on every single task forked from that branch.
+git_task_base_branch() {
+    git_current_branch
+}
+
 # Check if working tree has uncommitted changes (tracked or untracked)
 git_is_dirty() {
     # Check for staged/unstaged changes to tracked files

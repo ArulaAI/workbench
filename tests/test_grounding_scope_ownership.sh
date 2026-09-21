@@ -57,6 +57,7 @@ setup() {
     # Git helpers
     _git() { git -C "$PROJECT_ROOT" "$@"; }
     git_main_branch() { echo "main"; }
+    git_task_base_branch() { echo "main"; }  # tasks fork from main in these fixtures
 
     # Source grounding.sh
     unset _GROUNDING_SH_LOADED 2>/dev/null || true

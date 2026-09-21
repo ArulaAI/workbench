@@ -62,6 +62,7 @@ setup() {
 
     # git_main_branch stub
     git_main_branch() { echo "main"; }
+    git_task_base_branch() { echo "main"; }  # tasks fork from main in these fixtures
 
     # Source grounding.sh (reset source guard if present)
     unset _GROUNDING_SH_LOADED 2>/dev/null || true
