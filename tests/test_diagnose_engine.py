@@ -184,6 +184,25 @@ check(
     f1,
 )
 
+# F1 must fire the same way when the import is added to an existing file
+# being modified (`--- a/<path>`), not only when the file is newly
+# created — the engine reads only '+'/'+++' lines and never inspects
+# 'new file mode'/'--- /dev/null', so this proves that indifference holds
+# for a real modified-file diff shape, not just an unstated one.
+diff_f1_existing_file = (
+    "diff --git a/src/payments/service.ts b/src/payments/service.ts\n"
+    "--- a/src/payments/service.ts\n"
+    "+++ b/src/payments/service.ts\n"
+    "+import { reissueRefund } from './retry';\n"
+)
+result_existing = run_engine(diff_f1_existing_file, declared_files=["src/payments/service.ts"])
+f1_existing = result_existing["F1"]
+check(
+    "F1 fires on a new import added to an existing (modified, not newly created) file",
+    any("import/require" in s["observed"] for s in f1_existing["signals"]),
+    f1_existing,
+)
+
 # ══════════════════════════════════════════════════════════════
 # F2 — manager's rules, verbatim. Both must fire independently, and a
 # line that trips neither must not produce a false signal.
