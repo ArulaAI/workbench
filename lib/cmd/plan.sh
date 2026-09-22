@@ -302,13 +302,183 @@ _repair_coverage_gaps() {
     log_success "Added ${new_count} task(s)"
 }
 
+# ── Defect file resolution (defect-driven mode) ───────────────────
+# Resolves raw --defects arguments to absolute file paths. Rejects
+# directories explicitly (PLAN_CONTRACT.md §4: not a directory glob)
+# and missing files. Echoes one resolved path per line on success.
+_resolve_defect_files() {
+    local df resolved
+    for df in "$@"; do
+        if [[ -d "$df" ]] || [[ -d "${PROJECT_ROOT}/${df}" ]]; then
+            log_error_block \
+                "Defect path is a directory, not a file: ${df}" \
+                "speed plan --defects takes explicit file paths, not a directory glob" \
+                "List each defect file individually, e.g. --defects specs/defects/1.md specs/defects/2.md"
+            return 1
+        fi
+        if [[ -f "$df" ]]; then
+            resolved="$df"
+        elif [[ -f "${PROJECT_ROOT}/${df}" ]]; then
+            resolved="${PROJECT_ROOT}/${df}"
+        else
+            log_error_block \
+                "Defect file not found: ${df}" \
+                "speed plan --defects requires each path to exist" \
+                "Create the defect file or check the path"
+            return 1
+        fi
+        echo "$resolved"
+    done
+}
+
+# Given a task's spec_references JSON array, echo the index into
+# defect_files[] of the defect it traces back to (matched by absolute
+# path, PROJECT_ROOT-relative path, or basename). Returns 1 if no match.
+# Reads (caller scope): defect_files[]
+_defect_index_for_spec_refs() {
+    local spec_refs="$1"
+    local _di
+    for _di in "${!defect_files[@]}"; do
+        local _d_abs="${defect_files[$_di]}"
+        local _d_rel="${_d_abs#${PROJECT_ROOT}/}"
+        local _d_base
+        _d_base=$(basename "$_d_abs")
+        local _match
+        _match=$(echo "$spec_refs" | jq \
+            --arg abs "$_d_abs" --arg rel "$_d_rel" --arg base "$_d_base" \
+            'any(.[]?.spec; . == $abs or . == $rel or . == $base)')
+        if [[ "$_match" == "true" ]]; then
+            echo "$_di"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Attach Failure Class / Evidence / source_defect to a task file, carried
+# unchanged from the defect it traces back to via spec_references
+# (PLAN_CONTRACT.md §7) — no-op if spec_refs doesn't match any defect.
+# Reads (caller scope): defect_files[], defect_failure_class[], defect_evidence[]
+_attach_defect_metadata() {
+    local id="$1" spec_refs="$2"
+    [[ "$spec_refs" == "[]" ]] && return 0
+    local _di
+    if _di=$(_defect_index_for_spec_refs "$spec_refs"); then
+        local _d_rel="${defect_files[$_di]#${PROJECT_ROOT}/}"
+        task_update "$id" "source_defect" "$_d_rel"
+        local _fc="${defect_failure_class[$_di]:-}"
+        local _ev="${defect_evidence[$_di]:-}"
+        [[ -n "$_fc" ]] && task_update "$id" "failure_class" "$_fc"
+        [[ -n "$_ev" ]] && task_update "$id" "evidence" "$_ev"
+    fi
+    # Always return 0: the last statement above is a bare `[[ ]] && ...`
+    # that is 1 whenever evidence is undeclared (the common case) — under
+    # `set -e` that would otherwise silently kill the whole plan run.
+    return 0
+}
+
+# Read each defect file's content and deterministically extract its
+# Failure Class / Evidence lines (grep, not model transcription, per
+# PLAN_CONTRACT.md §7). Most defects declare neither — that's the
+# expected common case (PLAN_CONTRACT.md §14), not an error condition.
+# Reads (caller scope): defect_files[]
+# Sets (caller scope): defect_contents[], defect_failure_class[], defect_evidence[]
+_extract_defect_metadata() {
+    defect_contents=()
+    defect_failure_class=()
+    defect_evidence=()
+    local df_read
+    for df_read in "${defect_files[@]}"; do
+        local dc fc ev
+        dc=$(cat "$df_read")
+        defect_contents+=("$dc")
+        # `|| true`: grep exits 1 on no match (the common case), and under
+        # `set -eo pipefail` an unguarded no-match here would silently
+        # kill the whole plan run.
+        fc=$(grep -iE '^Failure Class:' "$df_read" | head -1 | sed -E 's/^[Ff]ailure [Cc]lass:[[:space:]]*//' | tr -d '[:space:]\r') || true
+        ev=$(grep -iE '^Evidence:' "$df_read" | head -1 | sed -E 's/^[Ee]vidence:[[:space:]]*//' | sed -E 's/[[:space:]]+$//') || true
+        defect_failure_class+=("$fc")
+        defect_evidence+=("$ev")
+    done
+}
+
+# ── F8 deterministic gate (PLAN_CONTRACT.md §8) ───────────────────
+# For every input defect tagged Failure Class: F8, at least one task
+# must trace back to it via spec_references and be an escalation task
+# (title starting with "Escalate:"). Any task tracing back to an F8
+# defect that is NOT an escalation task fails the gate — an F8 finding
+# must never be converted into an invented implementation requirement.
+# No bypass: F8 is human-reserved by design.
+#
+# Reads (caller scope): $tasks_json, defect_files[], defect_failure_class[]
+# Sets: _f8_status ("pass"|"fail"), _f8_errors[], _f8_warnings[], _f8_checked_count
+# Pure/deterministic — safe to call inside $().
+_run_f8_gate() {
+    _f8_status="pass"
+    _f8_errors=()
+    _f8_warnings=()
+    _f8_checked_count=0
+
+    local idx
+    for idx in "${!defect_files[@]}"; do
+        local fc="${defect_failure_class[$idx]:-}"
+        local fc_upper
+        fc_upper=$(echo "$fc" | tr '[:lower:]' '[:upper:]')
+        [[ "$fc_upper" == "F8" ]] || continue
+        ((_f8_checked_count++)) || true
+
+        local defect_abs="${defect_files[$idx]}"
+        local defect_rel="${defect_abs#${PROJECT_ROOT}/}"
+        local defect_base
+        defect_base=$(basename "$defect_abs")
+
+        local matches match_count
+        matches=$(echo "$tasks_json" | jq -c \
+            --arg abs "$defect_abs" --arg rel "$defect_rel" --arg base "$defect_base" \
+            '[.[] | select(([.spec_references[]?.spec]) | any(. == $abs or . == $rel or . == $base))]')
+        match_count=$(echo "$matches" | jq 'length')
+
+        if [[ "$match_count" -eq 0 ]]; then
+            _f8_status="fail"
+            _f8_errors+=("F8 defect ${defect_rel}: no task traces back to it via spec_references (an escalation task is required)")
+            continue
+        fi
+
+        local non_escalation non_escalation_count
+        non_escalation=$(echo "$matches" | jq -c '[.[] | select((.title // "") | startswith("Escalate:") | not)]')
+        non_escalation_count=$(echo "$non_escalation" | jq 'length')
+
+        if [[ "$non_escalation_count" -gt 0 ]]; then
+            _f8_status="fail"
+            while IFS=$'\t' read -r bad_id bad_title; do
+                [[ -z "$bad_id" ]] && continue
+                _f8_errors+=("F8 defect ${defect_rel}: task ${bad_id} (\"${bad_title}\") is an implementation task, not an escalation task — F8 findings must never produce an invented implementation requirement")
+            done < <(echo "$non_escalation" | jq -r '.[] | [.id, .title] | @tsv')
+        fi
+
+        local escalation_with_files ewf_count
+        escalation_with_files=$(echo "$matches" | jq -c '[.[] | select(((.title // "") | startswith("Escalate:")) and ((.files_touched // []) | length > 0))]')
+        ewf_count=$(echo "$escalation_with_files" | jq 'length')
+        if [[ "$ewf_count" -gt 0 ]]; then
+            while IFS=$'\t' read -r warn_id warn_title; do
+                [[ -z "$warn_id" ]] && continue
+                _f8_warnings+=("F8 defect ${defect_rel}: escalation task ${warn_id} (\"${warn_title}\") has non-empty files_touched — expected empty for a pure escalation task")
+            done < <(echo "$escalation_with_files" | jq -r '.[] | [.id, .title] | @tsv')
+        fi
+    done
+}
+
 cmd_plan() {
-    local spec_file="${1:-}"
-    shift || true
+    local spec_file=""
+    if [[ $# -gt 0 && "$1" != --* ]]; then
+        spec_file="$1"
+        shift
+    fi
     local specs_dir=""
     local force_plan=false
     local skip_audit=false
     local single_pass=false
+    local -a defect_files=()
 
     # Parse options
     while [[ $# -gt 0 ]]; do
@@ -317,16 +487,45 @@ cmd_plan() {
             --force) force_plan=true; shift ;;
             --skip-audit) skip_audit=true; shift ;;
             --single-pass) single_pass=true; shift ;;
+            --defects)
+                shift
+                while [[ $# -gt 0 && "$1" != --* ]]; do
+                    defect_files+=("$1")
+                    shift
+                done
+                ;;
             *) log_error "Unknown option: $1"; exit 1 ;;
         esac
     done
 
-    if [[ -z "$spec_file" ]]; then
+    # Defect-driven mode: --defects supplies one or more defect Markdown
+    # files instead of a tech-spec positional arg (PLAN_CONTRACT.md §3).
+    local defects_mode=false
+    [[ ${#defect_files[@]} -gt 0 ]] && defects_mode=true
+
+    if [[ "$defects_mode" == "true" ]]; then
+        skip_audit=true  # a defect batch is small; audit/phasing sizing doesn't apply
+        if [[ -z "${GLOBAL_FEATURE:-}" ]]; then
+            log_error "Usage: speed plan --defects <file> [<file> ...] --feature <name>"
+            log_error "--feature is required in defect-driven mode (no spec file to derive it from)"
+            exit "$EXIT_CONFIG_ERROR"
+        fi
+        local _resolved_output
+        _resolved_output=$(_resolve_defect_files "${defect_files[@]}") || exit "$EXIT_CONFIG_ERROR"
+        local -a resolved_defect_files=()
+        while IFS= read -r _resolved_line; do
+            [[ -n "$_resolved_line" ]] && resolved_defect_files+=("$_resolved_line")
+        done <<< "$_resolved_output"
+        defect_files=("${resolved_defect_files[@]}")
+    fi
+
+    if [[ -z "$spec_file" ]] && [[ "$defects_mode" != "true" ]]; then
         log_error "Usage: speed plan <tech-spec-file> [--specs-dir DIR]"
+        echo "       speed plan --defects <file> [<file> ...] --feature <name>"
         exit 1
     fi
 
-    if [[ ! -f "$spec_file" ]]; then
+    if [[ "$defects_mode" != "true" ]] && [[ ! -f "$spec_file" ]]; then
         # Try relative to PROJECT_ROOT
         if [[ -f "${PROJECT_ROOT}/${spec_file}" ]]; then
             spec_file="${PROJECT_ROOT}/${spec_file}"
@@ -375,8 +574,9 @@ cmd_plan() {
     feature_set_active "$feature_name"
     log_info "Feature: ${COLOR_STEP}${feature_name}${RESET}"
 
-    # Save spec path for verify and review commands
-    _save_spec_path "$spec_file"
+    # Save spec path for verify and review commands (not applicable — no
+    # single spec file — in defect-driven mode)
+    [[ "$defects_mode" != "true" ]] && _save_spec_path "$spec_file"
 
     # Ratification gate: in MP mode, spec must be ratified before planning
     if [[ "${MP_ENABLED:-}" == "true" ]]; then
@@ -403,40 +603,55 @@ cmd_plan() {
     fi
 
     log_header "Planning Task DAG"
-    log_step "Tech spec:    ${COLOR_STEP}${spec_file}${RESET}"
-    if [[ -n "$product_spec_file" ]]; then
-        log_step "Product spec: ${COLOR_STEP}${product_spec_file}${RESET}"
+    if [[ "$defects_mode" == "true" ]]; then
+        log_step "Defects:      ${COLOR_STEP}${#defect_files[@]} file(s)${RESET}"
+        local df_log
+        for df_log in "${defect_files[@]}"; do
+            log_step "  - ${df_log#${PROJECT_ROOT}/}"
+        done
     else
-        log_warn "No product spec found (expected: ${derived_product})"
-    fi
-    if [[ -n "$design_spec_file" ]]; then
-        log_step "Design spec:  ${COLOR_STEP}${design_spec_file}${RESET}"
-    else
-        log_warn "No design spec found (expected: ${derived_design})"
+        log_step "Tech spec:    ${COLOR_STEP}${spec_file}${RESET}"
+        if [[ -n "$product_spec_file" ]]; then
+            log_step "Product spec: ${COLOR_STEP}${product_spec_file}${RESET}"
+        else
+            log_warn "No product spec found (expected: ${derived_product})"
+        fi
+        if [[ -n "$design_spec_file" ]]; then
+            log_step "Design spec:  ${COLOR_STEP}${design_spec_file}${RESET}"
+        else
+            log_warn "No design spec found (expected: ${derived_design})"
+        fi
     fi
 
-    # Read all specs
-    local tech_spec_content
-    tech_spec_content=$(cat "$spec_file")
-
+    # Read all specs (spec mode only — empty in defect-driven mode)
+    local tech_spec_content=""
     local product_spec_content=""
-    if [[ -n "$product_spec_file" ]]; then
-        product_spec_content=$(cat "$product_spec_file")
+    local design_spec_content=""
+    if [[ "$defects_mode" != "true" ]]; then
+        tech_spec_content=$(cat "$spec_file")
+        [[ -n "$product_spec_file" ]] && product_spec_content=$(cat "$product_spec_file")
+        [[ -n "$design_spec_file" ]] && design_spec_content=$(cat "$design_spec_file")
     fi
 
-    local design_spec_content=""
-    if [[ -n "$design_spec_file" ]]; then
-        design_spec_content=$(cat "$design_spec_file")
-    fi
+    # Read defect files + extract Failure Class / Evidence (defect-driven
+    # mode only) — grep, not model transcription, per PLAN_CONTRACT.md §7.
+    local -a defect_contents=()
+    local -a defect_failure_class=()
+    local -a defect_evidence=()
+    [[ "$defects_mode" == "true" ]] && _extract_defect_metadata
 
     # ── Spec hash for stage caching ───────────────────────────────
     local spec_hash
-    spec_hash=$(printf '%s' "${tech_spec_content}${product_spec_content}${design_spec_content}" | shasum -a 256 | cut -d' ' -f1)
+    spec_hash=$(printf '%s' "${tech_spec_content}${product_spec_content}${design_spec_content}${defect_contents[*]:-}" | shasum -a 256 | cut -d' ' -f1)
 
     # ── Pre-Plan Guardian Gate ─────────────────────────────────────
-    # Check: does this spec belong in the product?
+    # Check: does this spec belong in the product? Not applicable in
+    # defect-driven mode — Guardian validates a new spec against product
+    # vision; a defect fix/escalation isn't a new-spec proposal.
     local guardian_rc=0
-    if [[ "$force_plan" != "true" ]] && _plan_cache_valid "guardian" "$spec_hash"; then
+    if [[ "$defects_mode" == "true" ]]; then
+        :
+    elif [[ "$force_plan" != "true" ]] && _plan_cache_valid "guardian" "$spec_hash"; then
         guardian_rc=$(_plan_cache_read "guardian")
         log_step "Guardian: ${COLOR_DIM}cached (specs unchanged)${RESET}"
     else
@@ -475,7 +690,8 @@ cmd_plan() {
     local -a plan_spec_contents=()
     local -a plan_spec_labels=()
 
-    _register_plan_spec "$spec_file" "$tech_spec_content" "Tech Spec (backend implementation)"
+    [[ "$defects_mode" != "true" ]] && \
+        _register_plan_spec "$spec_file" "$tech_spec_content" "Tech Spec (backend implementation)"
 
     [[ -n "$product_spec_file" ]] && \
         _register_plan_spec "$product_spec_file" "$product_spec_content" "Product Spec (what to build)"
@@ -563,6 +779,14 @@ cmd_plan() {
         product_escaped=$(jq -Rs '.' < "$product_spec_file")
         spec_files_for_l1=$(echo "$spec_files_for_l1" | jq --arg path "$product_spec_file" --argjson content "$product_escaped" '. + {($path): $content}')
     fi
+    if [[ "$defects_mode" == "true" ]]; then
+        local df_l1
+        for df_l1 in "${defect_files[@]}"; do
+            local df_l1_escaped
+            df_l1_escaped=$(jq -Rs '.' < "$df_l1")
+            spec_files_for_l1=$(echo "$spec_files_for_l1" | jq --arg path "$df_l1" --argjson content "$df_l1_escaped" '. + {($path): $content}')
+        done
+    fi
 
     local l1_result
     l1_result=$(context_build_layer1 "false" "$spec_files_for_l1") || {
@@ -645,7 +869,9 @@ cmd_plan() {
             base_message+="## Product Spec (what to build)\n\n${product_spec_content}"
         fi
 
-        base_message+="\n\n## Tech Spec (backend implementation)\n\n${tech_spec_content}"
+        if [[ "$defects_mode" != "true" ]]; then
+            base_message+="\n\n## Tech Spec (backend implementation)\n\n${tech_spec_content}"
+        fi
 
         if [[ -n "$design_spec_content" ]]; then
             base_message+="\n\n## Design Spec (frontend implementation)\n\n${design_spec_content}"
@@ -657,6 +883,17 @@ cmd_plan() {
 
         if [[ -n "$related_specs" ]]; then
             base_message+="\n\n## Related Specs (cross-reference for entity relationships)\n${related_specs}"
+        fi
+
+        if [[ "$defects_mode" == "true" ]]; then
+            base_message+="\n\n## Defects\n\nSee \"Defect-Driven Planning\" in your role instructions for the F1-F8 taxonomy and the F8 escalation-only rule. Each defect below states its own \`Failure Class\` and \`Evidence\` line when the source defect file declares them — use those values, do not re-derive or guess a class.\n\nEvery task produced from a defect MUST include a \`spec_references\` entry whose \`spec\` field is the exact defect file path shown in that defect's heading below (e.g. \`${defect_files[0]}\`) — not a generic label like \"defect\". This deviates from the product/tech/design spec-type convention used elsewhere; it is required so the plan traces back to its specific source defect."
+            local di
+            for di in "${!defect_files[@]}"; do
+                local _defect_header="### Defect: ${defect_files[$di]}"
+                [[ -n "${defect_failure_class[$di]:-}" ]] && _defect_header+="\nFailure Class: ${defect_failure_class[$di]}"
+                [[ -n "${defect_evidence[$di]:-}" ]] && _defect_header+="\nEvidence: ${defect_evidence[$di]}"
+                base_message+="\n\n${_defect_header}\n\n${defect_contents[$di]}"
+            done
         fi
 
         if [[ "$audit_sizing_rec" == "split" ]]; then
@@ -977,6 +1214,33 @@ cmd_plan() {
         exit 1
     fi
 
+    # ── F8 hard gate (PLAN_CONTRACT.md §8) ──────────────────────────
+    # Runs before anything is written to disk. No bypass — F8 is
+    # human-reserved by design and has no SKIP_ override.
+    if [[ "$defects_mode" == "true" ]]; then
+        _run_f8_gate
+        if [[ "$_f8_status" == "fail" ]]; then
+            log_error "F8 gate FAILED — an F8 (specification gap) defect produced an implementation task instead of an escalation task"
+            local _f8_err
+            for _f8_err in "${_f8_errors[@]}"; do
+                echo -e "  ${COLOR_ERROR}${SYM_CROSS} ${_f8_err}${RESET}"
+            done
+            printf '%s\n' "${_f8_errors[@]}" | jq -R . | jq -s '.' > "${LOGS_DIR}/f8-gate.json"
+            log_step "Full report: ${LOGS_DIR}/f8-gate.json"
+            exit "$EXIT_GATE_FAILURE"
+        fi
+        if [[ ${#_f8_warnings[@]} -gt 0 ]]; then
+            local _f8_warn
+            for _f8_warn in "${_f8_warnings[@]}"; do
+                log_warn "$_f8_warn"
+            done
+        fi
+        if [[ "$_f8_checked_count" -gt 0 ]]; then
+            log_success "F8 gate passed (${_f8_checked_count} F8 defect(s) checked)"
+            echo ""
+        fi
+    fi
+
     # Save contract
     if [[ -n "$contract_json" ]] && echo "$contract_json" | jq -e '.' &>/dev/null; then
         echo "$contract_json" | jq '.' > "${CONTRACT_FILE}"
@@ -991,6 +1255,30 @@ cmd_plan() {
         local cc_count
         cc_count=$(echo "$cross_cutting_json" | jq 'length')
         log_step "Saved ${cc_count} cross-cutting concern(s)"
+    fi
+
+    # ── TASKS_DIR overwrite safety guard (PLAN_CONTRACT.md §12) ─────
+    # Defect-driven mode reuses the general --feature flag; guard against
+    # silently destroying an unrelated (non-defect) task set that happens
+    # to share the feature name. A previous defect batch under the same
+    # name is a normal re-plan and is not guarded (every existing task
+    # there already carries source_defect).
+    if [[ "$defects_mode" == "true" ]] && [[ "$force_plan" != "true" ]]; then
+        local _existing_task_file _existing_count=0 _existing_defect_sourced=0
+        for _existing_task_file in "${TASKS_DIR}"/*.json; do
+            [[ -f "$_existing_task_file" ]] || continue
+            ((_existing_count++)) || true
+            if jq -e '.source_defect != null' "$_existing_task_file" &>/dev/null; then
+                ((_existing_defect_sourced++)) || true
+            fi
+        done
+        if [[ "$_existing_count" -gt 0 ]] && [[ "$_existing_defect_sourced" -eq 0 ]]; then
+            log_error_block \
+                "Feature '${feature_name}' already has ${_existing_count} task(s) not sourced from a defect batch" \
+                "speed plan --defects would silently delete this unrelated task set" \
+                "Re-run with --force to overwrite, or plan this defect batch under a different --feature name"
+            exit "$EXIT_GATE_FAILURE"
+        fi
     fi
 
     # Clear existing tasks
@@ -1047,6 +1335,17 @@ cmd_plan() {
         fi
         if [[ "$assumptions" != "[]" ]]; then
             task_update_raw "$id" "assumptions" "$assumptions"
+        fi
+
+        # Propagate Failure Class / Evidence from the source defect this
+        # task traces back to (PLAN_CONTRACT.md §7) — carried, not upgraded
+        # or reinterpreted.
+        # `if`, not bare `&&`: in spec mode (defects_mode=false, the
+        # default/common case) a bare `[[ ]] && fn` here would make this
+        # line's own exit status 1 for every task and kill the whole
+        # script under `set -e`.
+        if [[ "$defects_mode" == "true" ]]; then
+            _attach_defect_metadata "$id" "$spec_refs"
         fi
 
         ((i++)) || true
