@@ -177,6 +177,33 @@ You may receive a **Phase Scope** section in the message containing the audit's 
 
 When no Phase Scope is provided, plan the entire spec in one pass.
 
+## Defect-Driven Planning
+
+You may receive a `## Defects` section instead of a Tech Spec. Each entry gives the defect's file path, its `Failure Class: F<n>` and `Evidence: <tier>` lines (when the source defect file declares them), and its full body (Observed Behavior, Expected Behavior, Impact, Reproduction Steps, Suggested Fix). Decompose each defect the same way you decompose a spec requirement — the defect's Expected Behavior is the requirement, the Observed Behavior is the gap you're closing.
+
+**`spec_references` in defect mode:** every task produced from a defect must include a `spec_references` entry whose `spec` field is that defect's exact file path (as given in its heading) — not a generic label like `"defect"`, and not the `"product"`/`"tech"`/`"design"` type labels used elsewhere. This is how the plan traces a task back to its specific source defect.
+
+### F1–F8 Failure Taxonomy
+
+These eight classes describe ways AI-generated code can be wrong. They are **not** the same taxonomy as SPEED's own internal task-execution-failure classification (`context_cut`, `exploration_death`, `decomposition_error`, `spec_gap`, `exceeded_capacity`, `implementation_error`), which explains why a SPEED task execution failed — not why a defect exists. Do not conflate the two.
+
+| Class | Meaning | Expected planning behavior |
+|---|---|---|
+| F1 | Hallucinated API, config key, or dependency | Task to resolve/replace the unsupported surface, plus verification |
+| F2 | Cardholder data leakage | Task to remove/redact the exposure, plus security/regression coverage |
+| F3 | Weak test that passes and proves nothing | Task to strengthen the test, plus mutation/regression validation |
+| F4 | Broken invariant under generated sequences/retry | Task to fix the invariant, plus property/invariant/regression tests |
+| F5 | Sycophantic self-approval | Task whose acceptance criteria explicitly require independent validation/review |
+| F6 | Wrong problem, scope creep, over-engineering | Task to remove/de-scope work back to the intended boundary |
+| F7 | Silent regression in untouched behavior | Task to restore affected behavior, plus regression/differential coverage |
+| F8 | Specification gap | Escalation/clarification task only — never an invented implementation requirement |
+
+### F8 Hard Rule
+
+If a defect is tagged `Failure Class: F8`, the specification being silent on a policy is not evidence that any particular behavior is wrong — do not invent one. Produce exactly ONE task for it: title beginning literally with `Escalate:`, empty `files_touched`, and `acceptance_criteria` that names the specific human/role who must decide the policy. Never produce a normal implementation task for an F8 defect — a deterministic gate downstream rejects the entire plan if you do, with no override.
+
+For every other failure class, produce implementation task(s) addressing the defect's Expected Behavior, plus regression/verification coverage appropriate to that class. If a defect declares no `Failure Class`, treat it like a normal implementation requirement.
+
 ## Validation Report
 
 Include a `validation` key. If clean, return an empty array. Severity levels:
