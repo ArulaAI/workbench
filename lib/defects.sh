@@ -12,6 +12,16 @@
 
 _defect_json_tool=""
 
+_defect_python() {
+    if declare -F _context_python >/dev/null 2>&1; then
+        _context_python
+    elif [[ -n "${SPEED_PYTHON:-}" ]]; then
+        echo "$SPEED_PYTHON"
+    else
+        echo "python3"
+    fi
+}
+
 _defect_ensure_json() {
     if [[ -n "$_defect_json_tool" ]]; then
         return 0
@@ -48,12 +58,17 @@ if v is not None:
 
 # ── Defect directory paths ───────────────────────────────────────
 
-# Defects are team-visible in MP mode
-if [[ "${MP_ENABLED:-}" == "true" ]]; then
-    DEFECTS_DIR="${SHARED_DIR}/defects"
-else
-    DEFECTS_DIR="${STATE_DIR}/defects"
-fi
+# Defects are team-visible in MP mode. This is refreshed again after the main
+# entrypoint performs multiplayer detection; standalone shell consumers still
+# resolve correctly from the directory layout.
+_defect_refresh_root() {
+    if [[ "${MP_ENABLED:-}" == "true" || -d "${SHARED_DIR}" ]]; then
+        DEFECTS_DIR="${SHARED_DIR}/defects"
+    else
+        DEFECTS_DIR="${STATE_DIR}/defects"
+    fi
+}
+_defect_refresh_root
 
 _defect_dir() {
     local name="$1"
@@ -205,6 +220,11 @@ defect_state_read() {
         return 1
     fi
 
+    if ! PYTHONPATH="${SPEED_DIR}" "$(_defect_python)" -m lib.defect_report_cli \
+        readiness "$PROJECT_ROOT" "$DEFECTS_DIR" "$name" "${PROJECT_ROOT}/specs/defects/${name}.md"; then
+        log_error "Defect '${name}' requires intake repair"
+        return 1
+    fi
     cat "$state_file"
 }
 
@@ -606,26 +626,8 @@ defect_resolve_specs() {
         return 1
     fi
 
-    # Extract Related Feature value
-    local related
-    related=$(grep -i '^Related Feature:' "$spec_path" | head -1 | sed 's/^[Rr]elated[[:space:]]*[Ff]eature:[[:space:]]*//' | tr -d '[:space:]')
-
-    if [[ -z "$related" ]]; then
-        log_verbose "No Related Feature field in ${spec_path}"
-        return 0
-    fi
-
-    # Resolve to spec paths
-    local product_spec="${PROJECT_ROOT}/specs/product/${related}.md"
-    local tech_spec="${PROJECT_ROOT}/specs/tech/${related}.md"
-
-    if [[ -f "$product_spec" ]]; then
-        echo "$product_spec"
-    fi
-
-    if [[ -f "$tech_spec" ]]; then
-        echo "$tech_spec"
-    fi
+    PYTHONPATH="${SPEED_DIR}" "$(_defect_python)" -m lib.defect_report_cli \
+        related-specs "$spec_path" "$PROJECT_ROOT"
 }
 
 # ── get_defect_dir ───────────────────────────────────────────────
@@ -681,53 +683,7 @@ init_defect_dir() {
 parse_defect_report() {
     local spec_path="$1"
 
-    if [[ ! -f "$spec_path" ]]; then
-        log_error "Defect spec not found: ${spec_path}" >&2
-        return 1
-    fi
-
-    local errors=0
-
-    local severity
-    severity=$(grep -i '^Severity:' "$spec_path" | head -1 | sed 's/^[Ss]everity:[[:space:]]*//' | tr -d '[:space:]')
-    if [[ -z "$severity" ]]; then
-        log_error "Missing required field: Severity" >&2
-        ((errors++)) || true
-    fi
-
-    local related_feature
-    related_feature=$(grep -i '^Related Feature:' "$spec_path" | head -1 | sed 's/^[Rr]elated[[:space:]]*[Ff]eature:[[:space:]]*//' | sed 's/[[:space:]]*$//')
-
-    local observed_behavior
-    observed_behavior=$(grep -iE '^(Observed Behavior|Observed):' "$spec_path" | head -1 | sed 's/^[^:]*:[[:space:]]*//' | sed 's/[[:space:]]*$//')
-    if [[ -z "$observed_behavior" ]]; then
-        log_error "Missing required field: Observed Behavior" >&2
-        ((errors++)) || true
-    fi
-
-    local expected_behavior
-    expected_behavior=$(grep -iE '^(Expected Behavior|Expected):' "$spec_path" | head -1 | sed 's/^[^:]*:[[:space:]]*//' | sed 's/[[:space:]]*$//')
-    if [[ -z "$expected_behavior" ]]; then
-        log_error "Missing required field: Expected Behavior" >&2
-        ((errors++)) || true
-    fi
-
-    local reproduction_steps
-    reproduction_steps=$(grep -iE '^(Reproduction Steps|Repro):' "$spec_path" | head -1 | sed 's/^[^:]*:[[:space:]]*//' | sed 's/[[:space:]]*$//')
-    if [[ -z "$reproduction_steps" ]]; then
-        log_error "Missing required field: Reproduction Steps" >&2
-        ((errors++)) || true
-    fi
-
-    if [[ $errors -gt 0 ]]; then
-        return 1
-    fi
-
-    printf 'severity=%s\n' "$severity"
-    printf 'related_feature=%s\n' "$related_feature"
-    printf 'observed_behavior=%s\n' "$observed_behavior"
-    printf 'expected_behavior=%s\n' "$expected_behavior"
-    printf 'reproduction_steps=%s\n' "$reproduction_steps"
+    PYTHONPATH="${SPEED_DIR}" "$(_defect_python)" -m lib.defect_report_cli parse "$spec_path"
 }
 
 # ── validate_defect_report ───────────────────────────────────────
@@ -736,7 +692,7 @@ parse_defect_report() {
 # Args: path
 
 validate_defect_report() {
-    defect_validate_report "$@"
+    PYTHONPATH="${SPEED_DIR}" "$(_defect_python)" -m lib.defect_report_cli validate "$1"
 }
 
 # ── create_defect_state ──────────────────────────────────────────
@@ -809,7 +765,7 @@ read_defect_state() {
         return 1
     fi
 
-    cat "$state_file"
+    defect_state_read "$name"
 }
 
 # ── transition_defect_state ──────────────────────────────────────

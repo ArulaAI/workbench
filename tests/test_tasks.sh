@@ -324,6 +324,32 @@ test_request_changes() {
     assert_json_field "$json" ".review_verdict" "request_changes" "verdict set"
 }
 
+test_request_changes_idempotent_finding_marker() {
+    task_create "1" "Task" "Desc" "Criteria" '[]' > /dev/null
+    task_set_running "1" 42
+    task_set_done "1"
+
+    task_request_changes "1" "Repair the retry path" "finding-request-1"
+    task_request_changes "1" "This replay must not replace feedback" "finding-request-1"
+
+    local json
+    json=$(task_get "1")
+    assert_json_field "$json" ".review_feedback" "Repair the retry path" "feedback preserved on replay"
+    assert_json_field "$json" ".finding_rework_request_id" "finding-request-1" "request marker"
+}
+
+test_request_changes_preserves_pending_review_feedback() {
+    task_create "1" "Task" "Desc" "Criteria" '[]' > /dev/null
+    task_request_changes "1" "Existing reviewer feedback" ""
+
+    task_request_changes "1" "Additional finding guidance" "finding-request-2"
+
+    local json
+    json=$(task_get "1")
+    assert_json_field "$json" ".review_feedback" "Existing reviewer feedback" "pending review feedback"
+    assert_json_field "$json" ".finding_rework_request_id" "finding-request-2" "request marker"
+}
+
 # ── task_set_reviewed tests ───────────────────────────────────────────────────
 
 test_set_reviewed_approve() {
@@ -877,6 +903,8 @@ run_test test_set_done
 run_test test_set_failed
 run_test test_set_blocked
 run_test test_request_changes
+run_test test_request_changes_idempotent_finding_marker
+run_test test_request_changes_preserves_pending_review_feedback
 run_test test_set_reviewed_approve
 run_test test_set_reviewed_request_changes
 run_test test_set_timeout_first

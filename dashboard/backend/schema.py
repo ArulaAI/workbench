@@ -12,6 +12,7 @@ import strawberry
 from .resolvers import token_burn, mission_control, topology, budget
 from .resolvers import landing as landing_resolver
 from .resolvers import define
+from .resolvers import feature_defects as feature_defects_resolver
 from .resolvers import spec_editor
 from .resolvers import intelligence as intelligence_resolver
 from .resolvers import assist as assist_resolver
@@ -47,6 +48,12 @@ from .resolvers.context_types import (
     DeclareIntentResult,
 )
 from .resolvers.define_types import DefineView
+from .resolvers.feature_defect_types import (
+    AppendDefectEvidenceInput,
+    FileFindingDefectInput,
+    FindingDecisionInput,
+    GroupFindingsInput,
+)
 from .resolvers.spec_alignment import (
     Claim,
     ClaimSource,
@@ -770,6 +777,53 @@ class Query:
         project_root = info.context["project_root"]
         return define.get_define_view(project_root, feature)
 
+    @strawberry.field
+    def feature_findings(
+        self, info: strawberry.types.Info, feature_name: str,
+    ) -> strawberry.scalars.JSON:
+        return feature_defects_resolver.feature_findings(info.context["project_root"], feature_name)
+
+    @strawberry.field
+    def evidence_file(
+        self, info: strawberry.types.Info, feature_name: str, finding_id: str,
+        evidence_id: str, source_path: str,
+    ) -> strawberry.scalars.JSON:
+        return feature_defects_resolver.evidence_file(
+            info.context["project_root"], feature_name, finding_id, evidence_id, source_path,
+        )
+
+    @strawberry.field
+    def defect_draft(
+        self, info: strawberry.types.Info, feature_name: str, finding_id: str,
+    ) -> strawberry.scalars.JSON:
+        return feature_defects_resolver.defect_draft(info.context["project_root"], feature_name, finding_id)
+
+    @strawberry.field
+    def defect_report(
+        self, info: strawberry.types.Info, features: Optional[list[str]] = None,
+        severity: Optional[list[str]] = None, status: Optional[list[str]] = None,
+        source: Optional[list[str]] = None, lifecycle: Optional[list[str]] = None,
+        search: str = "",
+    ) -> strawberry.scalars.JSON:
+        return feature_defects_resolver.defect_report(info.context["project_root"], {
+            "features": features or [], "severity": severity or [], "status": status or [],
+            "source": source or [], "lifecycle": lifecycle or [], "search": search,
+        })
+
+    @strawberry.field
+    def defect_report_export(
+        self, info: strawberry.types.Info, displayed_revision: str, format: str,
+        features: Optional[list[str]] = None, severity: Optional[list[str]] = None,
+        status: Optional[list[str]] = None, source: Optional[list[str]] = None,
+        lifecycle: Optional[list[str]] = None, search: str = "",
+    ) -> strawberry.scalars.JSON:
+        return feature_defects_resolver.defect_report_export(
+            info.context["project_root"],
+            {"features": features or [], "severity": severity or [], "status": status or [],
+             "source": source or [], "lifecycle": lifecycle or [], "search": search},
+            displayed_revision, format,
+        )
+
     # ── Ceremony queries ────────────────────────────────────────
 
     @strawberry.field
@@ -1278,6 +1332,32 @@ class Subscription:
 
 @strawberry.type
 class Mutation:
+    @strawberry.mutation
+    def decide_finding(
+        self, info: strawberry.types.Info, input: FindingDecisionInput,
+    ) -> strawberry.scalars.JSON:
+        return feature_defects_resolver.decide(info.context["project_root"], input)
+
+    @strawberry.mutation
+    def group_findings(
+        self, info: strawberry.types.Info, input: GroupFindingsInput,
+    ) -> strawberry.scalars.JSON:
+        return feature_defects_resolver.group(info.context["project_root"], input)
+
+    @strawberry.mutation
+    def file_finding_defect(
+        self, info: strawberry.types.Info, input: FileFindingDefectInput,
+    ) -> strawberry.scalars.JSON:
+        return feature_defects_resolver.file(
+            info.context["project_root"], input, info.context.get("conn"),
+        )
+
+    @strawberry.mutation
+    def append_defect_evidence(
+        self, info: strawberry.types.Info, input: AppendDefectEvidenceInput,
+    ) -> strawberry.scalars.JSON:
+        return feature_defects_resolver.append(info.context["project_root"], input)
+
     @strawberry.mutation
     def respond_to_escalation(
         self,

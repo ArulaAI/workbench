@@ -15,6 +15,7 @@
 #   coherence [--resolve]    Check cross-task consistency before integration
 #   integrate               Merge completed branches into main
 #   review [--task-id ID]   Run code review on completed tasks
+#   define feature|defects  Review findings or the defect portfolio
 #   defect <spec-file>      Run full defect pipeline (triage → fix → review)
 #   learn [options]         Extract observations and discover conventions
 #   security                Run security audit on completed task diffs
@@ -76,6 +77,7 @@ MP_ENABLED=""
 if mp_is_enabled; then
     MP_ENABLED=true
 fi
+_defect_refresh_root
 
 source "${SCRIPT_DIR}/lib/shared.sh"
 
@@ -116,6 +118,8 @@ speed_help() {
     echo -e "    ${COLOR_STEP}run${RESET}  [options]               Execute pending tasks with parallel agents"
     echo -e "    ${COLOR_STEP}diagnose${RESET} --task ID            Count failure-class signals on a task's diff (writes risk-surface.yaml)"
     echo -e "    ${COLOR_STEP}status${RESET} [--defects]            Show SPEED state and progress"
+    echo -e "    ${COLOR_STEP}define${RESET} feature <name>          Review feature findings"
+    echo -e "    ${COLOR_STEP}define${RESET} defects [filters]       Review/export the defect portfolio"
     echo -e "    ${COLOR_STEP}defect${RESET} <spec-file>            Run the full defect pipeline (triage → fix → review)"
     echo -e "    ${COLOR_STEP}coherence${RESET} [--resolve]         Cross-task consistency check pre-integration"
     echo -e "    ${COLOR_STEP}integrate${RESET}                    Merge completed branches + regression + contract"
@@ -252,6 +256,13 @@ speed_help() {
 main() {
     local command="${1:-help}"
     shift || true
+
+    # Define owns repeated --feature filters and is read-only. Dispatch before
+    # global option extraction and multiplayer heartbeat side effects.
+    if [[ "$command" == "define" ]]; then
+        cmd_define "$@"
+        return $?
+    fi
 
     # ── Extract global flags before dispatching ─────────────────
     GLOBAL_FEATURE=""

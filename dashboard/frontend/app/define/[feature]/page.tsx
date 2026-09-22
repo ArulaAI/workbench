@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useCallback, useRef } from "react";
+import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useQuery, useMutation } from "urql";
 import { ErrorBoundary } from "@/components/shared/error-boundary";
@@ -23,6 +24,13 @@ import {
 } from "@/lib/graphql/queries/ceremony";
 
 const FEATURE_RE = /^[a-z0-9][a-z0-9-]*$/;
+
+function FindingsLink({ featureName }: { featureName: string }) {
+  return <Link href={`/define/${featureName}/findings`} style={{
+    border: "1px solid var(--color-border)", borderRadius: 7, padding: "7px 12px",
+    color: "var(--color-text-secondary)", textDecoration: "none", fontSize: 12,
+  }}>Findings</Link>;
+}
 
 function isValidFeatureName(name: string): boolean {
   return name.length > 0 && name.length <= 50 && FEATURE_RE.test(name);
@@ -159,6 +167,7 @@ export default function DefineFeaturePage() {
           >
             Loading context...
           </span>
+          <div style={{ position: "absolute", top: 20, right: 24 }}><FindingsLink featureName={featureName} /></div>
         </div>
       </div>
     );
@@ -185,6 +194,7 @@ export default function DefineFeaturePage() {
               ? `Error loading context: ${pkgError.message}`
               : "No context package found for this feature."}
           </span>
+          <div style={{ position: "absolute", top: 20, right: 24 }}><FindingsLink featureName={featureName} /></div>
         </div>
       </div>
     );
@@ -205,7 +215,7 @@ export default function DefineFeaturePage() {
             overflow: "hidden",
           }}
         >
-          <Header />
+          <Header actions={<FindingsLink featureName={featureName} />} />
           <main
             style={{
               flex: 1,
@@ -239,7 +249,7 @@ export default function DefineFeaturePage() {
           overflow: "hidden",
         }}
       >
-        <Header />
+        <Header actions={<FindingsLink featureName={featureName} />} />
         <div style={{ flex: 1, display: "flex", overflow: "hidden", position: "relative" }}>
           <ErrorBoundary>
             <CeremonyLayout

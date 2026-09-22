@@ -58,11 +58,20 @@ export interface DefineFeature {
 
 export interface DefectData {
   name: string;
+  title?: string;
   severity: string;
   status: string;
   description: string;
   impact: string | null;
   filedAt: string | null;
+  updatedAt?: string | null;
+  relatedFeatures?: string[];
+  source?: string;
+  sourceFeature?: string | null;
+  sourceFindingId?: string | null;
+  canonicalPath?: string | null;
+  filed?: boolean;
+  warnings?: string[];
 }
 
 export interface DefineAggregates {
@@ -148,11 +157,20 @@ export const DEFINE_VIEW_QUERY = gql`
       }
       defects {
         name
+        title
         severity
         status
         description
         impact
         filedAt
+        updatedAt
+        relatedFeatures
+        source
+        sourceFeature
+        sourceFindingId
+        canonicalPath
+        filed
+        warnings
       }
       aggregates {
         designSpecCount

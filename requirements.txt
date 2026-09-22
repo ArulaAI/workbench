@@ -14,6 +14,7 @@ tree-sitter-html
 tree-sitter-css
 tree-sitter-json
 tree-sitter-yaml
+PyYAML>=6.0
 tree-sitter-php
 tree-sitter-kotlin
 tree-sitter-swift

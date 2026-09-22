@@ -709,6 +709,8 @@ def read_defects(
     paths: SpeedPaths, scoped_files: list[str], feature_name: str = ""
 ) -> list[DefectItem]:
     """Read defects filtered by scoped file paths and feature relevance."""
+    from lib.defect_reports import discover_defects
+
     items: list[DefectItem] = []
     scoped_set = set(scoped_files)
     severity_map = {"P0": "critical", "P1": "critical", "P2": "major", "P3": "minor"}
@@ -720,95 +722,25 @@ def read_defects(
             if part and len(part) > 2:
                 scope_terms.add(part)
 
-    # Source 1: .speed/defects/*/state.json
-    defects_dir = paths.defects_dir
-    if defects_dir.is_dir():
-        for state_file in defects_dir.glob("*/state.json"):
-            data = _read_json(state_file)
-            if data is None:
-                continue
-
-            related = data.get("related_files", [])
-            if isinstance(related, str):
-                related = [related]
-
-            # Filter: require file overlap when related_files is populated
-            if scoped_set and related:
-                if not any(f in scoped_set for f in related):
-                    continue
-            # Skip defects with no related_files (can't verify relevance)
-            elif scoped_set and not related:
-                continue
-
-            severity = data.get("severity", "minor")
-            severity = severity_map.get(severity, severity)
-
-            items.append(
-                DefectItem(
-                    name=data.get("name", state_file.parent.name),
-                    severity=severity,
-                    status=data.get("status", "open"),
-                    related_files=related,
-                )
+    for row in discover_defects(paths.root, paths.defects_dir):
+        related_files = row["related_files"]
+        if scoped_set:
+            feature_terms = {
+                part for feature in row["related_features"]
+                for part in re.split(r"[,\s/._\-]+", feature.casefold()) if part
+            }
+            relevant = (
+                bool(related_files and any(path in scoped_set for path in related_files))
+                or bool(feature_terms & scope_terms)
+                or bool(set(row["tags"]) & scope_terms)
             )
-
-    # Source 2: specs/defects/*.md — parse metadata for scope filtering
-    specs_dir = paths.root / "specs" / "defects"
-    if specs_dir.is_dir():
-        seen = {d.name for d in items}
-        for md_file in sorted(specs_dir.glob("*.md")):
-            name = md_file.stem
-            if name in seen:
+            if not relevant:
                 continue
-
-            severity = "minor"
-            related_feature = ""
-            tags: list[str] = []
-            related_files: list[str] = []
-            try:
-                for line in md_file.read_text(encoding="utf-8").splitlines()[:20]:
-                    low = line.strip().lower()
-                    if low.startswith("severity:"):
-                        val = line.split(":", 1)[1].strip().lower()
-                        if val in ("critical", "major", "minor"):
-                            severity = val
-                        elif val.upper() in severity_map:
-                            severity = severity_map[val.upper()]
-                    elif low.startswith("related feature:"):
-                        related_feature = line.split(":", 1)[1].strip().lower()
-                    elif low.startswith("tags:"):
-                        tags = [t.strip().lower() for t in line.split(":", 1)[1].split(",")]
-                    elif low.startswith("related files:") or low.startswith("affected files:"):
-                        related_files = [f.strip() for f in line.split(":", 1)[1].split(",") if f.strip()]
-            except OSError:
-                pass
-
-            # Filter by relevance to scoped area
-            if scoped_set:
-                relevant = False
-                # Check related_files overlap
-                if related_files and any(f in scoped_set for f in related_files):
-                    relevant = True
-                # Check if related feature terms overlap with scope terms
-                elif related_feature:
-                    feature_words = set(re.split(r"[,\s/._\-]+", related_feature))
-                    if feature_words & scope_terms:
-                        relevant = True
-                # Check if tags overlap with scope terms
-                elif tags:
-                    if set(tags) & scope_terms:
-                        relevant = True
-                if not relevant:
-                    continue
-
-            items.append(
-                DefectItem(
-                    name=name,
-                    severity=severity,
-                    status="open",
-                    related_files=related_files,
-                )
-            )
+        severity = row.get("legacy_severity") or severity_map.get(row["severity"], "minor")
+        items.append(DefectItem(
+            name=row["slug"], severity=severity, status=row["status"],
+            related_files=related_files,
+        ))
 
     # Sort by severity: critical first
     severity_order = {"critical": 0, "major": 1, "minor": 2}

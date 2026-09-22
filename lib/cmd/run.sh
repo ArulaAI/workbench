@@ -75,6 +75,47 @@ _record_failure() {
         '{task_id: $tid, error: $err, timestamp: $ts}' >> "$failure_log"
 }
 
+_apply_finding_rework() {
+    local next rc request_id task_id guidance task_file status error
+    while true; do
+        rc=0
+        next=$(PYTHONPATH="${SPEED_DIR}" "$(_context_python)" -m lib.rework_cli next \
+            --project-root "$PROJECT_ROOT" --feature "$FEATURE_NAME") || rc=$?
+        [[ $rc -eq 3 ]] && return 0
+        if [[ $rc -ne 0 ]]; then
+            log_error "Could not read finding rework queue"
+            return 1
+        fi
+        request_id=$(echo "$next" | jq -r '.request_id')
+        task_id=$(echo "$next" | jq -r '.task_id // empty')
+        guidance=$(echo "$next" | jq -r '.guidance')
+        task_file="${TASKS_DIR}/${task_id}.json"
+        error=""
+        if [[ ! -f "$task_file" ]]; then
+            error="Task ${task_id} does not exist"
+        else
+            status=$(jq -r '.status // "pending"' "$task_file")
+            case "$status" in
+                pending|done|reviewed)
+                    task_request_changes "$task_id" "$guidance" "$request_id" || error="Could not queue task ${task_id}"
+                    ;;
+                *) error="Task ${task_id} is ${status}; it was not reset" ;;
+            esac
+        fi
+        if [[ -n "$error" ]]; then
+            PYTHONPATH="${SPEED_DIR}" "$(_context_python)" -m lib.rework_cli ack \
+                --project-root "$PROJECT_ROOT" --feature "$FEATURE_NAME" --request-id "$request_id" \
+                --status blocked --error "$error" || return 1
+            log_warn "$error"
+        else
+            PYTHONPATH="${SPEED_DIR}" "$(_context_python)" -m lib.rework_cli ack \
+                --project-root "$PROJECT_ROOT" --feature "$FEATURE_NAME" --request-id "$request_id" \
+                --status applied || return 1
+            log_info "Finding rework queued on task ${task_id}"
+        fi
+    done
+}
+
 _failure_count() {
     wc -l < "$failure_log" 2>/dev/null | tr -d ' '
 }
@@ -265,6 +306,8 @@ cmd_run() {
 
     # ── Acquire exclusive lock ────────────────────────────────────
     speed_acquire_lock "run" || exit 1
+
+    _apply_finding_rework || exit 1
 
     # ── Hard gate: timeout command is required ────────────────────
     require_timeout_cmd || exit $EXIT_CONFIG_ERROR

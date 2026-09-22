@@ -307,15 +307,29 @@ triage_defect() {
     local name
     name=$(defect_name_from_path "$spec_path")
 
-    # 3. Initialize defect directory and state
-    if ! init_defect_dir "$name" "$spec_path"; then
-        log_error "Failed to initialize defect directory for '${name}'"
-        return 1
-    fi
-
-    if ! create_defect_state "$name" "$spec_path"; then
-        log_error "Failed to create defect state for '${name}'"
-        return 1
+    # 3. Initialize a fresh report, or validate a dashboard-filed intake.
+    local existing_dir
+    existing_dir="$(_defect_dir "$name")"
+    if [[ -d "$existing_dir" ]]; then
+        if [[ ! -f "${existing_dir}/state.json" ]] \
+            || [[ "$(_defect_json_get "${existing_dir}/state.json" status)" != "filed" ]]; then
+            log_error "Existing defect '${name}' is not ready for initial triage"
+            return 1
+        fi
+        if ! PYTHONPATH="${SPEED_DIR}" "$(_defect_python)" -m lib.defect_report_cli \
+            readiness "$PROJECT_ROOT" "$DEFECTS_DIR" "$name" "$spec_path"; then
+            log_error "Existing defect '${name}' requires intake repair"
+            return 1
+        fi
+    else
+        if ! init_defect_dir "$name" "$spec_path"; then
+            log_error "Failed to initialize defect directory for '${name}'"
+            return 1
+        fi
+        if ! create_defect_state "$name" "$spec_path"; then
+            log_error "Failed to create defect state for '${name}'"
+            return 1
+        fi
     fi
 
     # 4. Transition to triaging
@@ -326,24 +340,16 @@ triage_defect() {
 
     # 5. Resolve related specs
     local product_spec="" tech_spec=""
-    local feature_name
-    feature_name=$(grep -i '^Related Feature:' "$spec_path" | head -1 \
-        | sed 's/^[Rr]elated[[:space:]]*[Ff]eature:[[:space:]]*//' | tr -d '[:space:]')
-
-    if [[ -n "$feature_name" ]]; then
-        local spec_paths
-        spec_paths=$(resolve_related_specs "$feature_name" 2>/dev/null)
-
-        # Parse found paths (product spec and tech spec)
-        while IFS= read -r resolved_path; do
-            [[ -z "$resolved_path" ]] && continue
-            if echo "$resolved_path" | grep -q "specs/product/"; then
-                product_spec="$resolved_path"
-            elif echo "$resolved_path" | grep -q "specs/tech/"; then
-                tech_spec="$resolved_path"
-            fi
-        done <<< "$spec_paths"
-    fi
+    local spec_paths
+    spec_paths=$(defect_resolve_specs "$spec_path" 2>/dev/null || true)
+    while IFS= read -r resolved_path; do
+        [[ -z "$resolved_path" ]] && continue
+        if echo "$resolved_path" | grep -q "specs/product/"; then
+            product_spec="$resolved_path"
+        elif echo "$resolved_path" | grep -q "specs/tech/"; then
+            tech_spec="$resolved_path"
+        fi
+    done <<< "$spec_paths"
 
     # 6. Build and run investigation phase
     local defect_dir
