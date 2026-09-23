@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { useMutation, useQuery, useSubscription } from "urql";
+import { useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { Toaster, toast } from "sonner";
 import { DEFINE_VIEW_QUERY } from "@/lib/graphql/queries/define";
 import type { DefineViewData, DefineFeature, DefectData } from "@/lib/graphql/queries/define";
@@ -607,18 +609,21 @@ function Navigator({
               <>
                 <div className="nav-section-label">Defects · {filteredDefects.length}</div>
                 {filteredDefects.map((d) => (
-                  <button
-                    key={d.name}
-                    className="nav-defect-row"
-                    onClick={() => onSelectSpec(`specs/defects/${d.name}.md`)}
-                    data-active={activeSpec === `specs/defects/${d.name}.md` ? "true" : "false"}
+                  d.canonicalPath ? <button
+                    key={d.name} className="nav-defect-row"
+                    onClick={() => onSelectSpec(d.canonicalPath!)}
+                    data-active={activeSpec === d.canonicalPath ? "true" : "false"}
                   >
                     <span className="nav-defect-severity" style={{ color: severityColor(d.severity) }}>
                       {d.severity}
                     </span>
                     <span className="nav-defect-name">{d.name.replace(/-/g, " ")}</span>
                     <span className="nav-defect-status">{d.status}</span>
-                  </button>
+                  </button> : <div key={d.name} className="nav-defect-row" title={d.warnings?.join(" · ") || "Canonical report missing"}>
+                    <span className="nav-defect-severity" style={{ color: severityColor(d.severity) }}>{d.severity}</span>
+                    <span className="nav-defect-name">{d.name.replace(/-/g, " ")}</span>
+                    <span className="nav-defect-status">repair</span>
+                  </div>
                 ))}
               </>
             )}
@@ -676,6 +681,13 @@ function writeSession(session: EditorSession): void {
 }
 
 export default function EditorPage() {
+  const searchParams = useSearchParams();
+  const requestedPath = searchParams.get("spec") || searchParams.get("path");
+  const safeRequestedPath = requestedPath && /^specs\/defects\/[a-z0-9]+(?:-[a-z0-9]+)*\.md$/.test(requestedPath)
+    ? requestedPath : null;
+  const requestedReturn = searchParams.get("return");
+  const safeReturnPath = requestedReturn && /^\/define\/(?:defects|[a-z0-9][a-z0-9-]{0,49}\/findings)(?:\?[^#]*)?$/.test(requestedReturn)
+    ? requestedReturn : null;
   const [activeSpec, setActiveSpec] = useState<string | null>(null);
   const [tabs, setTabs] = useState<TabItem[]>([]);
   const [explorerOpen, setExplorerOpen] = useState(true);
@@ -687,21 +699,30 @@ export default function EditorPage() {
   // Restore session from localStorage after hydration (SSR-safe)
   useEffect(() => {
     const session = readSession();
+    let restoredTabs: TabItem[] = [];
     if (session) {
       const openTabs = Array.isArray(session.openTabs) ? session.openTabs : [];
       if (openTabs.length > 0) {
-        setTabs(openTabs.map(t => ({
+        restoredTabs = openTabs.map(t => ({
           path: t.path,
           specType: t.specType,
           saveState: "clean" as const,
-        })));
+        }));
       }
       if (session.activeTab) setActiveSpec(session.activeTab);
       if (typeof session.explorerOpen === "boolean") setExplorerOpen(session.explorerOpen);
       if (session.mode === "preview" || session.mode === "edit") setMode(session.mode);
     }
+    if (safeRequestedPath) {
+      if (!restoredTabs.some((tab) => tab.path === safeRequestedPath)) {
+        restoredTabs.push({ path: safeRequestedPath, specType: "defect", saveState: "clean" });
+      }
+      setActiveSpec(safeRequestedPath);
+      setMode("preview");
+    }
+    if (restoredTabs.length > 0) setTabs(restoredTabs);
     hydrated.current = true;
-  }, []);
+  }, [safeRequestedPath]);
 
   // Persist session to localStorage on state changes
   useEffect(() => {
@@ -939,6 +960,12 @@ export default function EditorPage() {
 
   const [cursor, setCursor] = useState<{ line: number; col: number } | null>(null);
   const spec = specResult.data?.spec;
+  const missingRequestedPathWarned = useRef(false);
+  useEffect(() => {
+    if (!safeRequestedPath || activeSpec !== safeRequestedPath || specResult.fetching || specResult.data?.spec || missingRequestedPathWarned.current) return;
+    missingRequestedPathWarned.current = true;
+    toast.warning(`Canonical defect report is missing: ${safeRequestedPath}`);
+  }, [safeRequestedPath, activeSpec, specResult.fetching, specResult.data?.spec]);
 
   // Browser tab title
   useEffect(() => {
@@ -1031,6 +1058,7 @@ export default function EditorPage() {
                 onClose={closeTab}
               />
             </div>
+            {safeReturnPath && <Link href={safeReturnPath} style={{ alignSelf: "center", padding: "0 12px", color: "var(--color-text-secondary)", fontSize: 11 }}>Back to defect context</Link>}
             {activeSpec && spec && (
               <div className="mode-toggle">
                 <button

@@ -334,6 +334,12 @@ export default function DefinePage() {
               shortcut="⌘E"
             />
             <ToolbarButton
+              onClick={() => router.push("/define/defects")}
+              icon={<svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}><path d="M4 5h16M4 12h16M4 19h16" /></svg>}
+              label="Defect report"
+              shortcut=""
+            />
+            <ToolbarButton
               onClick={() => router.push("/define/new")}
               icon={<svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}><path d="M12 20h9M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z" /></svg>}
               label="New spec"

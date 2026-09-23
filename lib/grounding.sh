@@ -1527,6 +1527,26 @@ spec_grounding_check() {
 # Args: task_id [worktree_path]
 # Returns: 0 = clean, 1 = secrets detected
 
+# Emit the scanner's configured name/regex pairs as tab-separated records.
+# Text-only callers use this helper so intake and branch scanning cannot drift.
+_secrets_pattern_pairs() {
+    if [[ -n "${TOML_SECURITY_SECRETS_PATTERNS:-}" ]]; then
+        local _pat
+        for _pat in $TOML_SECURITY_SECRETS_PATTERNS; do
+            printf '%s\t%s\n' "${_pat%%|*}" "${_pat#*|}"
+        done
+        return 0
+    fi
+    printf '%s\t%s\n' \
+        "AWS Access Key" 'AKIA[0-9A-Z]{16}' \
+        "AWS Secret Key" "['\"][0-9a-zA-Z/+]{40}['\"]" \
+        "GitHub Token" 'gh[pousr]_[A-Za-z0-9_]{36,}' \
+        "Generic API Key" "['\"]sk-[a-zA-Z0-9]{20,}['\"]" \
+        "Private Key Header" '-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----' \
+        "Generic High-Entropy Secret" "['\"][A-Za-z0-9+/=]{40,}['\"]" \
+        "Database URL" '[a-z]+://[^:]+:[^@]+@[^/]+'
+}
+
 grounding_check_secrets() {
     local task_id="$1"
     local worktree_path="${2:-$PROJECT_ROOT}"
@@ -1571,32 +1591,12 @@ grounding_check_secrets() {
     local -a pattern_names=()
     local -a pattern_regexes=()
 
-    if [[ -n "${TOML_SECURITY_SECRETS_PATTERNS:-}" ]]; then
-        local _pat
-        for _pat in $TOML_SECURITY_SECRETS_PATTERNS; do
-            pattern_names+=("${_pat%%|*}")
-            pattern_regexes+=("${_pat#*|}")
-        done
-    else
-        pattern_names=(
-            "AWS Access Key"
-            "AWS Secret Key"
-            "GitHub Token"
-            "Generic API Key"
-            "Private Key Header"
-            "Generic High-Entropy Secret"
-            "Database URL"
-        )
-        pattern_regexes=(
-            'AKIA[0-9A-Z]{16}'
-            "['\"][0-9a-zA-Z/+]{40}['\"]"
-            'gh[pousr]_[A-Za-z0-9_]{36,}'
-            "['\"]sk-[a-zA-Z0-9]{20,}['\"]"
-            '-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----'
-            "['\"][A-Za-z0-9+/=]{40,}['\"]"
-            '[a-z]+://[^:]+:[^@]+@[^/]+'
-        )
-    fi
+    local _pattern_name _pattern_regex
+    while IFS=$'\t' read -r _pattern_name _pattern_regex; do
+        [[ -n "$_pattern_name" && -n "$_pattern_regex" ]] || continue
+        pattern_names+=("$_pattern_name")
+        pattern_regexes+=("$_pattern_regex")
+    done < <(_secrets_pattern_pairs)
 
     # ── Prepare log file ─────────────────────────────────
     local log_file="${LOGS_DIR}/secrets-scan.log"

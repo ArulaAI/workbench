@@ -227,6 +227,12 @@ _provider_stream_exec() {
             ' "$events_file" 2>/dev/null | tail -1)
         fi
 
+        if [[ -z "$result_text" && -n "${SPEED_PROVIDER_EVENTS_FILE:-}" ]] &&
+           jq -e 'select(.type == "user" and (.tool_use_result | type) == "object" and .tool_use_result.count > 0 and (.tool_use_result.findings | type) == "array")' "$events_file" >/dev/null 2>&1; then
+            # The review ingester validates the matching tool call and result.
+            result_text="Review findings submitted through ReportFindings."
+        fi
+
         if [[ -z "$result_text" ]]; then
             log_error "Result event has empty .result and .structured_output fields"
             log_debug "Events log: ${events_file}"
@@ -370,7 +376,7 @@ provider_run() {
     local timestamp
     timestamp=$(date +%s)
     mkdir -p "$LOGS_DIR"
-    local events_file="${LOGS_DIR}/${label}-${timestamp}.jsonl"
+    local events_file="${SPEED_PROVIDER_EVENTS_FILE:-${LOGS_DIR}/${label}-${timestamp}.jsonl}"
 
     # Stderr temp file — cleaned up after use
     local stderr_file

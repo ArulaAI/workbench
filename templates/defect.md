@@ -1,7 +1,7 @@
 # Defect: {Feature Name}
 
 **Severity:** P0-critical | P1-high | P2-moderate | P3-low
-**Related Feature:** {link to spec, e.g., specs/product/f4-tribes.md}
+**Related Feature:** {link to spec if one exists; otherwise the known feature name}
 **Reproducibility:** always | intermittent (N/10) | once
 **Last Known Working:** {version, date, or commit where this worked — or "never worked"}
 

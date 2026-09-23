@@ -186,12 +186,19 @@ task_set_blocked() {
 task_request_changes() {
     local id="$1"
     local feedback="$2"
+    local request_id="${3:-}"
     _ensure_jq
     local task_file="${TASKS_DIR}/${id}.json"
     [[ -f "$task_file" ]] || { log_error "Task ${id} not found"; return 1; }
     local tmp; tmp=$(mktemp)
-    jq --arg fb "$feedback" \
-        '.status = "pending" | .review_feedback = $fb | .review_verdict = "request_changes"' \
+    jq --arg fb "$feedback" --arg rid "$request_id" \
+        'if $rid != "" and .finding_rework_request_id == $rid then .
+         elif .status == "pending" and .review_verdict == "request_changes" then
+           . + (if $rid != "" then {finding_rework_request_id: $rid} else {} end)
+         else
+           .status = "pending" | .review_feedback = $fb | .review_verdict = "request_changes" |
+           . + (if $rid != "" then {finding_rework_request_id: $rid} else {} end)
+         end' \
         "$task_file" > "$tmp" && mv "$tmp" "$task_file"
     [[ "${MP_ENABLED:-}" == "true" ]] && event_emit "task.reset" "$FEATURE_NAME" "{\"id\":\"$id\"}" || true
 }

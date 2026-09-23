@@ -88,12 +88,20 @@ class DefineFeature:
 @strawberry.type
 class DefineDefect:
     name: str
-    # severity: "P0" | "P1" | "P2" | "P3" — unrecognized values clamped to "P3"
+    title: str
     severity: str
     status: str
     description: str
     impact: Optional[str]
     filed_at: Optional[str]
+    updated_at: Optional[str]
+    related_features: list[str]
+    source: str
+    source_feature: Optional[str]
+    source_finding_id: Optional[str]
+    canonical_path: Optional[str]
+    filed: bool
+    warnings: list[str]
 
 
 # ── Aggregates ────────────────────────────────────────────────────

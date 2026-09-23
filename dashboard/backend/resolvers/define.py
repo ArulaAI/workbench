@@ -517,115 +517,22 @@ def _build_gap(project_root: Path, feature_name: str) -> GapData:
 
 
 def _build_defects(project_root: Path) -> list[DefineDefect]:
-    """Read defects from .speed/defects/*/state.json and specs/defects/*.md.
-
-    Enriches with description from defect spec markdown (first paragraph).
-    Clamps unknown severity values to P3.
-    """
-    seen: set[str] = set()
-    defects: list[DefineDefect] = []
-
-    # Source 1: defects/*/state.json
+    """Project the shared defect inventory into the existing Define view."""
+    from lib.defect_reports import discover_defects
     from ..paths import get_paths
     paths = get_paths(project_root)
-    defects_dir = paths.defects_dir
-    if defects_dir.is_dir():
-        for state_file in sorted(defects_dir.glob("*/state.json")):
-            data = _read_json(state_file)
-            if data is None:
-                continue
-            name = data.get("name", state_file.parent.name)
-            severity = data.get("severity", "P3")
-            if severity not in _VALID_SEVERITIES:
-                severity = "P3"
-            status = data.get("status", "open")
-            filed_at = data.get("filed_at") or data.get("created_at")
-            impact = data.get("impact")
-
-            # Read description from companion spec markdown
-            description = data.get("description", "")
-            if not description:
-                spec_md = project_root / "specs" / "defects" / f"{name}.md"
-                description = _read_defect_description(spec_md)
-
-            seen.add(name)
-            defects.append(DefineDefect(
-                name=name,
-                severity=severity,
-                status=status,
-                description=description,
-                impact=impact,
-                filed_at=filed_at,
-            ))
-
-    # Source 2: specs/defects/*.md (only if not already seen)
-    specs_defects_dir = project_root / "specs" / "defects"
-    if specs_defects_dir.is_dir():
-        for md_file in sorted(specs_defects_dir.glob("*.md")):
-            name = md_file.stem
-            if name in seen:
-                continue
-
-            severity = _parse_severity_from_md(md_file)
-            description = _read_defect_description(md_file)
-
-            defects.append(DefineDefect(
-                name=name,
-                severity=severity,
-                status="open",
-                description=description,
-                impact=None,
-                filed_at=None,
-            ))
-
-    defects.sort(key=lambda d: _SEVERITY_ORDER.get(d.severity, 3))
-    return defects
-
-
-def _read_defect_description(md_path: Path) -> str:
-    """Read the first paragraph from a defect spec markdown file as description."""
-    try:
-        content = md_path.read_text(encoding="utf-8")
-    except OSError:
-        return ""
-
-    lines = content.splitlines()
-    paragraph_lines: list[str] = []
-    past_heading = False
-
-    for line in lines:
-        stripped = line.strip()
-        # Skip frontmatter
-        if stripped == "---" and not past_heading:
-            continue
-        # Skip headings
-        if stripped.startswith("#"):
-            if past_heading and paragraph_lines:
-                break
-            past_heading = True
-            continue
-        # Collect first paragraph (non-empty lines after first heading)
-        if past_heading:
-            if stripped:
-                paragraph_lines.append(stripped)
-            elif paragraph_lines:
-                break
-
-    return " ".join(paragraph_lines) if paragraph_lines else ""
-
-
-def _parse_severity_from_md(md_path: Path) -> str:
-    """Parse severity from a "Severity: PX" line in the first 10 lines of a markdown file."""
-    try:
-        for line in md_path.read_text(encoding="utf-8").splitlines()[:10]:
-            if line.strip().lower().startswith("severity:"):
-                val = line.split(":", 1)[1].strip().upper()
-                if val in _VALID_SEVERITIES:
-                    return val
-                return "P3"
-    except OSError:
-        pass
-    return "P3"
+    return [
+        DefineDefect(
+            name=row["slug"], title=row["title"], severity=row["severity"],
+            status=row["status"], description=row["description"], impact=row["impact"],
+            filed_at=row["filed_at"], updated_at=row["updated_at"],
+            related_features=row["related_features"], source=row["source"],
+            source_feature=row["source_feature"], source_finding_id=row["source_finding_id"],
+            canonical_path=row["canonical_path"],
+            filed=row["filed"], warnings=row["warnings"],
+        )
+        for row in discover_defects(project_root, paths.defects_dir)
+    ]
 
 
 # ── Aggregates ───────────────────────────────────────────────────────────────

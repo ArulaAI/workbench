@@ -76,6 +76,9 @@ cmd_diagnose() {
         log_error "Could not diff '${main_branch}...${branch}' — verify both refs exist (check MAIN_BRANCH if set)."
         exit "$EXIT_CONFIG_ERROR"
     fi
+    local inspected_commit diff_hash
+    inspected_commit=$(_git rev-parse "$branch" 2>/dev/null || true)
+    diff_hash=$(shasum -a 256 "$diff_file" | awk '{print $1}')
 
     # Optional: a spec file for new-names-absent-from-spec. Diagnose-specific
     # config wins; falls back to the project's existing [specs] vision_file
@@ -112,9 +115,28 @@ cmd_diagnose() {
         printf "  %-3s %-50s %s signal(s)\n" "$cid" "$ctitle" "$ccount"
     done
 
-    local out_file="${FEATURE_DIR}/risk-surface.yaml"
+    local payload_file content_hash
+    payload_file=$(mktemp)
+    content_hash=$(printf '%s' "$engine_json" | shasum -a 256 | awk '{print $1}')
+    echo "$engine_json" | jq --arg task "$task_id" '. + {task: $task}' > "$payload_file"
+    local evidence_python="${SPEED_PYTHON:-python3}"
+    if declare -F _context_python >/dev/null 2>&1; then evidence_python=$(_context_python); fi
+    if ! PYTHONPATH="${SPEED_DIR:-$(cd "${LIB_DIR}/.." && pwd)}" "$evidence_python" -m lib.evidence_cli \
+        --project-root "$PROJECT_ROOT" --feature "${FEATURE_NAME:-$GLOBAL_FEATURE}" --producer diagnose \
+        --task "$task_id" --payload "$payload_file" --content-hash "$content_hash" \
+        --compatibility "${FEATURE_DIR}/risk-surface.yaml" \
+        --commit "$inspected_commit" --diff-hash "$diff_hash"; then
+        rm -f "$payload_file"
+        log_error "Could not preserve Diagnose evidence; prior risk surface was not replaced"
+        exit "$EXIT_CONFIG_ERROR"
+    fi
+    rm -f "$payload_file"
+
+    local out_file="${FEATURE_DIR}/risk-surface.yaml" out_tmp
+    out_tmp=$(mktemp)
     mkdir -p "$(dirname "$out_file")"
-    _diagnose_write_risk_surface "$task_id" "$branch" "$agent_model" "$engine_json" > "$out_file"
+    _diagnose_write_risk_surface "$task_id" "$branch" "$agent_model" "$engine_json" > "$out_tmp"
+    mv "$out_tmp" "$out_file"
 
     log_result ""
     log_result "Risk surface written to ${out_file#"${PROJECT_ROOT}"/}"

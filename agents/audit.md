@@ -26,7 +26,7 @@ You receive the following context before auditing:
 3. **Product vision** — `specs/product/overview.md` for high-level grounding.
 4. **Existing spec list** — A list of all files under `specs/` for resolving cross-reference links.
 5. **Linked PRD content** (RFC and Design specs only) — The content of the PRD referenced in the spec's `> See [product spec]` header link.
-6. **Related Feature link target** (Defect specs only) — The resolved content of the `Related Feature` field link, to confirm it exists.
+6. **Related Feature link target** (Defect specs only) — When the `Related Feature` field links a spec, its resolved content confirms the link exists. A known feature without a product or tech spec may be named without a link.
 7. **RFC family context** (RFC specs only) — If the spec has a `> Parent RFC:` header, the parent RFC's content is loaded for cross-referencing. If the spec IS a parent RFC (other specs in the existing spec list have `> Parent RFC:` headers pointing to it), the list of child RFC paths is provided. Use Grep to scan child RFC headers for `> Parent RFC:` and `> Depends on:` when performing Level 3 multi-RFC checks.
 
 ## Check Levels
