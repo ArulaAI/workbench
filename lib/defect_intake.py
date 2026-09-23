@@ -49,6 +49,10 @@ class DefectDraft:
     observed: str
     expected: str
     reproduction: str
+    reproducibility: str
+    last_known_working: str
+    environment: str
+    error_output: str
     context: str
 
 
@@ -69,6 +73,15 @@ def _first_fact(evidence: list[dict[str, Any]], field: str) -> str:
         if value and not value.casefold().startswith("[redacted:"):
             return value
     return ""
+
+
+def _related_spec_reference(paths: Any, features: list[str] | tuple[str, ...]) -> tuple[str, str] | None:
+    root = Path(paths.root)
+    for feature in features:
+        for kind in ("product", "tech"):
+            if (root / "specs" / kind / f"{feature}.md").is_file():
+                return feature, f"../{kind}/{feature}.md"
+    return None
 
 
 def _context(evidence: list[dict[str, Any]]) -> str:
@@ -114,18 +127,23 @@ def preview_defect(paths: Any, feature: str, finding_id: str) -> dict[str, Any]:
     view = read_findings(paths, feature)
     finding = _finding(view, finding_id)
     evidence = finding["evidence"]
+    finding_title = str(finding.get("title") or "").strip()
     draft = DefectDraft(
-        title=str(finding.get("title") or "Untitled defect")[:160],
+        title=finding_title if len(finding_title) <= 100 else "",
         severity=None,
         severity_confirmed=False,
         related_features=(feature,),
         observed=_first_fact(evidence, "observed"),
         expected=_first_fact(evidence, "expected"),
         reproduction=_first_fact(evidence, "reproduction"),
+        reproducibility="",
+        last_known_working="",
+        environment="",
+        error_output="",
         context=_context(evidence),
     )
     missing = [
-        field for field in ("severity", "observed", "expected", "reproduction")
+        field for field in ("title", "severity", "observed", "expected", "reproduction", "reproducibility", "last_known_working", "environment", "error_output")
         if not getattr(draft, field)
     ]
     return {
@@ -153,6 +171,10 @@ def _draft_dict(value: dict[str, Any]) -> dict[str, Any]:
         "observed": str(value.get("observed") or "").strip(),
         "expected": str(value.get("expected") or "").strip(),
         "reproduction": str(value.get("reproduction") or "").strip(),
+        "reproducibility": str(value.get("reproducibility") or "").strip(),
+        "last_known_working": str(value.get("last_known_working", value.get("lastKnownWorking")) or "").strip(),
+        "environment": str(value.get("environment") or "").strip(),
+        "error_output": str(value.get("error_output", value.get("errorOutput")) or "").strip(),
         "context": str(value.get("context") or "").strip(),
     }
 
@@ -162,7 +184,17 @@ def _validation_errors(paths: Any, draft: dict[str, Any], rationale: str) -> lis
     title = draft["title"]
     if not title or len(title) > 160:
         errors.append({"field": "title", "message": "Title must be 1-160 characters"})
+    for field in ("title", "last_known_working"):
+        if "\n" in draft[field] or "\r" in draft[field]:
+            errors.append({"field": field, "message": "Must fit on one line"})
     errors.extend(validate_report(draft, strict=True))
+    if not re.fullmatch(r"(?:always|once|intermittent \((?:[1-9]|10)/10\))", draft["reproducibility"], re.I):
+        errors.append({"field": "reproducibility", "message": "Use always, once, or intermittent (N/10)"})
+    for field in ("last_known_working", "environment", "error_output", "context"):
+        if not draft[field].strip():
+            errors.append({"field": field, "message": f"{field.replace('_', ' ').title()} is required for the defect audit"})
+    if draft["reproduction"] and not re.match(r"^\s*1[.)]\s+", draft["reproduction"]):
+        errors.append({"field": "reproduction", "message": "Start with a numbered first step (1.)"})
     if not draft["severity_confirmed"]:
         errors.append({"field": "severityConfirmed", "message": "Confirm the severity before filing"})
     known = set(discover_feature_names(Path(paths.root), Path(paths.features_dir)))
@@ -171,7 +203,7 @@ def _validation_errors(paths: Any, draft: dict[str, Any], rationale: str) -> lis
         errors.append({"field": "relatedFeatures", "message": f"Unknown feature: {unknown[0]}"})
     if not rationale.strip():
         errors.append({"field": "rationale", "message": "Rationale is required"})
-    for field in ("title", "observed", "expected", "reproduction", "context"):
+    for field in ("title", "observed", "expected", "reproduction", "last_known_working", "environment", "error_output", "context"):
         if len(str(draft[field]).encode("utf-8")) > MAX_FIELD_BYTES:
             errors.append({"field": field, "message": "Must be 16 KiB or smaller"})
     return errors
@@ -435,6 +467,9 @@ def file_defect(
             "evidence_paths": [item["artifact_path"] for item in finding["evidence"]],
             "actor_name": actor[0], "actor_email": actor[1], "filed_at": now,
         }
+        related_spec = _related_spec_reference(paths, normalized["related_features"])
+        provenance["related_spec_feature"] = related_spec[0] if related_spec else normalized["related_features"][0]
+        provenance["related_spec_link"] = related_spec[1] if related_spec else None
         report_text = render_report(normalized, provenance)
         report_bytes = report_text.encode("utf-8")
         if len(report_bytes) > MAX_REPORT_BYTES:

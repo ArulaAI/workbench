@@ -25,7 +25,7 @@ _PLACEHOLDER_RE = re.compile(
 )
 _META_RE = re.compile(
     r"^\s*(?:\*\*)?"
-    r"(?P<key>severity|related features?|source feature|source|intake request|"
+    r"(?P<key>severity|related features?|reproducibility|last known working|source feature|source|intake request|"
     r"related files|affected files|tags)"
     r"(?:\*\*\s*:|\s*:\s*\*\*|\s*:)\s*(?P<value>.*?)\s*$",
     re.I,
@@ -220,6 +220,10 @@ def parse_report(text: str) -> dict[str, Any]:
         "observed": observed,
         "expected": expected,
         "reproduction": reproduction,
+        "reproducibility": _clean_value(combined.get("reproducibility")),
+        "last_known_working": _clean_value(combined.get("last known working")),
+        "environment": section("environment"),
+        "error_output": section("error output"),
         "context": context,
         "related_files": _split_values(combined.get("related files") or combined.get("affected files")),
         "tags": _split_values(combined.get("tags")),
@@ -263,18 +267,27 @@ def initial_defect_state(source_spec: str, reported_severity: str | None, now: s
 
 def render_report(draft: dict[str, Any], provenance: dict[str, Any]) -> str:
     related = ", ".join(draft.get("related_features") or [])
+    primary_feature = provenance["related_spec_feature"]
+    primary_link = provenance["related_spec_link"]
+    primary_reference = f"[{primary_feature}]({primary_link})" if primary_link else primary_feature
+    severity_label = {"P0": "critical", "P1": "high", "P2": "moderate", "P3": "low"}[draft["severity"]]
     evidence = provenance.get("evidence_paths") or []
     evidence_lines = "\n".join(f"- `{path}`" for path in evidence) or "- None"
     return (
         f"# Defect: {draft['title'].strip()}\n\n"
-        f"Severity: {draft['severity']}\n"
+        f"**Severity:** {draft['severity']}-{severity_label}\n"
+        f"**Related Feature:** {primary_reference}\n"
         f"Related Features: {related}\n"
+        f"**Reproducibility:** {draft['reproducibility'].strip()}\n"
+        f"**Last Known Working:** {draft['last_known_working'].strip()}\n"
         "Source: define\n"
         f"Source Feature: {provenance['source_feature']}\n"
         f"Intake Request: {provenance['request_id']}\n\n"
         f"## Observed Behavior\n\n{draft['observed'].strip()}\n\n"
         f"## Expected Behavior\n\n{draft['expected'].strip()}\n\n"
         f"## Reproduction Steps\n\n{draft['reproduction'].strip()}\n\n"
+        f"## Environment\n\n{draft['environment'].strip()}\n\n"
+        f"## Error Output\n\n{draft['error_output'].strip()}\n\n"
         f"## Additional Context\n\n{draft.get('context', '').strip()}\n\n"
         "## Provenance\n\n"
         f"Source finding: `{provenance['finding_id']}`\n\n"

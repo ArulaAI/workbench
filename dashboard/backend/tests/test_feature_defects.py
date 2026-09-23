@@ -120,7 +120,12 @@ def test_file_mutation_creates_canonical_report_and_state(tmp_path):
         "draft": {
             "title": "Retry charges twice", "severity": "P1", "severityConfirmed": True,
             "relatedFeatures": ["payments"], "observed": "Two charges are created.",
-            "expected": "Only one charge exists.", "reproduction": "Run retry test.", "context": "Review task 4.",
+            "expected": "Only one charge exists.",
+            "reproduction": "1. Start with a completed charge.\n2. Retry the charge.\n3. Inspect the result.",
+            "reproducibility": "always", "lastKnownWorking": "Unknown; check the parent commit",
+            "environment": "Test fixture with a completed charge on the current branch.",
+            "errorOutput": "No exception output; the observed result differs from expected.",
+            "context": "Review task 4.",
         },
     }}
     conn = connect(tmp_path)

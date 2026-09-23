@@ -130,6 +130,10 @@ export interface DraftView {
     observed: string;
     expected: string;
     reproduction: string;
+    reproducibility: string;
+    last_known_working: string;
+    environment: string;
+    error_output: string;
     context: string;
   };
   source_feature: string;

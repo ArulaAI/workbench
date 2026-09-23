@@ -8,6 +8,27 @@ from lib.review_evidence import parse_clean_review_payload, parse_report_finding
 
 
 class CleanReviewEvidenceTests(unittest.TestCase):
+    def test_confirmed_tool_missing_severity_uses_matching_final_json(self):
+        findings = [
+            {"summary": "Capture fee floors instead of rounding", "file": "src/payments/service.ts", "line": 119},
+            {"summary": "Retry helper is untested", "file": "test/refund-retry.test.ts", "line": 9},
+        ]
+        events = "\n".join(json.dumps(event) for event in (
+            {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "ReportFindings", "id": "done", "input": {"findings": findings}}]}},
+            {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "done"}], "role": "user"}, "tool_use_result": {"count": 2, "findings": findings}},
+        ))
+        final = json.dumps({"schema_version": 1, "issues": [
+            {"message": findings[0]["summary"], "file": findings[0]["file"], "line": 119, "severity": "major"},
+            {"message": findings[1]["summary"], "file": findings[1]["file"], "line": 9, "severity": "minor"},
+        ]})
+        parsed = parse_report_findings_events(events, final_text=final)
+        self.assertEqual([issue["severity"] for issue in parsed["issues"]], ["major", "minor"])
+        with self.assertRaisesRegex(ValueError, "does not match"):
+            parse_report_findings_events(events, final_text=final.replace("test/refund-retry.test.ts", "test/other.test.ts"))
+        with self.assertRaisesRegex(ValueError, "does not match"):
+            parse_report_findings_events(events, final_text=final.replace("Retry helper is untested", "Payment data leaks to logs"))
+        self.assertEqual(parsed["issues"][0]["message"], findings[0]["summary"])
+
     def test_confirmed_report_findings_becomes_separate_issues(self):
         rejected = {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "ReportFindings", "id": "bad", "input": {"findings": [{"summary": "Unaccepted"}]}}]}}
         accepted = {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "ReportFindings", "id": "good", "input": {"findings": [
@@ -59,6 +80,31 @@ class CleanReviewEvidenceTests(unittest.TestCase):
             self.assertEqual(len(archives), 2)
             latest = max((json.loads(path.read_text()) for path in archives), key=lambda value: value["sequence"])
             self.assertEqual(latest["source_event_log"], "events.jsonl")
+
+    def test_cli_publishes_matching_final_when_confirmed_tool_omits_severity(self):
+        from dashboard.backend.paths import SpeedPaths
+        from lib.defect_findings import read_findings
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            review = root / "review.tmp"
+            review.write_text(json.dumps({"schema_version": 1, "issues": [{
+                "message": "Capture fee floors instead of rounding", "file": "src/payments/service.ts",
+                "line": 119, "severity": "major", "observed": "Fee is 2, not 3.",
+            }]}), encoding="utf-8")
+            finding = {"summary": "Capture fee floors instead of rounding", "file": "src/payments/service.ts", "line": 119}
+            events = root / "events.jsonl"
+            events.write_text("\n".join(json.dumps(event) for event in (
+                {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "ReportFindings", "id": "done", "input": {"findings": [finding]}}]}},
+                {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "done"}], "role": "user"}, "tool_use_result": {"count": 1, "findings": [finding]}},
+            )), encoding="utf-8")
+            normalized = root / "normalized.json"
+            self.assertEqual(evidence_main([
+                "--project-root", str(root), "--feature", "payments", "--producer", "clean_review",
+                "--task", "1", "--payload", str(review), "--provider-events", str(events),
+                "--normalized-output", str(normalized),
+            ]), 0)
+            self.assertEqual(json.loads(normalized.read_text())["issues"][0]["severity"], "major")
+            self.assertEqual(len(read_findings(SpeedPaths(root), "payments")["findings"]), 1)
 
     def test_cli_accepts_json_when_provider_has_no_tool_transcript(self):
         with tempfile.TemporaryDirectory() as directory:

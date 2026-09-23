@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from difflib import SequenceMatcher
 from pathlib import PurePosixPath
 from typing import Any
 
@@ -120,8 +121,8 @@ def parse_clean_review_payload(text: str, *, legacy: bool = False) -> dict[str, 
     return _validate_current(payload)
 
 
-def parse_report_findings_events(text: str) -> dict[str, Any] | None:
-    """Use only a ReportFindings call confirmed by its matching successful result."""
+def parse_report_findings_events(text: str, *, final_text: str | None = None) -> dict[str, Any] | None:
+    """Use confirmed tool findings, recovering only severities omitted by the tool."""
     calls: dict[str, list[dict[str, Any]]] = {}
     confirmed: list[dict[str, Any]] | None = None
     for line in text.splitlines():
@@ -177,4 +178,22 @@ def parse_report_findings_events(text: str) -> dict[str, Any] | None:
             if finding.get(source) is not None:
                 issue[target] = finding[source]
         issues.append(issue)
+    if all(issue.get("severity") in _SEVERITIES for issue in issues):
+        return _validate_current({"schema_version": CLEAN_REVIEW_SCHEMA_VERSION, "issues": issues})
+    if final_text is None or any(issue.get("severity") not in _SEVERITIES | {None} for issue in issues):
+        return _validate_current({"schema_version": CLEAN_REVIEW_SCHEMA_VERSION, "issues": issues})
+    final_issues = parse_clean_review_payload(final_text)["issues"]
+    if len(final_issues) != len(issues):
+        raise ValueError("clean review final JSON does not match confirmed ReportFindings")
+    for tool_issue, final_issue in zip(issues, final_issues):
+        tool_words = " ".join(re.findall(r"[a-z0-9]+", str(tool_issue["message"]).casefold()))
+        final_words = " ".join(re.findall(r"[a-z0-9]+", final_issue["message"].casefold()))
+        if (
+            tool_issue.get("file") != final_issue.get("file")
+            or tool_issue.get("line") != final_issue.get("line")
+            or SequenceMatcher(None, tool_words, final_words).ratio() < 0.8
+        ):
+            raise ValueError("clean review final JSON does not match confirmed ReportFindings")
+        if tool_issue["severity"] is None:
+            tool_issue["severity"] = final_issue["severity"]
     return _validate_current({"schema_version": CLEAN_REVIEW_SCHEMA_VERSION, "issues": issues})

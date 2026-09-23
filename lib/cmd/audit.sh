@@ -1,6 +1,24 @@
 #!/usr/bin/env bash
 # audit.sh — Spec audit command
 
+_audit_related_feature_path() {
+    local related_feature="$1" spec_dir="$2" project_root="$3"
+    local markdown_link_re='^\[[^]]+\]\(([^)]+)\)$'
+    if [[ "$related_feature" =~ $markdown_link_re ]]; then
+        related_feature="${BASH_REMATCH[1]}"
+    fi
+    local root_real candidate candidate_real
+    root_real=$(realpath "$project_root" 2>/dev/null) || return 0
+    for candidate in "${spec_dir}/${related_feature}" "${project_root}/${related_feature}"; do
+        [[ -f "$candidate" ]] || continue
+        candidate_real=$(realpath "$candidate" 2>/dev/null) || continue
+        if [[ "$candidate_real" == "${root_real}/"* ]]; then
+            printf '%s\n' "$candidate_real"
+            return 0
+        fi
+    done
+}
+
 cmd_audit() {
     local spec_file="${1:-}"
 
@@ -104,20 +122,21 @@ cmd_audit() {
             | head -1 || true)
 
         if [[ -n "$related_feature" ]]; then
+            local related_label="$related_feature"
             local related_path=""
-            if [[ -f "${PROJECT_ROOT}/${related_feature}" ]]; then
-                related_path="${PROJECT_ROOT}/${related_feature}"
-            elif [[ -f "${spec_dir}/${related_feature}" ]]; then
-                related_path="${spec_dir}/${related_feature}"
-            fi
+            related_path=$(_audit_related_feature_path "$related_feature" "$spec_dir" "$PROJECT_ROOT")
 
             if [[ -n "$related_path" ]] && [[ -f "$related_path" ]]; then
                 local related_content
                 related_content=$(cat "$related_path")
-                linked_prd_content+="\n\n### Related Feature: ${related_feature}\n\n${related_content}"
+                linked_prd_content+="\n\n### Related Feature: ${related_label}\n\n${related_content}"
                 log_step "Related feature: ${COLOR_STEP}${related_path}${RESET}"
             else
-                log_warn "Related feature spec not found: ${related_feature}"
+                if [[ "$related_feature" == \[*\]\(*\) || "$related_feature" == */* || "$related_feature" == *.md ]]; then
+                    log_warn "Related feature spec not found or outside project: ${related_feature}"
+                else
+                    log_step "Related feature: ${related_feature} (no linked spec)"
+                fi
             fi
         fi
     fi

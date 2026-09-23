@@ -31,6 +31,7 @@ import {
 } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { IconRail } from "@/components/landing/IconRail";
+import { canFileDefectDraft } from "@/lib/define/defect-draft";
 import {
   APPEND_DEFECT_EVIDENCE_MUTATION,
   DECIDE_FINDING_MUTATION,
@@ -379,6 +380,7 @@ function DraftDialog({ feature, finding, close, refresh }: {
   feature: string; finding: Finding; close: () => void; refresh: () => void;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
   const requestIdRef = useRef<string | null>(null);
   const client = useClient();
   const [{ data, fetching, error }] = useQuery<{ defectDraft: DraftView }>({
@@ -402,7 +404,7 @@ function DraftDialog({ feature, finding, close, refresh }: {
 
   const update = (field: string, value: unknown) => setDraft((current) => current ? ({ ...current, [field]: value }) : current);
   const submit = async () => {
-    if (!draft || !preview) return;
+    if (!draft || !preview || !canFileDefectDraft(draft, rationale, duplicates.length, duplicateReason)) return;
     setSubmitting(true); setResult(null);
     requestIdRef.current ||= crypto.randomUUID();
     const response = await file({ input: {
@@ -414,13 +416,21 @@ function DraftDialog({ feature, finding, close, refresh }: {
       draft: {
         title: draft.title, severity: draft.severity || "", severityConfirmed: draft.severity_confirmed,
         relatedFeatures: draft.related_features, observed: draft.observed, expected: draft.expected,
-        reproduction: draft.reproduction, context: draft.context,
+        reproduction: draft.reproduction, reproducibility: draft.reproducibility,
+        lastKnownWorking: draft.last_known_working, environment: draft.environment,
+        errorOutput: draft.error_output, context: draft.context,
       },
     }});
     const value = response.data?.fileFindingDefect;
     setResult(value || { success: false, errors: [{ message: response.error?.message || "Filing failed" }] });
     setSubmitting(false);
     if (value?.success) refresh();
+    else {
+      const field = value?.errors?.[0]?.field;
+      const target = field ? dialogRef.current?.querySelector<HTMLElement>(`[name="${field}"]`) : null;
+      if (target) target.focus();
+      else bodyRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+    }
   };
   const refreshEvidence = async () => {
     const response = await client.query<{ defectDraft: DraftView }>(
@@ -434,6 +444,7 @@ function DraftDialog({ feature, finding, close, refresh }: {
   };
   const duplicates = [...(preview?.duplicates || []), ...(result?.duplicates || [])]
     .filter((item, index, values) => values.findIndex((value) => value.slug === item.slug) === index);
+  const canFile = canFileDefectDraft(draft, rationale, duplicates.length, duplicateReason);
 
   return (
     <dialog
@@ -455,7 +466,7 @@ function DraftDialog({ feature, finding, close, refresh }: {
         </button>
       </div>
 
-      <div className="min-h-0 overflow-y-auto overscroll-contain px-5 py-5 sm:px-7">
+      <div ref={bodyRef} className="min-h-0 overflow-y-auto overscroll-contain px-5 py-5 sm:px-7">
         <div className="mx-auto w-full max-w-[760px]">
         <div className="mb-5 flex items-center gap-3 rounded-lg border border-border bg-bg px-3.5 py-3">
           <div className="flex h-8 w-8 items-center justify-center rounded-md bg-accent/10 text-accent"><FileText className="h-4 w-4" /></div>
@@ -466,6 +477,10 @@ function DraftDialog({ feature, finding, close, refresh }: {
           <span className="rounded-full border border-border px-2 py-1 font-mono text-[9px] text-text-tertiary">NO WRITE</span>
         </div>
 
+        {result && !result.success && <div role="alert" className="mb-5 rounded-lg border border-red/20 bg-red/5 p-3 text-[12px] text-red">
+          {result.errors?.map((item: { field?: string; message: string }, index: number) => <div key={index}>{item.field ? `${item.field}: ` : ""}{item.message}</div>)}
+        </div>}
+
         {fetching && <div className="flex items-center gap-2 py-10 text-text-secondary"><RefreshCw className="h-4 w-4 animate-spin" /> Building draft…</div>}
         {error && <div role="alert" className="rounded-lg border border-red/20 bg-red/5 p-3 text-[12px] text-red">{error.message}</div>}
         {draft && <div className="grid gap-5">
@@ -473,22 +488,30 @@ function DraftDialog({ feature, finding, close, refresh }: {
             <div className="type-compact-label">Classification</div>
             <label className="grid gap-1.5 text-[11px] font-medium text-text-secondary">
               Title
-              <input value={draft.title} onChange={(e) => update("title", e.target.value)} maxLength={160} className={`${controlClass} w-full text-text`} />
+              <input name="title" value={draft.title} onChange={(e) => update("title", e.target.value)} maxLength={160} placeholder="Short, specific failure title" className={`${controlClass} w-full text-text`} />
             </label>
             <div className="grid gap-4 sm:grid-cols-[160px_1fr]">
               <label className="grid gap-1.5 text-[11px] font-medium text-text-secondary">
                 Severity
-                <select value={draft.severity || ""} onChange={(e) => update("severity", e.target.value)} className={`${controlClass} w-full`}>
+                <select name="severity" value={draft.severity || ""} onChange={(e) => update("severity", e.target.value)} className={`${controlClass} w-full`}>
                   <option value="">Choose severity</option>{["P0", "P1", "P2", "P3"].map((value) => <option key={value}>{value}</option>)}
                 </select>
               </label>
               <label className="grid gap-1.5 text-[11px] font-medium text-text-secondary">
                 Related features
-                <input value={draft.related_features.join(", ")} onChange={(e) => update("related_features", e.target.value.split(",").map((v) => v.trim()).filter(Boolean))} className={`${controlClass} w-full text-text`} />
+                <input name="relatedFeatures" value={draft.related_features.join(", ")} onChange={(e) => update("related_features", e.target.value.split(",").map((v) => v.trim()).filter(Boolean))} className={`${controlClass} w-full text-text`} />
+              </label>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label className="grid gap-1.5 text-[11px] font-medium text-text-secondary"><span>Reproducibility <span className="text-text-tertiary">(required)</span></span>
+                <input name="reproducibility" value={draft.reproducibility} onChange={(e) => update("reproducibility", e.target.value)} placeholder="always, once, or intermittent (3/10)" className={`${controlClass} w-full text-text`} />
+              </label>
+              <label className="grid gap-1.5 text-[11px] font-medium text-text-secondary"><span>Last known working <span className="text-text-tertiary">(required)</span></span>
+                <input name="last_known_working" value={draft.last_known_working} onChange={(e) => update("last_known_working", e.target.value)} placeholder="Version, date, commit, or unknown with explanation" className={`${controlClass} w-full text-text`} />
               </label>
             </div>
             <label className="flex items-center gap-2 rounded-md border border-border bg-bg px-3 py-2.5 text-[11px] text-text-secondary">
-              <input type="checkbox" checked={draft.severity_confirmed} onChange={(e) => update("severity_confirmed", e.target.checked)} className="accent-[var(--color-accent)]" />
+              <input name="severityConfirmed" type="checkbox" checked={draft.severity_confirmed} onChange={(e) => update("severity_confirmed", e.target.checked)} className="accent-[var(--color-accent)]" />
               I reviewed and confirm this severity
             </label>
           </section>
@@ -497,20 +520,22 @@ function DraftDialog({ feature, finding, close, refresh }: {
 
           <section className="grid gap-4">
             <div className="type-compact-label">Defect details</div>
-            {(["observed", "expected", "reproduction", "context"] as const).map((field) => (
+            {(["observed", "expected", "reproduction", "environment", "error_output", "context"] as const).map((field) => (
               <label key={field} className="grid gap-1.5 text-[11px] font-medium capitalize text-text-secondary">
-                {field === "context" ? "Additional context" : field}
+                {field === "context" ? "Additional context" : field === "error_output" ? "Error output" : field}
                 <textarea
+                  name={field}
                   value={draft[field]}
                   onChange={(e) => update(field, e.target.value)}
                   rows={field === "context" ? 5 : 4}
+                  placeholder={field === "reproduction" ? "1. Set up the affected state\n2. Run the action or test\n3. Observe the result" : field === "environment" ? "Runtime, OS, test data, and other conditions that matter" : field === "error_output" ? "Paste verbatim failure output, or state explicitly if there was none" : undefined}
                   className="min-h-24 w-full resize-y rounded-md border border-border bg-bg px-3 py-2.5 text-[12px] font-normal leading-5 text-text outline-none transition-colors placeholder:text-text-tertiary focus:border-accent/50 focus:ring-2 focus:ring-accent/10"
                 />
               </label>
             ))}
             <label className="grid gap-1.5 text-[11px] font-medium text-text-secondary">
               Filing rationale
-              <textarea value={rationale} onChange={(e) => setRationale(e.target.value)} rows={2} className="w-full resize-y rounded-md border border-border bg-bg px-3 py-2.5 text-[12px] font-normal text-text outline-none focus:border-accent/50 focus:ring-2 focus:ring-accent/10" />
+              <textarea name="rationale" value={rationale} onChange={(e) => setRationale(e.target.value)} rows={2} className="w-full resize-y rounded-md border border-border bg-bg px-3 py-2.5 text-[12px] font-normal text-text outline-none focus:border-accent/50 focus:ring-2 focus:ring-accent/10" />
             </label>
           </section>
 
@@ -518,10 +543,9 @@ function DraftDialog({ feature, finding, close, refresh }: {
             <div className="mb-1 flex items-center gap-2 font-semibold"><ShieldAlert className="h-4 w-4" /> Possible duplicate</div>
             <p className="mb-3 text-text-secondary">{duplicates.map((item) => item.title).join(", ")}</p>
             <label className="grid gap-1.5 text-[11px] font-medium text-text-secondary">Reason to file separately
-              <textarea value={duplicateReason} onChange={(e) => setDuplicateReason(e.target.value)} rows={2} className="w-full resize-y rounded-md border border-amber/20 bg-bg px-3 py-2 text-text outline-none focus:border-amber/50" />
+              <textarea name="duplicateReason" value={duplicateReason} onChange={(e) => setDuplicateReason(e.target.value)} rows={2} className="w-full resize-y rounded-md border border-amber/20 bg-bg px-3 py-2 text-text outline-none focus:border-amber/50" />
             </label>
           </div>}
-          {result && !result.success && <div role="alert" className="rounded-lg border border-red/20 bg-red/5 p-3 text-[12px] text-red">{result.errors?.map((item: { message: string }) => item.message).join(" · ")}</div>}
           {result?.success && <div role="status" className="flex items-center gap-2 rounded-lg border border-emerald/20 bg-emerald/5 p-3 text-[12px] text-emerald"><CheckCircle2 className="h-4 w-4" /> Filed <Link className="underline underline-offset-2" href={`/editor?spec=${encodeURIComponent(result.canonical_path)}&return=${encodeURIComponent(`/define/${feature}/findings?finding=${finding.id}`)}`}>{result.canonical_path}</Link></div>}
           {!!result?.warnings?.length && <div role="alert" className="rounded-lg border border-amber/20 bg-amber/5 p-3 text-[12px] text-amber">{result.warnings.join(" · ")}</div>}
         </div>}
@@ -532,7 +556,8 @@ function DraftDialog({ feature, finding, close, refresh }: {
         <button className={secondaryButtonClass} onClick={refreshEvidence} disabled={!draft || submitting}><RefreshCw className="h-3.5 w-3.5" /> Refresh evidence</button>
         <div className="flex gap-2">
           <button className={secondaryButtonClass} onClick={close}>Cancel</button>
-          <button className={primaryButtonClass} disabled={!draft || submitting || result?.success} onClick={submit}>
+          {!canFile && draft && <span className="self-center text-[11px] text-text-tertiary">Complete required fields to file</span>}
+          <button className={primaryButtonClass} disabled={!canFile || submitting || result?.success} onClick={submit}>
             {submitting ? <><RefreshCw className="h-3.5 w-3.5 animate-spin" /> Filing…</> : result?.code === "WRITE_FAILED" || result?.code === "REPAIR_REQUIRED" ? "Retry filing" : <><Bug className="h-3.5 w-3.5" /> File defect</>}
           </button>
         </div>

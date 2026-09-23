@@ -57,7 +57,7 @@ def main(argv: list[str] | None = None) -> int:
             if args.provider_events:
                 event_path = Path(args.provider_events).resolve()
                 source_event_log = str(event_path.relative_to(Path(args.project_root).resolve()))
-                payload = parse_report_findings_events(event_path.read_text(encoding="utf-8"))
+                payload = parse_report_findings_events(event_path.read_text(encoding="utf-8"), final_text=raw)
                 tool_report = payload is not None
             if payload is None:
                 payload = parse_clean_review_payload(raw)

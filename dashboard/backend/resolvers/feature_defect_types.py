@@ -16,6 +16,10 @@ class DefectDraftInput:
     observed: str
     expected: str
     reproduction: str
+    reproducibility: str
+    last_known_working: str
+    environment: str
+    error_output: str
     context: str
 
 

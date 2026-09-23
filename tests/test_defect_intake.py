@@ -9,9 +9,22 @@ from unittest.mock import patch
 from dashboard.backend.paths import SpeedPaths
 from lib.defect_findings import FindingError, publish_attempt, read_findings
 from lib.defect_intake import _slugify, append_defect_evidence, file_defect, preview_defect
+from lib.defect_reports import parse_report
 
 
 class DefectIntakeTests(unittest.TestCase):
+    @staticmethod
+    def _complete_draft(preview):
+        draft = dict(preview["draft"])
+        draft.update({
+            "reproduction": "1. Start with a completed payment.\n2. Retry the operation.\n3. Inspect the result.",
+            "reproducibility": "always",
+            "last_known_working": "Unknown; check the parent commit",
+            "environment": "Test fixture with a completed payment on the current branch.",
+            "error_output": "No exception output; the observed result differs from expected.",
+        })
+        return draft
+
     def test_slug_truncates_at_word_boundary(self):
         title = (
             "The new reissueRefund helper retries a non-idempotent refund() call and is never "
@@ -52,8 +65,8 @@ class DefectIntakeTests(unittest.TestCase):
         finding_id = __import__("lib.defect_findings", fromlist=["read_findings"]).read_findings(paths, "payments")["findings"][0]["id"]
         preview = preview_defect(paths, "payments", finding_id)
         self.assertEqual(view_before, sorted(str(path.relative_to(root)) for path in root.rglob("*")))
-        self.assertEqual(preview["missing_fields"], ["severity"])
-        draft = dict(preview["draft"])
+        self.assertEqual(preview["missing_fields"], ["severity", "reproducibility", "last_known_working", "environment", "error_output"])
+        draft = self._complete_draft(preview)
         draft.update({"title": "Refund retry charges twice", "severity": "P1", "severity_confirmed": True})
         request_id = str(uuid.uuid4())
         args = (paths, "payments", finding_id, preview["provenance"]["evidence_ids"],
@@ -62,6 +75,18 @@ class DefectIntakeTests(unittest.TestCase):
         result = file_defect(*args)
         self.assertFalse(result["replayed"])
         self.assertTrue((root / result["canonical_path"]).is_file())
+        report_text = (root / result["canonical_path"]).read_text()
+        template_text = (Path(__file__).resolve().parents[1] / "templates/defect.md").read_text()
+        for heading in (line for line in template_text.splitlines() if line.startswith("## ")):
+            self.assertIn(heading, report_text)
+        for field in ("Severity", "Related Feature", "Reproducibility", "Last Known Working"):
+            self.assertRegex(report_text, rf"(?m)^\*\*{field}:\*\* \S")
+        self.assertIn("**Related Feature:** [payments](../product/payments.md)", report_text)
+        parsed = parse_report(report_text)
+        self.assertEqual(parsed["related_features"], ["payments"])
+        self.assertEqual(parsed["reproducibility"], "always")
+        self.assertEqual(parsed["environment"], draft["environment"])
+        self.assertEqual(parsed["error_output"], draft["error_output"])
         state = json.loads((paths.defects_dir / result["slug"] / "state.json").read_text())
         self.assertEqual(state["status"], "filed")
         self.assertIsNone(state["severity"])
@@ -71,6 +96,23 @@ class DefectIntakeTests(unittest.TestCase):
         self.assertEqual(manifest["phase"], "committed")
         replay = file_defect(*args)
         self.assertTrue(replay["replayed"])
+
+    def test_known_feature_without_spec_can_be_filed(self):
+        temp, root, paths = self._fixture()
+        self.addCleanup(temp.cleanup)
+        (root / "specs/product/payments.md").unlink()
+        finding = read_findings(paths, "payments")["findings"][0]
+        preview = preview_defect(paths, "payments", finding["id"])
+        draft = self._complete_draft(preview)
+        draft.update({"severity": "P1", "severity_confirmed": True})
+        result = file_defect(
+            paths, "payments", finding["id"], preview["provenance"]["evidence_ids"],
+            preview["finding_revision"], preview["decision_revision"], str(uuid.uuid4()),
+            draft, "Track separately", ("Alex", "alex@example.test"),
+        )
+        report = (root / result["canonical_path"]).read_text()
+        self.assertIn("**Related Feature:** payments", report)
+        self.assertEqual(parse_report(report)["related_features"], ["payments"])
 
     def test_incomplete_draft_writes_nothing_in_multiplayer(self):
         temp, root, paths = self._fixture(multiplayer=True)
@@ -86,13 +128,30 @@ class DefectIntakeTests(unittest.TestCase):
         self.assertFalse((root / "specs/defects").exists())
         self.assertTrue(str(paths.defects_dir).endswith(".speed/shared/defects"))
 
+    def test_template_fields_are_required_before_any_file_is_written(self):
+        temp, root, paths = self._fixture()
+        self.addCleanup(temp.cleanup)
+        finding = read_findings(paths, "payments")["findings"][0]
+        preview = preview_defect(paths, "payments", finding["id"])
+        draft = self._complete_draft(preview)
+        draft.update({"title": "Retry charges twice", "severity": "P1", "severity_confirmed": True})
+        draft["environment"] = ""
+        with self.assertRaises(FindingError) as raised:
+            file_defect(
+                paths, "payments", finding["id"], preview["provenance"]["evidence_ids"],
+                preview["finding_revision"], preview["decision_revision"], str(uuid.uuid4()),
+                draft, "Track separately", ("Alex", "alex@example.test"),
+            )
+        self.assertEqual(raised.exception.code, "INVALID_INPUT")
+        self.assertFalse((root / "specs/defects").exists())
+
     def test_retry_rolls_prepared_transaction_forward(self):
         temp, root, paths = self._fixture()
         self.addCleanup(temp.cleanup)
         from lib.defect_findings import read_findings
         finding = read_findings(paths, "payments")["findings"][0]
         preview = preview_defect(paths, "payments", finding["id"])
-        draft = dict(preview["draft"])
+        draft = self._complete_draft(preview)
         draft.update({"title": "Recover retry defect", "severity": "P2", "severity_confirmed": True})
         request_id = str(uuid.uuid4())
         args = (paths, "payments", finding["id"], preview["provenance"]["evidence_ids"],
@@ -113,7 +172,7 @@ class DefectIntakeTests(unittest.TestCase):
         self.addCleanup(temp.cleanup)
         finding = read_findings(paths, "payments")["findings"][0]
         preview = preview_defect(paths, "payments", finding["id"])
-        draft = dict(preview["draft"])
+        draft = self._complete_draft(preview)
         draft.update({"title": "Staging failure", "severity": "P2", "severity_confirmed": True})
         request_id = str(uuid.uuid4())
         args = (
@@ -134,7 +193,7 @@ class DefectIntakeTests(unittest.TestCase):
         self.addCleanup(temp.cleanup)
         finding = read_findings(paths, "payments")["findings"][0]
         preview = preview_defect(paths, "payments", finding["id"])
-        draft = dict(preview["draft"])
+        draft = self._complete_draft(preview)
         draft.update({"title": "Commit point failure", "severity": "P2", "severity_confirmed": True})
         request_id = str(uuid.uuid4())
         args = (
@@ -165,7 +224,7 @@ class DefectIntakeTests(unittest.TestCase):
         self.addCleanup(temp.cleanup)
         finding = read_findings(paths, "payments")["findings"][0]
         preview = preview_defect(paths, "payments", finding["id"])
-        draft = dict(preview["draft"])
+        draft = self._complete_draft(preview)
         draft.update({"title": "Refund retry charges twice", "severity": "P1", "severity_confirmed": True})
         filed = file_defect(
             paths, "payments", finding["id"], preview["provenance"]["evidence_ids"],
@@ -199,7 +258,7 @@ class DefectIntakeTests(unittest.TestCase):
         self.addCleanup(temp.cleanup)
         finding = read_findings(paths, "payments")["findings"][0]
         preview = preview_defect(paths, "payments", finding["id"])
-        draft = dict(preview["draft"])
+        draft = self._complete_draft(preview)
         draft.update({"title": "Refund retry charges twice", "severity": "P1", "severity_confirmed": True})
         first = file_defect(
             paths, "payments", finding["id"], preview["provenance"]["evidence_ids"],
@@ -211,7 +270,7 @@ class DefectIntakeTests(unittest.TestCase):
         state["status"] = "resolved"
         state_path.write_text(json.dumps(state))
         current = preview_defect(paths, "payments", finding["id"])
-        regression = dict(current["draft"])
+        regression = self._complete_draft(current)
         regression.update({
             "title": "Refund retry charges twice regression",
             "severity": "P1", "severity_confirmed": True,
@@ -255,7 +314,7 @@ class DefectIntakeTests(unittest.TestCase):
         subprocess.run(["git", "-C", str(root), "commit", "-qm", "move branch"], check=True)
         finding = read_findings(paths, "payments")["findings"][0]
         preview = preview_defect(paths, "payments", finding["id"])
-        draft = dict(preview["draft"])
+        draft = self._complete_draft(preview)
         draft.update({"title": "Retry fails", "severity": "P1", "severity_confirmed": True})
         with self.assertRaises(FindingError) as raised:
             file_defect(
