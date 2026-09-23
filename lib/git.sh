@@ -32,15 +32,30 @@ git_main_branch() {
 
 git_ensure_repo() {
     if ! _git rev-parse --git-dir &>/dev/null; then
-        _git init
+        if ! _git init; then
+            log_error "Could not initialize a git repository"
+            return 1
+        fi
         log_info "Initialized git repository"
     fi
 
-    # Ensure at least one commit exists
+    # An unborn HEAD cannot host a worktree, and `speed run` creates one per
+    # task, so a repository without a root commit is unusable rather than
+    # merely empty. This commit is deliberately empty: staging the project's
+    # own files stays opt-in behind `init --commit`.
+    #
+    # Reported rather than left to `set -e`: the usual cause is an unset
+    # user.name or user.email, which is worth naming instead of aborting the
+    # caller with no message.
     if ! _git rev-parse HEAD &>/dev/null; then
-        _git commit --allow-empty -m "Initial commit"
+        if ! _git commit --allow-empty -m "Initial commit"; then
+            log_error "Could not create the initial commit"
+            log_error "Set git user.name and user.email, then try again"
+            return 1
+        fi
         log_info "Created initial commit"
     fi
+    return 0
 }
 
 git_current_branch() {

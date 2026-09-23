@@ -13,6 +13,11 @@
 # timeout = 600                  # agent timeout in seconds
 # max_turns = 50                 # max turns for developer agents
 
+[skills]
+# Skill harnesses are independent from agent.provider. `workbench init`
+# writes the durable project selection here.
+# harnesses = ["claude"]         # any of: "claude", "codex", "copilot"
+
 [worktree.symlinks]
 # Symlink these dirs from main repo into git worktrees.
 # key = relative path in worktree, value = relative path in main repo

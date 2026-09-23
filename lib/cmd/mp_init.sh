@@ -4,6 +4,29 @@
 # Creates the shared/local directory split, migrates existing state,
 # and updates .gitignore so shared/ is trackable and local/ is ignored.
 
+# The multi-player allowlist is the same kind of policy as the project
+# `.gitignore`, so it goes through the same versioned managed block in
+# `skills.bootstrap`: one delimited region Workbench rewrites, everything
+# around it preserved. Overwriting the file wholesale, which this replaced,
+# discarded any rule a team had added to it, and a later allowlist change
+# reached only projects that had not been converted yet.
+#
+# Returns 0 when the file changed, 1 when the block was already current, and 3
+# when the policy could not be applied at all.
+_mp_reconcile_state_ignore() {
+    local outcome ignore_error
+    ignore_error=$(mktemp)
+    if ! outcome=$(PYTHONPATH="${SPEED_DIR}/lib" "$(_context_python)" \
+        -m skills.bootstrap ignore \
+        --project-root "$PROJECT_ROOT" --scope state 2>"$ignore_error"); then
+        log_error "Could not apply the .speed/.gitignore policy: $(tr '\n' ' ' < "$ignore_error")"
+        rm -f "$ignore_error"
+        return 3
+    fi
+    rm -f "$ignore_error"
+    [[ "$outcome" == "changed" ]]
+}
+
 # Move logs/ and state.json from shared/features/ to local/features/.
 # Handles both fresh migration and repair of previously botched init.
 _mp_repair_zones() {
@@ -86,17 +109,14 @@ cmd_mp_init() {
             log_step "Wrote missing init event"
         fi
 
-        # Update .speed/.gitignore to allowlist if still using old denylist
-        if ! grep -q '^\*$' "${STATE_DIR}/.gitignore" 2>/dev/null; then
-            cat > "${STATE_DIR}/.gitignore" <<'INNER_GITIGNORE'
-# Multi-player mode: only shared/ is committed, everything else is local
-*
-!shared/
-!shared/**
-!.gitignore
-INNER_GITIGNORE
-            log_step "Updated .speed/.gitignore to allowlist"
-        fi
+        # Bring the allowlist up to date, whatever generation it came from
+        local repair_ignore_status=0
+        _mp_reconcile_state_ignore || repair_ignore_status=$?
+        case "$repair_ignore_status" in
+            0) log_step "Updated .speed/.gitignore to the managed allowlist" ;;
+            1) : ;;
+            *) return 3 ;;
+        esac
 
         # Remove .speed/ from project .gitignore if still present
         local project_gitignore="${PROJECT_ROOT}/.gitignore"
@@ -206,14 +226,13 @@ INNER_GITIGNORE
     fi
 
     # ── Write .speed/.gitignore (ignore local/ only) ──────────────
-    cat > "${STATE_DIR}/.gitignore" <<'INNER_GITIGNORE'
-# Multi-player mode: only shared/ is committed, everything else is local
-*
-!shared/
-!shared/**
-!.gitignore
-INNER_GITIGNORE
-    log_step "Wrote .speed/.gitignore"
+    local ignore_status=0
+    _mp_reconcile_state_ignore || ignore_status=$?
+    case "$ignore_status" in
+        0) log_step "Wrote .speed/.gitignore" ;;
+        1) log_step ".speed/.gitignore already carries the managed allowlist" ;;
+        *) return 3 ;;
+    esac
 
     # ── Update project .gitignore ─────────────────────────────────
     # Remove the .speed/ entry entirely — .speed/.gitignore allowlist handles the rest

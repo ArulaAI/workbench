@@ -158,10 +158,10 @@ The curl installer handles all of this. For manual installs, here is what you ar
 
 ## Initialize a project
 
-From your project root (must be a git repo with at least one commit):
+From your project root:
 
 ```bash
-speed init
+workbench init --harness claude
 ```
 
 `speed init` creates:
@@ -170,10 +170,15 @@ speed init
 |------|---------|
 | `.speed/` | Runtime state directory (gitignored automatically) |
 | `speed.toml` | Project configuration |
-| `CLAUDE.md` | Agent instructions, coding conventions, quality gate commands |
+| `AGENTS.md` | Agent instructions, coding conventions, quality gate commands |
 | `specs/product/overview.md` | Product vision template |
+| selected harness skill root | Managed Workbench skill projections |
+| `.speed/skills/manifest.json` | Durable identity for projected files |
 
-All four files are scaffolded from templates. An initial commit is created automatically.
+The selected harness is persisted under `[skills].harnesses`. Initialization
+verifies the projected skills before succeeding and leaves the resulting files
+uncommitted by default. Add `--commit` to commit only Workbench-owned
+initialization files after successful verification.
 
 ## Configure speed.toml
 
@@ -186,6 +191,9 @@ planning_model = "opus"        # architect, verifier, coherence checker
 support_model = "sonnet"       # developer, reviewer, guardian, debugger
 timeout = 600                  # seconds per agent invocation
 max_turns = 50                 # max turns for developer agents
+
+[skills]
+harnesses = ["claude"]         # "claude", "codex", and/or "copilot"
 
 [worktree.symlinks]
 # Symlink heavy dirs from main repo into worktrees to avoid duplication.

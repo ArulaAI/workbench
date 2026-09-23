@@ -10,16 +10,135 @@ SPEED turns markdown specs into implemented, reviewed, and integrated code. This
 ## Prerequisites
 
 1.  **SPEED installed** and available in your PATH.
-2.  **Claude CLI** or another supported agent provider installed.
+2.  **Claude Code, Codex, or GitHub Copilot** available as your agent harness.
 3.  **Git** initialized in your project.
 
 ## 1. Initialize the Project
 
 ```bash
-speed init
+# Choose the agent harness used by this project
+workbench init --harness claude
 ```
 
-SPEED creates a `.speed/` runtime directory, scaffolds a `speed.toml` configuration file, a `CLAUDE.md` for agent instructions, and a product vision template at `specs/product/overview.md` if one doesn't already exist.
+Use `claude`, `codex`, or `copilot` as the harness value. Explicit selection
+creates and configures only that harness's project skill directory:
+
+| Harness | Project skill directory |
+|---|---|
+| Claude Code | `.claude/skills/` |
+| Codex | `.agents/skills/` |
+| GitHub Copilot | `.github/skills/` |
+
+If `--harness` is omitted, Workbench detects existing supported harnesses and
+uses the first available policy in this order: `WORKBENCH_HARNESSES`,
+`[skills].harnesses` in `speed.toml`, a legacy manifest selection, then detected
+agent harnesses. A project with no configured or detectable harness must supply
+`--harness`. Repeat the flag to initialize more than one harness.
+
+Initialization records the resolved choice in project configuration:
+
+```toml
+[skills]
+harnesses = ["claude"]
+```
+
+Harness selection is separate from `[agent].provider`: the provider runs agents,
+while the harness hosts projected skills. They may intentionally name different
+products. Later `init`, `status`, `doctor`, and `sync` commands use the persisted
+skill policy instead of re-detecting directories. `speed init` remains available
+as a temporary alias for `workbench init`.
+
+Initialization creates the `.speed/` runtime directory, scaffolds `speed.toml`,
+adds agent instructions and the product vision template at
+`specs/product/overview.md` when needed, and imports the managed Workbench skill
+catalog. The initial catalog contains the read-only `workbench-health` skill.
+Initialization verifies every selected projection before reporting success.
+Conflicts exit 2; configuration, catalog, sync, and verification errors exit 3.
+
+Initialization leaves its files uncommitted by default. To create a commit after
+successful verification, use:
+
+```bash
+workbench init --harness claude --commit
+```
+
+Only Workbench-owned initialization paths are staged; unrelated working-tree
+changes are not included.
+
+On repeated initialization, Workbench also reconciles the current Git tracking
+policy, so `.speed/skills/manifest.json` is trackable and the machine-local
+`.speed/skills/events.jsonl` remains ignored.
+
+### Verify the Imported Skills
+
+Invoke the health skill from your selected agent harness:
+
+```text
+/workbench-health
+```
+
+A successful result reports that the Workbench skills were imported and are
+ready to use. Health is an agent skill; there is intentionally no
+`workbench health` command.
+
+You can inspect the same managed installation from the terminal:
+
+```bash
+# Show the state of every imported skill
+workbench skills status
+
+# Explain every skill that is not current, with one repair each
+workbench skills doctor
+
+# Import catalog updates or repair an unmodified projection
+workbench skills sync
+```
+
+### Reading `doctor` output
+
+On a healthy project there is nothing to say:
+
+```text
+skills doctor: healthy · 0 issue(s)
+All imported Workbench skills are current and ready to use.
+```
+
+A finding names the file that changed and shows the comparison it was made
+from, so you can tell a deliberate edit from an unexpected one without
+inspecting the projection yourself:
+
+```text
+skills doctor: issues · 1 issue(s)
+  claude / workbench-health [conflicted] error: projected_file_modified
+    path: SKILL.md
+    expected: sha256:b5c93d95c0b8a7dc…
+    actual:   sha256:2c4614f7bf1535d5…
+    message: 'SKILL.md' changed after Workbench projected it.
+    repair: `workbench skills sync --harness claude --force`  (destructive)
+```
+
+Four parts of that line are worth knowing:
+
+| Field | Why it matters |
+|---|---|
+| `code` | stable identifier such as `projected_file_modified`. Script against this, not the message wording |
+| `state` | the lifecycle state, one of six. Several codes can share one state, which is why the code carries the detail |
+| `repair` | scoped to the harness that has the problem, so it will not overwrite conflicts on another harness |
+| `(destructive)` | present only when running the repair can discard local work. Absent repairs are safe to run unattended |
+
+`--json` emits the same fields for tooling, with `repair_command` and
+`destructive` as separate keys:
+
+```bash
+workbench skills doctor --json
+```
+
+Exit status is 0 when there are no findings and 1 when there are, so `doctor`
+works as a check in a script or a pre-commit hook.
+
+Workbench preserves local edits to projected skills as conflicts. Review or
+back up an intentional edit before running the repair, because a repair marked
+`(destructive)` replaces the projected file with the catalog version.
 
 ## 2. Write a Spec
 
