@@ -273,7 +273,15 @@ main() {
     local args=()
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --feature|-f)  GLOBAL_FEATURE="$2"; shift 2 ;;
+            --feature|-f)
+                # Reading $2 unguarded made a trailing `--feature` die with
+                # "$2: unbound variable" and exit 1, where every other bad
+                # argument exits 3. Check before consuming it.
+                if [[ $# -lt 2 || -z "$2" || "$2" == --* ]]; then
+                    log_error "$1 requires a feature name"
+                    return "$EXIT_CONFIG_ERROR"
+                fi
+                GLOBAL_FEATURE="$2"; shift 2 ;;
             --quiet)       VERBOSITY=0; shift ;;
             --verbose)     VERBOSITY=2; shift ;;
             --debug)       VERBOSITY=3; shift ;;
@@ -303,6 +311,7 @@ main() {
         defect)    cmd_defect "$@" ;;
         coherence) cmd_coherence "$@" ;;
         integrate) cmd_integrate "$@" ;;
+        eval)      cmd_eval "$@" ;;
         review)    cmd_review "$@" ;;
         fix-nits)  cmd_fix_nits "$@" ;;
         retry)     cmd_retry "$@" ;;

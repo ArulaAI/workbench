@@ -42,7 +42,9 @@ task_create() {
             id: $id,
             title: $title,
             description: $description,
-            acceptance_criteria: $criteria,
+            # Shell arguments are strings, but structured planner criteria
+            # must remain a JSON array in the task file. Keep legacy prose.
+            acceptance_criteria: (try ($criteria | fromjson | if type == "array" then . else $criteria end) catch $criteria),
             depends_on: $depends_on,
             status: $status,
             branch: $branch,

@@ -23,10 +23,18 @@ class CleanReviewEvidenceTests(unittest.TestCase):
         ]})
         parsed = parse_report_findings_events(events, final_text=final)
         self.assertEqual([issue["severity"] for issue in parsed["issues"]], ["major", "minor"])
-        with self.assertRaisesRegex(ValueError, "does not match"):
-            parse_report_findings_events(events, final_text=final.replace("test/refund-retry.test.ts", "test/other.test.ts"))
-        with self.assertRaisesRegex(ValueError, "does not match"):
-            parse_report_findings_events(events, final_text=final.replace("Retry helper is untested", "Payment data leaks to logs"))
+        # A location that disagrees leaves that finding's severity unrecovered.
+        # Severity is required, so the transcript is declined rather than
+        # raised on: the caller then publishes the reviewer's final JSON, which
+        # carries every severity. Failing here used to abort the whole review.
+        self.assertIsNone(parse_report_findings_events(
+            events, final_text=final.replace("test/refund-retry.test.ts", "test/other.test.ts")))
+        # Differing wording at a matching location is no longer an obstacle.
+        # Recovery keys off file and line alone, so a reworded message recovers
+        # exactly as before; the old similarity gate rejected this outright.
+        reworded = parse_report_findings_events(
+            events, final_text=final.replace("Retry helper is untested", "Payment data leaks to logs"))
+        self.assertEqual([issue["severity"] for issue in reworded["issues"]], ["major", "minor"])
         self.assertEqual(parsed["issues"][0]["message"], findings[0]["summary"])
 
     def test_confirmed_report_findings_becomes_separate_issues(self):

@@ -101,6 +101,12 @@ _run_architect_phase() {
     local phase_label="$1"
     local message="$2"
 
+    # The catalog is authored before planning, so the architect assigns its
+    # IDs to acceptance criteria rather than inventing or rewriting them.
+    if [[ -n "${test_spec_content:-}" ]]; then
+        message+="\n\n## Test Scenario Catalog (created before task planning)\n\n${test_spec_content}\n\nKeep these scenario IDs stable. Assign each required automated scenario to task acceptance criteria using [SCENARIO-ID] and verify_by: test. List the intended test files in files_touched. Do not add task IDs or execution mappings to the test spec."
+    fi
+
     # Inject model tier names so the architect uses the active provider's vocabulary
     message+="\n\n## Model Tiers\n\nSupport model: ${MODEL_SUPPORT}\nPlanning model: ${MODEL_PLANNING}\nUse \`${MODEL_SUPPORT}\` as the default \`agent_model\`. Use \`${MODEL_PLANNING}\` only for architecturally complex tasks."
 
@@ -170,6 +176,7 @@ _run_coverage_check() {
     [[ -n "$product_spec_content" ]] && msg+="## Product Spec\n\n${product_spec_content}\n\n"
     msg+="## Tech Spec\n\n${tech_spec_content}"
     [[ -n "$design_spec_content" ]] && msg+="\n\n## Design Spec\n\n${design_spec_content}"
+    [[ -n "${test_spec_content:-}" ]] && msg+="\n\n## Test Scenario Catalog\n\n${test_spec_content}"
     msg+="\n\n## Planned Tasks\n\n\`\`\`json\n${task_summary}\n\`\`\`"
 
     local output rc=0
@@ -234,6 +241,7 @@ _repair_coverage_gaps() {
     [[ -n "$product_spec_content" ]] && msg+="## Product Spec\n\n${product_spec_content}\n\n"
     msg+="## Tech Spec\n\n${tech_spec_content}\n\n"
     [[ -n "$design_spec_content" ]] && msg+="## Design Spec\n\n${design_spec_content}\n\n"
+    [[ -n "${test_spec_content:-}" ]] && msg+="## Test Scenario Catalog\n\n${test_spec_content}\n\nPreserve [SCENARIO-ID] in task test criteria; do not rewrite the test spec.\n\n"
     msg+="## Coverage Gaps\n\n${gap_text}\n\n"
     msg+="## Instructions\n\nAdd task(s) for the gaps above. "
     msg+="IDs start at ${start_id}. Do not recreate existing tasks. "
@@ -633,6 +641,21 @@ cmd_plan() {
         [[ -n "$design_spec_file" ]] && design_spec_content=$(cat "$design_spec_file")
     fi
 
+    # Test scenarios exist before task IDs. Make them a planning input, not
+    # a document the planner must rewrite after deciding ownership. Defect
+    # mode has no tech spec to derive a catalog name from, so it opts out.
+    local test_spec_content=""
+    local test_spec_file="${PROJECT_ROOT}/specs/tests/$(basename "$spec_file")"
+    if [[ -f "${FEATURE_DIR}/test_spec_path" ]]; then
+        test_spec_file=$(cat "${FEATURE_DIR}/test_spec_path")
+        [[ "$test_spec_file" == /* ]] || test_spec_file="${PROJECT_ROOT}/${test_spec_file}"
+    fi
+    if [[ "$defects_mode" != "true" && -f "$test_spec_file" ]]; then
+        "$(_context_python)" "${LIB_DIR}/eval_runtime.py" guard --root "$PROJECT_ROOT" --path "$test_spec_file" || return "$EXIT_CONFIG_ERROR"
+        test_spec_content=$(cat "$test_spec_file")
+        log_step "Test spec:    ${COLOR_STEP}${test_spec_file}${RESET}"
+    fi
+
     # Read defect files + extract Failure Class / Evidence (defect-driven
     # mode only) — grep, not model transcription, per PLAN_CONTRACT.md §7.
     local -a defect_contents=()
@@ -642,7 +665,7 @@ cmd_plan() {
 
     # ── Spec hash for stage caching ───────────────────────────────
     local spec_hash
-    spec_hash=$(printf '%s' "${tech_spec_content}${product_spec_content}${design_spec_content}${defect_contents[*]:-}" | shasum -a 256 | cut -d' ' -f1)
+    spec_hash=$(printf '%s' "${tech_spec_content}${product_spec_content}${design_spec_content}${test_spec_content}${defect_contents[*]:-}" | shasum -a 256 | cut -d' ' -f1)
 
     # ── Pre-Plan Guardian Gate ─────────────────────────────────────
     # Check: does this spec belong in the product? Not applicable in
