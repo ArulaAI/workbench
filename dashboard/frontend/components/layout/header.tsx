@@ -16,6 +16,54 @@ const views: Record<string, { title: string; description: string }> = {
     title: "Codebase Topology",
     description: "Symbol distribution and dependency structure across your codebase.",
   },
+  "/digest": {
+    title: "Repository Digest",
+    description: "A synthesized snapshot of the repository: domains, hotspots, commands, and conventions.",
+  },
+  "/digest/workflows": {
+    title: "Repository Digest — Build & tests",
+    description: "Discovered commands grouped by working directory, and known test suites.",
+  },
+  "/digest/quality": {
+    title: "Repository Digest — Discovery quality",
+    description: "Readiness by capability and warnings raised during the last build.",
+  },
+  "/digest/start": {
+    title: "Repository Digest — Start here",
+    description: "Entrypoints, repository structure, and a deterministic suggested reading path.",
+  },
+  "/digest/knowledge": {
+    title: "Repository Digest — Team knowledge",
+    description: "Approved conventions and project knowledge, pending drafts, and recurring signals.",
+  },
+  "/digest/coverage": {
+    title: "Repository Digest — Coverage & conflicts",
+    description: "How much of the repository discovery actually covers, and where sources disagree.",
+  },
+  "/digest/architecture": {
+    title: "Repository Digest — Architecture",
+    description: "Domains grouped into lanes, and the verified relationships discovered between them.",
+  },
+  "/digest/api-data": {
+    title: "Repository Digest — API & Data",
+    description: "Discovered API routes, ORM entities, and persistence information.",
+  },
+  "/digest/cicd": {
+    title: "Repository Digest — CI/CD",
+    description: "Discovered CI/CD pipelines, jobs, triggers, and commands.",
+  },
+  "/digest/runtime": {
+    title: "Repository Digest — Runtime & Configuration",
+    description: "Detected language runtimes, frameworks, configuration sources, and environment variable names.",
+  },
+  "/digest/security": {
+    title: "Repository Digest — Security",
+    description: "Secret indicators, sensitive configuration, and authentication signals discovered from repository evidence.",
+  },
+  "/digest/changes": {
+    title: "Repository Digest — Changes",
+    description: "What changed since the previous digest snapshot, section by section.",
+  },
   "/define": {
     title: "Define",
     description: "Spec coverage, draft specifications, and open defects for the active feature.",

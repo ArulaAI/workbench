@@ -6,6 +6,7 @@ import { useQuery, useMutation } from "urql";
 import { ErrorBoundary } from "@/components/shared/error-boundary";
 import { IconRail } from "@/components/landing/IconRail";
 import { Header } from "@/components/layout/header";
+import { DigestEntryLink } from "@/components/digest/DigestEntryLink";
 import { BlufView } from "@/components/ceremony/BlufView";
 import { ContextPanel } from "@/components/ceremony/ContextPanel";
 import { CeremonyLayout } from "@/components/ceremony/CeremonyLayout";
@@ -205,7 +206,7 @@ export default function DefineFeaturePage() {
             overflow: "hidden",
           }}
         >
-          <Header />
+          <Header actions={<DigestEntryLink feature={featureName} />} />
           <main
             style={{
               flex: 1,
@@ -239,7 +240,7 @@ export default function DefineFeaturePage() {
           overflow: "hidden",
         }}
       >
-        <Header />
+        <Header actions={<DigestEntryLink feature={featureName} />} />
         <div style={{ flex: 1, display: "flex", overflow: "hidden", position: "relative" }}>
           <ErrorBoundary>
             <CeremonyLayout

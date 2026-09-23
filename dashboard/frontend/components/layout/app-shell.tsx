@@ -14,8 +14,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     Array<{ name: string; status: string; taskCount: number }>
   >([]);
 
-  // Landing, Define, and Editor pages render their own shell
-  if (pathname === "/" || pathname?.startsWith("/define") || pathname?.startsWith("/editor")) {
+  // Landing, Define, Editor, and Repository Digest render their own shell.
+  // Digest is a single self-contained application (its own sidebar covers
+  // its 12 screens) — it must not sit inside the global Workbench Sidebar
+  // and Header, which would show as a second, competing nav column.
+  if (
+    pathname === "/" ||
+    pathname?.startsWith("/define") ||
+    pathname?.startsWith("/editor") ||
+    pathname?.startsWith("/digest")
+  ) {
     return (
       <GraphQLProvider>
         <FeatureContext.Provider

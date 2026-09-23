@@ -20,6 +20,7 @@ from lib.context.layer1_domain_clustering import (
     _get_file_inventory,
     _classify_language,
     _resolve_python_imports,
+    _resolve_java_imports,
     _resolve_typescript_imports,
     _find_tsconfig_paths,
     _pascal_to_kebab,
@@ -29,6 +30,8 @@ from lib.context.layer1_domain_clustering import (
     _find_rest_bridges,
     _detect_packages,
     _extract_identifiers,
+    _strip_comments,
+    _compute_segment_doc_freq,
     _build_semantic_edges,
     _label_cluster,
     _build_cochange_graph,
@@ -173,6 +176,191 @@ check(
 check(
     "no self-edges",
     all(s != t for s, t in py_edges),
+)
+
+
+# ══════════════════════════════════════════════════════════════
+# 3b: Java Import Resolution (Layer 2a)
+# ══════════════════════════════════════════════════════════════
+
+print("\n=== 3b: Java Import Resolution (Layer 2a) ===")
+
+# Mirrors the actual PetClinic pattern the manager flagged: an interface
+# and its implementation live in different packages/directories and are
+# only connected by an explicit import — with no resolver, these two
+# files were structurally invisible to each other during clustering.
+repo_java = make_temp_repo({
+    "src/main/java/org/example/petclinic/repository/OwnerRepository.java":
+        "package org.example.petclinic.repository;\n"
+        "public interface OwnerRepository {\n"
+        "    Owner findById(int id);\n"
+        "}\n",
+    "src/main/java/org/example/petclinic/repository/jdbc/JdbcOwnerRepositoryImpl.java":
+        "package org.example.petclinic.repository.jdbc;\n"
+        "import org.example.petclinic.repository.OwnerRepository;\n"
+        "import org.example.petclinic.model.Owner;\n"
+        "public class JdbcOwnerRepositoryImpl implements OwnerRepository {\n"
+        "}\n",
+    "src/main/java/org/example/petclinic/model/Owner.java":
+        "package org.example.petclinic.model;\n"
+        "public class Owner {\n"
+        "}\n",
+    "src/main/java/org/example/petclinic/util/EntityUtils.java":
+        "package org.example.petclinic.util;\n"
+        "import java.util.Collection;\n"
+        "import static org.example.petclinic.model.Owner.NAME;\n"
+        "public class EntityUtils {\n"
+        "}\n",
+    "src/main/java/org/example/petclinic/config/Wildcard.java":
+        "package org.example.petclinic.config;\n"
+        "import org.example.petclinic.repository.*;\n"
+        "public class Wildcard {\n"
+        "}\n",
+    # Mirrors the other manager-flagged case: a same-package test subclass
+    # extending an abstract test base needs no import at all in Java —
+    # without same-package resolution, this pair has zero edges to each
+    # other and TF-IDF content similarity decides where they cluster
+    # instead (which is how an unrelated same-named-pattern test from a
+    # different feature area ended up sharing a cluster on PetClinic).
+    "src/test/java/org/example/petclinic/service/clinicService/AbstractClinicServiceTests.java":
+        "package org.example.petclinic.service.clinicService;\n"
+        "public abstract class AbstractClinicServiceTests {\n"
+        "}\n",
+    "src/test/java/org/example/petclinic/service/clinicService/ClinicServiceJdbcTests.java":
+        "package org.example.petclinic.service.clinicService;\n"
+        "public class ClinicServiceJdbcTests extends AbstractClinicServiceTests {\n"
+        "}\n",
+})
+
+java_files = [
+    "src/main/java/org/example/petclinic/repository/OwnerRepository.java",
+    "src/main/java/org/example/petclinic/repository/jdbc/JdbcOwnerRepositoryImpl.java",
+    "src/main/java/org/example/petclinic/model/Owner.java",
+    "src/main/java/org/example/petclinic/util/EntityUtils.java",
+    "src/main/java/org/example/petclinic/config/Wildcard.java",
+    "src/test/java/org/example/petclinic/service/clinicService/AbstractClinicServiceTests.java",
+    "src/test/java/org/example/petclinic/service/clinicService/ClinicServiceJdbcTests.java",
+]
+java_edges = _resolve_java_imports(repo_java, java_files)
+
+# The core case: impl (different package) → interface it implements.
+check(
+    "impl→interface import resolves across packages",
+    any(
+        s == "src/main/java/org/example/petclinic/repository/jdbc/JdbcOwnerRepositoryImpl.java"
+        and t == "src/main/java/org/example/petclinic/repository/OwnerRepository.java"
+        for s, t in java_edges
+    ),
+    f"edges: {java_edges}",
+)
+
+# Same import statement block also references the model class.
+check(
+    "impl→model import resolves",
+    any(
+        s == "src/main/java/org/example/petclinic/repository/jdbc/JdbcOwnerRepositoryImpl.java"
+        and t == "src/main/java/org/example/petclinic/model/Owner.java"
+        for s, t in java_edges
+    ),
+    f"edges: {java_edges}",
+)
+
+# External import (java.util.Collection) — not in this repo — produces no edge.
+check(
+    "external JDK import (java.util.Collection) produces no edge",
+    not any(
+        s == "src/main/java/org/example/petclinic/util/EntityUtils.java"
+        and "Collection" in t
+        for s, t in java_edges
+    ),
+    f"edges: {java_edges}",
+)
+
+# import static resolves to the class, not a synthetic member-name file.
+check(
+    "import static resolves to the containing class",
+    any(
+        s == "src/main/java/org/example/petclinic/util/EntityUtils.java"
+        and t == "src/main/java/org/example/petclinic/model/Owner.java"
+        for s, t in java_edges
+    ),
+    f"edges: {java_edges}",
+)
+
+# Wildcard imports name a package, not a file — must not fan out to
+# every file in that package (would manufacture edges, not find them).
+check(
+    "wildcard import produces no edge",
+    not any(s == "src/main/java/org/example/petclinic/config/Wildcard.java" for s, t in java_edges),
+    f"edges: {java_edges}",
+)
+
+check("no self-edges (java)", all(s != t for s, t in java_edges))
+
+check(
+    "same-package extends (no import needed) resolves",
+    any(
+        s == "src/test/java/org/example/petclinic/service/clinicService/ClinicServiceJdbcTests.java"
+        and t == "src/test/java/org/example/petclinic/service/clinicService/AbstractClinicServiceTests.java"
+        for s, t in java_edges
+    ),
+    f"edges: {java_edges}",
+)
+check(
+    "same-package resolution doesn't manufacture edges to unrelated packages",
+    not any(
+        s == "src/test/java/org/example/petclinic/service/clinicService/ClinicServiceJdbcTests.java"
+        and t == "src/main/java/org/example/petclinic/model/Owner.java"
+        for s, t in java_edges
+    ),
+    f"edges: {java_edges}",
+)
+
+# Max-effort code review regression: same-package resolution scanned raw,
+# unstripped file content, so a sibling class name merely mentioned in a
+# comment (never a real code reference) manufactured a spurious edge.
+repo_java_comment = make_temp_repo({
+    "src/main/java/org/example/petclinic/repository/OwnerRepository.java":
+        "package org.example.petclinic.repository;\n"
+        "public interface OwnerRepository {\n"
+        "}\n",
+    "src/main/java/org/example/petclinic/repository/UnrelatedRepository.java":
+        "package org.example.petclinic.repository;\n"
+        "// Unlike OwnerRepository, this one has no findById method.\n"
+        "public interface UnrelatedRepository {\n"
+        "}\n",
+})
+java_comment_files = [
+    "src/main/java/org/example/petclinic/repository/OwnerRepository.java",
+    "src/main/java/org/example/petclinic/repository/UnrelatedRepository.java",
+]
+java_comment_edges = _resolve_java_imports(repo_java_comment, java_comment_files)
+check(
+    "a sibling class name mentioned only in a comment does not produce an edge",
+    not any(
+        s == "src/main/java/org/example/petclinic/repository/UnrelatedRepository.java"
+        and t == "src/main/java/org/example/petclinic/repository/OwnerRepository.java"
+        for s, t in java_comment_edges
+    ),
+    f"edges: {java_comment_edges}",
+)
+
+
+# ══════════════════════════════════════════════════════════════
+# 3c: Java Import Edges Reach the Clustering Graph
+# ══════════════════════════════════════════════════════════════
+
+print("\n=== 3c: Java Import Edges Reach the Clustering Graph ===")
+
+file_to_cluster_java, cluster_to_files_java, combined_java, _ = build_file_clusters(repo_java)
+
+check(
+    "combined graph has an edge for the impl→interface import",
+    combined_java.has_edge(
+        "src/main/java/org/example/petclinic/repository/jdbc/JdbcOwnerRepositoryImpl.java",
+        "src/main/java/org/example/petclinic/repository/OwnerRepository.java",
+    ),
+    f"edges: {list(combined_java.edges())}",
 )
 
 
@@ -534,6 +722,230 @@ label1 = _label_cluster(["a/booking.py", "a/hotel.py"], {"a/booking.py": ["booki
 used.add(label1)
 label2 = _label_cluster(["b/payment.py"], {"b/payment.py": ["payment", "charge"]}, used)
 check("labels are unique", label1 != label2, f"l1={label1}, l2={label2}")
+
+# "java" (Maven/Gradle's "src/main/java/...") must not surface as a label
+# term — it's shared by every file in a Java project, so it carries no
+# discriminating signal, and it's what produced the manager-reported
+# "java/license"-style labels on PetClinic. Empty file_terms isolates
+# path-segment scoring, so "owner" (shared, distinctive) must win over
+# the generic path segments src/main/java (all filtered) and the
+# per-file-unique filename tokens.
+java_label = _label_cluster(
+    ["src/main/java/owner/OwnerRepository.java", "src/main/java/owner/OwnerService.java"],
+    {},
+    set(),
+)
+check(
+    "'java' path segment excluded from label",
+    "java" not in java_label.split("/"),
+    f"label={java_label!r}",
+)
+check(
+    "distinctive shared segment ('owner') still wins the label",
+    "owner" in java_label.split("/"),
+    f"label={java_label!r}",
+)
+
+# Code-review regression: _compute_segment_doc_freq's extension-stripping
+# used to be sequential str.replace() calls, which match a substring
+# *anywhere* — including the ".ts" prefix embedded in ".tsx" — not just a
+# trailing extension. "owner.tsx" corrupted to "ownerx" (the trailing "x"
+# survives because only ".ts" got removed, not the full ".tsx"), silently
+# feeding a garbled segment into every TSX/JSX file's document-frequency
+# count. Covers every extension _compute_segment_doc_freq strips.
+for ext in (".py", ".ts", ".tsx", ".js", ".jsx", ".java"):
+    df = _compute_segment_doc_freq([f"src/owner{ext}"])
+    check(
+        f"{ext} stripped cleanly to exactly the stem, no stray trailing character",
+        df == {"src": 1, "owner": 1},
+        f"df={df!r}",
+    )
+tsx_and_ts_corpus = ["src/OwnerRepository.tsx", "src/PetRepository.ts"]
+tsx_ts_df = _compute_segment_doc_freq(tsx_and_ts_corpus)
+check(
+    ".tsx and .ts files both contribute the clean shared stem, not two different corrupted variants",
+    tsx_ts_df.get("ownerrepository") == 1 and tsx_ts_df.get("petrepository") == 1,
+    f"df={tsx_ts_df!r}",
+)
+
+# The deeper bug behind the manager's report: even with "java" itself
+# filtered, every segment of a Java reverse-DNS package prefix
+# (org/springframework/samples/petclinic) is just as non-discriminating,
+# but none of those words can be hand-enumerated in a static blocklist —
+# a different organization has a different prefix. Calibrated to the
+# same ~0.71 document frequency observed on spring-petclinic-reactjs
+# itself (a mixed Java+JS repo, so the prefix doesn't reach 100%).
+# Spread across repository/, service/, and mapper/ sub-packages — like
+# the real repo, so "repository" is a real subset signal (not, itself,
+# universal to every Java file) while org/springframework/samples/
+# petclinic sit above every file regardless of which layer it's in.
+repository_files = [
+    f"src/main/java/org/springframework/samples/petclinic/repository/{name}"
+    for name in (
+        "OwnerRepository.java", "PetRepository.java", "VisitRepository.java",
+        "VetRepository.java", "SpecialtyRepository.java", "JdbcOwnerRepositoryImpl.java",
+    )
+]
+other_layer_files = [
+    "src/main/java/org/springframework/samples/petclinic/service/ClinicServiceImpl.java",
+    "src/main/java/org/springframework/samples/petclinic/mapper/OwnerMapper.java",
+    "src/main/java/org/springframework/samples/petclinic/mapper/PetMapper.java",
+    "src/main/java/org/springframework/samples/petclinic/model/BaseEntity.java",
+]
+non_java_files = ["client/src/index.js", "client/src/App.js", "README.md", "package.json"]
+mixed_corpus = repository_files + other_layer_files + non_java_files
+
+seg_df = _compute_segment_doc_freq(mixed_corpus)
+total_mixed = len(mixed_corpus)
+check(
+    "reverse-DNS package prefix sits above the dampening threshold in a mixed-language repo",
+    seg_df.get("org", 0) / total_mixed > 0.6 and seg_df.get("springframework", 0) / total_mixed > 0.6,
+    f"org df={seg_df.get('org', 0)}/{total_mixed}",
+)
+check(
+    "'repository' stays well under the threshold — a real subset signal, not filtered",
+    seg_df.get("repository", 0) / total_mixed < 0.6,
+    f"repository df={seg_df.get('repository', 0)}/{total_mixed}",
+)
+
+dns_label = _label_cluster(repository_files, {}, set(), seg_df, total_mixed)
+check(
+    "reverse-DNS package segments excluded from label via document-frequency dampening",
+    not any(seg in dns_label.split("/") for seg in ("org", "springframework", "samples", "petclinic")),
+    f"label={dns_label!r}",
+)
+check(
+    "distinctive architectural-layer segment ('repository') still wins after dampening",
+    "repository" in dns_label.split("/"),
+    f"label={dns_label!r}",
+)
+check(
+    "_label_cluster without segment_doc_freq still returns a usable label (backward compatible)",
+    bool(_label_cluster(repository_files, {}, set())),
+)
+
+# Source-license boilerplate (Apache/MIT/BSD headers, present verbatim in
+# nearly every file of a project) must not survive into the identifier
+# stream TF-IDF labels are built from — the other half of the
+# manager-reported "java/license"-style label on PetClinic.
+APACHE_HEADER = """/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ */
+"""
+repo_license = make_temp_repo({
+    "src/main/java/owner/OwnerRepository.java": APACHE_HEADER + """
+package owner;
+
+public interface OwnerRepository {
+    Owner findById(int id);
+}
+""",
+})
+license_terms = _extract_identifiers(
+    os.path.join(repo_license, "src/main/java/owner/OwnerRepository.java")
+)
+check(
+    "license boilerplate words excluded from extracted identifiers",
+    "apache" not in license_terms.lower()
+    and "licensed" not in license_terms.lower()
+    and "license" not in license_terms.lower(),
+    f"terms contain license text: {license_terms!r}",
+)
+check(
+    "real code identifiers still extracted alongside stripped comments",
+    "owner" in license_terms.lower() and "repository" in license_terms.lower(),
+    f"terms={license_terms!r}",
+)
+check(
+    "_strip_comments removes a block comment entirely",
+    "compliance" not in _strip_comments(APACHE_HEADER, "x.java").lower(),
+)
+url_in_string_literal = 'String base = "http://example.com/api"; // real trailing comment'
+stripped_url_line = _strip_comments(url_in_string_literal, "x.java")
+check(
+    "_strip_comments does not truncate a URL's :// inside a string literal",
+    "http://example.com/api" in stripped_url_line,
+    f"stripped={stripped_url_line!r}",
+)
+check(
+    "_strip_comments still removes a genuine trailing // comment",
+    "real trailing comment" not in stripped_url_line,
+    f"stripped={stripped_url_line!r}",
+)
+
+# The manager's structural-clustering report, part 2: two Java test
+# classes testing unrelated domains (clinic vs. user) but sharing the
+# same Spring/JDBC-testing boilerplate ended up TF-IDF-similar enough to
+# land in the same cluster — confirmed on spring-petclinic-reactjs's
+# ClinicServiceJdbcTests vs UserServiceJdbcTests (9 of 10 top terms
+# identical). package/import declaration lines get stripped (repo-
+# specific reverse-DNS prefix, same as _GENERIC_PATH_SEGMENTS's "java"
+# but on the content side) and Spring/JDBC/JPA infrastructure words are
+# in _STOP_IDENTS, so the one real distinguishing word survives instead
+# of being drowned out.
+repo_clinic = make_temp_repo({
+    "src/test/java/org/example/petclinic/service/clinicService/ClinicServiceJdbcTests.java":
+        "package org.example.petclinic.service.clinicService;\n"
+        "import org.springframework.boot.test.context.SpringBootTest;\n"
+        "import org.springframework.test.context.ActiveProfiles;\n"
+        "@SpringBootTest\n"
+        "@ActiveProfiles(\"jdbc\")\n"
+        "class ClinicServiceJdbcTests {\n"
+        "}\n",
+})
+clinic_terms = _extract_identifiers(
+    os.path.join(repo_clinic, "src/test/java/org/example/petclinic/service/clinicService/ClinicServiceJdbcTests.java")
+)
+check(
+    "Spring/JDBC infrastructure words excluded from extracted identifiers",
+    not any(w in clinic_terms.split() for w in ("spring", "springframework", "boot", "jdbc", "profiles")),
+    f"terms={clinic_terms!r}",
+)
+check(
+    "package/import reverse-DNS prefix excluded from extracted identifiers",
+    not any(w in clinic_terms.split() for w in ("org", "example")),
+    f"terms={clinic_terms!r}",
+)
+check(
+    "the one real distinguishing word ('clinic') survives",
+    "clinic" in clinic_terms.split(),
+    f"terms={clinic_terms!r}",
+)
+
+# Architecture data-quality audit finding: identifier expansion only
+# split camelCase compounds (fooBar -> foo, bar) before checking
+# _STOP_IDENTS, never snake_case ones — so a Python-only compound like
+# "tmp_path" (pytest's own fixture parameter name) sailed through as one
+# opaque token even though its component "path" is already stopworded.
+# Observed for real on a fresh Workbench digest: a mostly-production
+# ceremony/backend domain was mislabeled "backend/tmp_path" purely
+# because its test files' pytest fixture parameters out-scored every
+# real production identifier.
+repo_snake = make_temp_repo({
+    "pkg/thing.py": (
+        "def build_thing(tmp_path, mock_data, base_url):\n"
+        "    widget = tmp_path / 'out'\n"
+        "    return widget\n"
+    ),
+})
+snake_terms = _extract_identifiers(os.path.join(repo_snake, "pkg/thing.py"))
+check(
+    "snake_case compound whose parts are stopworded is fully excluded",
+    "tmp_path" not in snake_terms.split() and "mock_data" not in snake_terms.split() and "base_url" not in snake_terms.split(),
+    f"terms={snake_terms!r}",
+)
+check(
+    "the real distinguishing word ('widget'/'thing') survives snake_case splitting",
+    "widget" in snake_terms.split() or "thing" in snake_terms.split(),
+    f"terms={snake_terms!r}",
+)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -906,6 +1318,66 @@ check(
     "error" in coh_nongit or coh_nongit.get("commits_analyzed") == 0,
     f"got: {coh_nongit}",
 )
+
+
+# ══════════════════════════════════════════════════════════════
+# 17: Clustering Determinism (cross-process)
+# ══════════════════════════════════════════════════════════════
+
+print("\n=== 17: Clustering Determinism (cross-process) ===")
+
+# Python's per-process string-hash randomization only varies between
+# separate interpreter processes — calling build_file_clusters() twice
+# in this same test process would use one fixed hash seed for both
+# calls and could never catch this bug. The regression has to actually
+# spawn two fresh processes, exactly as the original investigation did.
+repo_det = make_temp_repo({
+    "app/models/owner.py": "class Owner:\n    pass\n",
+    "app/models/pet.py": "from app.models.owner import Owner\nclass Pet:\n    pass\n",
+    "app/repository/owner_repo.py": "from app.models.owner import Owner\nclass OwnerRepo:\n    pass\n",
+    "app/repository/pet_repo.py": "from app.models.pet import Pet\nclass PetRepo:\n    pass\n",
+    "app/service/owner_service.py":
+        "from app.repository.owner_repo import OwnerRepo\n"
+        "from app.repository.pet_repo import PetRepo\n"
+        "class OwnerService:\n    pass\n",
+    "app/service/pet_service.py":
+        "from app.repository.pet_repo import PetRepo\n"
+        "class PetService:\n    pass\n",
+    "app/util/formatting.py": "def fmt():\n    pass\n",
+    "app/util/validation.py": "def validate():\n    pass\n",
+    "app/web/owner_controller.py": "from app.service.owner_service import OwnerService\n",
+    "app/web/pet_controller.py": "from app.service.pet_service import PetService\n",
+})
+
+# Emit, per file, the sorted list of every other file sharing its
+# cluster — the actual clustering *assignment*, not the arbitrary
+# numeric cluster id (which legitimately isn't stable run to run).
+_det_script = (
+    "import sys, json\n"
+    f"sys.path.insert(0, {PROJECT_ROOT!r})\n"
+    "from lib.context.layer1_domain_clustering import build_file_clusters\n"
+    f"file_to_cluster, cluster_to_files, _, _ = build_file_clusters({repo_det!r})\n"
+    "membership = {f: sorted(cluster_to_files[cid]) for f, cid in file_to_cluster.items()}\n"
+    "print(json.dumps(membership, sort_keys=True))\n"
+)
+
+_det_run_a = subprocess.run([sys.executable, "-c", _det_script], capture_output=True, text=True, timeout=60)
+_det_run_b = subprocess.run([sys.executable, "-c", _det_script], capture_output=True, text=True, timeout=60)
+
+check(
+    "both determinism subprocess runs succeeded",
+    _det_run_a.returncode == 0 and _det_run_b.returncode == 0,
+    f"stderr a: {_det_run_a.stderr[-500:]}\nstderr b: {_det_run_b.stderr[-500:]}",
+)
+
+if _det_run_a.returncode == 0 and _det_run_b.returncode == 0:
+    membership_a = json.loads(_det_run_a.stdout)
+    membership_b = json.loads(_det_run_b.stdout)
+    check(
+        "two fresh-process runs on identical input produce identical cluster membership",
+        membership_a == membership_b,
+        f"differing files: {[f for f in membership_a if membership_a.get(f) != membership_b.get(f)]}",
+    )
 
 
 # ══════════════════════════════════════════════════════════════

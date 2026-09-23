@@ -1,0 +1,26 @@
+id: js-fetch-effect-with-request
+language: javascript
+metadata:
+  produces: semantic_effect
+  effect_kind: external_action
+  resource_kind: service
+  protocol: http
+  target_var: URL
+  request_var: OPTIONS
+  target_pattern: '^["'']([^"'']*)["'']$'
+rule:
+  pattern: fetch($URL, $OPTIONS)
+
+---
+id: js-fetch-effect
+language: javascript
+metadata:
+  produces: semantic_effect
+  effect_kind: external_action
+  resource_kind: service
+  protocol: http
+  method: GET
+  target_var: URL
+  target_pattern: '^["'']([^"'']*)["'']$'
+rule:
+  pattern: fetch($URL)

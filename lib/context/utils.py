@@ -30,6 +30,38 @@ def read_json(path: str) -> dict:
         return {}
 
 
+class DigestValidationError(Exception):
+    """A persisted context digest (CSG, project map, ...) exists on disk but
+    is not trustworthy — malformed JSON or a structure that fails schema
+    validation.
+
+    Deliberately distinct from "file doesn't exist" (read_json_or_none
+    returns None for that — a normal, expected first-run state). A digest
+    that exists but is corrupt or truncated must never be silently treated
+    as an empty-but-valid one: an empty CSG and a corrupt CSG look
+    identical to `.get("nodes", [])`-style callers, but only one of them
+    is actually safe to build downstream context from.
+    """
+
+
+def read_json_or_none(path: str) -> dict | None:
+    """Read JSON file. Returns None if the file doesn't exist.
+
+    Raises DigestValidationError if the file exists but isn't valid JSON.
+    Callers that need to tell "not built yet" apart from "built but
+    corrupted" (e.g. digest loaders that should trigger a rebuild rather
+    than silently proceeding on empty data) should use this instead of
+    read_json.
+    """
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        raise DigestValidationError(f"{path} exists but is not valid JSON: {e}") from e
+
+
 # ── Git helpers ─────────────────────────────────────────────────
 
 

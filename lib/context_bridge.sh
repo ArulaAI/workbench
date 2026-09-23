@@ -186,7 +186,7 @@ feature_context_dir = os.path.join(
 )
 
 from lib.context.layer2 import build_feature_cross_task
-result = build_feature_cross_task(all_tasks, csg, feature_context_dir)
+result = build_feature_cross_task(all_tasks, csg, feature_context_dir, project_root=project_root)
 
 print(json.dumps(result))
 PYTHON_EOF
@@ -225,6 +225,7 @@ conventions_md = format_conventions_for_agent(conventions_path, "architect", all
 knowledge_md = format_knowledge_for_agent(knowledge_path, "architect", all_files)
 
 from lib.context.assembly import assemble_architect
+from lib.context.business_domain_context import read_business_model
 result = assemble_architect(
     project_map=project_map,
     csg=csg,
@@ -232,6 +233,7 @@ result = assemble_architect(
     learnings=learnings,
     conventions=conventions_md,
     project_knowledge=knowledge_md,
+    business_model=read_business_model(project_root),
 )
 
 print(result)

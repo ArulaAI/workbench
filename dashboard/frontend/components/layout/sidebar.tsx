@@ -13,6 +13,7 @@ import {
   Wallet,
   BarChart3,
   GitBranch,
+  ScanText,
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import { FeatureSelector } from "./feature-selector";
@@ -26,6 +27,7 @@ const navItems = [
     icon: LayoutDashboard,
   },
   { href: "/topology", label: "Topology", icon: Network },
+  { href: "/digest", label: "Repository Digest", icon: ScanText },
   { href: "/define", label: "Define", icon: BookOpen },
   { href: "/editor", label: "Spec Editor", icon: FileEdit },
   { href: "/spec-alignment", label: "Spec Alignment", icon: CheckSquare },

@@ -74,7 +74,7 @@ def _hand_parse(path: str) -> dict:
             if "=" in line:
                 key, _, value = line.partition("=")
                 key = key.strip()
-                value = value.strip()
+                value = _strip_inline_comment(value).strip()
 
                 # Strip quotes
                 if (value.startswith('"') and value.endswith('"')) or \
@@ -88,6 +88,25 @@ def _hand_parse(path: str) -> dict:
                 d[key] = value
 
     return data
+
+
+def _strip_inline_comment(value: str) -> str:
+    """Remove a TOML comment while preserving hash characters in strings."""
+    quote = None
+    escaped = False
+    for index, char in enumerate(value):
+        if quote:
+            if escaped:
+                escaped = False
+            elif char == "\\" and quote == '"':
+                escaped = True
+            elif char == quote:
+                quote = None
+        elif char in ('"', "'"):
+            quote = char
+        elif char == '#':
+            return value[:index]
+    return value
 
 
 def shell_escape(value: str) -> str:

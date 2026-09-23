@@ -1,5 +1,55 @@
 # lib/context/data/extraction.toml
 
+# ── Ambient binding environments ──
+# Names a language binds without any declaration in the repository being
+# scanned. Derivation cannot reach them: every other binding is proven by a
+# declaration or an import the rule catalog already extracts, but nothing in
+# any repository ever declares an ambient name. The set is ECMA-262's global
+# object (closed and standardized) plus the host globals every JavaScript
+# runtime provides.
+#
+# Deliberately absent, because the installed rule catalog already classifies
+# them and a second classification would lose what it knows:
+#   fetch    rules/{tsx,typescript}/business.yml -> external_action, http
+#   require  rules/{tsx,typescript,javascript}/references.yml -> ref_kind: import
+#
+# No prototype method appears here. `map`, `then` and `validate` are names a
+# repository declares too, and this file is consulted only for the identifier a
+# call is rooted at, never for the member being called.
+
+[ambient_environments]
+ecmascript = [
+  # ECMA-262 value and function properties of the global object
+  "globalThis", "Infinity", "NaN", "undefined",
+  "eval", "isFinite", "isNaN", "parseFloat", "parseInt",
+  "decodeURI", "decodeURIComponent", "encodeURI", "encodeURIComponent",
+  # Fundamental objects and errors
+  "Object", "Function", "Boolean", "Symbol",
+  "Error", "AggregateError", "EvalError", "RangeError", "ReferenceError",
+  "SyntaxError", "TypeError", "URIError",
+  # Numbers, dates, text
+  "Number", "BigInt", "Math", "Date", "String", "RegExp",
+  # Collections and structured data
+  "Array", "Map", "Set", "WeakMap", "WeakSet", "WeakRef", "FinalizationRegistry",
+  "ArrayBuffer", "SharedArrayBuffer", "DataView", "JSON", "Atomics", "Intl",
+  "Int8Array", "Uint8Array", "Uint8ClampedArray", "Int16Array", "Uint16Array",
+  "Int32Array", "Uint32Array", "Float32Array", "Float64Array",
+  "BigInt64Array", "BigUint64Array",
+  # Control abstraction
+  "Promise", "Proxy", "Reflect",
+  # Host globals: console and timers exist in every runtime
+  "console", "setTimeout", "clearTimeout", "setInterval", "clearInterval",
+  "queueMicrotask", "structuredClone",
+  # Host globals: the browser document/window surface
+  "window", "document", "navigator", "location", "history",
+  "localStorage", "sessionStorage", "alert", "confirm", "prompt",
+  "URL", "URLSearchParams", "TextEncoder", "TextDecoder",
+  "Blob", "FormData", "Headers", "Request", "Response", "AbortController",
+  "Event", "CustomEvent", "XMLHttpRequest", "WebSocket",
+  # Host globals: CommonJS/Node ambient bindings
+  "module", "exports", "process", "Buffer", "__dirname", "__filename",
+]
+
 # ── Source languages with ast-grep rules ──
 # Rule files in lib/context/rules/{language}/
 
@@ -8,16 +58,25 @@ extraction = "rules"
 
 [javascript]
 extraction = "rules"
+ambient_globals = "ecmascript"
+
+[jsx]
+extraction = "rules"
+grammar_module = "tree_sitter_javascript"
+rules_language = "tsx"
+ambient_globals = "ecmascript"
 
 [typescript]
 extraction = "rules"
 grammar_module = "tree_sitter_typescript"
 grammar_func = "language_typescript"
+ambient_globals = "ecmascript"
 
 [tsx]
 extraction = "rules"
 grammar_module = "tree_sitter_typescript"
 grammar_func = "language_tsx"
+ambient_globals = "ecmascript"
 
 [go]
 extraction = "rules"
@@ -88,7 +147,7 @@ extraction = "rules"
 # ── Skeleton-only (grammar exists, parse for structure, no defs/refs) ──
 
 [html]
-extraction = "skeleton"
+extraction = "rules"
 
 [css]
 extraction = "skeleton"
@@ -114,3 +173,450 @@ category = "config"
 
 [c_sharp]
 extraction = "rules"
+
+# Trusted source capabilities. Repository configuration cannot register code.
+[source_adapters.rules]
+module = "rules"
+version = "1"
+contract_version = 1
+normalized_output_version = 1
+kind = "adapter"
+conformance = "declaration"
+extraction_level = "rules"
+fallback = true
+diagnostic_codes = ["SEMANTIC_RESOLUTION_UNAVAILABLE", "RULES_AMBIENT_CALL"]
+[source_adapters.rules.capabilities]
+parsing = "supported"
+declaration_extraction = "supported"
+entrypoint_detection = "partial"
+call_classification = "partial"
+callable_resolution = "partial"
+overload_resolution = "unsupported"
+type_resolution = "unsupported"
+relationship_resolution = "partial"
+framework_enrichment = "unsupported"
+bindings = "partial"
+data_access = "unsupported"
+rules = "partial"
+control_flow = "partial"
+outputs = "partial"
+runtime_selection = "unsupported"
+
+[source_adapters.ts_semantic]
+kind = "adapter"
+module = "ts_semantic"
+version = "tree-sitter-typescript-0.23"
+contract_version = 1
+normalized_output_version = 1
+conformance = "semantic"
+languages = ["javascript", "jsx", "typescript", "tsx"]
+diagnostic_codes = ["JS_EXTERNAL_CALL", "JS_CALL_UNRESOLVED", "JS_CALL_AMBIGUOUS", "JS_MODULE_UNRESOLVED"]
+[source_adapters.ts_semantic.capabilities]
+parsing = "supported"
+declaration_extraction = "supported"
+entrypoint_detection = "partial"
+call_classification = "supported"
+callable_resolution = "partial"
+overload_resolution = "unsupported"
+type_resolution = "unsupported"
+relationship_resolution = "partial"
+framework_enrichment = "unsupported"
+bindings = "partial"
+data_access = "unsupported"
+rules = "partial"
+control_flow = "partial"
+outputs = "partial"
+runtime_selection = "unsupported"
+
+[source_adapters.html_semantic]
+kind = "adapter"
+module = "html_semantic"
+version = "tree-sitter-html-0.23"
+contract_version = 1
+normalized_output_version = 1
+conformance = "semantic"
+languages = ["html"]
+diagnostic_codes = ["HTML_FORM_TARGET_UNRESOLVED", "HTML_HANDLER_UNRESOLVED"]
+[source_adapters.html_semantic.capabilities]
+parsing = "supported"
+declaration_extraction = "partial"
+entrypoint_detection = "partial"
+call_classification = "partial"
+callable_resolution = "partial"
+overload_resolution = "unsupported"
+type_resolution = "unsupported"
+relationship_resolution = "partial"
+framework_enrichment = "unsupported"
+bindings = "partial"
+data_access = "unsupported"
+rules = "partial"
+control_flow = "partial"
+outputs = "partial"
+runtime_selection = "unsupported"
+
+[source_adapters.react_semantic]
+kind = "enricher"
+module = "react_semantic"
+version = "1"
+framework = "react"
+contract_version = 1
+normalized_output_version = 1
+conformance = "semantic"
+languages = ["javascript", "jsx", "typescript", "tsx"]
+diagnostic_codes = ["REACT_STATE_UNRESOLVED", "REACT_TRANSITION_UNRESOLVED"]
+[source_adapters.react_semantic.evidence]
+imports_any = ['^react$', '^react(?:/.*)?$', '^react-dom(?:/.*)?$', '^react-router(?:-dom)?(?:/.*)?$']
+[source_adapters.react_semantic.capabilities]
+parsing = "unsupported"
+declaration_extraction = "unsupported"
+entrypoint_detection = "partial"
+call_classification = "partial"
+callable_resolution = "unsupported"
+overload_resolution = "unsupported"
+type_resolution = "unsupported"
+relationship_resolution = "partial"
+framework_enrichment = "supported"
+bindings = "partial"
+data_access = "unsupported"
+rules = "partial"
+control_flow = "partial"
+outputs = "partial"
+runtime_selection = "unsupported"
+
+[source_adapters.angular_semantic]
+kind = "enricher"
+module = "angular_semantic"
+version = "1"
+framework = "angular"
+contract_version = 1
+normalized_output_version = 1
+conformance = "semantic"
+languages = ["typescript"]
+diagnostic_codes = ["ANGULAR_TEMPLATE_UNRESOLVED", "ANGULAR_HANDLER_UNRESOLVED", "ANGULAR_HTTP_TARGET_UNRESOLVED"]
+[source_adapters.angular_semantic.evidence]
+imports_any = ['^@angular/core$', '^@angular/router$', '^@angular/common/http$', '^@angular/forms$']
+[source_adapters.angular_semantic.capabilities]
+parsing = "unsupported"
+declaration_extraction = "unsupported"
+entrypoint_detection = "partial"
+call_classification = "partial"
+callable_resolution = "unsupported"
+overload_resolution = "unsupported"
+type_resolution = "unsupported"
+relationship_resolution = "partial"
+framework_enrichment = "supported"
+bindings = "partial"
+data_access = "unsupported"
+rules = "partial"
+control_flow = "partial"
+outputs = "partial"
+runtime_selection = "unsupported"
+
+[source_adapters.api_contract]
+module = "documents"
+version = "1"
+contract_version = 1
+normalized_output_version = 1
+kind = "adapter"
+conformance = "declaration"
+languages = ["yaml", "json"]
+detect_any = ['(?m)^\s*openapi\s*:', '"openapi"\s*:']
+diagnostic_codes = ["CONTRACT_IMPLEMENTATION_UNRESOLVED"]
+[source_adapters.api_contract.capabilities]
+parsing = "partial"
+declaration_extraction = "partial"
+entrypoint_detection = "partial"
+call_classification = "unsupported"
+callable_resolution = "unsupported"
+overload_resolution = "unsupported"
+type_resolution = "unsupported"
+relationship_resolution = "unsupported"
+framework_enrichment = "unsupported"
+bindings = "partial"
+data_access = "unsupported"
+rules = "partial"
+control_flow = "unsupported"
+outputs = "partial"
+runtime_selection = "unsupported"
+
+[source_adapters.documentation]
+module = "documentation"
+version = "1"
+contract_version = 1
+normalized_output_version = 1
+kind = "adapter"
+conformance = "declaration"
+languages = ["markdown"]
+diagnostic_codes = []
+[source_adapters.documentation.capabilities]
+parsing = "partial"
+declaration_extraction = "supported"
+entrypoint_detection = "unsupported"
+call_classification = "unsupported"
+callable_resolution = "unsupported"
+overload_resolution = "unsupported"
+type_resolution = "unsupported"
+relationship_resolution = "partial"
+framework_enrichment = "unsupported"
+bindings = "unsupported"
+data_access = "unsupported"
+rules = "unsupported"
+control_flow = "unsupported"
+outputs = "unsupported"
+runtime_selection = "unsupported"
+
+[source_adapters.maven_build]
+module = "maven_build"
+version = "1"
+contract_version = 1
+normalized_output_version = 1
+kind = "adapter"
+conformance = "semantic"
+languages = ["xml"]
+detect_any = ['(?im)^SPEED_PATH:(?:.*/)?pom\.xml$']
+diagnostic_codes = ["GENERATED_SOURCE_CONFIGURATION_UNRESOLVED"]
+[source_adapters.maven_build.capabilities]
+parsing = "supported"
+declaration_extraction = "supported"
+entrypoint_detection = "unsupported"
+call_classification = "unsupported"
+callable_resolution = "unsupported"
+overload_resolution = "unsupported"
+type_resolution = "partial"
+relationship_resolution = "partial"
+framework_enrichment = "unsupported"
+bindings = "unsupported"
+data_access = "unsupported"
+rules = "unsupported"
+control_flow = "unsupported"
+outputs = "unsupported"
+runtime_selection = "supported"
+
+[source_adapters.java_semantic]
+kind = "adapter"
+module = "java_semantic"
+version = "tree-sitter-java-0.23"
+contract_version = 1
+normalized_output_version = 1
+conformance = "semantic"
+languages = ["java"]
+diagnostic_codes = ["JAVA_TYPE_DECLARATION_UNAVAILABLE", "JAVA_TYPE_AMBIGUOUS", "JAVA_EXTERNAL_TYPE", "JAVA_CALL_AMBIGUOUS", "JAVA_EXTERNAL_CALL"]
+[source_adapters.java_semantic.capabilities]
+parsing = "supported"
+declaration_extraction = "supported"
+entrypoint_detection = "partial"
+call_classification = "supported"
+callable_resolution = "partial"
+overload_resolution = "partial"
+type_resolution = "partial"
+relationship_resolution = "partial"
+framework_enrichment = "unsupported"
+bindings = "partial"
+data_access = "unsupported"
+rules = "partial"
+control_flow = "partial"
+outputs = "partial"
+runtime_selection = "unsupported"
+
+[source_adapters.spring_semantic]
+kind = "enricher"
+module = "spring_semantic"
+version = "1"
+framework = "spring"
+contract_version = 1
+normalized_output_version = 1
+conformance = "semantic"
+languages = ["java"]
+diagnostic_codes = ["SPRING_ENDPOINT_AMBIGUOUS", "SPRING_CONTRACT_DECLARATION_UNAVAILABLE"]
+[source_adapters.spring_semantic.evidence]
+imports_any = ['^org\.springframework\.web\.bind\.annotation(?:\.|$)']
+annotations_any = ['^(?:RestController|Controller|RequestMapping|GetMapping|PostMapping|PutMapping|PatchMapping|DeleteMapping)$']
+[source_adapters.spring_semantic.capabilities]
+parsing = "unsupported"
+declaration_extraction = "unsupported"
+entrypoint_detection = "supported"
+call_classification = "unsupported"
+callable_resolution = "unsupported"
+overload_resolution = "unsupported"
+type_resolution = "unsupported"
+relationship_resolution = "partial"
+framework_enrichment = "supported"
+bindings = "partial"
+data_access = "unsupported"
+rules = "partial"
+control_flow = "unsupported"
+outputs = "partial"
+runtime_selection = "unsupported"
+
+[source_adapters.oracle_plsql]
+kind = "adapter"
+module = "sql"
+version = "1"
+parser = "sqlglot"
+parser_version = "30.18.0"
+parser_dialect = "oracle"
+contract_version = 1
+normalized_output_version = 1
+conformance = "semantic"
+languages = ["sql"]
+dialects = ["oracle_plsql"]
+supported_versions = ["Oracle Database 19c"]
+recognized_extensions = [".sql"]
+detect_any = [
+  '(?im)^\s*CREATE\s+(?:OR\s+REPLACE\s+)?PACKAGE\s+(?:BODY\s+)?\w+',
+  '(?ims)^\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:PROCEDURE|FUNCTION)\s+\w+[^;]*?\b(?:IS|AS)\s+(?:BEGIN|\w+\s+(?:NUMBER|VARCHAR2))',
+  '(?ims)^\s*CREATE\s+(?:OR\s+REPLACE\s+)?TRIGGER\s+\w+.*?(?::(?:NEW|OLD)\b|\b(?:NUMBER|VARCHAR2|PLS_INTEGER)\b|END(?:\s+\w+)?\s*;\s*/)',
+  '(?i)\bPRAGMA\s+AUTONOMOUS_TRANSACTION\b',
+  '(?i)\bVARCHAR2\s*(?:\(|\b)',
+  '(?i)\b\w+(?:\.\w+)?%(?:TYPE|ROWTYPE)\b',
+]
+exclude_any = ['(?i)\bLANGUAGE\s+plpgsql\b']
+diagnostic_codes = ["PARTIAL_DIALECT_PARSER", "SQL_MATERIAL_PARSE_ERROR", "SQL_CALL_UNRESOLVED", "SQL_CALL_AMBIGUOUS", "SQL_DYNAMIC_CALL", "SQL_EXTERNAL_PACKAGE_CALL", "SQL_DATA_TARGET_UNRESOLVED", "SQL_OPERATION_PARSE_GAP", "SQL_CONTROL_FLOW_UNRESOLVED", "SQL_CHANGED_VALUES_UNRESOLVED", "SQL_TRANSACTION_SCOPE_UNRESOLVED", "SQL_COMMIT_NOT_ESTABLISHED", "SQL_COMPLETION_UNRESOLVED"]
+[source_adapters.oracle_plsql.capabilities]
+parsing = "partial"
+declaration_extraction = "partial"
+entrypoint_detection = "partial"
+call_classification = "partial"
+callable_resolution = "partial"
+overload_resolution = "partial"
+type_resolution = "unsupported"
+relationship_resolution = "partial"
+framework_enrichment = "unsupported"
+bindings = "partial"
+data_access = "partial"
+rules = "partial"
+control_flow = "partial"
+outputs = "partial"
+runtime_selection = "unsupported"
+
+[source_adapters.postgresql]
+kind = "adapter"
+module = "sql_postgresql"
+version = "1"
+parser = "sqlglot"
+parser_version = "30.18.0"
+parser_dialect = "postgres"
+contract_version = 1
+normalized_output_version = 1
+conformance = "semantic"
+languages = ["sql"]
+dialects = ["postgresql_plpgsql"]
+supported_versions = ["PostgreSQL 17"]
+recognized_extensions = [".sql"]
+detect_any = [
+  '(?i)\bLANGUAGE\s+plpgsql\b',
+  '(?im)^SPEED_PATH:.*/postgresql/[^/]+\.sql$',
+]
+diagnostic_codes = ["PARTIAL_DIALECT_PARSER", "SQL_MATERIAL_PARSE_ERROR", "SQL_CALL_UNRESOLVED", "SQL_CALL_AMBIGUOUS", "SQL_DYNAMIC_CALL", "SQL_EXTERNAL_PACKAGE_CALL", "SQL_DATA_TARGET_UNRESOLVED", "SQL_OPERATION_PARSE_GAP", "SQL_CONTROL_FLOW_UNRESOLVED", "SQL_CHANGED_VALUES_UNRESOLVED", "SQL_TRANSACTION_SCOPE_UNRESOLVED", "SQL_COMMIT_NOT_ESTABLISHED", "SQL_COMPLETION_UNRESOLVED"]
+[source_adapters.postgresql.capabilities]
+parsing = "partial"
+declaration_extraction = "partial"
+entrypoint_detection = "partial"
+call_classification = "partial"
+callable_resolution = "partial"
+overload_resolution = "partial"
+type_resolution = "unsupported"
+relationship_resolution = "partial"
+framework_enrichment = "unsupported"
+bindings = "partial"
+data_access = "partial"
+rules = "partial"
+control_flow = "partial"
+outputs = "partial"
+runtime_selection = "unsupported"
+
+[source_adapters.mysql]
+kind = "adapter"
+module = "sql_mysql"
+version = "1"
+parser = "sqlglot"
+parser_version = "30.18.0"
+parser_dialect = "mysql"
+contract_version = 1
+normalized_output_version = 1
+conformance = "semantic"
+languages = ["sql"]
+dialects = ["mysql"]
+supported_versions = ["MySQL 8"]
+recognized_extensions = [".sql"]
+detect_any = [
+  '(?i)\bAUTO_INCREMENT\b|\bENGINE\s*=',
+  '(?im)^SPEED_PATH:.*/mysql/[^/]+\.sql$',
+]
+diagnostic_codes = ["PARTIAL_DIALECT_PARSER", "SQL_MATERIAL_PARSE_ERROR", "SQL_CALL_UNRESOLVED", "SQL_CALL_AMBIGUOUS", "SQL_DYNAMIC_CALL", "SQL_EXTERNAL_PACKAGE_CALL", "SQL_DATA_TARGET_UNRESOLVED", "SQL_OPERATION_PARSE_GAP", "SQL_CONTROL_FLOW_UNRESOLVED", "SQL_CHANGED_VALUES_UNRESOLVED", "SQL_TRANSACTION_SCOPE_UNRESOLVED", "SQL_COMMIT_NOT_ESTABLISHED", "SQL_COMPLETION_UNRESOLVED"]
+[source_adapters.mysql.capabilities]
+parsing = "partial"
+declaration_extraction = "partial"
+entrypoint_detection = "partial"
+call_classification = "partial"
+callable_resolution = "partial"
+overload_resolution = "partial"
+type_resolution = "unsupported"
+relationship_resolution = "partial"
+framework_enrichment = "unsupported"
+bindings = "partial"
+data_access = "partial"
+rules = "partial"
+control_flow = "partial"
+outputs = "partial"
+runtime_selection = "unsupported"
+
+[source_adapters.hsqldb]
+kind = "adapter"
+module = "sql_hsqldb"
+version = "1"
+parser = "sqlglot"
+parser_version = "30.18.0"
+parser_dialect = "sqlite"
+contract_version = 1
+normalized_output_version = 1
+conformance = "semantic"
+languages = ["sql"]
+dialects = ["hsqldb"]
+supported_versions = ["HSQLDB 2"]
+recognized_extensions = [".sql"]
+detect_any = ['(?im)^SPEED_PATH:.*/hsqldb/[^/]+\.sql$']
+diagnostic_codes = ["PARTIAL_DIALECT_PARSER", "SQL_MATERIAL_PARSE_ERROR", "SQL_CALL_UNRESOLVED", "SQL_CALL_AMBIGUOUS", "SQL_DYNAMIC_CALL", "SQL_EXTERNAL_PACKAGE_CALL", "SQL_DATA_TARGET_UNRESOLVED", "SQL_OPERATION_PARSE_GAP", "SQL_CONTROL_FLOW_UNRESOLVED", "SQL_CHANGED_VALUES_UNRESOLVED", "SQL_TRANSACTION_SCOPE_UNRESOLVED", "SQL_COMMIT_NOT_ESTABLISHED", "SQL_COMPLETION_UNRESOLVED"]
+[source_adapters.hsqldb.capabilities]
+parsing = "partial"
+declaration_extraction = "partial"
+entrypoint_detection = "partial"
+call_classification = "partial"
+callable_resolution = "partial"
+overload_resolution = "partial"
+type_resolution = "unsupported"
+relationship_resolution = "partial"
+framework_enrichment = "unsupported"
+bindings = "partial"
+data_access = "partial"
+rules = "partial"
+control_flow = "partial"
+outputs = "partial"
+runtime_selection = "unsupported"
+
+[source_adapters.unknown_sql]
+kind = "adapter"
+module = "sql_unknown"
+version = "1"
+contract_version = 1
+normalized_output_version = 1
+conformance = "unavailable"
+languages = ["sql"]
+fallback = true
+diagnostic_codes = ["SQL_DIALECT_UNDETERMINED"]
+[source_adapters.unknown_sql.capabilities]
+parsing = "unsupported"
+declaration_extraction = "unsupported"
+entrypoint_detection = "unsupported"
+call_classification = "unsupported"
+callable_resolution = "unsupported"
+overload_resolution = "unsupported"
+type_resolution = "unsupported"
+relationship_resolution = "unsupported"
+framework_enrichment = "unsupported"
+bindings = "unsupported"
+data_access = "unsupported"
+rules = "unsupported"
+control_flow = "unsupported"
+outputs = "unsupported"
+runtime_selection = "unsupported"

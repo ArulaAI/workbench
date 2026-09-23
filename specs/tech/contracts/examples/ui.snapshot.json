@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "snapshot_id": "snapshot:ui",
+  "source_hash": "f65b56e9e90e7d5d23d08d5f88d536e69819310d8fc4183d1b624d4a78763887",
+  "encoding": "utf-8",
+  "fragments": [
+    {
+      "id": "fragment:ui",
+      "original_locator": "authored-fixture",
+      "text": "Authored UI fixture requirement: submitting the refund form with an empty reason displays a validation message and sends no API request.",
+      "excerpt_hash": "f65b56e9e90e7d5d23d08d5f88d536e69819310d8fc4183d1b624d4a78763887"
+    }
+  ]
+}

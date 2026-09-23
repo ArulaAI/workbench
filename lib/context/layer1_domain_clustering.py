@@ -58,6 +58,7 @@ SKIP_DIR_PATTERNS = {"_env", "site-packages", "egg-info", ".egg"}
 
 _PY_EXTS = {".py"}
 _TS_EXTS = {".ts", ".tsx", ".js", ".jsx"}
+_JAVA_EXTS = {".java"}
 
 _IDENT_PATTERN = re.compile(r"\b[a-zA-Z_][a-zA-Z0-9_]{2,}\b")
 
@@ -116,7 +117,7 @@ _STOP_IDENTS = {
     "open", "close", "show", "hide", "enable", "disable",
     "number", "count", "total", "item", "entry", "record",
     "info", "warning", "debug", "trace", "level",
-    "url", "path", "file", "dir", "base", "root",
+    "url", "path", "file", "dir", "base", "root", "tmp", "temp",
     "client", "server", "app", "lib", "src", "utils", "helper",
     "status", "code", "flag", "option", "param", "arg",
     "first", "last", "next", "prev", "current",
@@ -146,12 +147,32 @@ _STOP_IDENTS = {
     # English stop words that leak through identifier extraction
     "and", "the", "not", "all", "has", "only", "can", "will",
     "from", "with", "that", "than", "then", "when", "where",
+    # Spring/Java persistence-testing infrastructure — the same problem
+    # as _GENERIC_PATH_SEGMENTS's "java", moved to content instead of
+    # paths: a project with parallel Jdbc/Jpa/SpringDataJpa
+    # implementations of the same domain entity has test classes whose
+    # TF-IDF vectors are otherwise near-identical (SpringBootTest,
+    # ActiveProfiles, HSQLDB setup boilerplate) except for the one real
+    # domain word — "jdbc"/"jpa" name an implementation *strategy*, not a
+    # domain, so two unrelated entities' Jdbc-flavored tests end up
+    # scoring more similar to each other than either does to its own
+    # domain's Jpa-flavored test, pulling genuinely unrelated tests into
+    # the same cluster (confirmed via file_terms on
+    # spring-petclinic-reactjs's ClinicServiceJdbcTests vs
+    # UserServiceJdbcTests: 9 of 10 top terms identical, only "clinic"
+    # vs "user" differs).
+    "springframework", "spring", "boot", "jdbc", "jpa", "hsqldb", "profiles",
 }
 
 _GENERIC_PATH_SEGMENTS = {
     "src", "lib", "app", "main", "core", "utils", "helpers", "common",
     "shared", "internal", "pkg", "packages", "modules", "vendor",
     "__init__", "index", "__tests__", "test", "tests", "stories", "specs",
+    # Maven/Gradle source-root segment ("src/main/java/...") — present in
+    # nearly every file of a Java project, so it carries no discriminating
+    # signal for a domain label (this is the exact mechanism behind the
+    # manager-reported "java/license" label contamination on PetClinic).
+    "java",
 }
 
 # Clustering parameters
@@ -219,6 +240,8 @@ def _classify_language(filepath: str) -> str:
         return "python"
     if ext in _TS_EXTS:
         return "typescript"
+    if ext in _JAVA_EXTS:
+        return "java"
     if ext == ".rb":
         return "ruby"
     if ext == ".go":
@@ -305,6 +328,116 @@ def _resolve_python_imports(
                     resolved = try_resolve(alias.name)
                     if resolved and resolved != source_file:
                         edges.append((source_file, resolved))
+
+    return [(s, t) for s, t in edges if s != t]
+
+
+_JAVA_IMPORT_RE = re.compile(
+    r"^\s*import\s+(static\s+)?([\w.]+)(\.\*)?\s*;", re.MULTILINE,
+)
+
+
+_JAVA_PACKAGE_DECL_RE = re.compile(r"^\s*package\s+([\w.]+)\s*;", re.MULTILINE)
+
+
+def _resolve_java_imports(
+    repo_path: str, java_files: list[str],
+) -> list[tuple[str, str]]:
+    """Java import resolution via regex, mirroring _resolve_python_imports's
+    suffix-registration approach.
+
+    Java imports are always fully qualified from the package root (unlike
+    Python's relative imports), but the package root itself isn't at a
+    fixed depth in the repo (src/main/java/, src/test/java/, multi-module
+    layouts each with their own source root). Registering every path
+    suffix as a candidate module key — same technique
+    _resolve_python_imports uses for monorepo package roots — resolves an
+    import regardless of how deep its actual source root sits, without
+    having to detect or hardcode Maven/Gradle layout conventions.
+
+    Wildcard imports (`import pkg.*;`) name a package, not a single file;
+    fanning them out to every file in that package would manufacture
+    edges no more real than the ones this fix removes elsewhere, so they
+    are skipped rather than guessed at.
+
+    Also resolves same-package references, which is not an edge case —
+    it's the common case for a package-by-layer Java project (a `service`
+    package's impl class referencing its own interface, a test subclass
+    extending an abstract test base in the same package): Java requires
+    no `import` at all for a class to reference another class in its own
+    package, so an import-only scan sees a same-package test subclass as
+    having almost no edges at all — a class that references nothing looks
+    just as clusterable-anywhere as one that references half the domain,
+    and downstream TF-IDF content similarity (which doesn't know about
+    package structure) ends up deciding where it lands instead.
+    """
+    edges = []
+
+    module_to_file: dict[str, str] = {}
+    for f in java_files:
+        parts = Path(f).parts
+        for i in range(len(parts)):
+            suffix = parts[i:]
+            last = suffix[-1]
+            if last.endswith(".java"):
+                last = last[:-5]
+            mod = ".".join((*suffix[:-1], last))
+            if mod and mod not in module_to_file:
+                module_to_file[mod] = f
+
+    file_content: dict[str, str] = {}
+    file_package: dict[str, str] = {}
+    for f in java_files:
+        full_path = os.path.join(repo_path, f)
+        try:
+            with open(full_path, "r", errors="ignore") as fh:
+                content = fh.read(100_000)
+        except OSError:
+            continue
+        file_content[f] = content
+        m = _JAVA_PACKAGE_DECL_RE.search(content)
+        if m:
+            file_package[f] = m.group(1)
+
+    siblings_by_package: dict[str, dict[str, str]] = defaultdict(dict)
+    for f, pkg in file_package.items():
+        class_name = Path(f).stem
+        siblings_by_package[pkg].setdefault(class_name, f)
+
+    for source_file, content in file_content.items():
+        for match in _JAVA_IMPORT_RE.finditer(content):
+            is_static, dotted, is_wildcard = match.group(1), match.group(2), match.group(3)
+            if is_wildcard:
+                continue
+            target = dotted.rsplit(".", 1)[0] if is_static and "." in dotted else dotted
+
+            resolved = module_to_file.get(target)
+            if resolved and resolved != source_file:
+                edges.append((source_file, resolved))
+
+        pkg = file_package.get(source_file)
+        if not pkg:
+            continue
+        own_class = Path(source_file).stem
+        siblings = siblings_by_package.get(pkg, {})
+        if len(siblings) <= 1:
+            continue
+        # Comment-stripped before matching a sibling class *name* as a
+        # standalone word — a class merely mentioned in a comment (e.g.
+        # "// see OwnerRepository for the contract") is not a real code
+        # reference, and without this the raw, unstripped content (read
+        # above for the import-statement regex, which never legitimately
+        # matches inside a comment) would manufacture a spurious edge
+        # from prose alone. Does not also strip string literals — a class
+        # name appearing only inside a log/string literal can still
+        # produce a false edge; narrower residual risk than comments,
+        # left as-is rather than adding string-literal parsing here.
+        code_only = _strip_comments(content, source_file)
+        for class_name, sibling_file in siblings.items():
+            if class_name == own_class:
+                continue
+            if re.search(rf"\b{re.escape(class_name)}\b", code_only):
+                edges.append((source_file, sibling_file))
 
     return [(s, t) for s, t in edges if s != t]
 
@@ -736,6 +869,51 @@ def _detect_packages(repo_path: str, files: list[str]) -> dict[str, str]:
 
 # ─── Layer 5: TF-IDF semantic rescue + labeling ──────────────────────
 
+# Matches /* ... */ block comments (Javadoc/JSDoc included) across newlines.
+_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
+# Matches // line comments, but not a "://" inside a string literal
+# (http://, https://, ...) so URL text isn't half-truncated.
+_LINE_COMMENT_SLASH_RE = re.compile(r"(?<!:)//[^\n]*")
+# Matches # line comments (Python, Ruby, shell-style languages).
+_LINE_COMMENT_HASH_RE = re.compile(r"#[^\n]*")
+
+_HASH_COMMENT_EXTS = {".py", ".rb", ".sh", ".bash", ".toml", ".yml", ".yaml"}
+# Matches a Java package or import declaration line in full — the
+# reverse-DNS prefix repeated at the top of every file, see
+# _strip_comments.
+_JAVA_PACKAGE_IMPORT_RE = re.compile(r"^\s*(?:package|import(?:\s+static)?)\s+[\w.*]+\s*;", re.MULTILINE)
+
+
+def _strip_comments(content: str, filepath: str) -> str:
+    """Strip comment text before identifier extraction.
+
+    License headers, Javadoc/JSDoc prose, and other comment text are not
+    code — tokenizing them lets boilerplate (e.g. Apache License headers,
+    present verbatim in nearly every file of a project) dominate TF-IDF
+    labeling terms. This is a structural strip of comment syntax, not a
+    list of specific words to exclude, so it isn't defeated by a
+    differently-worded license header (MIT, BSD, ...).
+    """
+    content = _BLOCK_COMMENT_RE.sub(" ", content)
+    ext = Path(filepath).suffix.lower()
+    if ext in _HASH_COMMENT_EXTS:
+        content = _LINE_COMMENT_HASH_RE.sub(" ", content)
+    else:
+        content = _LINE_COMMENT_SLASH_RE.sub(" ", content)
+    if ext == ".java":
+        # Java's package declaration repeats the same reverse-DNS prefix
+        # (org.springframework.samples.petclinic...) at the top of every
+        # file in the project, and every import line repeats large chunks
+        # of it again — unlike a hardcoded word list (which only ever
+        # catches one specific organization's prefix), stripping the
+        # declaration lines themselves works for any package name. Import
+        # target *names* still carry real signal in most languages (a
+        # Python "from x.y import Owner" or a TS "import { OwnerService }"
+        # names something domain-relevant) so this is deliberately scoped
+        # to Java only, not applied to every language's import syntax.
+        content = _JAVA_PACKAGE_IMPORT_RE.sub(" ", content)
+    return content
+
 
 def _extract_identifiers(filepath: str) -> str:
     """Extract and expand identifiers from a source file for TF-IDF."""
@@ -744,6 +922,7 @@ def _extract_identifiers(filepath: str) -> str:
             content = f.read(50_000)
     except (OSError, UnicodeDecodeError):
         return ""
+    content = _strip_comments(content, filepath)
     idents = _IDENT_PATTERN.findall(content)
     expanded = []
     for ident in idents:
@@ -752,6 +931,15 @@ def _extract_identifiers(filepath: str) -> str:
             continue
         parts = re.sub(r"([a-z])([A-Z])", r"\1 \2", ident)
         parts = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1 \2", parts)
+        # camelCase compounds (fooBar) get split above, but a snake_case
+        # compound (tmp_path, mock_data) never did — this only replaced
+        # case-boundary transitions, never touched underscores, so a
+        # Python-only compound whose components ARE individually
+        # stopworded (e.g. tmp_path's "path") sailed through as one
+        # opaque token the stopword list was never checked against.
+        # Splitting on "_" here puts snake_case on equal footing with
+        # camelCase before the stopword check below.
+        parts = parts.replace("_", " ")
         for p in parts.split():
             if len(p) > 2 and p.lower() not in _STOP_IDENTS:
                 expanded.append(p.lower())
@@ -810,12 +998,77 @@ def _build_semantic_edges(
     return edges, file_terms
 
 
+_MAX_SEGMENT_DF = 0.6
+# Deliberately lower than TfidfVectorizer's max_df=0.8 below: a reverse-DNS
+# Java package prefix (org/springframework/samples/petclinic) sits at ~0.71
+# document frequency in a real mixed-language repo (Java backend + JS/TS
+# frontend dilute the ratio — every Java file has it, but it's not "every
+# file in the repo"), while genuine architectural-layer segments that must
+# still win a label (repository, service, mapper, client, ...) stay well
+# under 0.3 in the same corpus. 0.6 was calibrated against
+# spring-petclinic-reactjs, the repo the "java/license"-label bug was
+# reported against, to sit strictly between those two bands.
+
+
+def _compute_segment_doc_freq(files: list[str]) -> dict[str, int]:
+    """Document frequency (distinct-file count) for every normalized path
+    segment token across `files` — the path-segment equivalent of the
+    max_df cutoff TfidfVectorizer already applies to content-based terms
+    in _build_semantic_edges.
+
+    A static blocklist (_GENERIC_PATH_SEGMENTS) only catches whatever
+    specific words someone thought to list ("java", "src", "main", ...).
+    It can't catch a Java reverse-DNS package prefix like
+    org/springframework/samples/petclinic or com/example/myapp — every
+    segment of that prefix sits in nearly every file's path, so it's just
+    as non-discriminating as "java" is, but the exact words are different
+    for every organization and can never be fully enumerated by hand.
+    Measuring how many files actually share a segment catches that
+    structurally, project-agnostic, on top of the static list rather than
+    instead of it.
+    """
+    doc_freq: Counter = Counter()
+    for f in files:
+        parts = Path(f).parts
+        seen_in_file: set[str] = set()
+        for p in parts:
+            name = p.lower()
+            # endswith + slice, not .replace(): .replace(".ts", "") also
+            # matches the ".ts" *prefix* of ".tsx" wherever it occurs —
+            # including right at the end of "owner.tsx" — corrupting it
+            # to "ownerx" instead of "owner". endswith requires an exact
+            # positional match at the string's end, so ".tsx" can never
+            # be mistaken for a ".ts" suffix; order-independent by
+            # construction, not because of list ordering.
+            for ext in (".py", ".ts", ".tsx", ".js", ".jsx", ".java"):
+                if name.endswith(ext):
+                    name = name[: -len(ext)]
+                    break
+            for t in re.split(r"[-_.]", name):
+                if len(t) > 2:
+                    seen_in_file.add(t)
+        for t in seen_in_file:
+            doc_freq[t] += 1
+    return dict(doc_freq)
+
+
 def _label_cluster(
     cluster_files: list[str],
     file_terms: dict[str, list[str]],
     used_labels: set[str],
+    segment_doc_freq: dict[str, int] | None = None,
+    total_files: int = 0,
 ) -> str:
-    """Generate cluster label from TF-IDF terms + path segments."""
+    """Generate cluster label from TF-IDF terms + path segments.
+
+    segment_doc_freq/total_files (both optional, corpus-wide — see
+    _compute_segment_doc_freq) dampen a path segment shared by more than
+    _MAX_SEGMENT_DF of all files being clustered, the same way the static
+    _GENERIC_PATH_SEGMENTS list already does for known-generic segments —
+    callers that don't have this precomputed (e.g. existing unit tests
+    exercising a single cluster's label directly) simply get the old,
+    blocklist-only behavior.
+    """
     if len(cluster_files) == 1:
         return Path(cluster_files[0]).stem
 
@@ -836,8 +1089,14 @@ def _label_cluster(
                 continue
             tokens = re.split(r"[-_.]", name)
             for t in tokens:
-                if len(t) > 2 and t not in _GENERIC_PATH_SEGMENTS:
-                    term_scores[t] += 3
+                if len(t) <= 2 or t in _GENERIC_PATH_SEGMENTS:
+                    continue
+                if (
+                    segment_doc_freq is not None and total_files > 0
+                    and segment_doc_freq.get(t, 0) / total_files > _MAX_SEGMENT_DF
+                ):
+                    continue
+                term_scores[t] += 3
 
     if not term_scores:
         return f"cluster_{len(used_labels)}"
@@ -1026,6 +1285,7 @@ def build_file_clusters(
 
     py_files = [f for f in files if _classify_language(f) == "python"]
     ts_files = [f for f in files if _classify_language(f) == "typescript"]
+    java_files = [f for f in files if _classify_language(f) == "java"]
 
     combined = nx.Graph()
     combined.add_nodes_from(files)
@@ -1034,13 +1294,16 @@ def build_file_clusters(
     py_edges = _resolve_python_imports(repo_path, py_files)
     tsconfig_paths = _find_tsconfig_paths(repo_path, ts_files)
     ts_edges = _resolve_typescript_imports(repo_path, ts_files, tsconfig_paths)
+    java_edges = _resolve_java_imports(repo_path, java_files)
 
     py_unique = set(tuple(sorted(e)) for e in py_edges)
     ts_unique = set(tuple(sorted(e)) for e in ts_edges)
+    java_unique = set(tuple(sorted(e)) for e in java_edges)
+    import_unique = py_unique | ts_unique | java_unique
 
     # Convert direct imports to co-import similarity edges
     import_targets: dict[str, set[str]] = defaultdict(set)
-    for source, target in py_unique | ts_unique:
+    for source, target in import_unique:
         import_targets[source].add(target)
 
     files_with_imports = [f for f in files if f in import_targets]
@@ -1054,8 +1317,14 @@ def build_file_clusters(
                 weight = shared / union * 3.0
                 combined.add_edge(f1, f2, weight=weight)
 
-    # Direct import edges at lower weight
-    for u, v in py_unique | ts_unique:
+    # Direct import edges at lower weight.
+    # Sorted: a raw set of string-tuples iterates in an order that depends
+    # on Python's per-process string-hash randomization, which otherwise
+    # makes combined's edge-insertion order — and therefore Leiden's
+    # local-moving result, even with a fixed seed — vary run to run on
+    # identical input. Every other set-of-edges iterated below has the
+    # same fix for the same reason.
+    for u, v in sorted(import_unique):
         if combined.has_edge(u, v):
             combined[u][v]["weight"] += 1.0
         else:
@@ -1065,7 +1334,7 @@ def build_file_clusters(
     nc_edges = _find_naming_convention_edges(files)
     nc_pairs = set(tuple(sorted(e)) for e in nc_edges)
 
-    for u, v in nc_pairs:
+    for u, v in sorted(nc_pairs):
         if combined.has_edge(u, v):
             combined[u][v]["weight"] += 3.0
         else:
@@ -1078,7 +1347,7 @@ def build_file_clusters(
     rest_edges = _find_rest_bridges(repo_path, py_files, ts_files)
     rest_unique = set(tuple(sorted(e)) for e in rest_edges)
 
-    for u, v in gql_unique | rest_unique:
+    for u, v in sorted(gql_unique | rest_unique):
         if combined.has_edge(u, v):
             combined[u][v]["weight"] += 3.0
         else:
@@ -1295,6 +1564,14 @@ def build_layer_c_from_files(
     # Map files to symbols
     symbol_to_cluster = _map_files_to_symbols(file_to_cluster, nodes)
 
+    # Corpus-wide path-segment document frequency, so _label_cluster can
+    # dampen a segment shared by nearly every file (see
+    # _compute_segment_doc_freq) — computed once over every file that
+    # went into clustering, not per-cluster.
+    all_clustered_files = [f for cfiles in cluster_to_files.values() for f in cfiles]
+    segment_doc_freq = _compute_segment_doc_freq(all_clustered_files)
+    total_clustered_files = len(all_clustered_files)
+
     # Build cluster objects matching the consumer schema
     used_labels: set[str] = set()
     node_lookup = {n["id"]: n for n in nodes}
@@ -1306,7 +1583,7 @@ def build_layer_c_from_files(
     sorted_clusters = sorted(cluster_to_files.items(), key=lambda x: -len(x[1]))
 
     for numeric_id, cfiles in sorted_clusters:
-        label = _label_cluster(cfiles, file_terms, used_labels)
+        label = _label_cluster(cfiles, file_terms, used_labels, segment_doc_freq, total_clustered_files)
         used_labels.add(label)
         cluster_id = f"cluster_{label}_{numeric_id}"
         cluster_id_map[numeric_id] = cluster_id

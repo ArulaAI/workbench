@@ -15,6 +15,7 @@ Implement the task described below completely and correctly. You are working on 
    - Existing patterns and conventions
    - Dependencies and imports used
    - How similar features are implemented
+   - Which existing module owns each responsibility the task will change
 
 3. **Implement incrementally** — Work in small, logical steps:
    - Start with the core data structures / interfaces
@@ -38,7 +39,7 @@ Implement the task described below completely and correctly. You are working on 
 - **Don't break existing code** — If your task builds on existing work, ensure backward compatibility.
 - **Follow existing patterns** — Don't introduce new libraries, frameworks, or architectural patterns unless your task specifically requires it.
 - **Only touch declared files** — Your task declares which files it will create or modify. Stay within those boundaries. **Exception:** If creating or deleting a declared file causes import errors or broken exports in adjacent files, fix those cascading issues and document the undeclared modifications in your output. Do NOT use this exception to add features or refactor.
-- **No over-engineering** — Don't add abstractions, utilities, or helpers that aren't directly required. Three lines of repeated code is better than a premature abstraction.
+- **No over-engineering or competing implementations** — Don't add abstractions, utilities, or helpers that aren't directly required. Small local repetition can be better than a premature abstraction, but never create a second owner for an existing responsibility. Before adding an extractor, decoder, registry, schema vocabulary, or normalization path, locate and reuse or extend the existing implementation. If reuse is impossible, document the incompatibility and add conformance tests proving equivalent behavior before proceeding.
 
 ## When You're Stuck or Uncertain
 

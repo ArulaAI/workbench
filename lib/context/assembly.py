@@ -285,6 +285,7 @@ def assemble_architect(
     learnings: str = "",
     conventions: str = "",
     project_knowledge: str = "",
+    business_model: dict | None = None,
 ) -> str:
     """Assemble codebase context markdown for the Architect.
 
@@ -346,15 +347,29 @@ def assemble_architect(
         sections.append(f"### Project History\n\n{learnings}\n")
         total_budget -= estimate_tokens_from_text(learnings)
 
-    # ── Domain Architecture ───────────────────────────────
+    # Canonical business responsibilities are distinct from code structure.
+    sections.append('### Business Responsibilities\n')
+    if business_model:
+        sections.append(f"Discovery status: {business_model['status']}; build {business_model['build_id']}. These are evidence-backed proposals, with separate human review.\n")
+        for domain in business_model['domains'].values():
+            if domain['support']=='insufficient' or domain['review_state']=='rejected':
+                continue
+            sections.append(f"- {domain['name']}: {domain['summary']} (support: {domain['support']}; review: {domain['review_state']})")
+            for member in domain['activity_memberships']:
+                activity = business_model['activities'][member['activity_id']]
+                sections.append(f"  - {activity['name']}: {activity['description']}")
+    else:
+        sections.append('Business responsibilities are unknown: no readable canonical business-domain artifact is available.\n')
+
+    # ── Structural Architecture ──────────────────────────
     clusters = csg.get("clusters", [])
     # Filter to non-trivial clusters (2+ symbols)
     real_clusters = [c for c in clusters if len(c.get("symbols", [])) >= 2]
 
     if real_clusters:
-        sections.append(f"### Domain Architecture\n")
+        sections.append(f"### Structural Architecture\n")
         sections.append(
-            f"The codebase organizes into {len(real_clusters)} domain clusters "
+            f"The structural graph contains {len(real_clusters)} code clusters "
             f"(discovered from code references, not directory structure):\n"
         )
 
@@ -1145,10 +1160,18 @@ def assemble_coherence(
     # ── Cross-Task Risk Analysis ──────────────────────────
     sections.append("### Cross-Task Risk Analysis\n")
 
-    # Domain Overlap
-    overlaps = cross_task_analysis.get("domain_overlap", [])
+    from .cross_task import normalize_cross_task_analysis
+    cross_task_analysis = normalize_cross_task_analysis(cross_task_analysis)
+    overlaps = cross_task_analysis.get('domain_overlap',[])
     if overlaps:
-        sections.append("#### Domain Overlap\n")
+        sections.append('#### Potential Business Overlap\n')
+        for overlap in overlaps:
+            sections.append(f"- {overlap['name']}: tasks {', '.join(overlap['tasks_touching'])}. File-scoped potential participation; inspect the actual changed activities.")
+    elif cross_task_analysis.get('business_status') == 'unknown':
+        sections.append('Business overlap is unknown because canonical domain context is unavailable.\n')
+    overlaps = cross_task_analysis.get('cluster_overlap',[]) + cross_task_analysis.get('file_overlap',[])
+    if overlaps:
+        sections.append("#### Structural and File Overlap\n")
         for o in overlaps:
             cluster = o.get("cluster", o.get("file", "?"))
             tasks_touching = o.get("tasks_touching", [])

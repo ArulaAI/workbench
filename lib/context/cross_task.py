@@ -23,6 +23,7 @@ from .utils import write_json, read_json
 def build_cross_task_analysis(
     tasks: list[dict],
     csg: dict | None = None,
+    business_model: dict | None = None,
 ) -> dict:
     """Build cross-task analysis for a feature.
 
@@ -34,15 +35,20 @@ def build_cross_task_analysis(
         cross-task-analysis.json dict with domain_overlap, interface_boundaries,
         high_impact_modifications.
     """
-    domain_overlap = []
+    from .business_domain_context import domain_overlap,participation
+    business = {'schema_version':2,'domain_overlap':domain_overlap(tasks,business_model),
+        'business_status':business_model['status'] if business_model else 'unknown',
+        'domain_build_id':business_model['build_id'] if business_model else None,
+        'task_business_participation':participation(tasks,business_model)}
     interface_boundaries = []
     high_impact = []
 
     if not csg:
         # Degraded mode: only file-based overlap
-        domain_overlap = _file_based_overlap(tasks)
         return {
-            "domain_overlap": domain_overlap,
+            **business,
+            'cluster_overlap':[],
+            'file_overlap':_file_based_overlap(tasks),
             "interface_boundaries": interface_boundaries,
             "high_impact_modifications": high_impact,
             "degraded": True,
@@ -61,8 +67,8 @@ def build_cross_task_analysis(
                 symbols.add(node["id"])
         task_symbols[tid] = symbols
 
-    # 1. Domain overlap — tasks sharing CSG clusters
-    domain_overlap = _compute_domain_overlap(tasks, task_symbols, csg)
+    # Structural overlap remains independent of business responsibilities.
+    cluster_overlap = _compute_cluster_overlap(tasks, task_symbols, csg)
 
     # 2. Interface boundaries — symbols defined by one task, consumed by another
     interface_boundaries = _compute_interface_boundaries(tasks, task_symbols, csg)
@@ -71,13 +77,15 @@ def build_cross_task_analysis(
     high_impact = _compute_high_impact(tasks, task_symbols, csg)
 
     return {
-        "domain_overlap": domain_overlap,
+        **business,
+        'cluster_overlap':cluster_overlap,
+        'file_overlap':_file_based_overlap(tasks),
         "interface_boundaries": interface_boundaries,
         "high_impact_modifications": high_impact,
     }
 
 
-def _compute_domain_overlap(
+def _compute_cluster_overlap(
     tasks: list[dict],
     task_symbols: dict[str, set[str]],
     csg: dict,
@@ -272,4 +280,13 @@ def save_cross_task_analysis(analysis: dict, feature_context_dir: str) -> str:
 
 def load_cross_task_analysis(feature_context_dir: str) -> dict:
     path = os.path.join(feature_context_dir, "cross-task-analysis.json")
-    return read_json(path)
+    return normalize_cross_task_analysis(read_json(path))
+
+
+def normalize_cross_task_analysis(value):
+    if not value or value.get('schema_version') == 2:
+        return value
+    return {**value,'schema_version':2,'domain_overlap':[],
+        'cluster_overlap':[] if value.get('degraded') else value.get('domain_overlap',[]),
+        'file_overlap':value.get('domain_overlap',[]) if value.get('degraded') else [],
+        'business_status':'unknown','domain_build_id':None,'task_business_participation':[]}

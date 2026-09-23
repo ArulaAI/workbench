@@ -1,0 +1,13 @@
+{
+  "expected_rules": [
+    "html-document-definition",
+    "html-form-control",
+    "html-form-control",
+    "html-form-definition",
+    "html-form-effect",
+    "html-named-input-binding",
+    "html-required-observation",
+    "html-required-validation",
+    "html-submit-event"
+  ]
+}

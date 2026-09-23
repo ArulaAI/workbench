@@ -36,6 +36,12 @@ metadata:
   produces: reference
   ref_kind: call
   name_var: FUNC
+  callee_separator: '.'
+  implicit_receiver: self
 rule:
   kind: call
   pattern: $FUNC($$$ARGS)
+  not:
+    inside:
+      kind: decorator
+      stopBy: end

@@ -63,15 +63,19 @@ Configure the API URL in `.env.local` (defaults to `http://127.0.0.1:4440/graphq
 
 | View | Route | Data Source |
 |---|---|---|
+| Repository Digest | `/digest` | `repository-digest.json` |
 | Mission Control | `/mission-control` | `tasks/*.json`, `state.json` |
 | Codebase Topology | `/topology` | `semantic-graph.json` |
 | Spec Alignment | `/spec-alignment` | `spec-alignment.json` |
 | Context Budget | `/budget` | `context/tasks/*/context/budget.json` |
 | Token Burn Analytics | `/analytics` | JSONL agent logs (ingested into SQLite) |
 
-## GraphQL API
+Repository Digest is also reachable from any `/define/[feature]` page via a
+"Repository Digest" header link (`/digest?returnTo=define&feature=<feature>`),
+which shows a "← Return to Define" affordance back to the originating
+feature. See `specs/tech/speed-repository-digest-dashboard.md`.
 
-Eight query fields, three subscription channels.
+## GraphQL API
 
 **Queries** (test in GraphiQL at `/graphql`):
 
@@ -93,6 +97,18 @@ Eight query fields, three subscription channels.
 
 # Context budget utilization
 { contextBudget { summary { taskCount utilizationPct totalCuts } } }
+
+# Repository digest — reads the stored artifact only, never rebuilds
+{ repositoryDigest { status effectiveState identity { name summary } footprint { fileCount domainCount } } }
+
+# Repository digest build status (for polling during a refresh)
+{ repositoryDigestStatus { state lastError hasReadableDigest } }
+```
+
+**Mutations:**
+
+```graphql
+mutation { refreshRepositoryDigest(rebuildDiscovery: false) { accepted state message } }
 ```
 
 **Subscriptions** (WebSocket):
@@ -102,6 +118,7 @@ Eight query fields, three subscription channels.
 | `taskStatusChanged(feature)` | Task status changes |
 | `agentRunCompleted(feature?)` | New JSONL result event ingested |
 | `costAccumulation(feature?)` | Every 5s with cumulative cost |
+| `repositoryDigestUpdated` | Digest refresh starts, completes, or fails |
 
 ## Tech Stack
 

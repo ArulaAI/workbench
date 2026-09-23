@@ -97,14 +97,14 @@ class TestArchitectInjection:
         )
         assert "### Project History" not in result
 
-    def test_section_appears_before_domain_architecture(self):
+    def test_section_appears_before_structural_architecture(self):
         result = assemble_architect(
             project_map=MINIMAL_PROJECT_MAP,
             csg={"clusters": [{"name": "auth", "symbols": ["a", "b"]}]},
             learnings=LEARNINGS_TEXT,
         )
         history_pos = result.find("### Project History")
-        domain_pos = result.find("### Domain Architecture")
+        domain_pos = result.find("### Structural Architecture")
         assert history_pos < domain_pos
 
 
