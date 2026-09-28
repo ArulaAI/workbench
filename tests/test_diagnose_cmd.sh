@@ -320,6 +320,65 @@ assert cls["signals"][0]["observed"] == 'a "quoted" phrase and a \\backslash', c
 PYEOF
 }
 
+test_evidence_renders_in_risk_surface_beside_unchanged_where() {
+    _engine_output='{"classes":[{"id":"F2","title":"Cardholder data leakage","signals":[{"observed":"1 file(s) with an observability sink call","where":["src/payments/service.ts"],"evidence":[{"file":"src/payments/service.ts","line":67,"call":"logger.","snippet":"logger.warn('"'"'refund failed'"'"', { req })","rationale":"added-lines rule matched pattern on an added line"}]}]},{"id":"F3","title":"Weak test","signals":[{"observed":"1 changed source file(s)","where":["src/payments/retry.ts"],"evidence":[{"file":"src/payments/retry.ts","paired_test":"test/refund-retry.test.ts","rationale":"changed-source-with-test-change: paired by name"}]}]}]}'
+    local _out
+    _out=$(cmd_diagnose --task 1 2>&1) || true
+    local rs_file="${TEST_DIR}/.speed/features/test-feature/risk-surface.yaml"
+    # where keeps its exact list-of-strings rendering; Define reads it as such.
+    grep -qxF '          - "src/payments/service.ts"' "$rs_file" || { echo "    where line changed"; return 1; }
+    python3 - "$rs_file" <<'PYEOF'
+import sys, yaml
+data = yaml.safe_load(open(sys.argv[1]))
+f2, f3 = data["classes"]
+sig = f2["signals"][0]
+assert sig["where"] == ["src/payments/service.ts"], sig["where"]
+assert sig["evidence"] == [{
+    "file": "src/payments/service.ts", "line": 67, "call": "logger.",
+    "snippet": "logger.warn('refund failed', { req })",
+    "rationale": "added-lines rule matched pattern on an added line",
+}], sig["evidence"]
+paired = f3["signals"][0]["evidence"][0]
+assert paired == {"file": "src/payments/retry.ts", "paired_test": "test/refund-retry.test.ts",
+                  "rationale": "changed-source-with-test-change: paired by name"}, paired
+PYEOF
+}
+
+test_real_engine_evidence_reaches_risk_surface() {
+    # Unstub the engine: this runs the real rule engine on a real hunk.
+    python3() { command python3 "$@"; }
+    git_diff_branch() {
+        printf '%s\n' \
+            "diff --git a/src/payments/service.ts b/src/payments/service.ts" \
+            "--- a/src/payments/service.ts" \
+            "+++ b/src/payments/service.ts" \
+            "@@ -66,1 +66,2 @@" \
+            "   serialiseFailure(req);" \
+            "+  logger.warn('refund failed', { req });"
+    }
+    cat > "${TEST_DIR}/.speed/classes.yaml" <<'YAML'
+classes:
+  - id: F2
+    title: Cardholder data leakage
+    rules:
+      - look: added-lines
+        match: '\b(log|logger|webhook|telemetry)\s*\.'
+        say: "{n} file(s) with an observability sink call in the added lines"
+YAML
+    local _out
+    _out=$(cmd_diagnose --task 1 2>&1) || true
+    local rs_file="${TEST_DIR}/.speed/features/test-feature/risk-surface.yaml"
+    python3 - "$rs_file" <<'PYEOF'
+import sys, yaml
+sig = yaml.safe_load(open(sys.argv[1]))["classes"][0]["signals"][0]
+assert sig["where"] == ["src/payments/service.ts"], sig
+ev = sig["evidence"][0]
+assert (ev["file"], ev["line"], ev["call"]) == ("src/payments/service.ts", 67, "logger."), ev
+assert ev["snippet"] == "logger.warn('refund failed', { req });", ev
+assert ev["rationale"].startswith("added-lines rule matched pattern"), ev
+PYEOF
+}
+
 test_speed_script_contains_diagnose_case() {
     local speed_script="${SCRIPT_DIR}/../speed"
     grep -q "diagnose)" "$speed_script"
@@ -359,6 +418,8 @@ run_test test_console_output_never_reads_description_or_review_fields
 run_test test_risk_surface_never_contains_description_or_review_fields
 run_test test_engine_failure_preserves_stderr_message
 run_test test_title_with_embedded_quote_produces_valid_yaml
+run_test test_evidence_renders_in_risk_surface_beside_unchanged_where
+run_test test_real_engine_evidence_reaches_risk_surface
 run_test test_speed_script_contains_diagnose_case
 run_test test_speed_script_dispatches_diagnose_before_security
 

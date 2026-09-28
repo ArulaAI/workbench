@@ -1150,6 +1150,162 @@ finally:
     os.unlink(classes_yaml_out_of_range_unicode)
 
 # ══════════════════════════════════════════════════════════════
+# Evidence — file, line, call, snippet and rationale per signal
+# ══════════════════════════════════════════════════════════════
+
+from lib.diagnose_engine import _added_line_records
+
+diff_evidence = (
+    "diff --git a/src/payments/service.ts b/src/payments/service.ts\n"
+    "index 1111111..2222222 100644\n"
+    "--- a/src/payments/service.ts\n"
+    "+++ b/src/payments/service.ts\n"
+    "@@ -64,5 +64,6 @@ export function refund(req) {\n"
+    "   const a = 1;\n"
+    "   const b = 2;\n"
+    "-  serialiseFailure(redact(req));\n"
+    "+  serialiseFailure(req);\n"
+    "+  logger.warn('refund failed', { req });\n"
+    "   return a;\n"
+    "diff --git a/src/payments/retry.ts b/src/payments/retry.ts\n"
+    "new file mode 100644\n"
+    "--- /dev/null\n"
+    "+++ b/src/payments/retry.ts\n"
+    "@@ -0,0 +1,4 @@\n"
+    "+// retry helper\n"
+    "+export function reissueRefund(id) {\n"
+    "+  const card = '4111111111111111';\n"
+    "+}\n"
+    "diff --git a/test/refund-retry.test.ts b/test/refund-retry.test.ts\n"
+    "--- a/test/refund-retry.test.ts\n"
+    "+++ b/test/refund-retry.test.ts\n"
+    "@@ -10,2 +10,3 @@\n"
+    " describe('refund retry', () => {\n"
+    "+  test('[RETRY-01] a retried refund is accepted', () => {});\n"
+    " });\n"
+)
+
+check(
+    "hunk-aware records: removed lines don't advance the branch line number, context lines do",
+    _added_line_records(diff_evidence)[:2] == [
+        ("src/payments/service.ts", 66, "  serialiseFailure(req);"),
+        ("src/payments/service.ts", 67, "  logger.warn('refund failed', { req });"),
+    ],
+    _added_line_records(diff_evidence)[:2],
+)
+check(
+    "hunk-aware records: a new file counts from +1, a later hunk from its own start",
+    [(f, n) for f, n, _ in _added_line_records(diff_evidence)[2:]] == [
+        ("src/payments/retry.ts", 1), ("src/payments/retry.ts", 2),
+        ("src/payments/retry.ts", 3), ("src/payments/retry.ts", 4),
+        ("test/refund-retry.test.ts", 11),
+    ],
+    _added_line_records(diff_evidence)[2:],
+)
+check(
+    "_added_lines_by_file keeps its (file, text) shape",
+    _added_lines_by_file(diff_evidence)[1] == ("src/payments/service.ts", "  logger.warn('refund failed', { req });"),
+    _added_lines_by_file(diff_evidence)[1],
+)
+
+evidence_result = run_engine(
+    diff_evidence, declared_files=["src/payments/service.ts", "src/payments/retry.ts"],
+)
+
+
+def signal_for(class_id, observed_fragment):
+    return next(s for s in evidence_result[class_id]["signals"] if observed_fragment in s["observed"])
+
+
+# A. added-lines: file, line, snippet, matched call, rationale
+sink = signal_for("F2", "observability sink")
+check(
+    "added-lines evidence carries file, line, call, snippet and rationale",
+    sink["evidence"] == [{
+        "file": "src/payments/service.ts",
+        "line": 67,
+        "call": "logger.",
+        "snippet": "logger.warn('refund failed', { req });",
+        "rationale": r"added-lines rule matched pattern '\b(log|logger|webhook|telemetry)\s*\.' "
+                     "on an added line (matched text 'logger.')",
+    }],
+    sink["evidence"],
+)
+check("added-lines 'where' is unchanged: a list of file path strings", sink["where"] == ["src/payments/service.ts"], sink["where"])
+
+digits = signal_for("F2", "13 to 19 digit")
+check(
+    "added-lines evidence omits 'call' when the match is not call-shaped",
+    "call" not in digits["evidence"][0] and digits["evidence"][0]["line"] == 3
+    and digits["evidence"][0]["snippet"] == "const card = '4111111111111111';",
+    digits["evidence"],
+)
+
+# B. structural rules: no line, no call
+paired = signal_for("F3", "accompanying test change")
+check(
+    "changed-source-with-test-change names the paired test and omits line/call",
+    paired["evidence"] == [{
+        "file": "src/payments/retry.ts",
+        "paired_test": "test/refund-retry.test.ts",
+        "rationale": "changed-source-with-test-change: changed test file "
+                     "'test/refund-retry.test.ts' has 'retry' as a whole word in its name",
+    }],
+    paired["evidence"],
+)
+outside = signal_for("F6", "outside the declared file list")
+check(
+    "changed-files-outside-declared evidence is file and rationale only",
+    outside["evidence"] == [{
+        "file": "test/refund-retry.test.ts",
+        "rationale": "changed-files-outside-declared: the diff changes this file "
+                     "and the task's files_touched does not list it",
+    }],
+    outside["evidence"],
+)
+untested = signal_for("F7", "no matching test change")
+check(
+    "changed-source-without-test-change evidence names the unpaired source file",
+    [e["file"] for e in untested["evidence"]] == ["src/payments/service.ts"]
+    and all(set(e) == {"file", "rationale"} for e in untested["evidence"]),
+    untested["evidence"],
+)
+
+# C. F8: the file and line where the new name was declared
+gap = evidence_result["F8"]["signals"][0]
+reissue = next(e for e in gap["evidence"] if e.get("name") == "reissueRefund")
+check(
+    "F8 evidence records the declaring file, line and name",
+    reissue["file"] == "src/payments/retry.ts" and reissue["line"] == 2
+    and reissue["snippet"] == "export function reissueRefund(id) {",
+    reissue,
+)
+check("F8 'where' is unchanged (still [])", gap["where"] == [], gap["where"])
+
+# No hunk header means no line number, never an invented one
+no_hunk = run_engine(
+    "diff --git a/src/a.ts b/src/a.ts\n+++ b/src/a.ts\n+logger.info('x');\n",
+    declared_files=["src/a.ts"],
+)
+no_hunk_record = no_hunk["F2"]["signals"][0]["evidence"][0]
+check(
+    "evidence omits 'line' when the diff carries no hunk header",
+    "line" not in no_hunk_record and no_hunk_record["snippet"] == "logger.info('x');",
+    no_hunk_record,
+)
+
+# F. rationale describes the match, never a verdict
+_VERDICT_WORDS = re.compile(r"\b(detected|leak|leakage|defect|bug|vulnerab\w*|violat\w*|broken|confirmed|insecure|regress\w*|hallucinat\w*)\b", re.I)
+all_rationales = [e["rationale"] for c in evidence_result.values() for s in c["signals"] for e in s["evidence"]]
+check("every signal carries at least one evidence record",
+      all(s["evidence"] for c in evidence_result.values() for s in c["signals"]), evidence_result)
+check(
+    "no rationale makes a defect verdict",
+    all_rationales and not [r for r in all_rationales if _VERDICT_WORDS.search(r)],
+    [r for r in all_rationales if _VERDICT_WORDS.search(r)],
+)
+
+# ══════════════════════════════════════════════════════════════
 # Summary
 # ══════════════════════════════════════════════════════════════
 

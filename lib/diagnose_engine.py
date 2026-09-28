@@ -39,7 +39,12 @@ rule's own input is simply unavailable) rather than block the class it
 should not be silently invented.
 
 Output (stdout): JSON —
-    {"classes": [{"id", "title", "signals": [{"observed", "where"}]}]}
+    {"classes": [{"id", "title", "signals": [{"observed", "where", "evidence"}]}]}
+
+"where" stays a list of file paths. "evidence" adds one record per thing a
+rule counted: "file", plus "line", "call", "name", "paired_test" and
+"snippet" when they apply, and a "rationale" that says why the rule fired.
+A rationale describes the match, never a verdict on the code.
 
 A class with no rule that produced a count still appears, with
 "signals": []. That means nothing was countable, not that the failure is
@@ -304,20 +309,48 @@ def _diff_git_line_paths(line):
 # or a 100%-similarity rename (which has no +++/--- lines at all).
 
 
-def _added_lines_by_file(diff_text):
-    """[(file_path, added_line_content), ...] — one entry per '+' line,
-    excluding the '+++ b/...' file header itself."""
+_HUNK_HEADER = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
+
+
+def _added_line_records(diff_text):
+    """[(file_path, line_number, added_line_content), ...] — one entry per
+    '+' line, excluding the '+++ b/...' file header itself.
+
+    line_number is the line's position in the branch version of the file,
+    counted from the '+<start>' of its '@@ -a,b +c,d @@' hunk header: added
+    and context lines advance it, removed lines do not. It is None when the
+    diff carries no hunk header for that line, so a location is never
+    invented."""
     result = []
     current_file = None
+    next_line = None
     for line in diff_text.splitlines():
+        if line.startswith("diff --git "):
+            next_line = None
+            continue
         if line.startswith("+++ "):
             current_file = _file_header_path(line[len("+++ "):])
             continue
         if line.startswith("--- "):
             continue
-        if line.startswith("+") and current_file:
-            result.append((current_file, line[1:]))
+        hunk = _HUNK_HEADER.match(line)
+        if hunk:
+            next_line = int(hunk.group(1))
+            continue
+        if line.startswith("+"):
+            if current_file:
+                result.append((current_file, next_line, line[1:]))
+            if next_line is not None:
+                next_line += 1
+        elif line.startswith(" ") and next_line is not None:
+            next_line += 1
     return result
+
+
+def _added_lines_by_file(diff_text):
+    """[(file_path, added_line_content), ...] — _added_line_records without
+    line numbers, for callers that only need the text."""
+    return [(file_path, content) for file_path, _line, content in _added_line_records(diff_text)]
 
 
 def _changed_files(diff_text):
@@ -357,25 +390,55 @@ _DECL_PATTERNS = [
 ]
 
 
+# A regex match reads as a call site only when it is an identifier path
+# ending in member access or invocation ("logger.", "fetch("). Anything
+# else (a digit run, a whole import line) carries no call, and evidence
+# omits the field rather than presenting arbitrary matched text as one.
+_CALL_LIKE = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*\s*[.(]$")
+
+
+def _evidence(file_path, line, rationale, **fields):
+    """One evidence record: file, then line when known, then any extra
+    fields that apply, then the rationale. Unknown values are omitted."""
+    record = {"file": file_path}
+    if line is not None:
+        record["line"] = line
+    record.update({key: value for key, value in fields.items() if value is not None})
+    record["rationale"] = rationale
+    return record
+
+
 def _look_added_lines(added, rule):
     """Count added lines matching rule['match']. where = files they're in."""
     if not rule.get("match"):
-        return 0, [], None
+        return 0, [], None, []
     pattern = re.compile(rule["match"])
     count = 0
     where = []
-    for file_path, content in added:
-        if pattern.search(content):
+    evidence = []
+    for file_path, line, content in added:
+        match = pattern.search(content)
+        if match:
             count += 1
             if file_path not in where:
                 where.append(file_path)
-    return count, where, None
+            matched = match.group(0).strip()
+            evidence.append(_evidence(
+                file_path, line,
+                f"added-lines rule matched pattern '{rule['match']}' on an added line (matched text '{matched}')",
+                call=matched if _CALL_LIKE.match(matched) else None,
+                snippet=content.strip(),
+            ))
+    return count, where, None, evidence
 
 
 def _look_changed_files_outside_declared(diff_text, declared_files, rule):
     changed = _changed_files(diff_text)
     extra = [f for f in changed if f not in declared_files]
-    return len(extra), extra, extra
+    evidence = [_evidence(f, None, "changed-files-outside-declared: the diff changes this file "
+                                   "and the task's files_touched does not list it")
+                for f in extra]
+    return len(extra), extra, extra, evidence
 
 
 _TEST_DIR_NAMES = ("test", "tests", "spec", "specs", "__tests__")
@@ -410,6 +473,11 @@ def _non_test_dirs(path):
 
 
 def _has_matching_test_change(source_path, changed_files):
+    return _matching_test_change(source_path, changed_files) is not None
+
+
+def _matching_test_change(source_path, changed_files):
+    """The first changed test file that pairs with source_path, or None."""
     stem = re.sub(r"\.[A-Za-z0-9]+$", "", os.path.basename(source_path))
     source_dirs = _non_test_dirs(source_path)
     for f in changed_files:
@@ -434,8 +502,8 @@ def _has_matching_test_change(source_path, changed_files):
         # "any test file anywhere is mine"; it still has to actually match
         # test_dirs, same as any other source file.
         if not test_dirs or source_dirs == test_dirs:
-            return True
-    return False
+            return f
+    return None
 
 
 def _look_changed_source_without_test_change(diff_text, rule):
@@ -444,7 +512,10 @@ def _look_changed_source_without_test_change(diff_text, rule):
         f for f in changed
         if not _looks_like_test_file(f) and not _has_matching_test_change(f, changed)
     ]
-    return len(flagged), flagged, flagged
+    evidence = [_evidence(f, None, "changed-source-without-test-change: no changed test file "
+                                   "in the diff pairs with this source file by name")
+                for f in flagged]
+    return len(flagged), flagged, flagged, evidence
 
 
 def _look_changed_source_with_test_change(diff_text, rule):
@@ -455,32 +526,54 @@ def _look_changed_source_with_test_change(diff_text, rule):
         f for f in changed
         if not _looks_like_test_file(f) and _has_matching_test_change(f, changed)
     ]
-    return len(flagged), flagged, flagged
+    evidence = []
+    for f in flagged:
+        paired = _matching_test_change(f, changed)
+        stem = re.sub(r"\.[A-Za-z0-9]+$", "", os.path.basename(f))
+        how = (f"has the same name stem '{stem}'" if _test_file_stem(paired) == stem
+               else f"has '{stem}' as a whole word in its name")
+        evidence.append(_evidence(
+            f, None, f"changed-source-with-test-change: changed test file '{paired}' {how}",
+            paired_test=paired,
+        ))
+    return len(flagged), flagged, flagged, evidence
 
 
 def _look_new_names_absent_from_spec(added, spec_file, rule):
     if not spec_file or not os.path.isfile(spec_file):
-        return 0, [], None  # this rule's own input is missing — no signal, not an error
+        return 0, [], None, []  # this rule's own input is missing — no signal, not an error
 
     with open(spec_file, "r", errors="ignore") as f:
         spec_text = f.read()
 
     names = []
-    for _file_path, content in added:
+    first_seen = {}
+    for file_path, line, content in added:
         for pattern in _DECL_PATTERNS:
             for m in pattern.finditer(content):
                 name = m.group(1)
                 if name not in names:
                     names.append(name)
+                    first_seen[name] = (file_path, line, content.strip())
 
     missing = [n for n in names if not re.search(r"\b" + re.escape(n) + r"\b", spec_text)]
-    return len(missing), [], missing
+    spec_name = os.path.basename(spec_file)
+    evidence = [
+        _evidence(
+            first_seen[n][0], first_seen[n][1],
+            f"new-names-absent-from-spec: '{n}' is declared on an added line and the word "
+            f"does not appear in the spec file '{spec_name}'",
+            name=n, snippet=first_seen[n][2],
+        )
+        for n in missing
+    ]
+    return len(missing), [], missing, evidence
 
 
 # ── driver ───────────────────────────────────────────────────────────
 
 def _run_rule(rule, ctx):
-    """Returns (count, where, list_items) for one rule."""
+    """Returns (count, where, list_items, evidence) for one rule."""
     look = rule.get("look")
     if look == "added-lines":
         return _look_added_lines(ctx["added"], rule)
@@ -504,7 +597,7 @@ def _format_say(say, n, list_items):
 
 def diagnose(classes_yaml, diff_text, declared_files, spec_file=None):
     classes = _parse_classes_yaml(classes_yaml)
-    added = _added_lines_by_file(diff_text)
+    added = _added_line_records(diff_text)
     ctx = {
         "added": added,
         "diff_text": diff_text,
@@ -516,11 +609,12 @@ def diagnose(classes_yaml, diff_text, declared_files, spec_file=None):
     for cls in classes:
         signals = []
         for rule in cls.get("rules", []):
-            count, where, list_items = _run_rule(rule, ctx)
+            count, where, list_items, evidence = _run_rule(rule, ctx)
             if count > 0:
                 signals.append({
                     "observed": _format_say(rule.get("say", ""), count, list_items),
                     "where": where,
+                    "evidence": evidence,
                 })
         result.append({"id": cls["id"], "title": cls.get("title", cls["id"]), "signals": signals})
     return result

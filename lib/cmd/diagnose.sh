@@ -184,6 +184,17 @@ _diagnose_write_risk_surface() {
                     echo "          - ${w_json}"
                 done
             fi
+            # One record per counted item, fields in a fixed order and each
+            # value JSON-encoded (valid YAML), omitting fields that don't apply.
+            if [[ "$(echo "$sig_json" | jq '.evidence // [] | length')" -gt 0 ]]; then
+                echo "        evidence:"
+                echo "$sig_json" | jq -r '
+                    .evidence[] | . as $e
+                    | [("file", "line", "call", "name", "paired_test", "snippet", "rationale")
+                       | select($e[.] != null) | "\(.): \($e[.] | tojson)"]
+                    | to_entries[]
+                    | (if .key == 0 then "          - " else "            " end) + .value'
+            fi
         done
     done
 }
