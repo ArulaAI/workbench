@@ -259,7 +259,7 @@ def build_test_plan(
                         f"{test.get('error') or 'Duplicate test identity: ' + identity}"
                     )
                     continue
-                selector = os.path.relpath(path, cwd)
+                selector = Path(os.path.relpath(path, cwd)).as_posix()
                 if test.get("nodes"):
                     selector += "::" + "::".join(test["nodes"])
                 for sid in sorted(test["scenario_ids"] & wanted):

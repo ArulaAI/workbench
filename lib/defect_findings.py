@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import json
 import os
@@ -17,6 +16,11 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from lib.review_evidence import parse_clean_review_payload
+
+try:  # POSIX only
+    import fcntl
+except ImportError:
+    fcntl = None
 
 
 SCHEMA_VERSION = 1
@@ -54,11 +58,12 @@ def _atomic_json(path: Path, value: Any) -> None:
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(name, path)
-        directory_fd = os.open(path.parent, os.O_RDONLY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
+        if os.name != "nt":  # Windows can't open a directory
+            directory_fd = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
     finally:
         try:
             os.unlink(name)
@@ -108,7 +113,8 @@ def intake_lock(defects_dir: Path, timeout: float = 5.0) -> Iterator[None]:
         try:
             while True:
                 try:
-                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    if fcntl is not None:
+                        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                     break
                 except BlockingIOError:
                     if time.monotonic() >= deadline:
@@ -117,7 +123,8 @@ def intake_lock(defects_dir: Path, timeout: float = 5.0) -> Iterator[None]:
             yield
         finally:
             try:
-                fcntl.flock(fd, fcntl.LOCK_UN)
+                if fcntl is not None:
+                    fcntl.flock(fd, fcntl.LOCK_UN)
             finally:
                 os.close(fd)
 

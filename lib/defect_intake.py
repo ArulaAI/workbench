@@ -260,6 +260,8 @@ def _same_bytes(path: Path, data: bytes) -> bool:
 
 
 def _fsync_dir(path: Path) -> None:
+    if os.name == "nt":  # Windows can't open a directory
+        return
     fd = os.open(path, os.O_RDONLY)
     try:
         os.fsync(fd)
@@ -565,7 +567,7 @@ def append_defect_evidence(
             manifest["phase"] = "committed"
             manifest["committed_at"] = _utc_now()
             _atomic_json(manifest_path, manifest)
-            return {"path": str(output.relative_to(paths.root)), "decision_id": request_id, "replayed": replayed}
+            return {"path": output.relative_to(paths.root).as_posix(), "decision_id": request_id, "replayed": replayed}
         except FindingError:
             raise
         except OSError as exc:

@@ -160,10 +160,18 @@ _dashboard_stop() {
     # Kill any orphaned processes on dashboard ports
     for port in "$DASHBOARD_API_PORT" "$DASHBOARD_FRONTEND_PORT"; do
         local orphan_pids
-        orphan_pids=$(lsof -ti:"$port" 2>/dev/null || true)
+        if command -v lsof &>/dev/null; then
+            orphan_pids=$(lsof -ti:"$port" 2>/dev/null || true)
+        else  # Git Bash
+            orphan_pids=$(netstat -ano | awk -v p=":${port}" '$2 ~ p"$" && $4 == "LISTENING" {print $5}' | sort -u)
+        fi
         if [[ -n "$orphan_pids" ]]; then
             log_step "Killing orphaned process on port ${port}..."
-            echo "$orphan_pids" | xargs kill -9 2>/dev/null || true
+            if command -v lsof &>/dev/null; then
+                echo "$orphan_pids" | xargs kill -9 2>/dev/null || true
+            else
+                for pid in $orphan_pids; do taskkill //F //T //PID "$pid" >/dev/null 2>&1 || true; done
+            fi
             stopped=true
         fi
     done
@@ -206,7 +214,7 @@ _dashboard_ingest() {
     log_step "Running backfill ingestion..."
     PYTHONPATH="${SPEED_DIR}" "$py_bin" -c "
 import sys
-sys.path.insert(0, '${SPEED_DIR}')
+sys.path.insert(0, '$(cygpath -m "${SPEED_DIR}" 2>/dev/null || printf '%s' "${SPEED_DIR}")')
 from dashboard.backend.db import connect, migrate
 from dashboard.backend.ingest import register_project, backfill
 conn = connect('${PROJECT_ROOT}')

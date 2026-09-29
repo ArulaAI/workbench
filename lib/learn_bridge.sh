@@ -373,8 +373,8 @@ learn_post_merge() {
     output=$(PYTHONPATH="${SCRIPT_DIR}" $(_learn_python) -c "
 import json, sys
 from pathlib import Path
-sys.path.insert(0, '${SCRIPT_DIR}')
-sys.path.insert(0, '${SCRIPT_DIR}/lib')
+sys.path.insert(0, '$(cygpath -m "${SCRIPT_DIR}" 2>/dev/null || printf '%s' "${SCRIPT_DIR}")')
+sys.path.insert(0, '$(cygpath -m "${SCRIPT_DIR}" 2>/dev/null || printf '%s' "${SCRIPT_DIR}")/lib')
 from lib.learn.human_corrections import extract_post_merge
 from lib.learn.extract import write_observations
 
@@ -473,8 +473,8 @@ learn_synthesize() {
     output=$(PYTHONPATH="${SCRIPT_DIR}" $(_learn_python) -c "
 import json, sys
 from pathlib import Path
-sys.path.insert(0, '${SCRIPT_DIR}')
-sys.path.insert(0, '${SCRIPT_DIR}/lib')
+sys.path.insert(0, '$(cygpath -m "${SCRIPT_DIR}" 2>/dev/null || printf '%s' "${SCRIPT_DIR}")')
+sys.path.insert(0, '$(cygpath -m "${SCRIPT_DIR}" 2>/dev/null || printf '%s' "${SCRIPT_DIR}")/lib')
 from lib.learn.synthesize import synthesize
 
 memory_dir = Path('${memory_dir}')
