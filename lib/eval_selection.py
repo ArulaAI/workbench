@@ -86,7 +86,7 @@ def select_task_plan(root: Path, spec: str, tasks: list[dict], config: dict,
                     if test.get("error") or identities[identity] > 1:
                         gaps.append(f"Task {owner}, {name}: {test.get('error') or 'Duplicate test identity: ' + identity}")
                         continue
-                    selector = os.path.relpath(path, cwd)
+                    selector = Path(os.path.relpath(path, cwd)).as_posix()
                     if test.get("nodes"):
                         selector += "::" + "::".join(test["nodes"])
                     for sid in sorted(test["scenario_ids"] & automated):
@@ -115,8 +115,8 @@ def selector_file(case: dict) -> str:
     name = case["selector"].split("::", 1)[0]
     tokens = shlex.split(case.get("command", ""))
     if len(tokens) > 2 and tokens[0] == "cd" and tokens[2] == "&&":
-        name = str(Path(tokens[1]) / name)
-    return str(Path(name))
+        name = (Path(tokens[1]) / name).as_posix()
+    return Path(name).as_posix()
 
 
 def exact_selector(case: dict) -> bool:

@@ -277,7 +277,7 @@ cmd_eval() (
         return "$EXIT_CONFIG_ERROR"
     fi
     log_header "Eval: ${FEATURE_NAME}${_eval_task_filter:+ (task ${_eval_task_filter})}"
-    log_step "Evidence: $_eval_run_dir"
+    log_step "Evidence: $(cygpath -m "$_eval_run_dir" 2>/dev/null || printf '%s' "$_eval_run_dir")"
     if ! "$py" "${LIB_DIR}/eval_runtime.py" execute "$_eval_run_dir" 2>"$_eval_runtime_err"; then
         reason=$(_eval_runtime_reason "$_eval_runtime_err" "the evidence run failed")
         _eval_reject "$EXIT_CONFIG_ERROR" "Evaluation did not complete: ${reason}"

@@ -23,6 +23,13 @@ from lib.toml import parse_toml
 from lib.quality_gates import read_gates, gate_applies as _gate_applies
 
 
+def _kill_group(process: subprocess.Popen, sig: int) -> None:
+    if hasattr(os, "killpg"):
+        os.killpg(process.pid, sig)
+    else:  # Windows has no process groups
+        subprocess.run(["taskkill", "/F", "/T", "/PID", str(process.pid)], capture_output=True)
+
+
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -407,13 +414,13 @@ def run_command(base: str, selectors: list[str], root: Path, evidence_dir: Path,
             code = process.wait(timeout=timeout)
         except BaseException:
             try:
-                os.killpg(process.pid, signal.SIGTERM)
+                _kill_group(process, signal.SIGTERM)
             except ProcessLookupError:
                 pass
             try:
                 process.wait(timeout=2)
             except subprocess.TimeoutExpired:
-                os.killpg(process.pid, signal.SIGKILL)
+                _kill_group(process, getattr(signal, "SIGKILL", signal.SIGTERM))
                 process.wait()
             raise
     try:

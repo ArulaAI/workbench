@@ -12,13 +12,17 @@ for the file shape and § Claim lifecycle for the state machine.
 from __future__ import annotations
 
 import errno
-import fcntl
 import logging
 import os
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
+
+try:  # POSIX only
+    import fcntl
+except ImportError:
+    fcntl = None
 
 from ..paths import SpeedPaths, get_paths
 from .ceremony_authz import CeremonyAbility, _parse_iso_utc, _read_stale_window_seconds
@@ -82,11 +86,13 @@ def _locked_claim_file(path: Path) -> Iterator[None]:
     lock_path = path.with_suffix(path.suffix + ".lock")
     fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o644)
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
+        if fcntl is not None:
+            fcntl.flock(fd, fcntl.LOCK_EX)
         try:
             yield
         finally:
-            fcntl.flock(fd, fcntl.LOCK_UN)
+            if fcntl is not None:
+                fcntl.flock(fd, fcntl.LOCK_UN)
     finally:
         os.close(fd)
 

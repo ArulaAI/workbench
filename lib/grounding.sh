@@ -1191,7 +1191,7 @@ grounding_check_criteria() {
     local verify_output
     verify_output=$($(_context_python) -c "
 import json, sys
-sys.path.insert(0, '${PROJECT_ROOT}')
+sys.path.insert(0, '$(cygpath -m "${PROJECT_ROOT}" 2>/dev/null || printf '%s' "${PROJECT_ROOT}")')
 from lib.criteria_verify import verify_criteria
 
 task = json.load(open('${task_json}'))

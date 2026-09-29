@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import shutil
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -37,6 +39,7 @@ _LINK_RE = re.compile(r"\[[^]]+\]\((?P<path>[^)]+)\)")
 def secret_fields(fields: dict[str, str]) -> set[str]:
     """Return field names matching the existing grounding secret patterns."""
     grounding = Path(__file__).with_name("grounding.sh")
+    bash = shutil.which("bash") if os.name == "nt" else "/bin/bash"
     script = r'''
 source "$1"
 _patterns=()
@@ -49,7 +52,7 @@ exit $?
     flagged: set[str] = set()
     for name, value in fields.items():
         result = subprocess.run(
-            ["/bin/bash", "-c", script, "secret-scan", str(grounding)],
+            [bash, "-c", script, "secret-scan", str(grounding)],
             input=str(value), text=True, stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL, check=False,
         )
@@ -434,7 +437,7 @@ def discover_defects(root: Path, defects_dir: Path) -> list[dict[str, Any]]:
             "source": source,
             "source_feature": source_feature,
             "source_finding_id": intake.get("finding_id"),
-            "canonical_path": str(spec_path.relative_to(root)) if spec_safe else None,
+            "canonical_path": spec_path.relative_to(root).as_posix() if spec_safe else None,
             "related_files": report.get("related_files") or _split_values(state.get("related_files")),
             "tags": report.get("tags") or _split_values(state.get("tags")),
             "filed": bool(spec_safe and state_safe and ready),

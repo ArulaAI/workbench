@@ -33,6 +33,15 @@
 
 set -euo pipefail
 
+# Git Bash: Python defaults to the Windows code page, and jq.exe writes CRLF.
+case "$(uname -s)" in
+    MINGW*|MSYS*)
+        export PYTHONUTF8=1
+        jq() { command jq --binary "$@"; }
+        export -f jq
+        ;;
+esac
+
 # ── Bootstrap ────────────────────────────────────────────────────
 # Resolve through symlinks so SCRIPT_DIR points to the real location
 # even when invoked via ~/.speed/bin/speed -> ../current/speed

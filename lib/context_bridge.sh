@@ -46,7 +46,7 @@ context_build_layer1() {
 
     local py_cmd="
 import sys, json
-sys.path.insert(0, '${SPEED_DIR}')
+sys.path.insert(0, '$(cygpath -m "${SPEED_DIR}" 2>/dev/null || printf '%s' "${SPEED_DIR}")')
 from lib.context.layer1 import build_layer1
 
 spec_files = None

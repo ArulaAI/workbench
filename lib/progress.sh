@@ -125,7 +125,7 @@ progress_event() {
                         if [[ "$_PROGRESS_IS_TTY" == "true" ]]; then
                             _progress_update_line "${SYM_DOT} ${display}"
                         else
-                            echo -e "${COLOR_DIM}[$(_log_timestamp)]${RESET} ${COLOR_ACCENT}${SYM_RUNNING}${RESET} ${_PROGRESS_LABEL}: ${display}" >&2
+                            echo -e "${COLOR_DIM}[$(_log_timestamp)]${RESET} ${COLOR_ACCENT}${SYM_RUNNING}${RESET} ${_PROGRESS_LABEL}: ${display//\\/\\\\}" >&2
                         fi
                         ;;
                     thinking)
