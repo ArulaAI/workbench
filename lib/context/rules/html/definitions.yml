@@ -1,0 +1,25 @@
+id: html-document-definition
+language: html
+metadata:
+  produces: node
+  kind: function
+  name_from: path
+  executable_body: true
+rule:
+  kind: document
+
+---
+id: html-form-definition
+language: html
+metadata:
+  produces: node
+  kind: function
+  name_from: path
+  executable_body: true
+rule:
+  kind: element
+  has:
+    kind: start_tag
+    has:
+      kind: tag_name
+      regex: '^form$'

@@ -1,0 +1,96 @@
+id: java-controller-entrypoint
+language: java
+metadata:
+  produces: business_anchor
+  anchor_kind: http
+rule:
+  kind: method_declaration
+  inside:
+    kind: class_declaration
+    regex: '@RestController\b'
+    stopBy: end
+---
+id: java-conditional-observation
+language: java
+metadata:
+  produces: rule_observation
+  source_location_kind: api
+  expression_var: CONDITION
+rule:
+  kind: if_statement
+  has:
+    field: condition
+    pattern: $CONDITION
+---
+id: java-validation-observation
+language: java
+metadata:
+  produces: rule_observation
+  source_location_kind: api
+rule:
+  any:
+    - kind: annotation
+    - kind: marker_annotation
+  regex: '@(NotNull|NotEmpty|Size|Min|Max|Valid|PreAuthorize)\b'
+---
+id: java-input-binding
+language: java
+metadata:
+  produces: binding
+  direction: input
+  name_var: NAME
+  type_var: TYPE
+  expression_var: NAME
+rule:
+  kind: formal_parameter
+  has:
+    field: name
+    pattern: $NAME
+  all:
+    - has:
+        field: type
+        pattern: $TYPE
+---
+id: java-return-binding
+language: java
+metadata:
+  produces: binding
+  direction: output
+  expression_var: VALUE
+rule:
+  kind: return_statement
+  pattern: return $VALUE;
+---
+id: java-field-receiver-binding
+language: java
+metadata:
+  produces: receiver_binding
+  receiver_var: NAME
+  type_var: TYPE
+rule:
+  kind: field_declaration
+  all:
+    - has:
+        field: type
+        pattern: $TYPE
+    - has:
+        kind: variable_declarator
+        has:
+          field: name
+          pattern: $NAME
+---
+id: java-parameter-receiver-binding
+language: java
+metadata:
+  produces: receiver_binding
+  receiver_var: NAME
+  type_var: TYPE
+rule:
+  kind: formal_parameter
+  all:
+    - has:
+        field: type
+        pattern: $TYPE
+    - has:
+        field: name
+        pattern: $NAME

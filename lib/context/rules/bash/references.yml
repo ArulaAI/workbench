@@ -27,5 +27,3 @@ metadata:
   ref_kind: call
 rule:
   kind: command
-
-Notes on the Bash rules:

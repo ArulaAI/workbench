@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "snapshot_id": "snapshot:dag",
+  "source_hash": "3d27b546c4023bfc65353b94167b5eee932f7bc19ca903b00967ce36e4153b3c",
+  "encoding": "utf-8",
+  "fragments": [
+    {
+      "id": "fragment:dag",
+      "original_locator": "authored-fixture",
+      "text": "Authored DAG fixture requirement: check_approval fails unless approval is granted for paymentId. release_payment depends on it with all_success; task success does not prove payment settlement.",
+      "excerpt_hash": "3d27b546c4023bfc65353b94167b5eee932f7bc19ca903b00967ce36e4153b3c"
+    }
+  ]
+}

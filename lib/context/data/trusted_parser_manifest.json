@@ -1,0 +1,13 @@
+{
+  "manifest_version": 1,
+  "parsers": {
+    "sqlglot": {
+      "distribution": "sqlglot",
+      "module": "sqlglot",
+      "version": "30.18.0",
+      "implementation": "pure-python",
+      "wheel_tag": "py3-none-any",
+      "wheel_sha256": "ee0f9a9f3e2193e763c326e52dfb377b96fdb4292f6305c3ff2d9a220e71c601"
+    }
+  }
+}

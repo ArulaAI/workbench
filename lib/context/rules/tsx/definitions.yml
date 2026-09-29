@@ -30,8 +30,22 @@ language: tsx
 metadata:
   produces: node
   kind: function
+  executable_body: true
 rule:
   kind: function_declaration
+
+---
+id: tsx-arrow-function
+language: tsx
+metadata:
+  produces: node
+  kind: function
+  executable_body: true
+rule:
+  kind: variable_declarator
+  has:
+    field: value
+    kind: arrow_function
 
 ---
 id: tsx-constant

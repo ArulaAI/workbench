@@ -1,0 +1,9 @@
+[
+  {"orderId":"placed","rawBody":"{","status":400,"body":{"code":"INVALID_JSON"}},
+  {"orderId":"placed","rawBody":"{\"reason\":\" \"}","status":400,"body":{"code":"REASON_REQUIRED"}},
+  {"orderId":"shipped","rawBody":"{\"reason\":\"changed mind\"}","status":409,"body":{"code":"ORDER_SHIPPED"}},
+  {"orderId":"other-tenant","rawBody":"{\"reason\":\"changed mind\"}","status":404,"body":{"code":"ORDER_NOT_FOUND"}},
+  {"orderId":"missing","rawBody":"{\"reason\":\"changed mind\"}","status":404,"body":{"code":"ORDER_NOT_FOUND"}},
+  {"orderId":"placed","rawBody":"{\"reason\":\" changed mind \"}","status":200,"body":{"orderId":"placed","status":"CANCELLED"}},
+  {"orderId":"placed","rawBody":"{\"reason\":\"second request\"}","status":409,"body":{"code":"ALREADY_CANCELLED"}}
+]

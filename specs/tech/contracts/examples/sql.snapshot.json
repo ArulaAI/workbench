@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "snapshot_id": "snapshot:sql",
+  "source_hash": "fc468049877a875acf19df4e1aa0001ae97c128a80c47920e7878088f28e287a",
+  "encoding": "utf-8",
+  "fragments": [
+    {
+      "id": "fragment:sql",
+      "original_locator": "authored-fixture",
+      "text": "-- Authored PostgreSQL 17 / PL/pgSQL fixture; use an empty disposable database.\nCREATE SCHEMA billing;\nCREATE TABLE billing.invoice (\n    tenant_id bigint NOT NULL,\n    invoice_number bigint NOT NULL,\n    CONSTRAINT invoice_tenant_number_key\n        UNIQUE (tenant_id, invoice_number) NOT DEFERRABLE -- PG-CONSTRAINT\n);\n\nCREATE PROCEDURE billing.create_invoice(\n    IN p_tenant_id bigint, IN p_invoice_number bigint, OUT p_result text\n)\nLANGUAGE plpgsql AS $$\nDECLARE\n    violated_constraint text;\nBEGIN\n    INSERT INTO billing.invoice (tenant_id, invoice_number) -- PG-WRITE\n    VALUES (p_tenant_id, p_invoice_number);\n    p_result := 'CREATED'; -- PG-OUTPUT: caller still owns commit\nEXCEPTION\n    WHEN unique_violation THEN\n        GET STACKED DIAGNOSTICS violated_constraint = CONSTRAINT_NAME;\n        IF violated_constraint <> 'invoice_tenant_number_key' THEN\n            RAISE;\n        END IF;\n        p_result := 'DUPLICATE_INVOICE_NUMBER'; -- PG-ERROR-MAP\nEND;\n$$;\n-- Example call within a caller-controlled transaction:\n-- BEGIN; CALL billing.create_invoice(1, 123, NULL); ROLLBACK;\n",
+      "excerpt_hash": "fc468049877a875acf19df4e1aa0001ae97c128a80c47920e7878088f28e287a"
+    }
+  ]
+}

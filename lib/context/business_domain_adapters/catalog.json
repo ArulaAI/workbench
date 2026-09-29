@@ -1,0 +1,47 @@
+{
+  "ignored_directories": [
+    ".git",
+    ".speed",
+    ".venv",
+    "venv",
+    "node_modules",
+    "target",
+    "dist",
+    "build",
+    "__pycache__",
+    ".next"
+  ],
+  "service_scope_markers": [
+    "pom.xml",
+    "build.gradle",
+    "build.gradle.kts",
+    "package.json",
+    "pyproject.toml",
+    "Cargo.toml",
+    "go.mod"
+  ],
+  "test_path_pattern": "(^|/)(tests?|__tests__)(/|$)|Test\\.java$",
+  "source_kind_by_category": {
+    "config": "configuration",
+    "doc": "documentation",
+    "schema": "source",
+    "source": "source"
+  },
+  "symbol_kind_aliases": {
+    "interface": "type",
+    "constant": "field",
+    "variable": "field",
+    "export": "module"
+  },
+  "operation_edge_kinds": {
+    "data_read": "reads_data",
+    "data_write": "writes_data",
+    "external_action": "invokes_endpoint",
+    "event_publish": "emits",
+    "response": "emits",
+    "render": "emits",
+    "navigation": "emits",
+    "audit": "emits",
+    "cache_write": "emits"
+  }
+}

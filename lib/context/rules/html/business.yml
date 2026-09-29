@@ -1,0 +1,94 @@
+id: html-form-control
+language: html
+metadata:
+  produces: ui_control
+  label_var: TAG
+rule:
+  kind: element
+  has:
+    kind: start_tag
+    has:
+      kind: tag_name
+      pattern: $TAG
+constraints:
+  TAG:
+    regex: '^(input|select|textarea|button)$'
+
+---
+id: html-named-input-binding
+language: html
+metadata:
+  produces: binding
+  direction: input
+  parse_attribute: true
+rule:
+  kind: attribute
+  regex: '^name\s*='
+
+---
+id: html-angular-form-control-binding
+language: html
+metadata:
+  produces: binding
+  direction: input
+  parse_attribute: true
+rule:
+  kind: attribute
+  regex: '^formControlName\s*='
+
+---
+id: html-required-validation
+language: html
+metadata:
+  produces: ui_validation
+  trigger: native constraint validation attempt
+  enforcement: native
+rule:
+  kind: attribute
+  regex: '^required(?:="required")?$'
+
+---
+id: html-required-observation
+language: html
+metadata:
+  produces: rule_observation
+  source_location_kind: ui
+rule:
+  kind: attribute
+  regex: '^required(?:="required")?$'
+
+---
+id: html-submit-event
+language: html
+metadata:
+  produces: ui_event
+  trigger: submit
+rule:
+  kind: element
+  has:
+    kind: start_tag
+    all:
+      - has:
+          kind: tag_name
+          regex: '^button$'
+      - has:
+          kind: attribute
+          regex: '^type=["'']submit["'']$'
+
+---
+id: html-form-effect
+language: html
+metadata:
+  produces: semantic_effect
+  effect_kind: external_action
+  resource_kind: service
+  protocol: http
+  target_from_attribute: true
+rule:
+  kind: attribute
+  regex: '^action\s*='
+  inside:
+    kind: start_tag
+    has:
+      kind: tag_name
+      regex: '^form$'

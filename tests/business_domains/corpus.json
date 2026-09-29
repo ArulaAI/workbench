@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "purpose": "Evaluation-only source expectations. These records are never loaded by production discovery or agent definitions.",
+  "repositories": [
+    {
+      "id": "petclinic",
+      "url": "https://github.com/spring-petclinic/spring-petclinic-reactjs.git",
+      "revision": "77db261c615f30431014f431d5525ddf4ba770df",
+      "critical_cases": [
+        {
+          "source": "src/main/java/org/springframework/samples/petclinic/rest/controller/OwnerRestController.java",
+          "symbol": "listOwners",
+          "expected_behavior": "With a supplied last name, find matching owners; otherwise list all owners. Empty results produce NOT_FOUND, otherwise map owners to DTOs and return OK.",
+          "must_not_claim": ["This controller alone proves which persistence profile is active", "Every operation in the shared ClinicService belongs to owner management", "Generic frontend layout is a business responsibility"]
+        },
+        {
+          "source": "src/main/java/org/springframework/samples/petclinic/repository/jdbc/JdbcOwnerRepositoryImpl.java",
+          "symbol": "loadPetsAndVisits",
+          "expected_behavior": "Supporting owner retrieval loads related pets and visits.",
+          "must_not_claim": ["Loading related records makes every pet and visit activity part of owner management", "A helper is a separate externally reachable entry point without registration evidence"]
+        },
+        {
+          "source": "src/main/java/org/springframework/samples/petclinic/rest/controller/PetTypeRestController.java",
+          "symbol": "listPetTypes",
+          "expected_behavior": "Pet-type vocabulary is distinct from individual pet records.",
+          "must_not_claim": ["Pet types and individual pets are interchangeable information records"]
+        }
+      ],
+      "accepted_alternatives": ["Separate client/owner, animal and visit responsibilities with evidenced dependencies", "A broader patient-record responsibility with explicit activity scope and exclusions"]
+    },
+    {
+      "id": "grocery",
+      "url": "https://github.com/EarlTilluck/Grocery-Market-Oracle-Database-PLSQL-Example",
+      "revision": "06fd8a644d67241038e861f5e723fdc3882bb0da",
+      "critical_cases": [
+        {
+          "source": "JTA_Packages.sql",
+          "symbol": "add_item_to_bill",
+          "expected_behavior": "Only unpaid bills accept items. Barcode lookup supplies price/tax details. An existing bill line increments quantity; otherwise create a line, update tender and declare commit. Exception paths declare rollback.",
+          "must_not_claim": ["The procedure returns a response payload", "A declared COMMIT proves execution or successful commit", "An item can be added to any bill regardless of status"]
+        },
+        {
+          "source": "JTA_Packages.sql",
+          "symbol": "receive_payment",
+          "expected_behavior": "Reject invalid payment type, nonpositive amount or already-paid bill. Return numeric change on the successful path, NULL after handled errors. Pending bills adjust the remaining amount and suppress a second inventory update. Drawer updates differ for cash and non-cash payment.",
+          "must_not_claim": ["Every payment triggers inventory deduction", "Failure is returned only as an exception", "The routine always returns a number rather than nullable NUMBER"]
+        },
+        {
+          "source": "JTA_Packages.sql",
+          "symbol": "logon_trigger",
+          "expected_behavior": "Record a schema login event and query the authorized-IP list. The missing-IP handler does nothing; the access-blocking statement is commented out.",
+          "must_not_claim": ["Unauthorized IP addresses are actively blocked", "Schema event recording alone proves a business audit/compliance responsibility"]
+        }
+      ],
+      "accepted_alternatives": ["Retail checkout, inventory/replenishment, pricing/tax and workforce/payroll responsibilities with supported shared participation", "Broader retail operations groupings with explicit scope, information use and alternatives"]
+    }
+  ]
+}

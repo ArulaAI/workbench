@@ -48,6 +48,7 @@ language: typescript
 metadata:
   produces: node
   kind: function
+  executable_body: true
 rule:
   kind: function_declaration
 
@@ -57,6 +58,7 @@ language: typescript
 metadata:
   produces: node
   kind: function
+  executable_body: true
 rule:
   kind: variable_declarator
   has:
@@ -69,6 +71,7 @@ language: typescript
 metadata:
   produces: node
   kind: function
+  executable_body: true
 rule:
   kind: generator_function_declaration
 
@@ -78,6 +81,7 @@ language: typescript
 metadata:
   produces: node
   kind: method
+  executable_body: true
 rule:
   kind: method_definition
   inside:
@@ -90,6 +94,7 @@ language: typescript
 metadata:
   produces: node
   kind: function
+  executable_body: true
 rule:
   kind: export_statement
   has:

@@ -1,0 +1,10 @@
+{
+  "openapi": {
+    "root_marker": "openapi",
+    "operations_key": "paths",
+    "operation_methods": ["get", "post", "put", "patch", "delete", "head", "options", "trace"],
+    "anchor_kind": "http",
+    "operation_name_key": "operationId",
+    "validation_keys": ["required", "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "minLength", "maxLength", "pattern", "enum", "minItems", "maxItems", "uniqueItems"]
+  }
+}

@@ -1,0 +1,268 @@
+{
+  "Site.source_id": [
+    "resource",
+    "symbol"
+  ],
+  "activation_evidence_id": [
+    "ev"
+  ],
+  "activity_id": [
+    "activity"
+  ],
+  "activity_ids": [
+    "activity"
+  ],
+  "anchor_id": [
+    "anchor"
+  ],
+  "anchor_ids": [
+    "anchor"
+  ],
+  "binding_id": [
+    "binding"
+  ],
+  "binding_ids": [
+    "binding"
+  ],
+  "call_ids": [
+    "calls"
+  ],
+  "caller_symbol_id": [
+    "symbol"
+  ],
+  "canonical_anchor_id": [
+    "anchor"
+  ],
+  "claim_id": [
+    "claim"
+  ],
+  "claim_ids": [
+    "claim"
+  ],
+  "concept_id": [
+    "concept"
+  ],
+  "concept_ids": [
+    "concept"
+  ],
+  "concepts": [
+    "concept"
+  ],
+  "conflicts": [
+    "rule_relationship",
+    "observation"
+  ],
+  "dependency_ids": [
+    "binding",
+    "effect",
+    "resource",
+    "rule"
+  ],
+  "domain_id": [
+    "domain"
+  ],
+  "domain_ids": [
+    "domain"
+  ],
+  "edge_id": [
+    "edge"
+  ],
+  "edge_ids": [
+    "edge"
+  ],
+  "effect_id": [
+    "effect"
+  ],
+  "effect_ids": [
+    "effect"
+  ],
+  "element_id": [
+    "ui_element"
+  ],
+  "enforcement_sites.source_id": [
+    "resource",
+    "symbol"
+  ],
+  "entrypoint_ids": [
+    "anchor"
+  ],
+  "ev_id": [
+    "ev"
+  ],
+  "ev_ids": [
+    "ev"
+  ],
+  "event_id": [
+    "ui_event"
+  ],
+  "evidence_ids": [
+    "ev"
+  ],
+  "excluded_anchor_ids": [
+    "anchor"
+  ],
+  "failure_output_ids": [
+    "ui_output"
+  ],
+  "from_activity_id": [
+    "activity"
+  ],
+  "from_domain_id": [
+    "domain"
+  ],
+  "from_observation_id": [
+    "observation"
+  ],
+  "from_state_id": [
+    "ui_state"
+  ],
+  "frontier_ids": [
+    "symbol",
+    "edge"
+  ],
+  "guard_evidence_ids": [
+    "ev"
+  ],
+  "handler_symbol_id": [
+    "symbol"
+  ],
+  "header_binding_ids": [
+    "binding"
+  ],
+  "information_use_id": [
+    "information_use"
+  ],
+  "information_use_ids": [
+    "information_use"
+  ],
+  "input_binding_ids": [
+    "binding"
+  ],
+  "observation_id": [
+    "observation"
+  ],
+  "observation_ids": [
+    "observation"
+  ],
+  "omitted_activity_ids": [
+    "activity"
+  ],
+  "output_binding_ids": [
+    "binding"
+  ],
+  "output_ids": [
+    "ui_output"
+  ],
+  "ownership_id": [
+    "ownership"
+  ],
+  "ownership_ids": [
+    "ownership"
+  ],
+  "parameter_binding_ids": [
+    "binding"
+  ],
+  "parent_view_id": [
+    "ui_element"
+  ],
+  "pending_anchor_ids": [
+    "anchor"
+  ],
+  "predicate_evidence_ids": [
+    "ev"
+  ],
+  "relationship_id": [
+    "relationship"
+  ],
+  "relationship_ids": [
+    "relationship"
+  ],
+  "render_evidence_ids": [
+    "ev"
+  ],
+  "request_binding_ids": [
+    "binding"
+  ],
+  "resource_id": [
+    "resource"
+  ],
+  "resource_ids": [
+    "resource"
+  ],
+  "response_binding_ids": [
+    "binding"
+  ],
+  "result_domain_ids": [
+    "domain"
+  ],
+  "route_binding_ids": [
+    "binding"
+  ],
+  "rule_id": [
+    "rule"
+  ],
+  "rule_ids": [
+    "rule"
+  ],
+  "rule_observation_id": [
+    "observation"
+  ],
+  "rule_relationship_id": [
+    "rule_relationship"
+  ],
+  "rule_relationship_ids": [
+    "rule_relationship"
+  ],
+  "rules": [
+    "rule"
+  ],
+  "service_resource_id": [
+    "resource"
+  ],
+  "snapshot_id": [
+    "snapshot"
+  ],
+  "snapshot_ids": [
+    "snapshot"
+  ],
+  "source_id": [
+    "resource"
+  ],
+  "symbol_id": [
+    "symbol"
+  ],
+  "symbol_ids": [
+    "symbol"
+  ],
+  "target_anchor_id": [
+    "anchor"
+  ],
+  "to_activity_id": [
+    "activity"
+  ],
+  "to_domain_id": [
+    "domain"
+  ],
+  "to_observation_id": [
+    "observation"
+  ],
+  "to_state_id": [
+    "ui_state"
+  ],
+  "trace_id": [
+    "trace"
+  ],
+  "trace_ids": [
+    "trace"
+  ],
+  "unsupported_source_ids": [
+    "resource"
+  ],
+  "obligation_ids": [
+    "trace_obligation"
+  ],
+  "candidate_target_ids": [
+    "symbol",
+    "resource"
+  ]
+}

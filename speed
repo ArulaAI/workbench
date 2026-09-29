@@ -24,6 +24,7 @@
 #   recover                 Recover from crashed/stale state
 #   guardian [spec-file]     Run Product Guardian vision check
 #   audit <spec-file>       Audit a spec for structural completeness
+#   discover domains [opts] Discover business domains from repository source
 #   add-language <lang>     Generate ast-grep rules for a new language
 #   test-rules [lang|--all] Verify ast-grep rules against fixtures
 #   dashboard [start|stop]  Launch SPEED dashboard
@@ -144,6 +145,7 @@ speed_help() {
     echo -e "    ${COLOR_STEP}security${RESET} [--create-defects]   Run security audit on completed task diffs"
     echo -e "    ${COLOR_STEP}new${RESET} <type> <name>           Scaffold a new spec from template"
     echo -e "    ${COLOR_STEP}gates${RESET}   --task ID             Run quality gates for a task (used by Developer Agent mid-task)"
+    echo -e "    ${COLOR_STEP}discover${RESET} domains [opts]       Discover business domains (--facts-only, --status, --cancel)"
     echo -e "    ${COLOR_STEP}add-language${RESET} <lang>          Generate ast-grep rules for a new language"
     echo -e "    ${COLOR_STEP}test-rules${RESET}  [lang|--all]     Verify ast-grep rules against fixture files"
     echo -e "    ${COLOR_STEP}skills${RESET} <sync|status|doctor>  Import and inspect Workbench skills"
@@ -331,6 +333,7 @@ main() {
         verify-spec) cmd_verify_spec "$@" ;;
         gates)     cmd_gates "$@" ;;
         clean)     cmd_clean "$@" ;;
+        discover)     cmd_discover "$@" ;;
         add-language) cmd_add_language "$@" ;;
         test-rules)   cmd_test_rules "$@" ;;
         learn)     cmd_learn "$@" ;;

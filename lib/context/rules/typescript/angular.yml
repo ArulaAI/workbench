@@ -1,0 +1,46 @@
+id: ts-angular-component
+language: typescript
+metadata:
+  produces: component_marker
+  framework: angular
+  metadata_var: META
+rule:
+  pattern: '@Component($META)'
+
+---
+id: ts-angular-http-client-binding
+language: typescript
+metadata:
+  produces: receiver_binding
+  framework: angular
+  receiver_var: CLIENT
+  type_var: TYPE
+rule:
+  kind: required_parameter
+  all:
+    - has:
+        kind: identifier
+        pattern: $CLIENT
+    - has:
+        kind: type_annotation
+        has:
+          kind: type_identifier
+          pattern: $TYPE
+constraints:
+  TYPE:
+    regex: '^HttpClient$'
+
+---
+id: ts-angular-http-call
+language: typescript
+metadata:
+  produces: ui_transition
+  framework: angular
+  receiver_var: CLIENT
+  method_var: METHOD
+  target_var: URL
+rule:
+  pattern: $CLIENT.$METHOD($URL, $$$ARGS)
+constraints:
+  METHOD:
+    regex: '^(get|post|put|patch|delete)$'

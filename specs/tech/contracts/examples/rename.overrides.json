@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "revision": 1,
+  "updated_at": "2026-09-06T00:00:00Z",
+  "decisions": [
+    {
+      "id": "decision:rename-example",
+      "revision": 1,
+      "expected_build_id": "5ffca706-5442-5250-bc55-28ddd646b1c9",
+      "author": "fixture-reviewer",
+      "recorded_at": "2026-09-06T00:00:00Z",
+      "explanation": "Illustrative rename decision; no real user acceptance.",
+      "operation": {
+        "operation": "rename",
+        "domain_id": "domain:order-management",
+        "name": "Order cancellation"
+      },
+      "result_domain_ids": [
+        "domain:order-management"
+      ]
+    }
+  ]
+}

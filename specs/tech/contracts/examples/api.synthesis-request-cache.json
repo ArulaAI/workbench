@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "kind": "request",
+  "key": "fe5583e4c64364d5d1e80ec5842ddf4284ac27e8b02256c7327ecaddc6c204fb",
+  "created_at": "2026-09-06T00:00:00Z",
+  "request": {
+    "schema_version": 1,
+    "request_id": "a064a1e3-28b4-578d-95c5-a43b2feadd7b",
+    "operation": "synthesize",
+    "input_fingerprint": "cc3ee2375c43edad0cef13764a214e3780e2a0e39bc4a7486c8a303088878497",
+    "graph": {
+      "schema_version": 1,
+      "scope_id": "scope:api-whole",
+      "scope_kind": "whole_graph",
+      "partition_strategy": "none",
+      "estimated_input_tokens": 1,
+      "parent_scope_id": null,
+      "input_fingerprint": "cc3ee2375c43edad0cef13764a214e3780e2a0e39bc4a7486c8a303088878497",
+      "context": {
+        "capabilities": [],
+        "resources": {},
+        "symbols": {},
+        "edges": {},
+        "anchors": {},
+        "anchor_representations": {},
+        "anchor_correspondences": {},
+        "bindings": {},
+        "traces": {},
+        "trace_obligations": {},
+        "effects": {},
+        "evidence": {},
+        "source_snapshots": {},
+        "rule_observations": {},
+        "activities": {},
+        "concepts": {},
+        "information_uses": {},
+        "ownerships": {},
+        "rules": {},
+        "rule_relationships": {},
+        "claims": {},
+        "domains": {},
+        "relationships": {},
+        "record_refs": {}
+      },
+      "source_representation_ids": [],
+      "canonical_anchor_ids": [],
+      "child_scope_ids": [],
+      "cross_scope_edge_ids": []
+    },
+    "candidate": null,
+    "parent_candidate_hash": null,
+    "deterministic_findings": [],
+    "verification_report": null,
+    "allowed_evidence_ids": [],
+    "output_schema": {
+      "$ref": "#/$defs/CandidatePayload"
+    },
+    "model": "fixture-model",
+    "max_output_tokens": 2000,
+    "deadline_at": "2026-09-06T00:10:00Z"
+  }
+}

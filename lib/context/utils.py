@@ -59,6 +59,23 @@ def ensure_dir(path: str) -> None:
     os.makedirs(path, exist_ok=True)
 
 
+# One credential denylist shared by every discovery-time file reader.
+CREDENTIAL_DENYLIST_SUFFIXES = (".key", ".pem")
+CREDENTIAL_DENYLIST_NAMES = {".env", ".env.local"}
+CREDENTIAL_DENYLIST_PREFIXES = ("credentials.",)
+
+
+def is_credential_path(path: Path) -> bool:
+    name = path.name
+    if name in CREDENTIAL_DENYLIST_NAMES:
+        return True
+    if any(name.endswith(suf) for suf in CREDENTIAL_DENYLIST_SUFFIXES):
+        return True
+    if any(name.startswith(pre) for pre in CREDENTIAL_DENYLIST_PREFIXES):
+        return True
+    return False
+
+
 # ── Token estimation ───────────────────────────────────────────
 
 
