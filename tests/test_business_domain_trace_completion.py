@@ -364,7 +364,7 @@ def test_interface_without_implementation_cannot_resolve_through_structural_edge
     method = next(symbol for symbol in trace["symbol_ids"]
                   if name_of(symbol) == "OrderService.save(Order)")
     assert {edge["kind"] for edge in facts["edges"].values()
-            if edge["from_ref"]["id"] == method} <= core.STRUCTURAL_EDGE_KINDS
+            if edge["from_ref"]["id"] == method} <= core.NON_TRAVERSAL_EDGES
     assert "OrderService.save(Order)" not in selections
     [selection] = _selection_of(obligations, name_of, "OrderService.save(Order)")
     assert (selection["status"], selection["reason_code"]) == (

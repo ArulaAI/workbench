@@ -22,10 +22,9 @@ from .business_domain_schema import (DEFAULTS, DomainError, account_artifact_byt
 from .utils import is_credential_path
 
 IGNORED = set(CATALOG['ignored_directories'])
-# Relationships that describe a declaration rather than a transfer of control.
-# Traversal never follows them, so they are no evidence that a path continues
-# or that a symbol is a proven terminal.
-STRUCTURAL_EDGE_KINDS = frozenset({'implements', 'inherits', 'has_field',
+# Structural, test and documentation edges describe a symbol; tracing does not
+# follow them, so they cannot show that a path continues past that symbol.
+NON_TRAVERSAL_EDGES = frozenset({'implements', 'inherits', 'has_field',
     'accepts_type', 'returns_type', 'tests_behavior', 'documents_behavior',
     'exposes_endpoint'})
 def source_paths(root: Path) -> list[str]:
@@ -847,6 +846,10 @@ class Extractor:
         for edge in self.facts['edges'].values():
             outgoing.setdefault(edge['from_ref']['id'], []).append(edge)
         units_by_symbol = {unit.symbol_id: unit for unit in self.units}
+        units_by_anchor: dict[str, list[Unit]] = {}
+        for unit in self.units:
+            if unit.anchor_id:
+                units_by_anchor.setdefault(unit.anchor_id, []).append(unit)
         for anchor in self.facts['anchors'].values():
             tid = identifier('trace', anchor['id'])
             obligations = []
@@ -964,7 +967,7 @@ class Extractor:
                     frontier.add(symbol); reasons.add('symbol_limit'); continue
                 seen.add(symbol)
                 for edge in outgoing.get(symbol, []):
-                    if edge['kind'] in STRUCTURAL_EDGE_KINDS or (
+                    if edge['kind'] in NON_TRAVERSAL_EDGES or (
                             edge['kind'] == 'selects_implementation'
                             and symbol == start.symbol_id
                             and 'implementation_selection' in required_relationships):
@@ -1083,10 +1086,10 @@ class Extractor:
             # selection were judged by that obligation above.
             for symbol in sorted(seen):
                 unit = units_by_symbol[symbol]
-                if symbol != anchor['symbol_id'] \
+                traversed = [edge for edge in outgoing.get(symbol, [])
+                             if edge['kind'] not in NON_TRAVERSAL_EDGES]
+                if symbol != anchor['symbol_id'] and not traversed \
                         and 'implementation_selection' not in (unit.required_relationships or ()) \
-                        and not any(edge['kind'] not in STRUCTURAL_EDGE_KINDS
-                                    for edge in outgoing.get(symbol, [])) \
                         and not (unit.valid_terminal and unit.executable_body):
                     require('capability', symbol, 'unresolved', 'UNPROVEN_TERMINAL',
                             'Empty adjacency does not establish an executable terminal.')
@@ -1107,7 +1110,10 @@ class Extractor:
                 obligation_ids=sorted(set(obligations)), stop_reasons=sorted(reasons), evidence_ids=evidence,
                 traversal_complete=traversal_complete, resolution=resolution,
                 reason='Trace has unsatisfied implementation, capability or traversal obligations.' if incomplete else None)
-            unit = next(u for u in self.units if u.anchor_id == anchor['id'])
+            # The canonical representation's unit owns the anchor's display and
+            # registration fields; fall back only for symbol-id collisions.
+            unit = (start if start.anchor_id == anchor['id']
+                    else units_by_anchor[anchor['id']][0])
             interaction = getattr(adapter_for(unit.source),'interaction',None)
             if interaction:
                 self.facts['traces'][tid]['ui_interaction'] = interaction(unit,self.evidence,self.facts)

@@ -30,6 +30,51 @@ def span(source, match):
                  for side in ('start', 'end'))
 
 
+HTTP_METHODS = frozenset({'GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'})
+
+
+def _declared_route_method(text):
+    """Select the HTTP method of a generic route registration such as Flask's.
+
+    ``route('/x')`` defaults to GET.  A literal ``methods=[...]`` naming one
+    method selects it; several methods, or a non-literal list, select none.
+    """
+    listed = re.search(r'\bmethods\s*=\s*[\[(]([^\])]*)[\])]', text)
+    if not listed:
+        return None if re.search(r'\bmethods\s*=', text) else 'GET'
+    methods = {value.upper() for value in re.findall(r'''["'](\w+)["']''', listed.group(1))}
+    if re.sub(r'''["']\w+["']|[\s,]''', '', listed.group(1)):
+        return None
+    return next(iter(methods)) if len(methods) == 1 and methods <= HTTP_METHODS else None
+
+
+def _literal_request_method(request):
+    """Return the HTTP method of a literal fetch options object, else None.
+
+    A literal object without ``method`` means GET.  Spread or computed
+    options cannot be read statically.
+    """
+    text = (request or '').strip()
+    if not (text.startswith('{') and text.endswith('}')) or '...' in text:
+        return None
+    values = re.findall(r'''(?<![\w$])["']?method["']?\s*:\s*([^,}]+)''', text)
+    if not values:
+        return 'GET'
+    literal = (re.fullmatch(r'''\s*(["'`])([A-Za-z]+)\1\s*''', values[0])
+               if len(values) == 1 else None)
+    method = literal.group(2).upper() if literal else None
+    return method if method in HTTP_METHODS else None
+
+
+def _handler_name(expression):
+    """Unwrap a single-call arrow handler such as ``() => save()``."""
+    arrow = re.fullmatch(
+        r'\s*(?:\(\s*(?:[A-Za-z_$][\w$]*\s*(?:,\s*[A-Za-z_$][\w$]*\s*)*)?\)|[A-Za-z_$][\w$]*)'
+        r'\s*=>\s*((?:this\.)?[A-Za-z_$][\w$]*)\s*\([^()]*\)\s*;?\s*',
+        expression or '')
+    return arrow.group(1) if arrow else expression
+
+
 def capture(match, key):
     if hasattr(match, 'captures'):
         return match.captures.get(key)
@@ -90,6 +135,8 @@ def extract(source):
                 if metadata.get('method_var'):
                     method = capture(match,metadata['method_var'])
                     unit.method = method.upper() if method else None
+                    if unit.method and unit.method not in HTTP_METHODS:
+                        unit.method = _declared_route_method(match.text)
                 unit.route = capture(match, metadata.get('route_var'))
                 if unit.route and metadata.get('route_pattern'):
                     literal = re.fullmatch(metadata['route_pattern'],unit.route)
@@ -285,6 +332,7 @@ def prepare(sources, units, diagnostics=None):
                 name, source.path, nodes, extractions))
 
     def resolve(name, source):
+        name = _handler_name(name)
         if not name or not re.fullmatch(r'(?:this\.)?[A-Za-z_$][\w$]*', name):
             return None
         target_id = resolve_source_reference(name, source.path, nodes, extractions)
@@ -615,6 +663,11 @@ def http_operation(unit, match, metadata=None):
     operation_start = start - unit.start
     target_name, target_resolved, target_value_resolved, target_evidence = \
         _http_target(unit, expression, operation_start)
+    request = capture(match, metadata.get('request_var'))
+    if not metadata.get('method') and request:
+        method = _literal_request_method(request)
+        if method:
+            metadata = {**metadata, 'method': method}
     target_identity_key = _http_target_identity(
         unit, metadata, target_name, target_resolved)
     expression_at = match.text.find(expression) if expression else -1
@@ -629,7 +682,6 @@ def http_operation(unit, match, metadata=None):
         None if target_value_resolved else
             ('The endpoint pattern is known, but its runtime values are not.'
              if target_resolved else dynamic_reason))]
-    request = capture(match, metadata.get('request_var'))
     if request:
         request_at = match.text.find(request, expression_at+len(expression))
         if request_at < 0:
@@ -847,6 +899,7 @@ def interaction(unit,evidence,facts):
                 match.text, re.DOTALL)
             if attribute:
                 trigger, handler = attribute.groups()
+        handler = _handler_name(handler)
         separator = metadata.get('handler_separator')
         receiver,name = (handler.rsplit(separator,1) if separator and handler and separator in handler else (None,handler))
         if receiver == metadata.get('implicit_receiver'):

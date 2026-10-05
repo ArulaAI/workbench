@@ -47,3 +47,6 @@ lib/context/data/grammars/*.dll
 # Environment
 .env
 .env.*
+
+# Windows shortcuts
+*.lnk

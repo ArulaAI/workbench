@@ -107,17 +107,57 @@ def _parameter_segments(text: str) -> list[str]:
     return [segment.strip() for segment in result if segment.strip()]
 
 
+def _parameter_list(header: str) -> str:
+    """Return the text inside a routine's own parameter parentheses.
+
+    Matching the first ``(`` keeps a following ``RETURNS numeric(10,2)`` out
+    of the parameter list, and so out of the routine identity.
+    """
+    start = header.find("(")
+    if start < 0:
+        return ""
+    depth = 0
+    for index in range(start, len(header)):
+        if header[index] == "(":
+            depth += 1
+        elif header[index] == ")":
+            depth -= 1
+            if depth == 0:
+                return header[start + 1:index]
+    return header[start + 1:]
+
+
+# PostgreSQL argument names are optional. These type names contain spaces,
+# so their first word must not be mistaken for an argument name.
+_POSTGRES_MULTIWORD_TYPE = re.compile(
+    r"(?is)^(?:double\s+precision|character\s+varying|bit\s+varying"
+    r"|(?:timestamp|time)(?:\s*\(\s*\d+\s*\))?\s+with(?:out)?\s+time\s+zone)\b")
+
+
+def _postgres_parameter(segment: str) -> tuple[str | None, str | None, str] | None:
+    """Split one PostgreSQL argument into ``(mode, name, type)``."""
+    match = re.match(r"(?is)^(?:(INOUT|IN\s+OUT|IN|OUT|VARIADIC)\s+)?(.+)$", segment)
+    if not match:
+        return None
+    mode, rest = match.groups()
+    rest = rest.strip()
+    named = re.match(r"(?is)^([\w$#]+)\s+(.+)$", rest)
+    if (named and not _POSTGRES_MULTIWORD_TYPE.match(rest)
+            and not re.match(r"(?i)(?:DEFAULT\b|=)", named.group(2))):
+        return mode, named.group(1), named.group(2)
+    return mode, None, rest
+
+
 def _parameters(text: str, dialect: str) -> list[tuple[str, str]]:
     """Normalize Oracle and PostgreSQL argument ordering to ``(name, type)``."""
     result = []
-    for segment in _parameter_segments(text):
+    for position, segment in enumerate(_parameter_segments(text)):
         if dialect == "postgres":
-            match = re.match(
-                r"(?is)^(?:(INOUT|IN\s+OUT|IN|OUT|VARIADIC)\s+)?"
-                r"([\w$#]+)\s+(.+)$", segment)
-            if not match:
+            parsed = _postgres_parameter(segment)
+            if not parsed:
                 continue
-            mode, name, type_name = match.groups()
+            mode, name, type_name = parsed
+            name = name or f"${position + 1}"
             mode = "IN OUT" if mode and mode.casefold() == "inout" else mode
         else:
             match = re.match(
@@ -188,7 +228,8 @@ def extract(source: Source) -> list[Unit]:
     _ensure_parser()
     code = mask_sql(source.text)
     packages = list(re.finditer(
-        r"(?i)\bCREATE\s+(?:OR\s+REPLACE\s+)?PACKAGE\s+(BODY\s+)?([\w$#]+(?:\.[\w$#]+)*)", code))
+        r"(?i)\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:(?:NON)?EDITIONABLE\s+)?"
+        r"PACKAGE\s+(BODY\s+)?([\w$#]+(?:\.[\w$#]+)*)", code))
     units = []
     for match in re.finditer(r"(?i)\b(PROCEDURE|FUNCTION|TRIGGER)\s+([\w.$#]+)", code):
         tail = code[match.end():]
@@ -200,7 +241,7 @@ def extract(source: Source) -> list[Unit]:
         owner = package.group(2) if package else None
         package_body = bool(package and package.group(1))
         header = code[match.end():start_body]
-        param_text = header[header.find("(") + 1:header.rfind(")")] if "(" in header else ""
+        param_text = _parameter_list(header)
         params = _parameters(param_text, _dialect(source))
         if intro.group() == ";":
             if not owner or package_body:
