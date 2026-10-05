@@ -332,6 +332,7 @@ def prepare(sources, units, diagnostics=None):
                 name, source.path, nodes, extractions))
 
     def resolve(name, source):
+        name = _handler_name(name)
         if not name or not re.fullmatch(r'(?:this\.)?[A-Za-z_$][\w$]*', name):
             return None
         target_id = resolve_source_reference(name, source.path, nodes, extractions)
@@ -662,6 +663,11 @@ def http_operation(unit, match, metadata=None):
     operation_start = start - unit.start
     target_name, target_resolved, target_value_resolved, target_evidence = \
         _http_target(unit, expression, operation_start)
+    request = capture(match, metadata.get('request_var'))
+    if not metadata.get('method') and request:
+        method = _literal_request_method(request)
+        if method:
+            metadata = {**metadata, 'method': method}
     target_identity_key = _http_target_identity(
         unit, metadata, target_name, target_resolved)
     expression_at = match.text.find(expression) if expression else -1
@@ -676,7 +682,6 @@ def http_operation(unit, match, metadata=None):
         None if target_value_resolved else
             ('The endpoint pattern is known, but its runtime values are not.'
              if target_resolved else dynamic_reason))]
-    request = capture(match, metadata.get('request_var'))
     if request:
         request_at = match.text.find(request, expression_at+len(expression))
         if request_at < 0:
@@ -894,6 +899,7 @@ def interaction(unit,evidence,facts):
                 match.text, re.DOTALL)
             if attribute:
                 trigger, handler = attribute.groups()
+        handler = _handler_name(handler)
         separator = metadata.get('handler_separator')
         receiver,name = (handler.rsplit(separator,1) if separator and handler and separator in handler else (None,handler))
         if receiver == metadata.get('implicit_receiver'):

@@ -1,5 +1,6 @@
 """Language-neutral source adapter records and semantic result contract."""
 from __future__ import annotations
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -173,11 +174,34 @@ def http_identity(source: Source, method: str | None, route: str | None) -> str 
     return f'http:{scope or "repository"}:{method.upper()}:{route}'
 
 
+def http_route_key(identity_key: str | None) -> str | None:
+    """Return a scope-free ``METHOD:/route`` key for an HTTP identity.
+
+    A caller and the endpoint it calls normally live in different service
+    scopes, and spell the same route differently: path-parameter names,
+    ``:id`` placeholders, trailing slashes, query strings and absolute hosts.
+    """
+    if not identity_key or not identity_key.startswith('http:'):
+        return None
+    parts = identity_key.split(':', 3)
+    if len(parts) != 4:
+        return None
+    method, route = parts[2], parts[3]
+    route = re.sub(r'^[A-Za-z][\w+.-]*://[^/]*', '', route)
+    route = re.split(r'[?#]', route, maxsplit=1)[0]
+    route = re.sub(r'\{[^}]*\}|(?<=/):[A-Za-z_]\w*', '{}', route)
+    return f'{method.upper()}:/{route.strip("/")}'
+
+
 def resolve_anchor_identity(
     facts: dict,
     identity_key: str | None,
 ) -> tuple[str | None, str, str | None]:
-    """Resolve one exact operation identity against canonical anchors."""
+    """Resolve one operation identity against canonical anchors.
+
+    An exact identity wins.  Otherwise an HTTP call may match by method and
+    normalized route in any service scope, but only when one anchor matches.
+    """
     if not identity_key:
         return None, 'unresolved', 'The call has no exact target identity.'
     candidates = sorted({
@@ -191,6 +215,21 @@ def resolve_anchor_identity(
     if len(candidates) > 1:
         return (None, 'ambiguous',
                 f'Exact target identity matches {len(candidates)} canonical anchors.')
+    route_key = http_route_key(identity_key)
+    if route_key:
+        candidates = sorted({
+            anchor['id']
+            for anchor in facts['anchors'].values()
+            if anchor.get('eligibility') == 'eligible'
+            and any(http_route_key(representation['identity_key']) == route_key
+                    for representation in anchor['representations'])
+        })
+        if len(candidates) == 1:
+            return candidates[0], 'resolved', None
+        if len(candidates) > 1:
+            return (None, 'ambiguous',
+                    f'HTTP method and route match {len(candidates)} canonical anchors '
+                    'across service scopes.')
     return (None, 'unresolved',
             'No canonical anchor has the call\'s exact target identity.')
 

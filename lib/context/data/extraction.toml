@@ -463,9 +463,9 @@ dialects = ["oracle_plsql"]
 supported_versions = ["Oracle Database 19c"]
 recognized_extensions = [".sql"]
 detect_any = [
-  '(?im)^\s*CREATE\s+(?:OR\s+REPLACE\s+)?PACKAGE\s+(?:BODY\s+)?\w+',
-  '(?ims)^\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:PROCEDURE|FUNCTION)\s+\w+[^;]*?\b(?:IS|AS)\s+(?:BEGIN|\w+\s+(?:NUMBER|VARCHAR2))',
-  '(?ims)^\s*CREATE\s+(?:OR\s+REPLACE\s+)?TRIGGER\s+\w+.*?(?::(?:NEW|OLD)\b|\b(?:NUMBER|VARCHAR2|PLS_INTEGER)\b|END(?:\s+\w+)?\s*;\s*/)',
+  '(?im)^\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:(?:NON)?EDITIONABLE\s+)?PACKAGE\s+(?:BODY\s+)?\w+',
+  '(?ims)^\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:(?:NON)?EDITIONABLE\s+)?(?:PROCEDURE|FUNCTION)\s+\w+[^;]*?\b(?:IS|AS)\s+(?:BEGIN|\w+\s+(?:NUMBER|VARCHAR2))',
+  '(?ims)^\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:(?:NON)?EDITIONABLE\s+)?TRIGGER\s+\w+.*?(?::(?:NEW|OLD)\b|\b(?:NUMBER|VARCHAR2|PLS_INTEGER)\b|END(?:\s+\w+)?\s*;\s*/)',
   '(?i)\bPRAGMA\s+AUTONOMOUS_TRANSACTION\b',
   '(?i)\bVARCHAR2\s*(?:\(|\b)',
   '(?i)\b\w+(?:\.\w+)?%(?:TYPE|ROWTYPE)\b',
