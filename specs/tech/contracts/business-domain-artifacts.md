@@ -267,13 +267,30 @@ reason: string | null
 id: string
 from_ref: Ref
 to_ref: Ref | null
-kind: "declares" | "inherits" | "implements" | "calls" | "has_field" | "accepts_type" | "returns_type" | "reads_data" | "writes_data" | "exposes_endpoint" | "invokes_endpoint" | "tests_behavior" | "documents_behavior" | "depends_on" | "emits" | "selects_implementation"
+kind: "declares" | "inherits" | "implements" | "calls" | "has_field" | "accepts_type" | "returns_type" | "reads_data" | "writes_data" | "exposes_endpoint" | "invokes_endpoint" | "tests_behavior" | "documents_behavior" | "depends_on" | "emits" | "selects_implementation" | "routes_to" | "navigates_to"
 condition: string | null
 binding_ids: Array<string>
 evidence_ids: Array<string>
 resolution: "resolved" | "ambiguous" | "unresolved"
 reason: string | null
 ```
+
+A `routes_to` edge joins the symbol issuing a client request to the server
+handler that answers it. The request's composed method and URL must fall under
+a declared server base and match the endpoint's method and path segment for
+segment. `condition` names the branch and build choices that select the
+request. Several matching handlers keep the edge ambiguous with every
+candidate, and a request no declared base or endpoint answers stays unresolved
+with its reason. The client call keeps its own `invokes_endpoint` operation
+edge and Effect. `routes_to` adds the traversable link and never replaces them.
+
+A `navigates_to` edge joins the symbol that asks a client router to change
+location to what that change runs. The location's path must match a
+registered route segment for segment, routes taking precedence in declaration
+order. When the route is the one rendering the navigating component, the
+component stays mounted, and the edge reaches its props-update lifecycle. Any
+other route is reached through its registration. A path a runtime segment could
+send to more than one route stays ambiguous with every candidate.
 
 ### Operation
 

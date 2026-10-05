@@ -400,7 +400,7 @@ contract_version = 1
 normalized_output_version = 1
 conformance = "semantic"
 languages = ["java"]
-diagnostic_codes = ["JAVA_TYPE_DECLARATION_UNAVAILABLE", "JAVA_TYPE_AMBIGUOUS", "JAVA_EXTERNAL_TYPE", "JAVA_CALL_AMBIGUOUS", "JAVA_EXTERNAL_CALL"]
+diagnostic_codes = ["JAVA_TYPE_DECLARATION_UNAVAILABLE", "JAVA_TYPE_AMBIGUOUS", "JAVA_EXTERNAL_TYPE", "JAVA_CALL_AMBIGUOUS", "JAVA_EXTERNAL_CALL", "JAVA_IMPLEMENTATION_AMBIGUOUS", "JAVA_GENERATED_IMPLEMENTATION"]
 [source_adapters.java_semantic.capabilities]
 parsing = "supported"
 declaration_extraction = "supported"
@@ -412,7 +412,7 @@ type_resolution = "partial"
 relationship_resolution = "partial"
 framework_enrichment = "unsupported"
 bindings = "partial"
-data_access = "unsupported"
+data_access = "partial"
 rules = "partial"
 control_flow = "partial"
 outputs = "partial"
@@ -448,6 +448,69 @@ control_flow = "unsupported"
 outputs = "partial"
 runtime_selection = "unsupported"
 
+
+# Spring Data repositories. The same module as spring_semantic, activated by
+# its own evidence: a repository interface imports Spring Data, not Spring Web.
+[source_adapters.spring_data_semantic]
+kind = "enricher"
+module = "spring_semantic"
+version = "1"
+framework = "spring-data"
+contract_version = 1
+normalized_output_version = 1
+conformance = "semantic"
+languages = ["java"]
+diagnostic_codes = ["SPRING_DATA_RUNTIME_IMPLEMENTATION"]
+[source_adapters.spring_data_semantic.evidence]
+imports_any = ['^org\.springframework\.data(?:\.|$)']
+[source_adapters.spring_data_semantic.capabilities]
+parsing = "unsupported"
+declaration_extraction = "unsupported"
+entrypoint_detection = "unsupported"
+call_classification = "unsupported"
+callable_resolution = "unsupported"
+overload_resolution = "unsupported"
+type_resolution = "unsupported"
+relationship_resolution = "partial"
+framework_enrichment = "supported"
+bindings = "unsupported"
+data_access = "unsupported"
+rules = "unsupported"
+control_flow = "unsupported"
+outputs = "unsupported"
+runtime_selection = "unsupported"
+
+# Spring beans: stereotypes, @Bean, @Primary, @Qualifier and @Profile. The same
+# module again, activated by the annotations that describe implementation
+# candidates; it reports them as evidence and never selects a candidate.
+[source_adapters.spring_bean_semantic]
+kind = "enricher"
+module = "spring_semantic"
+version = "1"
+framework = "spring"
+contract_version = 1
+normalized_output_version = 1
+conformance = "semantic"
+languages = ["java"]
+diagnostic_codes = []
+[source_adapters.spring_bean_semantic.evidence]
+imports_any = ['^org\.springframework\.(?:stereotype|context\.annotation|beans\.factory\.annotation)(?:\.|$)']
+[source_adapters.spring_bean_semantic.capabilities]
+parsing = "unsupported"
+declaration_extraction = "unsupported"
+entrypoint_detection = "unsupported"
+call_classification = "unsupported"
+callable_resolution = "unsupported"
+overload_resolution = "unsupported"
+type_resolution = "unsupported"
+relationship_resolution = "partial"
+framework_enrichment = "supported"
+bindings = "unsupported"
+data_access = "unsupported"
+rules = "unsupported"
+control_flow = "unsupported"
+outputs = "unsupported"
+runtime_selection = "unsupported"
 [source_adapters.oracle_plsql]
 kind = "adapter"
 module = "sql"

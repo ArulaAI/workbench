@@ -357,15 +357,124 @@ def validate(value: dict, type_name: str) -> None:
                           repair_kind='schema')
 
 
+def _anchor_symbol_ids(model: dict, anchor_id: str) -> set[str]:
+    anchor = model.get('anchors', {}).get(anchor_id)
+    if anchor is None:
+        return set()
+    return {sid for sid in [anchor.get('symbol_id'), *(
+        representation.get('symbol_id')
+        for representation in anchor.get('representations', []))] if sid}
+
+
+def _symbol_reach(starts: set[str], edges: list[dict]) -> set[str]:
+    successors: dict[str, list[str]] = {}
+    for edge in edges:
+        source, target = edge['from_ref'], edge['to_ref']
+        if (source and target and source['kind'] == 'symbol'
+                and target['kind'] == 'symbol'):
+            successors.setdefault(source['id'], []).append(target['id'])
+    reached, pending = set(starts), list(starts)
+    while pending:
+        for target in successors.get(pending.pop(), []):
+            if target not in reached:
+                reached.add(target)
+                pending.append(target)
+    return reached
+
+
+def _condition_terms(condition: str | None) -> set[str]:
+    """Split a rendered route condition into its top-level conjuncts.
+
+    Extraction renders a taken branch test as ``test`` and an untaken one as
+    ``!(test)``, joined by `` && ``; grouped alternatives stay parenthesized.
+    """
+    terms, depth, quote, start, index = [], 0, None, 0, 0
+    text = condition or ''
+    while index < len(text):
+        char = text[index]
+        if quote:
+            quote = None if char == quote else quote
+        elif char in '\'"':
+            quote = char
+        elif char in '()':
+            depth += 1 if char == '(' else -1
+        elif depth == 0 and text.startswith(' && ', index):
+            terms.append(text[start:index])
+            index = start = index + 4
+            continue
+        index += 1
+    terms.append(text[start:])
+    return {term.strip() for term in terms if term.strip()}
+
+
+def _exclusive_conditions(first: str | None, second: str | None) -> bool:
+    """Whether one condition requires a branch test the other requires untaken."""
+    left, right = _condition_terms(first), _condition_terms(second)
+    return (any(f'!({term})' in right for term in left)
+            or any(f'!({term})' in left for term in right))
+
+
+def _activity_trace_exclusions(model: dict, activity: dict,
+                               trace_id: str) -> tuple[set[str], set[str]]:
+    """Return the edges and symbols of a shared trace outside the activity's branch.
+
+    A trace forks where one symbol routes requests to different targets under
+    mutually exclusive branch conditions.  When the activity claims an anchor
+    for some of those targets, a route whose condition excludes every claimed
+    route belongs to another activity: it, and the work reachable only
+    through it, are not part of this activity's operation.  Routes without
+    such a proven alternative (sequential requests, missing or equal
+    conditions) and traces without a known anchor symbol keep the whole trace.
+    """
+    trace = model['traces'][trace_id]
+    roots = _anchor_symbol_ids(model, trace['anchor_id'])
+    if not roots:
+        return set(), set()
+    claimed = set().union(*(_anchor_symbol_ids(model, anchor_id)
+                            for anchor_id in activity.get('anchor_ids', [])))
+    edges = [model['edges'][eid] for eid in trace['edge_ids']]
+    reachable = _symbol_reach(roots, edges)
+    forks: dict[str, list[dict]] = {}
+    for edge in edges:
+        if (edge['kind'] == 'routes_to' and edge['from_ref'] and edge['to_ref']
+                and edge['from_ref']['kind'] == 'symbol'
+                and edge['to_ref']['kind'] == 'symbol'
+                and edge['from_ref']['id'] in reachable):
+            forks.setdefault(edge['from_ref']['id'], []).append(edge)
+    routes = set()
+    for branches in forks.values():
+        chosen = [edge.get('condition') for edge in branches
+                  if edge['to_ref']['id'] in claimed]
+        routes.update(
+            edge['id'] for edge in branches
+            if chosen and edge['to_ref']['id'] not in claimed
+            and all(_exclusive_conditions(edge.get('condition'), condition)
+                    for condition in chosen))
+    if not routes:
+        return set(), set()
+    kept = [edge for edge in edges if edge['id'] not in routes]
+    live = _symbol_reach(roots, kept)
+    dead = _symbol_reach({model['edges'][eid]['to_ref']['id'] for eid in routes},
+                         kept) - live
+    routes.update(edge['id'] for edge in kept if edge['from_ref']
+                  and edge['from_ref']['kind'] == 'symbol'
+                  and edge['from_ref']['id'] in dead)
+    return routes, dead
+
+
 def activity_closure(model: dict, activity: dict) -> dict[str, set[str]]:
     """Canonical operation membership for hydration and integrity validation."""
     traces = set(activity['trace_ids'])
-    symbols = {sid for tid in traces for sid in model['traces'][tid]['symbol_ids']}
-    edge_ids = {eid for tid in traces for eid in model['traces'][tid]['edge_ids']}
+    excluded = {tid: _activity_trace_exclusions(model, activity, tid) for tid in traces}
+    symbols = {sid for tid in traces for sid in model['traces'][tid]['symbol_ids']
+               if sid not in excluded[tid][1]}
+    edge_ids = {eid for tid in traces for eid in model['traces'][tid]['edge_ids']
+                if eid not in excluded[tid][0]}
     operation_binding_ids = {bid for eid in edge_ids
         for bid in model['edges'][eid].get('binding_ids', [])}
     closure = {'effect_ids': {eid for eid, effect in model['effects'].items()
-               if set(effect['trace_ids']) & traces},
+               if any(tid in traces and effect.get('edge_id') not in excluded[tid][0]
+                      for tid in effect['trace_ids'])},
                'information_use_ids': {iid for iid, use in model.get('information_uses', {}).items()
                if use['activity_id'] == activity['id']}}
     for direction in ('input', 'output'):
@@ -411,8 +520,10 @@ def information_use_closure(model: dict, use: dict) -> dict[str, set[str]]:
              'creates': {'writes_data'}, 'updates': {'writes_data'}, 'deletes': {'writes_data'},
              'references': {'reads_data', 'writes_data'}}[use['access']]
     traces = {tid: model['traces'][tid] for tid in activity['trace_ids']}
-    edge_ids = {eid for trace in traces.values() for eid in trace['edge_ids']
-                if model['edges'][eid]['kind'] in kinds
+    excluded = {tid: _activity_trace_exclusions(model, activity, tid)[0] for tid in traces}
+    edge_ids = {eid for tid, trace in traces.items() for eid in trace['edge_ids']
+                if eid not in excluded[tid]
+                and model['edges'][eid]['kind'] in kinds
                 and model['edges'][eid]['to_ref']
                 and model['edges'][eid]['to_ref']['kind'] == 'resource'
                 and model['edges'][eid]['to_ref']['id'] in resources}

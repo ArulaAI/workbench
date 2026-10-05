@@ -14,14 +14,27 @@ from collections import defaultdict
 from tree_sitter import Language, Parser
 import tree_sitter_java
 
-from . import rules
-from .base import SemanticResult, Unit, declare_trace_contract
+from . import CATALOG, rules
+from .base import (MAX_SEMANTIC_CANDIDATES, SemanticResult, Unit, declare_operation_observation,
+                   declare_trace_contract)
 from ..business_domain_schema import identifier
 
 
 _PARSER = Parser(Language(tree_sitter_java.language()))
 _TYPE_NODES = {"class_declaration", "interface_declaration", "enum_declaration", "record_declaration"}
 _METHOD_NODES = {"method_declaration", "constructor_declaration"}
+# The type nodes a heritage clause names directly. A generic argument is nested
+# inside one of these and is never a parent of its own.
+_HERITAGE_TYPE_NODES = {"type_identifier", "scoped_type_identifier", "generic_type"}
+# Types that can carry a method body a call is dispatched to. An abstract class
+# is a class_declaration: it may hold the concrete body its subclasses inherit.
+_CONCRETE_TYPE_KINDS = {"class_declaration", "enum_declaration", "record_declaration"}
+# Declarations with no body of their own. A call that lands on one has not yet
+# reached the code that runs, so it is joined to the methods that answer for it.
+_DISPATCH_ROLES = {"interface", "abstract_declaration"}
+# Heritage hops walked between a declaring type and an implementing one. Bounds
+# the walk, so a malformed cycle cannot spin; Java hierarchies are far shallower.
+_MAX_HERITAGE_DEPTH = 8
 
 
 def _children(node, kinds=None):
@@ -88,11 +101,122 @@ def _parameters(source, node):
     return result
 
 
-def _declared_types(source, node):
-    return [_type_text(source, item) for item in _walk(node, {
-        "type_identifier", "scoped_type_identifier", "generic_type", "integral_type",
-        "floating_point_type", "boolean_type", "void_type",
-    })]
+def _heritage_nodes(clause):
+    """Each type node one heritage clause names, read at the clause's top level.
+
+    ``extends Repository<Owner, Integer>`` names one parent. A walk of every
+    type node under the clause would also yield ``Owner`` and ``Integer`` from
+    the argument list, and they are not supertypes.
+    """
+    if clause is None:
+        return []
+    lists = list(_children(clause, {"type_list"})) or [clause]
+    return [item for parent in lists for item in _children(parent, _HERITAGE_TYPE_NODES)]
+
+
+def _annotation_type(source, annotation):
+    """The qualified name an annotation refers to: written in full, or bound by an import.
+
+    A bare name under a wildcard import is not proven to be any one type, so it
+    yields None.
+    """
+    written = annotation["text"].lstrip("@").split("(", 1)[0].strip()
+    if "." in written:
+        return written
+    return source.semantic["imports"].get(written)
+
+
+# The annotation and processor that make MapStruct write a mapper's implementation
+# at build time. Both must be evidenced: the annotation alone does not run.
+_MAPSTRUCT_MAPPER = "org.mapstruct.Mapper"
+_MAPSTRUCT_PROCESSOR = ("org.mapstruct", "mapstruct-processor")
+
+
+def _keyword_modifiers(node):
+    """The modifier keywords on a declaration, e.g. ``{"public", "static"}``."""
+    modifiers = next(_children(node, {"modifiers"}), None)
+    return {child.type for child in modifiers.children if not child.is_named} if modifiers else set()
+
+
+# A bare name in a written type that could be a type variable: never one
+# qualified by a package or an enclosing type.
+_TYPE_VARIABLE_NAME = re.compile(r"(?<![\w.$])[A-Za-z_$][\w$]*")
+
+
+def _type_parameters(source, node):
+    """``{name: bound}`` for the type parameters a declaration introduces.
+
+    The bound is the leftmost one written, which is what the parameter erases
+    to; an unbounded parameter erases to ``Object``.
+    """
+    clause = node.child_by_field_name("type_parameters") if node is not None else None
+    result = {}
+    for parameter in _children(clause, {"type_parameter"}) if clause else ():
+        name = next(_children(parameter, {"type_identifier", "identifier"}), None)
+        bound_clause = next(_children(parameter, {"type_bound"}), None)
+        bound = next(_children(bound_clause), None) if bound_clause else None
+        if name:
+            result[_text(source, name)] = _type_text(source, bound) if bound else "Object"
+    return result
+
+
+def _without_type_arguments(text):
+    """A written type with every ``<...>`` argument list removed."""
+    kept, depth = [], 0
+    for char in text or "":
+        if char == "<":
+            depth += 1
+        elif char == ">":
+            depth -= 1
+        elif depth == 0:
+            kept.append(char)
+    return "".join(kept)
+
+
+def _type_arguments(text):
+    """The top-level type arguments a written type supplies, or None when it is raw."""
+    text = text or ""
+    start = text.find("<")
+    if start < 0:
+        return None
+    arguments, current, depth = [], [], 0
+    for char in text[start + 1:]:
+        if char == "<":
+            depth += 1
+        elif char == ">":
+            if depth == 0:
+                break
+            depth -= 1
+        elif char == "," and depth == 0:
+            arguments.append("".join(current).strip())
+            current = []
+            continue
+        current.append(char)
+    arguments.append("".join(current).strip())
+    return arguments
+
+
+def _substitute(text, mapping):
+    """Replace each type variable *mapping* names with the type it stands for."""
+    if not mapping:
+        return text
+    return _TYPE_VARIABLE_NAME.sub(lambda match: mapping.get(match.group(0), match.group(0)), text)
+
+
+def _erased(text, variables, depth=0):
+    """``(simple name, array depth)`` of a written type under Java erasure.
+
+    Type arguments are dropped, so ``List<Owner>`` and ``List<Pet>`` both erase
+    to ``List``. A type variable in *variables* erases to its bound; any other
+    name stands for itself, so an unknown variable never matches a concrete type.
+    """
+    base = _without_type_arguments(text).replace(" ", "")
+    dimensions = base.count("[]")
+    name = base.replace("[]", "").rsplit(".", 1)[-1]
+    if name in variables and depth < _MAX_HERITAGE_DEPTH:
+        bound_name, bound_dimensions = _erased(variables[name], variables, depth + 1)
+        return bound_name, dimensions + bound_dimensions
+    return name, dimensions
 
 
 def _matching_unit(units, source, node, name):
@@ -155,12 +279,20 @@ def _parse(source, units):
                            and node.end_byte < parent.end_byte), None)
         owner_name = _text(source, owner_node.child_by_field_name("name")) if owner_node else None
         fqname = ".".join(filter(None, [package, owner_name, name]))
-        superclass = node.child_by_field_name("superclass")
-        interfaces = node.child_by_field_name("interfaces")
-        bases = _declared_types(source, superclass) if superclass else []
-        implemented = _declared_types(source, interfaces) if interfaces else []
+        if node.type == "interface_declaration":
+            # An interface names its parents in an ``extends_interfaces`` child,
+            # not in the ``interfaces`` field a class uses, so without this a
+            # class implementing a sub-interface never reaches the base's methods.
+            base_nodes = _heritage_nodes(next(_children(node, {"extends_interfaces"}), None))
+            interface_nodes = []
+        else:
+            base_nodes = _heritage_nodes(node.child_by_field_name("superclass"))
+            interface_nodes = _heritage_nodes(node.child_by_field_name("interfaces"))
+        bases = [_type_text(source, item) for item in base_nodes]
+        implemented = [_type_text(source, item) for item in interface_nodes]
         entry = {"node": node, "unit": unit, "name": name, "fqname": fqname,
                  "kind": node.type, "bases": bases, "interfaces": implemented,
+                 "type_parameters": _type_parameters(source, node),
                  "annotations": _annotations(source, node), "fields": {},
                  "field_units": [], "methods": []}
         unit.semantic_identity = fqname
@@ -204,6 +336,7 @@ def _parse(source, units):
         declare_trace_contract(unit, unit.trace_role)
         method = {"node": node, "unit": unit, "name": name, "owner": owner,
                   "params": params, "return_type": return_type,
+                  "type_parameters": _type_parameters(source, node),
                   "annotations": unit.semantic_annotations, "variables": dict(params),
                   "invocations": []}
         unit.semantic_method = method
@@ -279,9 +412,11 @@ def _resolve_type(source, raw, types_by_fq, types_by_short):
         target = source.semantic["imports"][simple]
         candidates = [types_by_fq[target]] if target in types_by_fq else []
         if not candidates:
-            local_roots = {entry["fqname"].split(".")[0] for entry in types_by_fq.values()
-                           if "." in entry["fqname"]}
-            return ("unresolved" if target.split(".")[0] in local_roots else "external"), []
+            # Absent from the snapshot: a project type that should be here is a
+            # gap, anything else is a dependency the snapshot never contains.
+            local = any(target.startswith(namespace + ".")
+                        for namespace in source.semantic.get("local_namespaces", ()))
+            return ("unresolved" if local else "external"), []
     else:
         same = ".".join(filter(None, [source.semantic["package"], simple]))
         if same in types_by_fq:
@@ -350,9 +485,254 @@ def _assignable(argument, parameter):
     return False
 
 
+def _local_namespaces(java_sources):
+    """The package namespaces whose types belong to this project.
+
+    An imported type the snapshot does not declare is a missing project type
+    when it falls under one of these, and an external dependency otherwise.
+
+    The namespaces are each declared package root; that root's parent when the
+    parent keeps at least two segments, so a sibling package such as a generated
+    ``org.example.api`` beside ``org.example.controller`` stays the project's;
+    the build's own coordinates (Maven ``groupId``); and the packages a
+    configured code generator writes into.
+    """
+    declared = {source.semantic["package"] for source in java_sources
+                if source.semantic.get("package")}
+    roots = {package for package in declared
+             if not any(package.startswith(other + ".") for other in declared)}
+    namespaces = set(roots)
+    namespaces.update(root.rsplit(".", 1)[0] for root in roots if root.count(".") >= 2)
+    for source in java_sources:
+        namespaces.update(getattr(source, "build_namespaces", ()))
+        for config in getattr(source, "generated_source_config", ()):
+            namespaces.update(filter(None, (config.get("api_package"),
+                                            config.get("model_package"))))
+    return tuple(sorted(namespaces))
+
+
+def _implementation_relations(java_sources, types_by_fq, types_by_short, diagnostics):
+    """Join each interface or abstract method to the concrete methods that run for it.
+
+    A call written against an interface or an abstract type resolves to a method
+    with no body. This pass emits a ``selects_implementation`` relation from that
+    declaration to every concrete method that answers for it, which ``_traces``
+    follows.
+
+    A method answers when a concrete type inheriting the declaring type has, or
+    inherits from its superclasses, a method with the same name and the same
+    erased parameter types after substituting the type arguments its heritage
+    supplies (``I<T>.save(T)`` under ``C implements I<Owner>`` is
+    ``save(Owner)``; under a raw ``implements I`` it is ``save(Object)``). A type
+    with no such method runs the interface ``default`` it inherits. Static and
+    private methods never answer, and test sources are ignored so a test double
+    cannot make a production call ambiguous. One answer is exact, several make
+    the relation ambiguous, and none emits nothing.
+    """
+    test_path = re.compile(CATALOG["test_path_pattern"])
+    source_of = {id(entry): source for source in java_sources
+                 for entry in source.semantic["types"]}
+    entries = {id(entry): entry for source in java_sources
+               for entry in source.semantic["types"]}
+
+    def parents_of(entry):
+        source = source_of[id(entry)]
+        found = []
+        for name in entry["bases"] + entry["interfaces"]:
+            state, matches = _resolve_type(source, name, types_by_fq, types_by_short)
+            if state == "resolved" and id(matches[0]) in entries and matches[0] is not entry:
+                found.append((matches[0], _type_arguments(name)))
+        return found
+
+    parents = {key: parents_of(entry) for key, entry in entries.items()}
+    children = defaultdict(list)
+    for key, found in parents.items():
+        for parent, _ in found:
+            children[id(parent)].append(entries[key])
+
+    def descendants(entry):
+        seen, queue, found = {id(entry)}, [(entry, 0)], []
+        while queue:
+            current, depth = queue.pop(0)
+            if depth >= _MAX_HERITAGE_DEPTH:
+                continue
+            for child in children.get(id(current), ()):
+                if id(child) not in seen:
+                    seen.add(id(child))
+                    found.append(child)
+                    queue.append((child, depth + 1))
+        return found
+
+    def parameterized(parent, arguments, context):
+        """*parent*'s type parameters as the inheriting type supplies them.
+
+        Each argument is rewritten in the terms of the type the walk started
+        from, so ``J<U> extends I<U>`` under ``C implements J<Owner>`` gives
+        I's parameter ``Owner``. A raw supertype, or arguments that do not line
+        up with the parameters, leaves every parameter at its bound: Java
+        compares a raw supertype's members by erasure.
+        """
+        declared = list(parent.get("type_parameters", {}).items())
+        if (arguments is None or len(arguments) != len(declared)
+                or any(argument.startswith("?") for argument in arguments)):
+            return dict(declared)
+        return {name: _substitute(argument, context)
+                for (name, _), argument in zip(declared, arguments)}
+
+    supertype_cache = {}
+
+    def supertypes(entry):
+        """Every supertype of *entry*, nearest first, with how *entry* parameterizes it."""
+        cached = supertype_cache.get(id(entry))
+        if cached is not None:
+            return cached
+        found, seen, queue = [], {id(entry)}, [(entry, {}, 0)]
+        while queue:
+            current, context, depth = queue.pop(0)
+            if depth >= _MAX_HERITAGE_DEPTH:
+                continue
+            for parent, arguments in parents.get(id(current), ()):
+                if id(parent) not in seen:
+                    seen.add(id(parent))
+                    mapping = parameterized(parent, arguments, context)
+                    found.append((parent, mapping))
+                    queue.append((parent, mapping, depth + 1))
+        supertype_cache[id(entry)] = found
+        return found
+
+    def signature(method, mapping, scope):
+        """The erased parameter list Java compares *method* by, seen from *scope*.
+
+        *mapping* rewrites the type variables of the type that declares the
+        method into *scope*'s terms. The method's own type variables shadow
+        them and erase to their bounds, as do *scope*'s.
+        """
+        own = method.get("type_parameters", {})
+        visible = {name: value for name, value in mapping.items() if name not in own}
+        variables = {**scope.get("type_parameters", {}),
+                     **{name: _substitute(bound, visible) for name, bound in own.items()}}
+        return method["name"], tuple(_erased(_substitute(value, visible), variables)
+                                     for _, value in method["params"])
+
+    def concrete_method(entry, wanted):
+        """The concrete method *entry* runs for *wanted*: its own, or its superclass chain's."""
+        chain = [(entry, {})] + [(parent, mapping) for parent, mapping in supertypes(entry)
+                                 if parent["kind"] in _CONCRETE_TYPE_KINDS]
+        for owner, mapping in chain:
+            for method in owner["methods"]:
+                unit = method["unit"]
+                if (unit.trace_role == "implementation" and unit.executable_body
+                        and not _keyword_modifiers(method["node"]) & {"static", "private"}
+                        and signature(method, mapping, entry) == wanted):
+                    return unit
+        return None
+
+    def inherited_default(entry, wanted):
+        """The ``default`` body *entry* runs for *wanted* when no class declares one.
+
+        Java takes the most specific default among the interfaces a type
+        inherits; the nearest one in the heritage walk stands for it. The
+        declaration's own default body is a candidate like any other.
+        """
+        for owner, mapping in supertypes(entry):
+            if owner["kind"] != "interface_declaration":
+                continue
+            for method in owner["methods"]:
+                unit = method["unit"]
+                if (unit.executable_body and "default" in _keyword_modifiers(method["node"])
+                        and signature(method, mapping, entry) == wanted):
+                    return unit
+        return None
+
+    def mapstruct_evidence(source, entry):
+        """The ``@Mapper`` declaration and processor that make MapStruct generate *entry*."""
+        annotation = next((item for item in entry["annotations"]
+                           if _annotation_type(source, item) == _MAPSTRUCT_MAPPER), None)
+        processor = next((item for item in getattr(source, "build_processors", ())
+                          if item[3:5] == _MAPSTRUCT_PROCESSOR), None)
+        return (annotation, processor) if annotation and processor else None
+
+    for source in java_sources:
+        if test_path.search(source.path):
+            continue
+        for entry in source.semantic["types"]:
+            generated = mapstruct_evidence(source, entry)
+            if generated and any(declaration["unit"].trace_role in _DISPATCH_ROLES
+                                 and not declaration["unit"].executable_body
+                                 for declaration in entry["methods"]):
+                diagnostics.append({"code": "JAVA_GENERATED_IMPLEMENTATION",
+                    "message": f"MapStruct generates the implementation of {entry['fqname']} "
+                               "at build time; it is not in the analyzed source snapshot.",
+                    "subject_ids": [source.resource_id], "evidence_ids": []})
+            for declaration in entry["methods"]:
+                base = declaration["unit"]
+                if base.trace_role not in _DISPATCH_ROLES:
+                    continue
+                if generated and not base.executable_body:
+                    # The implementation exists, but only in the build's output:
+                    # a resource outside the snapshot, never a fabricated symbol.
+                    annotation, (build_source, start, end, group, artifact) = generated
+                    source.semantic_relations.append({
+                        "source": base, "target": None, "candidate_targets": [],
+                        "kind": "selects_implementation", "start": base.start, "end": base.end,
+                        "resolution": "unresolved", "outcome": "external",
+                        "diagnostic_code": "JAVA_GENERATED_IMPLEMENTATION",
+                        "external_target_id": identifier(
+                            "resource", "generated-implementation", "mapstruct", entry["fqname"]),
+                        "reason": (f"MapStruct generates the implementation of {base.semantic_identity} "
+                                   f"at build time ({annotation['text'].split('(', 1)[0]} with "
+                                   f"annotation processor {group}:{artifact}); it is not in the "
+                                   "analyzed source snapshot."),
+                        "evidence_spans": [(source, annotation["start"], annotation["end"]),
+                                           (build_source, start, end)],
+                    })
+                found = {}
+                for descendant in descendants(entry):
+                    if (descendant["kind"] not in _CONCRETE_TYPE_KINDS
+                            or test_path.search(source_of[id(descendant)].path)):
+                        continue
+                    # The declaration as the descendant sees it, with the type
+                    # arguments its heritage supplies substituted in.
+                    mapping = next((mapping for parent, mapping in supertypes(descendant)
+                                    if parent is entry), {})
+                    wanted = signature(declaration, mapping, descendant)
+                    # A class's own or inherited concrete method wins; otherwise
+                    # the type runs the default body it inherits, which may be
+                    # the declaration itself.
+                    unit = (concrete_method(descendant, wanted)
+                            or inherited_default(descendant, wanted))
+                    if unit is not None:
+                        found[id(unit)] = unit
+                implementations = sorted(found.values(), key=lambda unit: unit.qualified)
+                if not implementations:
+                    continue
+                kept = implementations[:MAX_SEMANTIC_CANDIDATES]
+                relation = {"source": base, "kind": "selects_implementation",
+                            "start": base.start, "end": base.end,
+                            "evidence_spans": [(unit.source, unit.start, unit.end) for unit in kept]}
+                if len(implementations) == 1:
+                    relation.update(target=implementations[0], candidate_targets=implementations,
+                                    resolution="resolved", outcome="exact", reason=None)
+                else:
+                    reason = (f"{len(implementations)} concrete methods implement "
+                              f"{base.semantic_identity}; which one runs is not established "
+                              "statically.")
+                    if len(implementations) > len(kept):
+                        reason += f" The first {len(kept)} are retained as candidates."
+                    relation.update(target=None, candidate_targets=kept,
+                                    resolution="ambiguous", outcome="ambiguous",
+                                    diagnostic_code="JAVA_IMPLEMENTATION_AMBIGUOUS", reason=reason)
+                    diagnostics.append({"code": "JAVA_IMPLEMENTATION_AMBIGUOUS", "message": reason,
+                                        "subject_ids": [source.resource_id], "evidence_ids": []})
+                source.semantic_relations.append(relation)
+
+
 def prepare(sources, units, diagnostics=None):
     diagnostics = diagnostics if diagnostics is not None else []
     java_sources = [source for source in sources if hasattr(source, "semantic")]
+    namespaces = _local_namespaces(java_sources)
+    for source in java_sources:
+        source.semantic["local_namespaces"] = namespaces
     types = [entry for source in java_sources for entry in source.semantic["types"]]
     types.extend({unit.generated_interface_name: {
         "node": None, "unit": unit, "name": unit.name,
@@ -487,6 +867,9 @@ def prepare(sources, units, diagnostics=None):
                 if state in {"ambiguous", "external"}:
                     diagnostics.append({"code": call_code, "message": call_reason,
                         "subject_ids": [source.resource_id], "evidence_ids": []})
+    # After every source's relations are reset and rebuilt above: a declaration's
+    # relation lands in its own source, which may precede its implementer's.
+    _implementation_relations(java_sources, types_by_fq, types_by_short, diagnostics)
     # Used by candidate resolution without any global mutable adapter state.
     for source in java_sources:
         source.semantic_types_by_fq = types_by_fq
@@ -562,5 +945,29 @@ def symbol_key(name):
 bindings = rules.bindings
 resources = rules.resources
 observations = rules.observations
-operations = rules.operations
+
+
+def operations(unit):
+    """Rule-declared operations plus the persistence operations a framework enricher found.
+
+    An enricher that understands a persistence API (Spring JDBC, JPA, Spring
+    Data) records, on the unit performing it, each statement's data access:
+    its span, read or write, target table and the conditions that select it.
+    Its normalized observation is built here, once the unit has its symbol.
+    """
+    result = rules.operations(unit)
+    for item in getattr(unit, "persistence_operations", []):
+        gaps = list(item["gaps"])
+        if item["kind"] == "data_write":
+            gaps.append({"projection": "completion", "code": "JAVA_PERSISTENCE_COMPLETION_UNRESOLVED",
+                         "reason": "The write is declared in source; whether its transaction "
+                                   "commits at runtime is not established statically."})
+        reason = "; ".join(gap["reason"] for gap in gaps) or None
+        result.append(declare_operation_observation(unit,
+            position=item["position"], end=item["end"], kind=item["kind"],
+            outcome=unit.text[item["position"]:item["end"]], resource=item["resource"],
+            condition=item["condition"], protocol=item["protocol"],
+            supporting_evidence_spans=item["supporting"], projection_gaps=gaps,
+            resolution="unresolved" if gaps else "resolved", reason=reason))
+    return result
 interaction = rules.interaction

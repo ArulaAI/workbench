@@ -59,8 +59,7 @@ _domains_render_status() {
         if .status == null then "No domain discovery has run yet. Run: speed discover domains"
         else
           .status as $s
-          | "Phase:       \($s.phase)",
-            "Started:     \($s.started_at // "-")",
+          | "Started:     \($s.started_at // "-")",
             "Completed:   \($s.completed_at // "-")",
             "Published:   \(if .published then "yes (build \(.published_build_id))" else "no" end)",
             (if $s.coverage then "Anchors:     \($s.coverage.anchors_processed)/\($s.coverage.anchors_total) processed" else empty end),

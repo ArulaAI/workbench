@@ -1276,7 +1276,9 @@
             "depends_on",
             "emits",
             "composes",
-            "selects_implementation"
+            "selects_implementation",
+            "routes_to",
+            "navigates_to"
           ]
         },
         "condition": {

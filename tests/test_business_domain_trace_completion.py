@@ -266,3 +266,376 @@ def finish():
     assert trace["stop_reasons"] == ["symbol_limit"]
     assert any(item["kind"] == "symbol_limit" and item["status"] == "limit_reached"
                for item in obligations)
+
+
+# Interface -> implementation dispatch reached mid-trace. The entry point is a
+# concrete controller method; the declaration its call lands on is selected
+# through the Java adapter's selects_implementation relationships.
+
+_ORDER = "class Order {}\n"
+_CONTROLLER = """
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RestController;
+@RestController class OrderController {
+  private final OrderService service;
+  OrderController(OrderService service) { this.service = service; }
+  @PostMapping("/orders") public void create(Order order) { this.service.save(order); }
+}
+"""
+
+
+def _dispatch_trace(tmp_path, files):
+    for name, content in {"Order.java": _ORDER, "OrderController.java": _CONTROLLER,
+                          **files}.items():
+        (tmp_path / name).write_text(content)
+    facts, _ = Extractor(tmp_path, DEFAULTS).extract()
+    validate_references(facts)
+    symbols = facts["symbols"]
+    trace = next(item for item in facts["traces"].values()
+                 if facts["anchors"][item["anchor_id"]]["operation"]["path"] == "/orders")
+    obligations = [facts["trace_obligations"][key] for key in trace["obligation_ids"]]
+    reached = {symbols[symbol]["qualified_name"].split("::")[-1]
+               for symbol in trace["symbol_ids"]}
+    name_of = lambda symbol: symbols[symbol]["qualified_name"].split("::")[-1]
+    selections = {name_of(edge["from_ref"]["id"]): edge for edge in facts["edges"].values()
+                  if edge["kind"] == "selects_implementation"}
+    return facts, trace, obligations, reached, selections, name_of
+
+
+def _selection_of(obligations, name_of, declaration):
+    return [item for item in obligations if item["kind"] == "implementation_selection"
+            and name_of(item["origin_ref"]["id"]) == declaration]
+
+
+def test_interface_reached_mid_trace_selects_its_single_implementation(tmp_path):
+    facts, trace, obligations, reached, selections, name_of = _dispatch_trace(tmp_path, {
+        "OrderService.java": "interface OrderService { void save(Order order); }\n",
+        "OrderServiceImpl.java": """
+            class OrderServiceImpl implements OrderService {
+              public void save(Order order) { record(order); }
+              private void record(Order order) {}
+            }
+        """,
+    })
+
+    edge = selections["OrderService.save(Order)"]
+    assert edge["resolution"] == "resolved"
+    assert name_of(edge["to_ref"]["id"]) == "OrderServiceImpl.save(Order)"
+    assert {"OrderService.save(Order)", "OrderServiceImpl.save(Order)",
+            "OrderServiceImpl.record(Order)"} <= reached
+    [selection] = _selection_of(obligations, name_of, "OrderService.save(Order)")
+    assert (selection["status"], selection["reason_code"]) == ("satisfied", "IMPLEMENTATION_REACHED")
+    assert [name_of(target) for target in selection["candidate_target_ids"]] == [
+        "OrderServiceImpl.save(Order)"]
+    assert trace["traversal_complete"] is True and trace["resolution"] == "resolved"
+
+
+def test_multiple_implementations_keep_every_candidate_and_make_the_trace_ambiguous(tmp_path):
+    facts, trace, obligations, reached, selections, name_of = _dispatch_trace(tmp_path, {
+        "OrderService.java": "interface OrderService { void save(Order order); }\n",
+        "JpaOrderService.java":
+            "class JpaOrderService implements OrderService { public void save(Order order) {} }\n",
+        "JdbcOrderService.java":
+            "class JdbcOrderService implements OrderService { public void save(Order order) {} }\n",
+    })
+
+    edge = selections["OrderService.save(Order)"]
+    candidates = sorted(name_of(target) for target in edge["candidate_target_ids"])
+    assert edge["resolution"] == "ambiguous" and edge["to_ref"] is None
+    assert candidates == ["JdbcOrderService.save(Order)", "JpaOrderService.save(Order)"]
+    [recorded] = [item for item in obligations if item["edge_id"] == edge["id"]]
+    assert (recorded["kind"], recorded["status"], recorded["reason_code"]) == (
+        "implementation_selection", "ambiguous", "IMPLEMENTATION_AMBIGUOUS")
+    assert sorted(map(name_of, recorded["candidate_target_ids"])) == candidates
+    assert trace["resolution"] == "ambiguous"
+    assert "implementation_ambiguous" in trace["stop_reasons"]
+    assert any(item["code"] == "JAVA_IMPLEMENTATION_AMBIGUOUS" for item in facts["warnings"])
+
+
+@pytest.mark.parametrize("declaration", ["void save(Order order);", "Order save(Order order);"])
+def test_interface_without_implementation_cannot_resolve_through_structural_edges(
+        tmp_path, declaration):
+    # The declaration's accepts_type / returns_type edges to Order used to make
+    # it look like a finished leaf, which marked the whole trace resolved.
+    facts, trace, obligations, reached, selections, name_of = _dispatch_trace(tmp_path, {
+        "OrderService.java": f"interface OrderService {{ {declaration} }}\n",
+    })
+
+    method = next(symbol for symbol in trace["symbol_ids"]
+                  if name_of(symbol) == "OrderService.save(Order)")
+    assert {edge["kind"] for edge in facts["edges"].values()
+            if edge["from_ref"]["id"] == method} <= core.STRUCTURAL_EDGE_KINDS
+    assert "OrderService.save(Order)" not in selections
+    [selection] = _selection_of(obligations, name_of, "OrderService.save(Order)")
+    assert (selection["status"], selection["reason_code"]) == (
+        "unresolved", "IMPLEMENTATION_NOT_REACHED")
+    assert trace["resolution"] == "unresolved"
+    assert "implementation_not_reached" in trace["stop_reasons"]
+
+
+def test_dispatch_repeats_at_every_interface_on_the_path(tmp_path):
+    facts, trace, obligations, reached, selections, name_of = _dispatch_trace(tmp_path, {
+        "OrderService.java": "interface OrderService { void save(Order order); }\n",
+        "OrderRepository.java": "interface OrderRepository { void store(Order order); }\n",
+        "OrderServiceImpl.java": """
+            class OrderServiceImpl implements OrderService {
+              private final OrderRepository repository;
+              OrderServiceImpl(OrderRepository repository) { this.repository = repository; }
+              public void save(Order order) { this.repository.store(order); }
+            }
+        """,
+        "SqlOrderRepository.java":
+            "class SqlOrderRepository implements OrderRepository { public void store(Order order) {} }\n",
+    })
+
+    assert {"OrderServiceImpl.save(Order)", "OrderRepository.store(Order)",
+            "SqlOrderRepository.store(Order)"} <= reached
+    for declaration in ("OrderService.save(Order)", "OrderRepository.store(Order)"):
+        [selection] = _selection_of(obligations, name_of, declaration)
+        assert selection["status"] == "satisfied"
+    assert trace["resolution"] == "resolved"
+
+
+def test_abstract_method_selects_the_subclass_override(tmp_path):
+    controller = _CONTROLLER.replace("OrderService service", "BaseService service")
+    facts, trace, obligations, reached, selections, name_of = _dispatch_trace(tmp_path, {
+        "OrderController.java": controller,
+        "BaseService.java": "abstract class BaseService { public abstract void save(Order order); }\n",
+        "OrderService.java":
+            "class OrderService extends BaseService { public void save(Order order) {} }\n",
+    })
+
+    assert name_of(selections["BaseService.save(Order)"]["to_ref"]["id"]) == "OrderService.save(Order)"
+    assert "OrderService.save(Order)" in reached
+    assert trace["resolution"] == "resolved"
+
+
+def test_class_implementing_a_sub_interface_answers_for_the_base_declaration(tmp_path):
+    facts, trace, obligations, reached, selections, name_of = _dispatch_trace(tmp_path, {
+        "OrderService.java": "interface OrderService { void save(Order order); }\n",
+        "AuditedOrderService.java": "interface AuditedOrderService extends OrderService {}\n",
+        "AuditedOrderServiceImpl.java": """
+            class AuditedOrderServiceImpl implements AuditedOrderService {
+              public void save(Order order) {}
+            }
+        """,
+    })
+
+    inherits = [edge for edge in facts["edges"].values() if edge["kind"] == "inherits"
+                and name_of(edge["from_ref"]["id"]) == "AuditedOrderService"]
+    assert [(edge["resolution"], name_of(edge["to_ref"]["id"])) for edge in inherits] == [
+        ("resolved", "OrderService")]
+    assert "AuditedOrderServiceImpl.save(Order)" in reached
+    assert trace["resolution"] == "resolved"
+
+
+def test_test_doubles_and_static_methods_never_answer_for_a_declaration(tmp_path):
+    (tmp_path / "test").mkdir()
+    facts, trace, obligations, reached, selections, name_of = _dispatch_trace(tmp_path, {
+        "OrderService.java": "interface OrderService { void save(Order order); }\n",
+        "OrderServiceImpl.java":
+            "class OrderServiceImpl implements OrderService { public void save(Order order) {} }\n",
+        "StaticSaver.java":
+            "class StaticSaver implements OrderService { public static void save(Order order) {} }\n",
+        "test/FakeOrderService.java":
+            "class FakeOrderService implements OrderService { public void save(Order order) {} }\n",
+    })
+
+    edge = selections["OrderService.save(Order)"]
+    assert edge["resolution"] == "resolved"
+    assert name_of(edge["to_ref"]["id"]) == "OrderServiceImpl.save(Order)"
+
+
+_DEFAULT_SERVICE = ("interface OrderService {\n"
+                    "  default void save(Order order) { audit(order); }\n"
+                    "  default void audit(Order order) {}\n"
+                    "}\n")
+
+
+def test_default_method_nobody_overrides_selects_its_own_body(tmp_path):
+    facts, trace, obligations, reached, selections, name_of = _dispatch_trace(tmp_path, {
+        "OrderService.java": _DEFAULT_SERVICE,
+        "PlainOrderService.java": "class PlainOrderService implements OrderService {}\n",
+    })
+
+    for declaration in ("OrderService.save(Order)", "OrderService.audit(Order)"):
+        edge = selections[declaration]
+        assert edge["resolution"] == "resolved"
+        assert name_of(edge["to_ref"]["id"]) == declaration
+        [selection] = _selection_of(obligations, name_of, declaration)
+        assert (selection["status"], selection["reason_code"]) == (
+            "satisfied", "IMPLEMENTATION_REACHED")
+    assert trace["resolution"] == "resolved"
+
+
+def test_default_method_overridden_by_one_implementer_keeps_both_bodies(tmp_path):
+    facts, trace, obligations, reached, selections, name_of = _dispatch_trace(tmp_path, {
+        "OrderService.java": _DEFAULT_SERVICE,
+        "PlainOrderService.java": "class PlainOrderService implements OrderService {}\n",
+        "CustomOrderService.java":
+            "class CustomOrderService implements OrderService { public void save(Order order) {} }\n",
+    })
+
+    edge = selections["OrderService.save(Order)"]
+    assert edge["resolution"] == "ambiguous"
+    assert sorted(map(name_of, edge["candidate_target_ids"])) == [
+        "CustomOrderService.save(Order)", "OrderService.save(Order)"]
+    [selection] = _selection_of(obligations, name_of, "OrderService.save(Order)")
+    assert (selection["status"], selection["reason_code"]) == ("ambiguous", "IMPLEMENTATION_AMBIGUOUS")
+    assert trace["resolution"] == "ambiguous"
+
+
+def test_every_parent_of_a_type_keeps_its_own_heritage_edge(tmp_path):
+    files = {
+        "A.java": "interface A { void a(); }\n",
+        "B.java": "interface B<T> { void b(); }\n",
+        "Owner.java": "class Owner {}\n",
+        "C.java": "class C implements A, B<Owner> { public void a() {} public void b() {} }\n",
+        "D.java": "interface D extends A, B<Owner> {}\n",
+    }
+    for name, content in files.items():
+        (tmp_path / name).write_text(content)
+    facts, _ = Extractor(tmp_path, DEFAULTS).extract()
+    validate_references(facts)
+    symbols = facts["symbols"]
+    name_of = lambda symbol: symbols[symbol]["qualified_name"].split("::")[-1]
+    heritage = sorted((edge["kind"], name_of(edge["from_ref"]["id"]),
+                       name_of(edge["to_ref"]["id"]) if edge["to_ref"] else None, edge["resolution"])
+                      for edge in facts["edges"].values() if edge["kind"] in {"implements", "inherits"})
+
+    # Both parents survive, and a type argument (Owner) is never a parent.
+    assert heritage == [
+        ("implements", "C", "A", "resolved"), ("implements", "C", "B", "resolved"),
+        ("inherits", "D", "A", "resolved"), ("inherits", "D", "B", "resolved")]
+
+
+# Phase 2C: a selection reached mid-trace, in each semantic shape, from an
+# adapter that names no language or framework.
+
+def _mid_trace_selection(tmp_path, monkeypatch, shape):
+    state = {"bodies": []}
+
+    def extract(source):
+        role = {"contract": "contract", "declaration": "declaration"}.get(source.text, "implementation")
+        unit = Unit(source, source.text, source.path + "::" + source.text, 0, len(source.text),
+                    "declarative_operation" if role == "contract" else "function",
+                    executable_body=role == "implementation", trace_role=role,
+                    required_relationships=() if role == "implementation" else ("implementation_selection",),
+                    required_capabilities=(), valid_terminal=role == "implementation",
+                    anchor_kind="workflow" if role == "contract" else None,
+                    anchor_resolution="resolved" if role == "contract" else None)
+        if role == "implementation" and source.text != "entry":
+            state["bodies"].append(unit)
+        state[source.text] = unit
+        source.units = [unit]
+        return [unit]
+
+    def relation(origin, kind, **fields):
+        origin.source.semantic_relations.append({"source": origin, "kind": kind, "start": 0,
+            "end": len(origin.source.text), "target": None, "candidate_targets": [],
+            "resolution": "resolved", "reason": None, **fields})
+
+    def prepare(sources, units, diagnostics):
+        for source in sources:
+            source.semantic_relations = []
+        relation(state["contract"], "selects_implementation", target=state["entry"],
+                 outcome="exact")
+        relation(state["entry"], "calls", target=state["declaration"], outcome="exact")
+        bodies = sorted(state["bodies"], key=lambda unit: unit.qualified)
+        declaration = state["declaration"]
+        if shape == "source":
+            relation(declaration, "selects_implementation", target=bodies[0], outcome="exact")
+        elif shape == "ambiguous":
+            relation(declaration, "selects_implementation", candidate_targets=bodies,
+                     resolution="ambiguous", outcome="ambiguous",
+                     diagnostic_code="FIXTURE_AMBIGUOUS", reason="Two bodies remain viable.")
+        elif shape == "external":
+            relation(declaration, "selects_implementation", resolution="unresolved",
+                     outcome="external", external_target_id="resource:fixture-generated",
+                     diagnostic_code="FIXTURE_EXTERNAL",
+                     reason="The implementation is produced outside the analyzed source.")
+
+    adapter = SimpleNamespace(
+        extract=extract, prepare=prepare, relations=lambda source: source.semantic_relations,
+        bindings=lambda unit: [], resources=lambda unit: [], calls=lambda unit: [],
+        observations=lambda unit: [], operations=lambda unit: [],
+        activation_evidence=lambda source: {})
+    monkeypatch.setattr(core, "descriptor", lambda value: {
+        "language": "fixture", "source_kind": "source", "adapter": "fixture",
+        "capability": {"id": "fixture", "version": "1", "capabilities": {
+            "entrypoint_detection": "supported", "relationship_resolution": "supported"},
+            "diagnostic_codes": []}})
+    monkeypatch.setattr(core, "adapter_for", lambda source: adapter)
+    for name in ("contract", "entry", "declaration", "body0", "body1"):
+        (tmp_path / f"{name}.opaque").write_text(name)
+    facts, _ = Extractor(tmp_path, DEFAULTS).extract()
+    validate_references(facts)
+    trace = next(iter(facts["traces"].values()))
+    declaration = state["declaration"].symbol_id
+    obligations = [facts["trace_obligations"][key] for key in trace["obligation_ids"]
+                   if facts["trace_obligations"][key]["origin_ref"]["id"] == declaration
+                   and facts["trace_obligations"][key]["kind"] == "implementation_selection"]
+    return facts, trace, obligations
+
+
+@pytest.mark.parametrize(("shape", "status", "code", "resolution"), [
+    ("source", "satisfied", "IMPLEMENTATION_REACHED", "resolved"),
+    ("ambiguous", "ambiguous", "IMPLEMENTATION_AMBIGUOUS", "ambiguous"),
+    ("external", "external", "EXTERNAL_IMPLEMENTATION_UNAVAILABLE", "unresolved"),
+    ("none", "unresolved", "IMPLEMENTATION_NOT_REACHED", "unresolved"),
+])
+def test_mid_trace_selection_shapes_use_one_vocabulary(tmp_path, monkeypatch, shape, status,
+                                                       code, resolution):
+    facts, trace, obligations = _mid_trace_selection(tmp_path, monkeypatch, shape)
+
+    [selection] = obligations
+    assert (selection["status"], selection["reason_code"]) == (status, code)
+    assert trace["resolution"] == resolution
+    if shape == "external":
+        assert selection["candidate_target_ids"] == ["resource:fixture-generated"]
+        assert facts["resources"]["resource:fixture-generated"]
+        assert "external_boundary" in trace["stop_reasons"]
+        assert "implementation_not_reached" not in trace["stop_reasons"]
+
+
+_MAVEN_MAPSTRUCT = """<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <groupId>org.acme</groupId><artifactId>shop</artifactId>
+  <build><plugins><plugin><artifactId>maven-compiler-plugin</artifactId><configuration>
+    <annotationProcessorPaths><path>
+      <groupId>org.mapstruct</groupId><artifactId>mapstruct-processor</artifactId>
+    </path></annotationProcessorPaths>
+  </configuration></plugin></plugins></build>
+</project>
+"""
+
+
+def test_generated_mapper_reached_mid_trace_is_an_external_boundary(tmp_path):
+    facts, trace, obligations, reached, selections, name_of = _dispatch_trace(tmp_path, {
+        "pom.xml": _MAVEN_MAPSTRUCT,
+        "OrderService.java": ("import org.mapstruct.Mapper;\n"
+                              "@Mapper interface OrderService { void save(Order order); }\n"),
+    })
+
+    edge = selections["OrderService.save(Order)"]
+    assert edge["to_ref"]["kind"] == "resource" and "MapStruct" in edge["reason"]
+    [selection] = _selection_of(obligations, name_of, "OrderService.save(Order)")
+    assert (selection["status"], selection["reason_code"]) == (
+        "external", "EXTERNAL_IMPLEMENTATION_UNAVAILABLE")
+    assert trace["resolution"] == "unresolved" and "external_boundary" in trace["stop_reasons"]
+
+
+def test_spring_evidence_does_not_resolve_an_ambiguous_trace(tmp_path):
+    imports = ("import org.springframework.context.annotation.Primary;\n"
+               "import org.springframework.stereotype.Repository;\n")
+    facts, trace, obligations, reached, selections, name_of = _dispatch_trace(tmp_path, {
+        "OrderService.java": "interface OrderService { void save(Order order); }\n",
+        "JpaOrderService.java": imports + "@Repository @Primary\n"
+            "class JpaOrderService implements OrderService { public void save(Order order) {} }\n",
+        "JdbcOrderService.java": imports + "@Repository\n"
+            "class JdbcOrderService implements OrderService { public void save(Order order) {} }\n",
+    })
+
+    [selection] = _selection_of(obligations, name_of, "OrderService.save(Order)")
+    assert (selection["status"], selection["reason_code"]) == ("ambiguous", "IMPLEMENTATION_AMBIGUOUS")
+    assert "JpaOrderService: @Repository, @Primary" in selection["reason"]
+    assert trace["resolution"] == "ambiguous"

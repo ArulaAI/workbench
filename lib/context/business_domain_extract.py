@@ -12,7 +12,7 @@ from .business_domain_adapters import (CATALOG, adapter_for, descriptor,
     enricher_descriptors, enrichers_for)
 from .business_domain_adapters.base import (
     MAX_SEMANTIC_CANDIDATES, TRACE_ROLES, SemanticResult, Source, Unit,
-    normalize_operation_observation,
+    http_url_parts, normalize_operation_observation,
 )
 from .business_domain_identity import reconcile_anchors
 from .language_registry import SOURCE_ADAPTER_CAPABILITIES
@@ -22,6 +22,12 @@ from .business_domain_schema import (DEFAULTS, DomainError, account_artifact_byt
 from .utils import is_credential_path
 
 IGNORED = set(CATALOG['ignored_directories'])
+# Relationships that describe a declaration rather than a transfer of control.
+# Traversal never follows them, so they are no evidence that a path continues
+# or that a symbol is a proven terminal.
+STRUCTURAL_EDGE_KINDS = frozenset({'implements', 'inherits', 'has_field',
+    'accepts_type', 'returns_type', 'tests_behavior', 'documents_behavior',
+    'exposes_endpoint'})
 def source_paths(root: Path) -> list[str]:
     try:
         result = subprocess.run(['git', '-C', str(root), 'ls-files', '-co', '--exclude-standard', '-z'], capture_output=True, timeout=30, check=True)
@@ -84,6 +90,196 @@ def redact_values(value):
     if isinstance(value,dict):
         return {key:redact_values(item) for key,item in value.items()}
     return value
+
+def _validate_endpoint_request(unit: Unit, request: dict) -> None:
+    """Reject a loose adapter request record at the common boundary."""
+    expected = {'position', 'end', 'method', 'method_reason', 'url', 'url_reason',
+                'conditions', 'evidence_spans'}
+    if not isinstance(request, dict) or set(request) != expected:
+        raise ValueError('Adapter endpoint request does not match the normalized contract')
+    if (type(request['position']) is not int or type(request['end']) is not int
+            or not 0 <= request['position'] < request['end'] <= len(unit.text)):
+        raise ValueError('Adapter endpoint request requires a valid unit-relative span')
+    for field, reason in (('method', 'method_reason'), ('url', 'url_reason')):
+        if (request[field] is None) == (request[reason] is None):
+            raise ValueError(f'Adapter endpoint request needs exactly one of {field} and {reason}')
+    if any(not isinstance(item, (list, tuple)) or len(item) != 2
+           or not isinstance(item[0], str) or not isinstance(item[1], bool)
+           for item in request['conditions']):
+        raise ValueError('Adapter endpoint request conditions must be (test, taken) pairs')
+    if not request['evidence_spans'] or any(
+            not isinstance(span, (list, tuple)) or len(span) != 3
+            or not isinstance(span[0], Source)
+            or type(span[1]) is not int or type(span[2]) is not int
+            or not 0 <= span[1] < span[2] <= len(span[0].text)
+            for span in request['evidence_spans']):
+        raise ValueError('Adapter endpoint request requires exact evidence spans')
+
+
+def _request_path(path: str) -> str:
+    """The path of a request URL without its query string or fragment."""
+    depth = 0
+    for index, character in enumerate(path):
+        if character == '{':
+            depth += 1
+        elif character == '}':
+            depth -= 1
+        elif depth == 0 and character in '?#':
+            return path[:index]
+    return path
+
+
+_PATH_VARIABLE = re.compile(r'\{[^{}]*\}')
+
+
+def _segment_match(client: str, server: str) -> str | None:
+    """'exact', 'possible' (a runtime value could match) or None."""
+    if _PATH_VARIABLE.fullmatch(server):
+        return 'possible' if ':' in server else 'exact'
+    if '{' in client:
+        pattern = ''.join('.+' if _PATH_VARIABLE.fullmatch(piece) else re.escape(piece)
+                          for piece in re.split(r'(\{[^{}]*\})', client) if piece)
+        literal = '{' not in server
+        return 'possible' if not literal or re.fullmatch(pattern, server) else None
+    if '{' in server:
+        pattern = ''.join('[^/]+' if _PATH_VARIABLE.fullmatch(piece) else re.escape(piece)
+                          for piece in re.split(r'(\{[^{}]*\})', server) if piece)
+        return 'exact' if re.fullmatch(pattern, client) else None
+    return 'exact' if client == server else None
+
+
+def _path_match(client: str, server: str) -> str | None:
+    client_segments = [item for item in client.split('/') if item]
+    server_segments = [item for item in server.split('/') if item]
+    if len(client_segments) != len(server_segments):
+        return None
+    results = [_segment_match(left, right)
+               for left, right in zip(client_segments, server_segments)]
+    if None in results:
+        return None
+    return 'possible' if 'possible' in results else 'exact'
+
+
+def _route_request(request: dict, bases: list[dict], served: list) -> dict | None:
+    """The server endpoint(s) one client request reaches, or why none does."""
+    method, url = request['method'], request['url']
+    if url is None:
+        # The destination is dynamic; the call's own operation edge records it.
+        return None
+
+    def outcome(resolution, reason=None, target=None, candidates=(),
+                evidence_ids=(), evidence_spans=(), conditions=(), notes=(), request_path=None):
+        # ``key`` names the edge; ``request_path`` (the path below whichever
+        # base was applied) only lets variants of one request find each other.
+        return {'resolution': resolution, 'reason': reason, 'target': target,
+                'candidates': tuple(candidates), 'evidence_ids': tuple(evidence_ids),
+                'evidence_spans': tuple(evidence_spans), 'conditions': tuple(conditions),
+                'notes': tuple(notes), 'request_path': request_path,
+                'key': (method, target, tuple(candidates), resolution, reason)}
+
+    if method is None:
+        return outcome('unresolved', f'The request to {url} has no established HTTP '
+                       f'method: {request["method_reason"]}')
+    parts = http_url_parts(url)
+    if parts is None:
+        return outcome('unresolved', f'The request URL {url} has no fixed origin: it is '
+                       'relative or its host is a runtime value, and the source does not '
+                       'establish which server receives it.')
+    scheme, host, port, raw_path = parts
+    written = _request_path(raw_path) or '/'
+    path = re.sub(r'/{2,}', '/', written)
+    notes = []
+    if path != written:
+        notes.append(('HTTP_TARGET_PATH_NOT_NORMALIZED',
+            f'The request URL {url} contains an empty path segment (//). It was '
+            f'collapsed to {path} to match endpoints, but the server receives the '
+            'URL as written and may reject or route it differently.'))
+    trailing = len(path) > 1 and path.endswith('/')
+    if trailing:
+        path = path[:-1]
+    under = [base for base in bases if base['port'] == port and (
+        not base['path'] or path == base['path'] or path.startswith(base['path'] + '/'))]
+    if not under:
+        declared = '; '.join(sorted({f"port {base['port']} at {base['path'] or '/'} "
+                                     f"({base['label']})" for base in bases})) or 'none'
+        return outcome('unresolved', f'The request to {scheme}://{host}:{port}{path} '
+                       f'is under no declared server base (declared: {declared}).',
+                       request_path=path)
+    matches = []
+    for base in under:
+        rest = path[len(base['path']):] or '/'
+        for representation, scope in served:
+            operation = representation['operation']
+            if operation['method'].upper() != method:
+                continue
+            if base['role'] == 'contract':
+                if (representation['role'] != 'contract'
+                        or representation['source_id'] != base['source_id']):
+                    continue
+            elif representation['role'] == 'contract' or scope != base['scope']:
+                continue
+            matched = _path_match(rest, operation['path'])
+            if matched:
+                matches.append((base, representation, matched))
+    used = {id(base): base for base, _, _ in matches} or {id(base): base for base in under}
+    evidence_spans = [span for base in used.values() for span in base['evidence_spans']]
+    conditions = sorted({(base['condition'], True) for base in used.values()
+                         if base['condition']})
+    if not matches:
+        labels = '; '.join(sorted({base['label'] for base in under}))
+        return outcome('unresolved', f'No declared {method} endpoint matches {path} '
+                       f'under its server base ({labels}).',
+                       evidence_spans=evidence_spans, notes=notes)
+    if trailing and any(not representation['operation']['path'].endswith('/')
+                        for _, representation, _ in matches):
+        notes.append(('HTTP_TARGET_TRAILING_SLASH_MISMATCH',
+            f'The request path of {url} ends with /, but the matched endpoint is '
+            'declared without one. Whether the server treats them as equal is '
+            'runtime configuration.'))
+    symbols = sorted({representation['symbol_id'] for _, representation, _ in matches})
+    evidence_ids = sorted({evidence_id for _, representation, _ in matches
+                           for evidence_id in representation['evidence_ids']})
+    endpoints = ', '.join(sorted({f"{representation['operation']['method']} "
+                                  f"{representation['operation']['path']}"
+                                  for _, representation, _ in matches}))
+    # A runtime value standing where an endpoint has a literal segment matches
+    # only if it happens to equal that literal. Such a match widens the
+    # candidates but never establishes a route on its own.
+    if not any(matched == 'exact' for _, _, matched in matches):
+        return outcome('unresolved', f'{method} {path} reaches {endpoints} only if a runtime '
+                       'value equals a literal path segment, which the source does not '
+                       'establish.', evidence_spans=evidence_spans, notes=notes)
+    if len(symbols) == 1:
+        base = next(base for base, _, _ in matches)
+        return outcome('resolved', target=symbols[0], evidence_ids=evidence_ids,
+                       evidence_spans=evidence_spans, conditions=conditions, notes=notes,
+                       request_path=path[len(base['path']):] or '/')
+    return outcome('ambiguous', f'{len(symbols)} declared endpoints can answer {method} '
+                   f'{path}: {endpoints}.', candidates=symbols[:MAX_SEMANTIC_CANDIDATES],
+                   evidence_ids=evidence_ids, evidence_spans=evidence_spans,
+                   conditions=conditions, notes=notes)
+
+
+def _route_condition(alternatives: list[list]) -> str | None:
+    """Render the branch choices under which a request takes one route."""
+    rendered = [[test if taken else f'!({test})' for test, taken in conditions]
+                for conditions in alternatives]
+    if not rendered or any(not item for item in rendered):
+        return None
+    common = [term for term in rendered[0] if all(term in other for other in rendered[1:])]
+    rests = []
+    for item in rendered:
+        rest = [term for term in item if term not in common]
+        if rest not in rests:
+            rests.append(rest)
+    if any(not rest for rest in rests):
+        clause = None
+    elif len(rests) == 1:
+        clause = ' && '.join(rests[0])
+    else:
+        clause = '(' + ' || '.join('(' + ' && '.join(rest) + ')' for rest in rests) + ')'
+    return ' && '.join(common + ([clause] if clause else [])) or None
+
 
 class Extractor:
     def __init__(self, root: Path, config: dict, build_id: str | None = None):
@@ -279,15 +475,25 @@ class Extractor:
             for enricher in enrichers_for(source, evidence):
                 selected_enrichers.setdefault(id(enricher), (enricher, []))[1].append(source)
         for enricher, sources in selected_enrichers.values():
+            # Repository configuration (properties, YAML) has no units of its
+            # own; an enricher that interprets it reads it here, before it
+            # prepares the sources it was selected for.
+            configure = getattr(enricher, 'configure', None)
+            if configure:
+                configure(sources, self.sources)
             prepare = getattr(enricher, 'prepare', None)
             if prepare:
                 prepare(sources, self.units, self.diagnostics)
+        self.selected_modules = sorted(
+            [*selected_adapters.values(), *selected_enrichers.values()],
+            key=lambda item: getattr(item[0], '__name__', type(item[0]).__name__))
         for unit in self.units:
             self.add_unit(unit)
         self._connections()
         self._anchor_correspondences()
         self._observations()
         self._canonicalize_anchors()
+        self._endpoint_links()
         self._documentation_edges()
         self._capabilities()
         self._traces()
@@ -525,6 +731,106 @@ class Extractor:
                     resolution='resolved', reason=None)
                 self.facts['coverage']['edges_resolved'] += 1
 
+    def _endpoint_links(self) -> None:
+        """Link each client request to the server endpoint that answers it.
+
+        Adapters state both halves. A client adapter states each request as its
+        source composes it: method, full URL, the branch choices selecting it,
+        and evidence. A server adapter states where its endpoints are served: a
+        port and base path per service, or per contract. Matching is exact. The
+        request must fall under a declared base, its method must be the
+        endpoint's, and its path must have the endpoint's segments, literal for
+        literal. A match is a ``routes_to`` edge from the requesting symbol to
+        the endpoint's handler, which traversal follows like any call; several
+        matches stay ambiguous, and a request no base or endpoint answers stays
+        unresolved with its reason.
+        """
+        bases = []
+        for module, sources in getattr(self, 'selected_modules', []):
+            provider = getattr(module, 'endpoint_bases', None)
+            if provider:
+                bases.extend(provider(sources, self.sources))
+        served = []
+        for anchor in self.facts['anchors'].values():
+            if anchor['kind'] != 'http':
+                continue
+            handled = any(item['role'] != 'contract' and item['operation'].get('path')
+                          for item in anchor['representations'])
+            for representation in anchor['representations']:
+                operation = representation['operation']
+                if (not representation['symbol_id'] or not operation.get('method')
+                        or not operation.get('path')):
+                    continue
+                # A contract answers only for an operation no source handler
+                # implements; otherwise the handler is what runs.
+                if representation['role'] == 'contract' and handled:
+                    continue
+                service = self.facts['resources'].get(operation['service_resource_id']) or {}
+                served.append((representation, service.get('name')))
+        for unit in self.units:
+            requester = getattr(adapter_for(unit.source), 'endpoint_requests', None)
+            if not requester or not unit.symbol_id:
+                continue
+            groups = {}
+            for request in requester(unit):
+                _validate_endpoint_request(unit, request)
+                outcome = _route_request(request, bases, served)
+                if outcome is None:
+                    continue
+                group = groups.setdefault(
+                    (request['position'], request['end'], outcome['key']),
+                    {'outcome': outcome, 'members': [], 'notes': set()})
+                group['members'].append((request, outcome))
+                group['notes'].update(outcome['notes'])
+            for (position, end, key), group in sorted(groups.items(), key=lambda item: repr(item[0])):
+                self._add_route(unit, position, end, key, group, groups)
+
+    def _add_route(self, unit, position, end, key, group, groups=None) -> None:
+        outcome = group['outcome']
+        members = group['members']
+        reason = outcome['reason']
+        if outcome['resolution'] == 'unresolved' and outcome['request_path']:
+            # The same request (same call, method and path below its base)
+            # resolved under another configuration: this variant is scoped to
+            # its own configuration, not a statement about the request.
+            method = key[0]
+            siblings = sorted({self.facts['symbols'][other['outcome']['target']]['qualified_name']
+                               .split('::', 1)[-1]
+                               for (other_position, other_end, other_key), other in (groups or {}).items()
+                               if (other_position, other_end) == (position, end)
+                               and other_key[0] == method
+                               and other['outcome']['resolution'] == 'resolved'
+                               and other['outcome']['request_path'] == outcome['request_path']})
+            if siblings:
+                scope_condition = _route_condition([[*request['conditions'], *routed['conditions']]
+                                                    for request, routed in members])
+                reason += (f" This applies only when {scope_condition}; under the other declared "
+                           f"configuration(s) the same request routes to {', '.join(siblings)}."
+                           if scope_condition else
+                           f" Under other declared configuration(s) the same request routes to "
+                           f"{', '.join(siblings)}.")
+        request_evidence = sorted({self.evidence(source, start, finish)
+            for request, _ in members
+            for source, start, finish in request['evidence_spans']})
+        evidence_ids = sorted(set(request_evidence)
+            | {self.evidence(source, start, finish) for _, routed in members
+               for source, start, finish in routed['evidence_spans']}
+            | {evidence_id for _, routed in members for evidence_id in routed['evidence_ids']})
+        conditions = [[*request['conditions'], *routed['conditions']]
+                      for request, routed in members]
+        edge_id = identifier('edge', unit.symbol_id, 'routes_to', position, end, *map(str, key))
+        target = outcome['target']
+        self.facts['edges'][edge_id] = record('Edge', id=edge_id,
+            from_ref={'kind': 'symbol', 'id': unit.symbol_id},
+            to_ref={'kind': 'symbol', 'id': target} if target else None,
+            candidate_target_ids=list(outcome['candidates']), kind='routes_to',
+            condition=_route_condition(conditions), evidence_ids=evidence_ids,
+            resolution=outcome['resolution'], reason=reason)
+        self.facts['coverage']['edges_' + outcome['resolution']] += 1
+        for code, message in sorted(group['notes']):
+            self.diagnostics.append(record('Diagnostic', code=code, message=message,
+                subject_ids=[edge_id], evidence_ids=request_evidence))
+
     def _canonicalize_anchors(self) -> None:
         """Reconcile adapter-established identities before traces are scheduled."""
         replacements = reconcile_anchors(self.facts)
@@ -658,9 +964,7 @@ class Extractor:
                     frontier.add(symbol); reasons.add('symbol_limit'); continue
                 seen.add(symbol)
                 for edge in outgoing.get(symbol, []):
-                    if edge['kind'] in {'implements', 'inherits', 'has_field',
-                            'accepts_type', 'returns_type', 'tests_behavior',
-                            'documents_behavior', 'exposes_endpoint'} or (
+                    if edge['kind'] in STRUCTURAL_EDGE_KINDS or (
                             edge['kind'] == 'selects_implementation'
                             and symbol == start.symbol_id
                             and 'implementation_selection' in required_relationships):
@@ -674,15 +978,34 @@ class Extractor:
                         obligation_kind = 'external_boundary'
                     else:
                         obligation_kind = 'call_target'
+                    if (edge['kind'] == 'selects_implementation' and edge['to_ref']
+                            and edge['to_ref']['kind'] != 'symbol'):
+                        # The selected implementation is a resource outside the
+                        # analyzed source, so the selection ends at an external
+                        # boundary.
+                        require('implementation_selection', symbol, 'external',
+                                'EXTERNAL_IMPLEMENTATION_UNAVAILABLE',
+                                edge['reason'] or 'The selected implementation is outside the analyzed source.',
+                                edge['id'], [edge['to_ref']['id']])
+                        frontier.add(edge['id']); reasons.add('external_boundary')
+                        continue
                     if edge['resolution'] != 'resolved' or not edge['to_ref']:
                         status = ('external' if obligation_kind == 'external_boundary' and edge['to_ref']
                                   else 'ambiguous' if edge['resolution']=='ambiguous' else 'unresolved')
+                        code, reason = 'UNRESOLVED_TARGET', edge['resolution']
+                        if edge['kind'] == 'selects_implementation':
+                            # An unsettled selection is an implementation-selection
+                            # obligation wherever the trace meets it.
+                            obligation_kind = 'implementation_selection'
+                            code, reason = (('IMPLEMENTATION_AMBIGUOUS', 'implementation_ambiguous')
+                                            if status == 'ambiguous' else
+                                            ('IMPLEMENTATION_NOT_REACHED', 'implementation_not_reached'))
                         require(obligation_kind, symbol, status,
-                                'UNRESOLVED_TARGET', edge['reason'] or 'Relationship target is not resolved.',
+                                code, edge['reason'] or 'Relationship target is not resolved.',
                                 edge['id'], edge['candidate_target_ids'] or (
                                     [edge['to_ref']['id']] if edge['to_ref'] else []))
                         frontier.add(edge['id'])
-                        reasons.add('external_boundary' if status == 'external' else edge['resolution'])
+                        reasons.add('external_boundary' if status == 'external' else reason)
                         continue
                     target = edge['to_ref']['id']
                     if edge['to_ref']['kind'] != 'symbol':
@@ -706,6 +1029,38 @@ class Extractor:
             for symbol in sorted(seen - {start.symbol_id}):
                 require_capabilities(units_by_symbol[symbol])
 
+            # Implementation selection is required of every declaration the
+            # trace reaches, not only of its entry point: a call that lands on
+            # a contract has not reached the code that runs until one of the
+            # contract's selects_implementation relationships has been followed.
+            # An ambiguous, unresolved or external selection was already
+            # recorded as the traversal met it; a contract with no selection at
+            # all is recorded here, whatever structural edges it carries.
+            for symbol in sorted(seen - {start.symbol_id}):
+                unit = units_by_symbol[symbol]
+                if 'implementation_selection' not in (unit.required_relationships or ()):
+                    continue
+                selections = [edge for edge in outgoing.get(symbol, [])
+                              if edge['kind'] == 'selects_implementation']
+                if any(edge['resolution'] != 'resolved' or not edge['to_ref']
+                       or edge['to_ref']['kind'] != 'symbol' for edge in selections):
+                    continue
+                targets = sorted(edge['to_ref']['id'] for edge in selections)
+                reached = [target for target in targets if target in seen]
+                if reached:
+                    require('implementation_selection', symbol, 'satisfied',
+                            'IMPLEMENTATION_REACHED',
+                            'The traversal followed an evidenced implementation of this declaration.',
+                            targets=reached)
+                    continue
+                require('implementation_selection', symbol, 'unresolved',
+                        'IMPLEMENTATION_NOT_REACHED',
+                        ('The selected implementation was not reached within traversal limits.'
+                         if targets else
+                         'No evidenced relationship selects a concrete executable implementation.'),
+                        targets=targets)
+                frontier.add(symbol); reasons.add('implementation_not_reached')
+
             if selection_status == 'satisfied' and selected_target and selected_target not in seen:
                 selection_status = 'unresolved'
                 selection_reason = 'The selected implementation was not reached within traversal limits.'
@@ -722,10 +1077,17 @@ class Extractor:
                 reasons.add('implementation_ambiguous' if selection_status == 'ambiguous'
                             else 'external_boundary' if selection_status == 'external'
                             else 'implementation_not_reached')
+            # A leaf is judged by the relationships traversal can follow from it.
+            # Structural edges such as accepts_type describe the declaration and
+            # cannot make it a terminal. Declarations that require implementation
+            # selection were judged by that obligation above.
             for symbol in sorted(seen):
-                if symbol != anchor['symbol_id'] and not outgoing.get(symbol) \
-                        and not (units_by_symbol[symbol].valid_terminal
-                                 and units_by_symbol[symbol].executable_body):
+                unit = units_by_symbol[symbol]
+                if symbol != anchor['symbol_id'] \
+                        and 'implementation_selection' not in (unit.required_relationships or ()) \
+                        and not any(edge['kind'] not in STRUCTURAL_EDGE_KINDS
+                                    for edge in outgoing.get(symbol, [])) \
+                        and not (unit.valid_terminal and unit.executable_body):
                     require('capability', symbol, 'unresolved', 'UNPROVEN_TERMINAL',
                             'Empty adjacency does not establish an executable terminal.')
                     frontier.add(symbol); reasons.add('unproven_terminal')
@@ -847,6 +1209,7 @@ class Extractor:
                     self.facts['coverage']['edges_resolved'] += 1
                 key='edges_resolved' if target else ('edges_ambiguous'
                     if result['outcome']=='ambiguous' else 'edges_unresolved');self.facts['coverage'][key]+=1
+        relation_targets: dict[str, tuple] = {}
         for source in self.sources:
             relations = getattr(adapter_for(source),'relations',None)
             if not relations:
@@ -879,6 +1242,21 @@ class Extractor:
                 ).normalized()
                 source.semantic_results.append(semantic)
                 edge_id = identifier('edge',origin.symbol_id,relation['kind'],relation['start'],relation['end'])
+                # Relations are keyed by origin, kind and span, and one span can
+                # carry several relations of a kind: ``class C implements A, B``
+                # is evidenced by the whole declaration. A relation naming a
+                # different target than the one already holding the key gets
+                # its own edge rather than replacing it; a repeated relation to
+                # the same target still replaces itself. The reason tells apart
+                # only relations with nothing else to name: an explanation added
+                # to a targeted relation must not change its identity.
+                named = target.symbol_id if target else semantic['target_id']
+                target_key = (named, tuple(candidates),
+                              None if named or candidates else relation.get('reason'))
+                if relation_targets.setdefault(edge_id, target_key) != target_key:
+                    edge_id = identifier('edge', origin.symbol_id, relation['kind'],
+                                         relation['start'], relation['end'], *map(str, target_key))
+                    relation_targets[edge_id] = target_key
                 external_ref = None
                 if outcome == 'external' and semantic['target_id']:
                     external_ref = {'kind':'resource', 'id':semantic['target_id']}
@@ -893,7 +1271,7 @@ class Extractor:
                     candidate_target_ids=semantic['candidate_target_ids'],
                     kind=relation['kind'], resolution=relation['resolution'],
                     reason=None if relation['resolution']=='resolved' else relation['reason'],
-                    evidence_ids=evidence_ids)
+                    condition=relation.get('condition'), evidence_ids=evidence_ids)
                 self.facts['coverage']['edges_'+relation['resolution']] += 1
 
     def _observations(self) -> None:

@@ -2,6 +2,8 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from lib.context.business_domain_extract import Extractor
 from lib.context.business_domain_schema import (
     DEFAULTS, digest, identifier, record, validate_references,
@@ -399,3 +401,711 @@ def test_spring_inherited_anchor_retains_implementation_terminal_contract():
     assert (method.trace_role, method.required_relationships,
             method.required_capabilities, method.valid_terminal) == (
                 "implementation", (), ("entrypoint_detection",), True)
+
+
+# Phase 2A: an import the snapshot does not declare is a missing project type
+# only under the project's own namespaces; anything else is a dependency.
+
+def _heritage(facts, kind):
+    """(origin, resolved target or the reason naming the parent, target kind) per edge."""
+    return {(source.rsplit("::", 1)[-1],
+             target if edge["to_ref"] and edge["to_ref"]["kind"] == "symbol" else edge["reason"],
+             edge["to_ref"]["kind"] if edge["to_ref"] else None)
+            for source, target, edge in _edge_names(facts, kind)}
+
+
+def _codes(facts):
+    return [warning["code"] for warning in facts["warnings"]]
+
+
+def test_dependency_sharing_the_projects_first_segment_is_external(tmp_path):
+    facts = _extract(tmp_path, {"src/org/acme/app/Api.java": """
+        package org.acme.app;
+        import org.springframework.core.Ordered;
+        import org.springframework.http.HttpHeaders;
+        public class Api implements Ordered {
+          public void respond() {
+            HttpHeaders headers = new HttpHeaders();
+            headers.setLocation(null);
+          }
+        }
+    """})
+
+    [(_, reason, ref_kind)] = _heritage(facts, "implements")
+    assert ref_kind == "resource" and "target Ordered is external" in reason
+    call = next(edge for _, _, edge in _edge_names(facts, "calls")
+                if "setLocation" in (edge["reason"] or ""))
+    assert "setLocation is external" in call["reason"] and call["to_ref"]["kind"] == "resource"
+    assert "JAVA_EXTERNAL_TYPE" in _codes(facts)
+    assert "JAVA_TYPE_DECLARATION_UNAVAILABLE" not in _codes(facts)
+
+
+def test_missing_type_under_the_projects_own_namespace_stays_unresolved(tmp_path):
+    facts = _extract(tmp_path, {"src/org/acme/app/web/Page.java": """
+        package org.acme.app.web;
+        import org.acme.app.domain.MissingContract;
+        public class Page implements MissingContract {}
+    """})
+
+    [(_, reason, ref_kind)] = _heritage(facts, "implements")
+    assert ref_kind is None and "target MissingContract is unresolved" in reason
+    assert "JAVA_TYPE_DECLARATION_UNAVAILABLE" in _codes(facts)
+    assert "JAVA_EXTERNAL_TYPE" not in _codes(facts)
+
+
+_POM = """<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <parent><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-parent</artifactId></parent>
+  <groupId>org.acme</groupId>
+  <artifactId>shop</artifactId>
+  {plugins}
+</project>
+"""
+_GENERATOR = """<build><plugins><plugin>
+  <artifactId>openapi-generator-maven-plugin</artifactId>
+  <configuration><apiPackage>com.vendor.api</apiPackage><modelPackage>com.vendor.model</modelPackage></configuration>
+</plugin></plugins></build>"""
+
+
+def test_build_coordinates_and_generated_packages_are_project_namespaces(tmp_path):
+    page = """
+        package org.acme.app.web;
+        import org.acme.billing.Invoice;
+        import com.vendor.api.OrdersApi;
+        import com.vendor.model.OrderDto;
+        import org.springframework.boot.SpringApplication;
+        public class Page implements Invoice, OrdersApi, OrderDto, SpringApplication {}
+    """
+    without_build = _extract(tmp_path / "plain", {"src/org/acme/app/web/Page.java": page})
+    with_build = _extract(tmp_path / "maven", {
+        "pom.xml": _POM.format(plugins=_GENERATOR),
+        "src/org/acme/app/web/Page.java": page,
+    })
+
+    def classified(facts):
+        return {edge["reason"].split(" target ")[1].split(" is ")[0]:
+                ("external" if edge["to_ref"] else "unresolved")
+                for _, _, edge in _edge_names(facts, "implements")}
+
+    # The project's parent package (org.acme.app) does not cover org.acme.billing;
+    # the Maven groupId does. Generated packages are the project's even outside
+    # its own coordinates. The <parent> groupId (Spring Boot) never is.
+    assert classified(without_build) == {
+        "Invoice": "external", "OrdersApi": "external",
+        "OrderDto": "external", "SpringApplication": "external"}
+    assert classified(with_build) == {
+        "Invoice": "unresolved", "OrdersApi": "unresolved",
+        "OrderDto": "unresolved", "SpringApplication": "external"}
+
+
+def test_com_project_classification_is_unchanged(tmp_path):
+    facts = _extract(tmp_path, {"src/com/acme/app/Api.java": """
+        package com.acme.app;
+        import com.acme.app.domain.MissingContract;
+        import org.springframework.http.HttpHeaders;
+        public class Api implements MissingContract {
+          public void respond() {
+            HttpHeaders headers = new HttpHeaders();
+            headers.setLocation(null);
+          }
+        }
+    """})
+
+    [(_, reason, ref_kind)] = _heritage(facts, "implements")
+    assert ref_kind is None and "target MissingContract is unresolved" in reason
+    call = next(edge for _, _, edge in _edge_names(facts, "calls")
+                if "setLocation" in (edge["reason"] or ""))
+    assert "setLocation is external" in call["reason"]
+
+
+def test_petclinic_spring_data_repository_parent_is_external(tmp_path):
+    base = "src/main/java/org/springframework/samples/petclinic"
+    facts = _extract(tmp_path, {
+        "pom.xml": _POM.format(plugins="").replace(
+            "<groupId>org.acme</groupId>", "<groupId>org.springframework.samples</groupId>"),
+        f"{base}/model/Owner.java": "package org.springframework.samples.petclinic.model;\npublic class Owner {}\n",
+        f"{base}/repository/OwnerRepository.java": """
+            package org.springframework.samples.petclinic.repository;
+            import org.springframework.samples.petclinic.model.Owner;
+            public interface OwnerRepository { void save(Owner owner); }
+        """,
+        f"{base}/repository/springdatajpa/SpringDataOwnerRepository.java": """
+            package org.springframework.samples.petclinic.repository.springdatajpa;
+            import org.springframework.data.repository.Repository;
+            import org.springframework.samples.petclinic.model.Owner;
+            import org.springframework.samples.petclinic.repository.OwnerRepository;
+            public interface SpringDataOwnerRepository extends OwnerRepository, Repository<Owner, Integer> {}
+        """,
+    })
+
+    parents = {(target.rsplit("::", 1)[-1] if ref == "symbol" else target, ref)
+               for source, target, ref in _heritage(facts, "inherits")
+               if source == "SpringDataOwnerRepository"}
+    assert ("OwnerRepository", "symbol") in parents
+    [(reason, _)] = [item for item in parents if item[1] == "resource"]
+    assert "target Repository<Owner,Integer> is external" in reason
+    assert not any(warning["code"] == "JAVA_TYPE_DECLARATION_UNAVAILABLE"
+                   and "Repository" in warning["message"] for warning in facts["warnings"])
+
+
+# Phase 2B: generic signature matching. A descendant's heritage supplies type
+# arguments that are substituted for the declaring type's variables before the
+# erased parameter lists are compared.
+
+_ENTITIES = {
+    "BaseEntity.java": "class BaseEntity {}\n",
+    "Owner.java": "class Owner extends BaseEntity {}\n",
+    "Pet.java": "class Pet extends BaseEntity {}\n",
+}
+
+
+def _selected(tmp_path, files, declaration):
+    facts = _extract(tmp_path, {**_ENTITIES, **files})
+    symbols = facts["symbols"]
+    name_of = lambda symbol: symbols[symbol]["qualified_name"].split("::")[-1]
+    edges = [edge for edge in facts["edges"].values() if edge["kind"] == "selects_implementation"
+             and name_of(edge["from_ref"]["id"]) == declaration]
+    if not edges:
+        return []
+    [edge] = edges
+    return ([name_of(edge["to_ref"]["id"])] if edge["to_ref"]
+            else sorted(map(name_of, edge["candidate_target_ids"])))
+
+
+_GENERIC_REPOSITORY = "interface Repository<T> { T save(T value); }\n"
+
+
+def test_type_argument_is_substituted_for_the_declaring_variable(tmp_path):
+    assert _selected(tmp_path, {
+        "Repository.java": _GENERIC_REPOSITORY,
+        "OwnerRepository.java": """
+            class OwnerRepository implements Repository<Owner> {
+              public Owner save(Owner value) { return value; }
+            }
+        """,
+    }, "Repository.save(T)") == ["OwnerRepository.save(Owner)"]
+
+
+def test_incompatible_concrete_parameter_is_not_an_implementation(tmp_path):
+    assert _selected(tmp_path, {
+        "Repository.java": _GENERIC_REPOSITORY,
+        "OwnerRepository.java": """
+            class OwnerRepository implements Repository<Owner> {
+              public Pet save(Pet value) { return value; }
+            }
+        """,
+    }, "Repository.save(T)") == []
+
+
+@pytest.mark.parametrize(("parameter", "expected"), [
+    ("Object", ["RawRepository.save(Object)"]),
+    ("Owner", []),
+])
+def test_raw_supertype_compares_by_erasure(tmp_path, parameter, expected):
+    assert _selected(tmp_path, {
+        "Repository.java": _GENERIC_REPOSITORY,
+        "RawRepository.java": f"""
+            class RawRepository implements Repository {{
+              public Object save({parameter} value) {{ return value; }}
+            }}
+        """,
+    }, "Repository.save(T)") == expected
+
+
+@pytest.mark.parametrize(("parameter", "expected"), [
+    ("Owner[] values", ["OwnerRepository.save(Owner[])"]),
+    ("Owner values", []),
+])
+def test_substitution_keeps_array_depth(tmp_path, parameter, expected):
+    assert _selected(tmp_path, {
+        "Repository.java": "interface Repository<T> { void save(T[] values); }\n",
+        "OwnerRepository.java": f"""
+            class OwnerRepository implements Repository<Owner> {{
+              public void save({parameter}) {{}}
+            }}
+        """,
+    }, "Repository.save(T[])") == expected
+
+
+@pytest.mark.parametrize(("heritage", "parameter", "expected"), [
+    ("Repository", "BaseEntity", ["EntityRepository.save(BaseEntity)"]),
+    ("Repository", "Owner", []),
+    ("Repository<Owner>", "Owner", ["EntityRepository.save(Owner)"]),
+    ("Repository<Owner>", "BaseEntity", []),
+])
+def test_bounded_variable_erases_to_its_bound(tmp_path, heritage, parameter, expected):
+    assert _selected(tmp_path, {
+        "Repository.java": "interface Repository<T extends BaseEntity> { void save(T value); }\n",
+        "EntityRepository.java": f"""
+            class EntityRepository implements {heritage} {{
+              public void save({parameter} value) {{}}
+            }}
+        """,
+    }, "Repository.save(T)") == expected
+
+
+def test_method_level_type_variable_follows_override_rules(tmp_path):
+    # <V> V convert(V) and the erased Object convert(Object) both override
+    # <U> U convert(U); Owner convert(Owner) does not.
+    assert _selected(tmp_path, {
+        "Converter.java": "interface Converter { <U> U convert(U value); }\n",
+        "GenericConverter.java": """
+            class GenericConverter implements Converter {
+              public <V> V convert(V value) { return value; }
+            }
+        """,
+        "ErasedConverter.java": """
+            class ErasedConverter implements Converter {
+              public Object convert(Object value) { return value; }
+            }
+        """,
+        "OwnerConverter.java": """
+            class OwnerConverter implements Converter {
+              public Owner convert(Owner value) { return value; }
+            }
+        """,
+    }, "Converter.convert(U)") == ["ErasedConverter.convert(Object)", "GenericConverter.convert(V)"]
+
+
+@pytest.mark.parametrize(("parameter", "expected"), [
+    ("Owner", ["OwnerStore.save(Owner)"]),
+    ("Pet", []),
+])
+def test_substitution_composes_through_a_generic_sub_interface(tmp_path, parameter, expected):
+    assert _selected(tmp_path, {
+        "Repository.java": _GENERIC_REPOSITORY,
+        "Store.java": "interface Store<U> extends Repository<U> {}\n",
+        "OwnerStore.java": f"""
+            class OwnerStore implements Store<Owner> {{
+              public {parameter} save({parameter} value) {{ return value; }}
+            }}
+        """,
+    }, "Repository.save(T)") == expected
+
+
+def test_implementation_inherited_from_a_generic_superclass(tmp_path):
+    assert _selected(tmp_path, {
+        "Repository.java": _GENERIC_REPOSITORY,
+        "BaseRepository.java": """
+            class BaseRepository<X> implements Repository<X> {
+              public X save(X value) { return value; }
+            }
+        """,
+        "OwnerRepository.java": "class OwnerRepository extends BaseRepository<Owner> {}\n",
+    }, "Repository.save(T)") == ["BaseRepository.save(X)"]
+
+
+# Phase 2C: implementations outside the analyzed source.
+
+_PROCESSOR_POM = """<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <groupId>org.acme</groupId><artifactId>shop</artifactId>
+  <build><plugins><plugin><artifactId>maven-compiler-plugin</artifactId><configuration>
+    <annotationProcessorPaths><path>
+      <groupId>org.mapstruct</groupId><artifactId>mapstruct-processor</artifactId>
+    </path></annotationProcessorPaths>
+  </configuration></plugin></plugins></build>
+</project>
+"""
+_MAPPER = """
+package org.acme.mapper;
+{imports}
+{annotation}
+public interface OwnerMapper {{
+  OwnerDto toDto(Owner owner);
+  default String label(Owner owner) {{ return "owner"; }}
+}}
+"""
+_MAPPER_TYPES = {
+    "src/org/acme/mapper/Owner.java": "package org.acme.mapper;\npublic class Owner {}\n",
+    "src/org/acme/mapper/OwnerDto.java": "package org.acme.mapper;\npublic class OwnerDto {}\n",
+}
+
+
+def _selections_from(facts, declaration):
+    """[(resolution, target kind, target name or candidates, edge)] for one declaration."""
+    symbols = facts["symbols"]
+    name_of = lambda symbol: symbols[symbol]["qualified_name"].split("::")[-1]
+    rows = []
+    for edge in facts["edges"].values():
+        if edge["kind"] != "selects_implementation" or name_of(edge["from_ref"]["id"]) != declaration:
+            continue
+        if edge["to_ref"] and edge["to_ref"]["kind"] == "resource":
+            rows.append((edge["resolution"], "resource", edge["to_ref"]["id"], edge))
+        elif edge["to_ref"]:
+            rows.append((edge["resolution"], "symbol", name_of(edge["to_ref"]["id"]), edge))
+        else:
+            rows.append((edge["resolution"], "candidates",
+                         sorted(name_of(item) for item in edge["candidate_target_ids"]), edge))
+    return sorted(rows, key=lambda row: row[:2])
+
+
+def test_mapstruct_mapper_with_processor_is_a_generated_implementation(tmp_path):
+    facts = _extract(tmp_path, {**_MAPPER_TYPES, "pom.xml": _PROCESSOR_POM,
+        "src/org/acme/mapper/OwnerMapper.java": _MAPPER.format(
+            imports="import org.mapstruct.Mapper;", annotation="@Mapper(uses = Object.class)")})
+
+    [(resolution, kind, target, edge)] = _selections_from(facts, "OwnerMapper.toDto(Owner)")
+    assert (resolution, kind) == ("unresolved", "resource")
+    assert "MapStruct generates the implementation" in edge["reason"]
+    assert "org.mapstruct:mapstruct-processor" in edge["reason"]
+    excerpts = [facts["evidence"][item]["excerpt"] for item in edge["evidence_ids"]]
+    assert any(excerpt.startswith("@Mapper") for excerpt in excerpts)
+    assert any("mapstruct-processor" in excerpt for excerpt in excerpts)
+    # A default method has its own body: MapStruct does not implement it.
+    assert not any(kind == "resource" for _, kind, _, _ in _selections_from(facts, "OwnerMapper.label(Owner)"))
+    assert "JAVA_GENERATED_IMPLEMENTATION" in [warning["code"] for warning in facts["warnings"]]
+
+
+@pytest.mark.parametrize(("pom", "imports", "annotation"), [
+    (False, "import org.mapstruct.Mapper;", "@Mapper"),          # no processor in the build
+    (True, "import org.mapstruct.*;", "@Mapper"),                # name not proven by an import
+    (True, "import org.acme.other.Mapper;", "@Mapper"),          # a different Mapper annotation
+    (True, "", ""),                                              # a plain interface
+])
+def test_mapper_without_sufficient_evidence_is_not_generated(tmp_path, pom, imports, annotation):
+    files = {**_MAPPER_TYPES, "src/org/acme/mapper/OwnerMapper.java":
+             _MAPPER.format(imports=imports, annotation=annotation)}
+    if pom:
+        files["pom.xml"] = _PROCESSOR_POM
+    facts = _extract(tmp_path, files)
+
+    assert _selections_from(facts, "OwnerMapper.toDto(Owner)") == []
+    assert "JAVA_GENERATED_IMPLEMENTATION" not in [warning["code"] for warning in facts["warnings"]]
+
+
+_SPRING_DATA = "src/org/acme/repository"
+
+
+def _repositories(extra):
+    return {
+        f"{_SPRING_DATA}/Owner.java": "package org.acme.repository;\npublic class Owner {}\n",
+        f"{_SPRING_DATA}/OwnerRepository.java": """
+            package org.acme.repository;
+            public interface OwnerRepository {
+              void save(Owner owner);
+              Owner findById(int id);
+            }
+        """,
+        f"{_SPRING_DATA}/SpringDataOwnerRepository.java": """
+            package org.acme.repository;
+            import org.springframework.context.annotation.Profile;
+            import org.springframework.data.repository.Repository;
+            @Profile("spring-data-jpa")
+            public interface SpringDataOwnerRepository extends OwnerRepository, Repository<Owner, Integer> {
+              Owner findByName(String name);
+            }
+        """,
+        **extra,
+    }
+
+
+def test_spring_data_repository_methods_gain_an_external_runtime_implementation(tmp_path):
+    facts = _extract(tmp_path, _repositories({}))
+
+    for declaration in ("OwnerRepository.save(Owner)", "OwnerRepository.findById(int)",
+                        "SpringDataOwnerRepository.findByName(String)"):
+        [(resolution, kind, target, edge)] = _selections_from(facts, declaration)
+        assert (resolution, kind) == ("unresolved", "resource")
+        assert "Spring Data implements" in edge["reason"]
+        assert "org.springframework.data.repository.Repository" in edge["reason"]
+        # The evidence names the Spring Data parent in the extends clause.
+        assert "Repository" in [facts["evidence"][item]["excerpt"] for item in edge["evidence_ids"]]
+    assert "SPRING_DATA_RUNTIME_IMPLEMENTATION" in [warning["code"] for warning in facts["warnings"]]
+
+
+def test_spring_data_candidate_sits_beside_source_implementations_without_narrowing(tmp_path):
+    facts = _extract(tmp_path, _repositories({
+        f"{_SPRING_DATA}/JdbcOwnerRepository.java": """
+            package org.acme.repository;
+            import org.springframework.context.annotation.Profile;
+            @Profile("jdbc")
+            public class JdbcOwnerRepository implements OwnerRepository {
+              public void save(Owner owner) {}
+              public Owner findById(int id) { return null; }
+            }
+        """,
+        f"{_SPRING_DATA}/JpaOwnerRepository.java": """
+            package org.acme.repository;
+            import org.springframework.context.annotation.Profile;
+            @Profile("jpa")
+            public class JpaOwnerRepository implements OwnerRepository {
+              public void save(Owner owner) {}
+              public Owner findById(int id) { return null; }
+            }
+        """,
+    }))
+
+    rows = _selections_from(facts, "OwnerRepository.save(Owner)")
+    assert [(resolution, kind) for resolution, kind, _, _ in rows] == [
+        ("ambiguous", "candidates"), ("unresolved", "resource")]
+    assert rows[0][2] == ["JdbcOwnerRepository.save(Owner)", "JpaOwnerRepository.save(Owner)"]
+
+
+_FRAGMENT = {
+    f"{_SPRING_DATA}/Pet.java": "package org.acme.repository;\npublic class Pet {}\n",
+    f"{_SPRING_DATA}/PetRepository.java": """
+        package org.acme.repository;
+        public interface PetRepository {
+          void save(Pet pet);
+          void delete(Pet pet);
+        }
+    """,
+    f"{_SPRING_DATA}/PetRepositoryOverride.java": """
+        package org.acme.repository;
+        public interface PetRepositoryOverride { void delete(Pet pet); }
+    """,
+    f"{_SPRING_DATA}/SpringDataPetRepository.java": """
+        package org.acme.repository;
+        import org.springframework.data.repository.Repository;
+        public interface SpringDataPetRepository
+            extends PetRepository, Repository<Pet, Integer>, PetRepositoryOverride {}
+    """,
+}
+
+
+@pytest.mark.parametrize("implementation_name", ["SpringDataPetRepositoryImpl", "PetRepositoryOverrideImpl"])
+def test_spring_data_fragment_is_a_source_implementation(tmp_path, implementation_name):
+    facts = _extract(tmp_path, {**_FRAGMENT, f"{_SPRING_DATA}/{implementation_name}.java": f"""
+        package org.acme.repository;
+        public class {implementation_name} implements PetRepositoryOverride {{
+          public void delete(Pet pet) {{}}
+        }}
+    """})
+
+    assert [(resolution, kind, target) for resolution, kind, target, _ in
+            _selections_from(facts, "PetRepository.delete(Pet)")] == [
+        ("resolved", "symbol", f"{implementation_name}.delete(Pet)")]
+    # Methods no fragment provides are still the runtime proxy's.
+    assert [(resolution, kind) for resolution, kind, _, _ in
+            _selections_from(facts, "PetRepository.save(Pet)")] == [("unresolved", "resource")]
+
+
+def test_fragment_needs_spring_data_naming_to_be_routed(tmp_path):
+    facts = _extract(tmp_path, {**_FRAGMENT, f"{_SPRING_DATA}/PetDeletion.java": """
+        package org.acme.repository;
+        public class PetDeletion implements PetRepositoryOverride { public void delete(Pet pet) {} }
+    """})
+
+    assert [(resolution, kind) for resolution, kind, _, _ in
+            _selections_from(facts, "PetRepository.delete(Pet)")] == [("unresolved", "resource")]
+
+
+def test_fragment_and_source_implementations_stay_ambiguous(tmp_path):
+    facts = _extract(tmp_path, {**_FRAGMENT,
+        f"{_SPRING_DATA}/SpringDataPetRepositoryImpl.java": """
+            package org.acme.repository;
+            public class SpringDataPetRepositoryImpl implements PetRepositoryOverride {
+              public void delete(Pet pet) {}
+            }
+        """,
+        f"{_SPRING_DATA}/JdbcPetRepository.java": """
+            package org.acme.repository;
+            public class JdbcPetRepository implements PetRepository {
+              public void save(Pet pet) {}
+              public void delete(Pet pet) {}
+            }
+        """,
+    })
+
+    rows = _selections_from(facts, "PetRepository.delete(Pet)")
+    assert [(resolution, kind, target) for resolution, kind, target, _ in rows] == [
+        ("ambiguous", "candidates", ["JdbcPetRepository.delete(Pet)", "SpringDataPetRepositoryImpl.delete(Pet)"])]
+    assert "repository fragment" in rows[0][3]["reason"]
+
+
+# Phase 2D: Spring evidence on implementation candidates. Evidence explains a
+# selection; it never resolves one.
+
+_APP = "src/org/acme/app"
+_ORDER_TYPES = {
+    f"{_APP}/Order.java": "package org.acme.app;\npublic class Order {}\n",
+    f"{_APP}/OrderRepository.java": "package org.acme.app;\npublic interface OrderRepository { void save(Order order); }\n",
+}
+
+
+def _candidate(name, annotations="", imports=""):
+    return {f"{_APP}/{name}.java": f"""
+        package org.acme.app;
+        {imports}
+        {annotations}
+        public class {name} implements OrderRepository {{
+          public void save(Order order) {{}}
+        }}
+    """}
+
+
+def _order_selection(tmp_path, *files):
+    merged = dict(_ORDER_TYPES)
+    for item in files:
+        merged.update(item)
+    facts = _extract(tmp_path, merged)
+    # The static selection: a declared profile may add a separate conditioned
+    # selection beside it, but never changes this one.
+    rows = [row for row in _selections_from(facts, "OrderRepository.save(Order)")
+            if row[3]["condition"] is None]
+    [(resolution, kind, target, edge)] = rows
+    excerpts = [facts["evidence"][item]["excerpt"] for item in edge["evidence_ids"]]
+    return resolution, target, edge, excerpts
+
+
+@pytest.mark.parametrize("stereotype", ["Service", "Component", "Repository"])
+def test_stereotype_is_candidate_evidence(tmp_path, stereotype):
+    imports = f"import org.springframework.stereotype.{stereotype};"
+    resolution, target, edge, excerpts = _order_selection(
+        tmp_path, _candidate("JpaOrderRepository", f"@{stereotype}", imports),
+        _candidate("JdbcOrderRepository", f"@{stereotype}", imports))
+
+    assert resolution == "ambiguous"
+    assert target == ["JdbcOrderRepository.save(Order)", "JpaOrderRepository.save(Order)"]
+    assert f"JpaOrderRepository: @{stereotype}" in edge["reason"]
+    assert f"@{stereotype}" in excerpts
+
+
+def test_bean_method_is_candidate_evidence(tmp_path):
+    resolution, target, edge, excerpts = _order_selection(tmp_path,
+        _candidate("BeanOrderRepository"), _candidate("JdbcOrderRepository"),
+        {f"{_APP}/OrderConfig.java": """
+            package org.acme.app;
+            import org.springframework.context.annotation.Bean;
+            import org.springframework.context.annotation.Configuration;
+            @Configuration
+            public class OrderConfig {
+              @Bean public OrderRepository orders() { return new BeanOrderRepository(); }
+            }
+        """})
+
+    assert resolution == "ambiguous"
+    assert "BeanOrderRepository: @Bean OrderConfig.orders()" in edge["reason"]
+    assert "JdbcOrderRepository: no Spring stereotype or @Bean declaration" in edge["reason"]
+    assert "@Bean" in excerpts
+
+
+def test_primary_is_evidence_and_does_not_resolve_the_selection(tmp_path):
+    imports = ("import org.springframework.context.annotation.Primary;\n"
+               "import org.springframework.stereotype.Repository;")
+    resolution, target, edge, excerpts = _order_selection(tmp_path,
+        _candidate("JpaOrderRepository", "@Repository @Primary", imports),
+        _candidate("JdbcOrderRepository", "@Repository", imports))
+
+    assert resolution == "ambiguous" and len(target) == 2
+    assert "JpaOrderRepository: @Repository, @Primary" in edge["reason"]
+    assert "@Primary" in excerpts
+
+
+def test_candidate_qualifier_is_evidence(tmp_path):
+    imports = "import org.springframework.beans.factory.annotation.Qualifier;"
+    resolution, target, edge, excerpts = _order_selection(tmp_path,
+        _candidate("JpaOrderRepository", '@Qualifier("jpa")', imports),
+        _candidate("JdbcOrderRepository", '@Qualifier("jdbc")', imports))
+
+    assert resolution == "ambiguous"
+    assert 'JpaOrderRepository: @Qualifier("jpa")' in edge["reason"]
+    assert 'JdbcOrderRepository: @Qualifier("jdbc")' in edge["reason"]
+
+
+def test_injection_point_qualifier_is_recorded_without_narrowing(tmp_path):
+    resolution, target, edge, excerpts = _order_selection(tmp_path,
+        _candidate("JpaOrderRepository"), _candidate("JdbcOrderRepository"),
+        {f"{_APP}/OrderService.java": """
+            package org.acme.app;
+            import org.springframework.beans.factory.annotation.Qualifier;
+            public class OrderService {
+              @Qualifier("jpa") private final OrderRepository repository;
+              OrderService(OrderRepository repository) { this.repository = repository; }
+            }
+        """})
+
+    assert resolution == "ambiguous" and len(target) == 2
+    assert 'injection points: @Qualifier("jpa") OrderRepository repository' in edge["reason"]
+    assert any(excerpt.startswith('@Qualifier("jpa")') for excerpt in excerpts)
+
+
+def test_profile_is_evidence_and_configuration_is_not_proof(tmp_path):
+    imports = "import org.springframework.context.annotation.Profile;"
+    resolution, target, edge, excerpts = _order_selection(tmp_path,
+        _candidate("JpaOrderRepository", '@Profile("jpa")', imports),
+        _candidate("JdbcOrderRepository", '@Profile("jdbc")', imports),
+        {"src/main/resources/application.properties": "spring.profiles.active=jpa\n"})
+
+    assert resolution == "ambiguous"
+    assert target == ["JdbcOrderRepository.save(Order)", "JpaOrderRepository.save(Order)"]
+    assert 'JpaOrderRepository: @Profile("jpa")' in edge["reason"]
+    assert 'JdbcOrderRepository: @Profile("jdbc")' in edge["reason"]
+    assert "not established statically" in edge["reason"]
+    # The declared profile adds one conditioned selection; the property is a
+    # default a runtime override can change, so it is a condition, not proof.
+    facts = _extract(tmp_path, {**_ORDER_TYPES,
+        **_candidate("JpaOrderRepository", '@Profile("jpa")', imports),
+        **_candidate("JdbcOrderRepository", '@Profile("jdbc")', imports),
+        "src/main/resources/application.properties": "spring.profiles.active=jpa\n"})
+    conditioned = [row for row in _selections_from(facts, "OrderRepository.save(Order)")
+                   if row[3]["condition"]]
+    [(resolution, _, target, edge)] = conditioned
+    assert resolution == "resolved" and target == "JpaOrderRepository.save(Order)"
+    assert "spring.profiles.active=jpa" in edge["condition"]
+    assert "runtime profile override" in edge["condition"]
+    assert 'JdbcOrderRepository (@Profile("jdbc"))' in edge["condition"]
+
+
+def test_candidate_without_stereotype_is_kept(tmp_path):
+    imports = "import org.springframework.stereotype.Repository;"
+    resolution, target, edge, excerpts = _order_selection(tmp_path,
+        _candidate("JpaOrderRepository", "@Repository", imports),
+        _candidate("PlainOrderRepository"))
+
+    assert target == ["JpaOrderRepository.save(Order)", "PlainOrderRepository.save(Order)"]
+    assert "PlainOrderRepository: no Spring stereotype or @Bean declaration" in edge["reason"]
+
+
+def test_single_spring_candidate_keeps_its_exact_selection(tmp_path):
+    resolution, target, edge, excerpts = _order_selection(tmp_path, _candidate(
+        "JpaOrderRepository", "@Service", "import org.springframework.stereotype.Service;"))
+
+    assert (resolution, target, edge["reason"]) == ("resolved", "JpaOrderRepository.save(Order)", None)
+    assert "@Service" in excerpts
+
+
+def test_spring_data_runtime_candidate_gains_its_profile(tmp_path):
+    facts = _extract(tmp_path, _repositories({}))
+
+    [(resolution, kind, _, edge)] = _selections_from(facts, "OwnerRepository.save(Owner)")
+    assert (resolution, kind) == ("unresolved", "resource")
+    assert 'SpringDataOwnerRepository: @Profile("spring-data-jpa")' in edge["reason"]
+    assert '@Profile("spring-data-jpa")' in [facts["evidence"][item]["excerpt"] for item in edge["evidence_ids"]]
+
+
+def test_spring_evidence_is_deterministic(tmp_path):
+    imports = ("import org.springframework.context.annotation.Profile;\n"
+               "import org.springframework.stereotype.Repository;")
+    files = [_candidate("JpaOrderRepository", '@Repository @Profile("jpa")', imports),
+             _candidate("JdbcOrderRepository", '@Repository @Profile("jdbc")', imports)]
+    first = _order_selection(tmp_path / "first", *files)
+    second = _order_selection(tmp_path / "second", *reversed(files))
+
+    assert first[2]["reason"] == second[2]["reason"]
+    assert sorted(first[3]) == sorted(second[3])
+
+
+def test_spring_evidence_does_not_change_selection_edge_identity(tmp_path):
+    # OwnerRepository.save has an ambiguous source edge and an external Spring
+    # Data edge on the same declaration span; evidence must not rename either.
+    def implementations(annotated):
+        return {f"{_SPRING_DATA}/{name}OwnerRepository.java": f"""
+            package org.acme.repository;
+            {"import org.springframework.stereotype.Repository;" if annotated else ""}
+            {"@Repository" if annotated else ""}
+            public class {name}OwnerRepository implements OwnerRepository {{
+              public void save(Owner owner) {{}}
+              public Owner findById(int id) {{ return null; }}
+            }}
+        """ for name in ("Jdbc", "Jpa")}
+
+    def selection_ids(root, annotated):
+        files = _repositories(implementations(annotated))
+        if not annotated:
+            path = f"{_SPRING_DATA}/SpringDataOwnerRepository.java"
+            files[path] = files[path].replace('@Profile("spring-data-jpa")', "")
+        facts = _extract(root, files)
+        return sorted(edge["id"] for _, _, _, edge in _selections_from(facts, "OwnerRepository.save(Owner)"))
+
+    plain, explained = selection_ids(tmp_path / "plain", False), selection_ids(tmp_path / "explained", True)
+    assert len(plain) == 2 and plain == explained

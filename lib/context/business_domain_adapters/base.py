@@ -1,5 +1,6 @@
 """Language-neutral source adapter records and semantic result contract."""
 from __future__ import annotations
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -171,6 +172,36 @@ def http_identity(source: Source, method: str | None, route: str | None) -> str 
         return None
     scope = source.service_scope.strip() if source.service_scope else 'repository'
     return f'http:{scope or "repository"}:{method.upper()}:{route}'
+
+
+def http_url_parts(url: str) -> tuple[str, str, int, str] | None:
+    """Scheme, host, port and path of an absolute HTTP(S) URL template.
+
+    The port is the written one or the scheme's default. A URL whose host or
+    port is itself a runtime value, or that is relative, has no fixed origin
+    and returns None.
+    """
+    found = re.fullmatch(r'([A-Za-z][A-Za-z0-9+.-]*)://([^/?#]*)(.*)', url, re.DOTALL)
+    if not found:
+        return None
+    scheme, authority, path = found.group(1).lower(), found.group(2), found.group(3)
+    if '{' in authority or '@' in authority or not authority:
+        return None
+    host, separator, written_port = authority.rpartition(':')
+    if not separator:
+        host, written_port = authority, ''
+    if written_port and not written_port.isdigit():
+        return None
+    port = int(written_port) if written_port else {'http': 80, 'https': 443}.get(scheme)
+    if port is None or not host:
+        return None
+    return scheme, host, port, path or '/'
+
+
+def http_base_path(path: str | None) -> str:
+    """A server base path as ``/segment/...`` with no trailing slash; root is ''."""
+    trimmed = (path or '').strip().strip('/')
+    return '/' + trimmed if trimmed else ''
 
 
 def resolve_anchor_identity(

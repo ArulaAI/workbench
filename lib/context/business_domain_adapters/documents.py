@@ -10,7 +10,7 @@ from pathlib import Path
 import yaml
 from yaml.nodes import MappingNode, ScalarNode, SequenceNode
 from .base import (Unit, declare_anchor_representation, declare_trace_contract,
-                   http_identity)
+                   http_base_path, http_identity, http_url_parts)
 
 PROFILES = json.loads(Path(__file__).with_name('document_profiles.json').read_text())
 
@@ -36,9 +36,15 @@ def extract(source):
         raise ValueError('Malformed declarative document') from exc
     units = []
     source.matches = []
+    source.contract_servers = []
     for profile in PROFILES.values():
         if profile['root_marker'] not in root:
             continue
+        for server in sequence(root.get(profile.get('servers_key'))):
+            url_node = mapping(server).get('url')
+            if scalar(url_node):
+                source.contract_servers.append((scalar(url_node),
+                    url_node.start_mark.index, url_node.end_mark.index))
         for route,path_node in mapping(root.get(profile['operations_key'])).items():
             path = mapping(path_node)
             for method in profile['operation_methods']:
@@ -116,6 +122,26 @@ def observations(unit):
 
 def resources(unit):
     return []
+
+
+def endpoint_bases(sources, all_sources=None):
+    """Where each contract declares its operations are served.
+
+    An operation path is relative to the contract's server URL. A relative or
+    templated server URL has no fixed origin, so it declares no base.
+    """
+    bases = []
+    for source in sources:
+        for url, start, end in getattr(source, 'contract_servers', []):
+            parts = http_url_parts(url)
+            if not parts:
+                continue
+            bases.append({'scope': source.service_scope, 'role': 'contract',
+                'source_id': source.resource_id, 'port': parts[2],
+                'path': http_base_path(parts[3].split('?', 1)[0]),
+                'label': f'server url {url} in {source.path}', 'condition': None,
+                'evidence_spans': [(source, start, end)]})
+    return bases
 
 
 def calls(unit):

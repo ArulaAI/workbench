@@ -18,8 +18,35 @@ def _text(element, name):
     return (child.text or "").strip() if child is not None else ""
 
 
+def _annotation_processors(root, text):
+    """The annotation processors the build runs, each with the span declaring it.
+
+    A processor runs when it is on the compiler's processor path
+    (``annotationProcessorPaths``) or is an ordinary ``*-processor`` dependency
+    on the compile classpath. Only declared coordinates are reported; the build
+    is never executed, so a processor's generated output is never seen.
+    """
+    declared = [(path, "path") for paths in root.findall(".//{*}annotationProcessorPaths")
+                for path in paths.findall("{*}path")]
+    declared += [(dependency, "dependency") for dependency in root.findall(".//{*}dependency")
+                 if _text(dependency, "artifactId").endswith("-processor")]
+    processors = []
+    for element, _ in declared:
+        group, artifact = _text(element, "groupId"), _text(element, "artifactId")
+        marker = re.search(rf"<artifactId>\s*{re.escape(artifact)}\s*</artifactId>", text) if artifact else None
+        if group and artifact and marker:
+            processors.append({"group": group, "artifact": artifact, "span": marker.span()})
+    return processors
+
+
 def extract(source):
     root = ET.fromstring(source.text)
+    # The project's own coordinates name the namespace its code is published
+    # under. The <parent> groupId belongs to whatever the project inherits from
+    # (spring-boot-starter-parent, say), so it never counts as the project's.
+    group_id = _text(root, "groupId")
+    source.build_namespaces = [group_id] if group_id.count(".") >= 1 else []
+    source.annotation_processors = _annotation_processors(root, source.text)
     generated = []
     for plugin in root.findall(".//{*}plugin"):
         if _text(plugin, "artifactId") != "openapi-generator-maven-plugin":
@@ -51,6 +78,19 @@ def extract(source):
 
 
 def prepare(sources, units, diagnostics=None):
+    java_sources = {id(unit.source): unit.source for unit in units
+                    if unit.source.language == "java"}.values()
+    # Handed to every Java source whether or not a generator is configured: the
+    # Java adapter reads it to tell a missing project type from a dependency.
+    namespaces = sorted({namespace for source in sources
+                         for namespace in getattr(source, "build_namespaces", [])})
+    # Each processor with the build file and span that declare it, so a Java
+    # declaration a processor implements can cite the build evidence.
+    processors = [(source, *processor["span"], processor["group"], processor["artifact"])
+                  for source in sources for processor in getattr(source, "annotation_processors", [])]
+    for source in java_sources:
+        source.build_namespaces = namespaces
+        source.build_processors = processors
     configs = [item for source in sources
                for item in getattr(source, "generated_source_config", [])]
     if not configs:
@@ -59,8 +99,6 @@ def prepare(sources, units, diagnostics=None):
     build_unit = next((unit for unit in units if unit.source is build_source), None)
     start = build_unit.start if build_unit else 0
     end = build_unit.end if build_unit else len(build_source.text)
-    java_sources = {id(unit.source): unit.source for unit in units
-                    if unit.source.language == "java"}.values()
     known = {getattr(unit, "generated_interface_name", None) for unit in units}
     for source in java_sources:
         semantic = getattr(source, "semantic", {})
