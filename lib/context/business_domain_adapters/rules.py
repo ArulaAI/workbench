@@ -30,6 +30,51 @@ def span(source, match):
                  for side in ('start', 'end'))
 
 
+HTTP_METHODS = frozenset({'GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'})
+
+
+def _declared_route_method(text):
+    """Select the HTTP method of a generic route registration such as Flask's.
+
+    ``route('/x')`` defaults to GET.  A literal ``methods=[...]`` naming one
+    method selects it; several methods, or a non-literal list, select none.
+    """
+    listed = re.search(r'\bmethods\s*=\s*[\[(]([^\])]*)[\])]', text)
+    if not listed:
+        return None if re.search(r'\bmethods\s*=', text) else 'GET'
+    methods = {value.upper() for value in re.findall(r'''["'](\w+)["']''', listed.group(1))}
+    if re.sub(r'''["']\w+["']|[\s,]''', '', listed.group(1)):
+        return None
+    return next(iter(methods)) if len(methods) == 1 and methods <= HTTP_METHODS else None
+
+
+def _literal_request_method(request):
+    """Return the HTTP method of a literal fetch options object, else None.
+
+    A literal object without ``method`` means GET.  Spread or computed
+    options cannot be read statically.
+    """
+    text = (request or '').strip()
+    if not (text.startswith('{') and text.endswith('}')) or '...' in text:
+        return None
+    values = re.findall(r'''(?<![\w$])["']?method["']?\s*:\s*([^,}]+)''', text)
+    if not values:
+        return 'GET'
+    literal = (re.fullmatch(r'''\s*(["'`])([A-Za-z]+)\1\s*''', values[0])
+               if len(values) == 1 else None)
+    method = literal.group(2).upper() if literal else None
+    return method if method in HTTP_METHODS else None
+
+
+def _handler_name(expression):
+    """Unwrap a single-call arrow handler such as ``() => save()``."""
+    arrow = re.fullmatch(
+        r'\s*(?:\(\s*(?:[A-Za-z_$][\w$]*\s*(?:,\s*[A-Za-z_$][\w$]*\s*)*)?\)|[A-Za-z_$][\w$]*)'
+        r'\s*=>\s*((?:this\.)?[A-Za-z_$][\w$]*)\s*\([^()]*\)\s*;?\s*',
+        expression or '')
+    return arrow.group(1) if arrow else expression
+
+
 def capture(match, key):
     if hasattr(match, 'captures'):
         return match.captures.get(key)
@@ -90,6 +135,8 @@ def extract(source):
                 if metadata.get('method_var'):
                     method = capture(match,metadata['method_var'])
                     unit.method = method.upper() if method else None
+                    if unit.method and unit.method not in HTTP_METHODS:
+                        unit.method = _declared_route_method(match.text)
                 unit.route = capture(match, metadata.get('route_var'))
                 if unit.route and metadata.get('route_pattern'):
                     literal = re.fullmatch(metadata['route_pattern'],unit.route)

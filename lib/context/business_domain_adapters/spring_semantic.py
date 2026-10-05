@@ -11,11 +11,41 @@ _MAPPING_METHODS = {
     "GetMapping": "GET", "PostMapping": "POST", "PutMapping": "PUT",
     "PatchMapping": "PATCH", "DeleteMapping": "DELETE",
 }
+# Annotations on outbound HTTP client interfaces. Their mappings describe the
+# remote endpoint being called, not an endpoint this service exposes.
+_CLIENT_ANNOTATIONS = frozenset({"FeignClient", "HttpExchange"})
+# A route evidenced only through a constant or expression. It must not
+# collapse into the empty route, which would claim a different endpoint.
+_DYNAMIC_ROUTE = "\0dynamic"
+_STRING_LITERAL = r'"(?:[^"\\]|\\.)*"'
 
 
 def _paths(text):
-    quoted = re.findall(r'["\']([^"\']*)["\']', text)
-    return quoted or [""]
+    """Return the route values of a mapping annotation.
+
+    Only ``value``/``path`` or the first positional argument carry routes;
+    ``produces``, ``consumes``, ``params``, ``headers`` and ``name`` do not.
+    """
+    args = text[text.find("(") + 1:text.rfind(")")] if "(" in text else ""
+    named = re.search(r"\b(?:value|path)\s*=\s*(\{[^}]*\}|" + _STRING_LITERAL + r"|[^,)]+)", args)
+    if named:
+        args = named.group(1)
+    elif re.match(r"\s*\w+\s*=", args):
+        return [""]
+    else:
+        args = re.split(r",\s*\w+\s*=", args, maxsplit=1)[0]
+    if re.search(r"[A-Za-z_$]", re.sub(_STRING_LITERAL, "", args)):
+        return [_DYNAMIC_ROUTE]
+    return [literal[1:-1] for literal in re.findall(_STRING_LITERAL, args)] or [""]
+
+
+def _request_methods(text):
+    """Return HTTP methods selected by a RequestMapping ``method`` attribute."""
+    selected = re.search(r"\bmethod\s*=\s*(\{[^}]*\}|[\w.]+)", text)
+    if not selected:
+        return []
+    return re.findall(r"(?:\bRequestMethod\.|\b)(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b",
+                      selected.group(1))
 
 
 def _mappings(annotations):
@@ -25,13 +55,15 @@ def _mappings(annotations):
         if name in _MAPPING_METHODS:
             mappings.extend((_MAPPING_METHODS[name], path, annotation) for path in _paths(text))
         elif name == "RequestMapping":
-            methods = re.findall(r"RequestMethod\.(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)", text)
+            methods = _request_methods(text)
             mappings.extend((method if methods else None, path, annotation)
                             for method in (methods or [None]) for path in _paths(text))
     return mappings
 
 
 def _join(*parts):
+    if _DYNAMIC_ROUTE in parts:
+        return None
     values = [part.strip("/") for part in parts if part not in (None, "", "/")]
     return "/" + "/".join(values) if values else "/"
 
@@ -67,8 +99,10 @@ def _apply_endpoint(unit, combinations, base_owner, diagnostics, source):
                 (mapping_owner, mapping_annotation))
             if annotation
         ]
-        unit.anchor_resolution = "resolved" if http_method else "unresolved"
-        unit.anchor_reason = None if http_method else (
+        unit.anchor_resolution = "resolved" if http_method and route else "unresolved"
+        unit.anchor_reason = (None if http_method and route else
+            "Spring route is evidenced through a constant or expression that is not statically resolved."
+            if http_method else
             "Spring route is evidenced, but RequestMapping does not select one HTTP method.")
     elif len(combinations) > 1:
         unit.anchor_kind = "http"
@@ -111,7 +145,9 @@ def prepare(sources, units, diagnostics=None):
     all_types = [item for source in sources for item in getattr(source, "semantic", {}).get("types", [])]
     by_unit = {id(item["unit"]): item for item in all_types}
     for interface in (item for item in all_types
-                      if item["kind"] == "interface_declaration"):
+                      if item["kind"] == "interface_declaration"
+                      and not _CLIENT_ANNOTATIONS & {annotation["name"]
+                          for annotation in item["annotations"]}):
         for method in interface["methods"]:
             combinations = _combinations(interface, method)
             _apply_endpoint(method["unit"], combinations, interface,
