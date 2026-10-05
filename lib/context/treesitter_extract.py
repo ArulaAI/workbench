@@ -323,16 +323,23 @@ def match_source(source: str, language: str, max_output_bytes: int = 25_000_000)
     rule_files = sorted((_RULES_DIR / registry.rules_language(language)).glob('*.yml'))
     if not rule_files:
         raise RuntimeError('No declarative extraction rules registered')
+    # Only custom grammars need sgconfig.yml, which ast-grep loads from its
+    # working directory. Loading it for ordinary languages would make every
+    # rule fail whenever an optional custom grammar library is not built.
+    custom = registry.rules_language(language) in _CUSTOM_LANGUAGES
+    cwd = str(_SPEED_ROOT) if custom else tempfile.gettempdir()
     matches = []
     consumed = 0
     for rule_file in rule_files:
         with tempfile.TemporaryFile() as output:
             result = subprocess.run([sg, 'scan', '--json', '--include-metadata',
-                '--stdin', '-r', str(rule_file)], input=source.encode(), stdout=output,
-                stderr=subprocess.DEVNULL, timeout=30, cwd=str(_SPEED_ROOT))
+                '--stdin', '-r', _native_path(rule_file)], input=source.encode(), stdout=output,
+                stderr=subprocess.PIPE, timeout=30, cwd=cwd)
             consumed += output.tell()
             if result.returncode != 0:
-                raise RuntimeError('Declarative extraction rule failed')
+                detail = result.stderr.decode(errors='replace').strip().splitlines()
+                raise RuntimeError(f'Declarative extraction rule failed: {rule_file.name}'
+                                   + (f': {detail[0]}' if detail else ''))
             if consumed > max_output_bytes:
                 raise RuntimeError('Extraction result exceeds byte budget')
             output.seek(0)
