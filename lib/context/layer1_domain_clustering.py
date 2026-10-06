@@ -326,9 +326,45 @@ def _pattern(value, text):
     return {'pattern': value, 'wildcard': '*' in value}
 
 
+def _strip_jsonc(text: str) -> str:
+    """JSON with comments and trailing commas blanked, offsets unchanged.
+
+    tsconfig.json is JSONC: ``tsc --init`` writes comments, and trailing
+    commas are accepted.
+    """
+    out, index, quote = list(text), 0, False
+    while index < len(text):
+        character = text[index]
+        if quote:
+            if character == '\\':
+                index += 2
+                continue
+            quote = character != '"'
+        elif character == '"':
+            quote = True
+        elif text.startswith('//', index):
+            end = text.find('\n', index)
+            end = len(text) if end < 0 else end
+            out[index:end] = ' ' * (end - index)
+            index = end
+            continue
+        elif text.startswith('/*', index):
+            end = text.find('*/', index + 2)
+            end = len(text) if end < 0 else end + 2
+            out[index:end] = [value if value in '\r\n' else ' ' for value in text[index:end]]
+            index = end
+            continue
+        elif character == ',':
+            following = re.match(r'(?:\s|//[^\n]*|/\*.*?\*/)*([}\]])', text[index + 1:], re.S)
+            if following:
+                out[index] = ' '
+        index += 1
+    return ''.join(out)
+
+
 def parse_typescript_module_resolution(text: str, document_kind: str) -> dict:
     try:
-        data = json.loads(text)
+        data = json.loads(_strip_jsonc(text))
     except json.JSONDecodeError as error:
         start = min(error.pos, len(text))
         raise TypeScriptModuleResolutionError('json_syntax_invalid', start,
@@ -390,12 +426,15 @@ def normalize_typescript_path_target(scope_dir: str, target: str,
     return normalized
 
 
+_TYPESCRIPT_PROBES = ('', '.ts', '.tsx', '.js', '.jsx', '/index.ts', '/index.tsx',
+                      '/index.js', '/index.jsx')
+
+
 def _probe_typescript_path(candidate: str, source_paths) -> tuple[str, ...]:
+    """The file one module path resolves to: TypeScript takes the first probe."""
     available = set(source_paths)
-    probes = (candidate, *(candidate + suffix for suffix in
-        ('.ts', '.tsx', '.js', '.jsx', '/index.ts', '/index.tsx',
-         '/index.js', '/index.jsx')))
-    return tuple(path for path in probes if path in available)
+    return next(((candidate + suffix,) for suffix in _TYPESCRIPT_PROBES
+                 if candidate + suffix in available), ())
 
 
 def resolve_typescript_path_alias(import_name: str, scope_dir: str,
@@ -453,10 +492,7 @@ def _resolve_typescript_imports(
                 continue
             if raw.startswith('.'):
                 base = os.path.normpath(os.path.join(source_dir, raw))
-                probes = (base, *(base + suffix for suffix in (
-                    '.ts', '.tsx', '.js', '.jsx', '/index.ts', '/index.tsx',
-                    '/index.js', '/index.jsx')))
-                targets = tuple(path for path in probes if path in file_set)
+                targets = _probe_typescript_path(base, file_set)
             else:
                 resolution = resolve_typescript_path_alias(
                     raw, selected[0] or '.', selected[1], ts_files)
@@ -486,7 +522,10 @@ def _find_tsconfig_paths(repo_path: str, ts_files: list[str]):
         except (OSError, UnicodeDecodeError,
                 TypeScriptModuleResolutionError):
             continue
-        result.append((scope_dir, parsed['aliases']))
+        # A tsconfig without paths (typically one that extends the root)
+        # leaves the nearest enclosing aliases in force.
+        if parsed['aliases']:
+            result.append((scope_dir, parsed['aliases']))
     return result
 
 

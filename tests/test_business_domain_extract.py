@@ -1109,3 +1109,38 @@ def _write(root, files):
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(text)
     return root
+
+
+# ── Review regressions: routing precedence and redaction ─────────────────
+
+@pytest.mark.parametrize('path', ['.vscode/icon.svg', '.vscode/project.code-snippets',
+                                  '.vscode/logo.png'])
+def test_developer_tool_assets_are_ignored_not_conflicting(tmp_path, path):
+    target = tmp_path / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text('<svg/>')
+    (tmp_path / 'a.md').write_text('# A\n')
+    routes = {route.classification.path: route
+              for route in _core.scan_inventory(tmp_path, DEFAULTS).routes}
+    assert (routes[path].disposition, routes[path].expected_owner, routes[path].status) == (
+        'ignore', 'developer_tool_configuration', 'routed')
+    _validated(tmp_path)
+
+
+@pytest.mark.parametrize('text, secret', [
+    ('const jwtSecret = "s3cr3t-value";', 's3cr3t-value'),
+    ('private String clientSecret = "abc123";', 'abc123'),
+    ('{"adminPassword": "pw-value"}', 'pw-value'),
+    ('mysqlRootPassword: hunter2', 'hunter2'),
+])
+def test_camel_case_secret_names_are_redacted(text, secret):
+    from lib.context.business_domain_extract import redacted
+    assert secret not in redacted(text)
+
+
+@pytest.mark.parametrize('text', [
+    'if (token === expected) { return ok(user); }', 'if (password == null) return;',
+    'const f = token => token.trim();', 'author=x', 'tokenizer=y', 'secretary: z'])
+def test_comparisons_and_non_secret_names_stay_visible(text):
+    from lib.context.business_domain_extract import redacted
+    assert redacted(text) == text

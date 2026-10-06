@@ -236,11 +236,13 @@ def _property_condition(annotation):
     decoded_names = [_string(item) for item in (names or values)]
     prefix = (_string(grouped['prefix'][0])
         if grouped.get('prefix') else '')
+    # Spring treats an empty havingValue like an omitted one: the property
+    # must be present and not "false".
     having_value = (_string(grouped['havingValue'][0])
-        if grouped.get('havingValue') else None)
+        if grouped.get('havingValue') else None) or None
     value_spans = (((grouped['havingValue'][0]['start'],
                      grouped['havingValue'][0]['end']),)
-        if grouped.get('havingValue') else ())
+        if having_value is not None else ())
     match_if_missing = False
     if grouped.get('matchIfMissing'):
         literal = grouped['matchIfMissing'][0]['expression']
@@ -311,8 +313,17 @@ def _prepare_property_conditions(sources, units):
             for key in keys:
                 allowed = {'main'} if environment == 'main' else {'main', 'test'}
                 candidates = tuple(unit for unit in declarations
-                    if unit.configuration.key == key
+                    if _relaxed(unit.configuration.key) == _relaxed(key)
                     and unit.configuration.environment in allowed)
+                # Spring's relaxed binding matches app.featureEnabled to
+                # app.feature-enabled. The binding is named by the declared key,
+                # so declarations spelled differently keep the exact one only.
+                spellings = {unit.configuration.key for unit in candidates}
+                if len(spellings) > 1:
+                    candidates = tuple(unit for unit in candidates
+                                       if unit.configuration.key == key)
+                    spellings = {key} if candidates else set()
+                binding_name = next(iter(spellings)) if spellings else key
                 if not candidates:
                     pending.append({'source_id': consumer.source.resource_id,
                         'code': 'SPRING_PROPERTY_CONDITION_UNAVAILABLE',
@@ -325,7 +336,7 @@ def _prepare_property_conditions(sources, units):
                      'native_expression': _condition_expression(
                          key, having_value, match_if_missing),
                      'declaration_units': candidates,
-                     'binding_name': key, 'binding_direction': 'internal',
+                     'binding_name': binding_name, 'binding_direction': 'internal',
                      'span': (annotation['start'] - consumer.start,
                               annotation['end'] - consumer.start),
                      'scope': {'environment': environment, 'tenant': None,
@@ -885,7 +896,7 @@ def _activation(profile, values):
                          else f"the active Spring profiles match {value}")
         else:
             terms.append(f"{key} is {value}")
-    return " && ".join(terms) or None
+    return " && ".join(dict.fromkeys(terms)) or None
 
 
 def _boot_layers(all_sources, scopes):

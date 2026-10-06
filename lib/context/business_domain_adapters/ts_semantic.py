@@ -6,12 +6,13 @@ language-specific boundary decisions that require JavaScript module meaning.
 """
 from __future__ import annotations
 
+import posixpath
 import re
 from dataclasses import dataclass
 
 from types import MappingProxyType
 
-from . import rules
+from . import CATALOG, rules
 from .base import SemanticResult
 from ..layer1_domain_clustering import resolve_typescript_path_alias
 from ..business_domain_schema import identifier, record
@@ -48,7 +49,7 @@ def _external_import_boundaries(source):
         if not module or module.startswith(('.', '/')):
             continue
         target = source.resolved_module_targets.get(module)
-        if target is not None and target['state'] != 'external':
+        if target is not None and target['state'] in {'resolved', 'ambiguous'}:
             continue
         start, _ = rules.span(source, {'range': reference.source_range})
         if (start, reference.callee_name) in getattr(
@@ -74,6 +75,9 @@ def prepare(sources, units, diagnostics=None):
             for item in typings.get('declared_external_modules', ())}
         resolved = {}
         for module in _modules(source):
+            # TypeScript applies ``paths`` to bare specifiers only.
+            if module.startswith(('.', '/')):
+                continue
             result = resolve_typescript_path_alias(
                 module, tsconfig.get('scope_dir', '.'), aliases, source_paths)
             if result['state'] == 'unmatched':
@@ -91,6 +95,7 @@ def prepare(sources, units, diagnostics=None):
             })
         source.resolved_module_targets = MappingProxyType(resolved)
     rules.prepare(sources, units, diagnostics)
+    _prepare_prop_callbacks(sources)
     definitions = _build_definitions(sources)
     for source in sources:
         source.external_import_boundaries = _external_import_boundaries(source)
@@ -110,6 +115,175 @@ def calls(unit):
             if (call['position'], call['end']) not in effects]
 
 
+# Callback props. A function component that destructures a prop such as
+# ``onChange`` and calls it receives the handler each JSX usage passes. The
+# handlers are only known when every usage is visible and passes a named
+# function; a spread, an inline function, a missing prop or any use of the
+# component other than as a JSX tag leaves the call unresolved. Test sources
+# are ignored, so a test double cannot widen a production callback.
+
+_DESTRUCTURED_PROPS = re.compile(
+    r'\A\s*(?:export\s+default\s+)?(?:function\s*[\w$]*\s*)?\(\s*\{([^{}]*)\}')
+_HANDLER = re.compile(r'(?:this\.)?([A-Za-z_$][\w$]*)')
+_SCRIPT_SUFFIXES = ('', '.tsx', '.ts', '.jsx', '.js',
+                    '/index.tsx', '/index.ts', '/index.jsx', '/index.js')
+
+
+def _destructured_props(component):
+    """Local names of the props a function component destructures."""
+    found = _DESTRUCTURED_PROPS.match(component.text)
+    if not found:
+        return {}
+    props = {}
+    for part in found.group(1).split(','):
+        declared = part.split('=', 1)[0].strip()
+        if not declared or declared.startswith('...'):
+            continue
+        prop, _, local = declared.partition(':')
+        props[(local or prop).strip()] = prop.strip()
+    return props
+
+
+def _opening_tag(text):
+    """The opening tag of a JSX element, without its children."""
+    depth, quote = 0, None
+    for index, character in enumerate(text):
+        if quote:
+            quote = None if character == quote else quote
+        elif character in '"\'`':
+            quote = character
+        elif character == '{':
+            depth += 1
+        elif character == '}':
+            depth -= 1
+        elif character == '>' and depth == 0:
+            return text[:index + 1]
+    return text
+
+
+def _attribute(tag, prop):
+    """The expression the element's own attribute passes, or None when absent.
+
+    Only the tag's top level counts: a JSX element nested inside another
+    attribute's expression carries its own props.
+    """
+    depth, quote = 0, None
+    pattern = re.compile(rf'(?<![\w$-]){re.escape(prop)}\s*=\s*\{{')
+    for index, character in enumerate(tag):
+        if quote:
+            quote = None if character == quote else quote
+        elif character in '"\'`':
+            quote = character
+        elif character == '{':
+            depth += 1
+        elif character == '}':
+            depth -= 1
+        elif depth == 0 and (found := pattern.match(tag, index)) and (
+                index == 0 or not re.match(r'[\w$-]', tag[index - 1])):
+            nested, start = 1, found.end()
+            for end in range(start, len(tag)):
+                nested += {'{': 1, '}': -1}.get(tag[end], 0)
+                if nested == 0:
+                    return tag[start:end].strip()
+            return None
+    return None
+
+
+def _handler(origin, expression):
+    """The one unit a handler expression names in its rendering scope, or None."""
+    if not expression or not _HANDLER.fullmatch(expression):
+        return None
+    name = _HANDLER.fullmatch(expression).group(1)
+    own = expression.startswith('this.')
+    if not own and name in rules._import_bindings(origin.source):
+        return None
+    # ``this.x`` is a member of the rendering class; a bare name is a binding
+    # in module scope, never a class method.
+    found = [unit for unit in origin.source.units
+             if unit.name == name and unit is not origin
+             and (unit.owner == origin.owner if own else unit.owner is None)]
+    return found[0] if len(found) == 1 else None
+
+
+def _only_rendered(component, sources):
+    """True when every reference to *component* in *sources* is a JSX tag."""
+    target = component.source.path
+    for source in sources:
+        if _is_test(source):
+            continue
+        directory = posixpath.dirname(source.path)
+        aliases = [alias for alias, module in rules._import_bindings(source).items()
+                   if module.startswith('.') and any(
+                       posixpath.normpath(posixpath.join(directory, module)) + suffix == target
+                       for suffix in _SCRIPT_SUFFIXES)]
+        for alias in aliases:
+            text = '\n'.join(line for line in source.text.splitlines()
+                             if not re.match(r'\s*import\b', line))
+            uses = len(re.findall(rf'(?<![\w$.]){re.escape(alias)}(?![\w$])', text))
+            tags = len(re.findall(rf'</?{re.escape(alias)}(?![\w$])', text))
+            if uses != tags:
+                return False
+    return True
+
+
+def _is_test(source):
+    return bool(re.search(CATALOG['test_path_pattern'], source.path))
+
+
+def _prepare_prop_callbacks(sources):
+    for source in sources:
+        for component in source.units:
+            usages = [usage for usage in getattr(component, 'jsx_usages', None) or ()
+                      if not _is_test(usage[0].source)]
+            props = _destructured_props(component) if usages else {}
+            if not props or not _only_rendered(component, sources):
+                continue
+            targets = {}
+            for local, prop in props.items():
+                handlers = []
+                for origin, start, end in usages:
+                    tag = _opening_tag(origin.source.text[start:end])
+                    if re.search(r'\{\s*\.\.\.', tag):
+                        handlers = None
+                        break
+                    handler = _handler(origin, _attribute(tag, prop))
+                    if handler is None:
+                        handlers = None
+                        break
+                    if handler not in handlers:
+                        handlers.append(handler)
+                if handlers:
+                    targets[local] = tuple(handlers)
+            component.prop_callback_targets = targets
+
+
+def _prop_callback(unit, receiver, name):
+    """Handlers a call to a destructured callback prop reaches, or None."""
+    if receiver:
+        return None
+    components = sorted((candidate for candidate in unit.source.units
+                         if getattr(candidate, 'prop_callback_targets', None)
+                         and candidate.start <= unit.start and unit.end <= candidate.end),
+                        key=lambda candidate: candidate.end - candidate.start)
+    if not components or name not in components[0].prop_callback_targets:
+        return None
+    component = components[0]
+    # A local declaration of the same name between the call and the component
+    # shadows the prop.
+    body = component.text[_DESTRUCTURED_PROPS.match(component.text).end():]
+    escaped = re.escape(name)
+    shadowing = (rf'\b(?:const|let|var)\s+[^=;]*(?<![\w$.]){escaped}(?![\w$])[^=;]*=',
+                 rf'\bfunction\s+{escaped}\b',
+                 rf'(?<![\w$.]){escaped}\s*=>',
+                 rf'\([^()]*(?<![\w$.]){escaped}(?![\w$])[^()]*\)\s*=>')
+    if any(re.search(pattern, body) for pattern in shadowing) or any(
+            name == parameter for scope in unit.source.units
+            if component.start < scope.start and scope.start <= unit.start
+            and unit.end <= scope.end for parameter, _ in scope.params):
+        return None
+    return list(component.prop_callback_targets[name])
+
+
 def candidates(unit, receiver, name, available, position=None):
     lexical = rules.lexical_candidates(unit, receiver, name, available)
     if lexical:
@@ -119,13 +293,18 @@ def candidates(unit, receiver, name, available, position=None):
     module = bindings.get(bound)
     target = unit.source.resolved_module_targets.get(module)
     if target is None:
-        return rules.candidates(unit, receiver, name, available, position)
+        found = rules.candidates(unit, receiver, name, available, position)
+        return found or _prop_callback(unit, receiver, name) or []
     if target['state'] in {'resolved', 'ambiguous'}:
         paths = set(target['candidate_source_paths'])
         return sorted((candidate for candidate in available
             if candidate.source.path in paths),
             key=lambda candidate: candidate.qualified)
-    return []
+    if target['state'] == 'external':
+        return []
+    # An alias matched but named no local file: TypeScript falls back to
+    # ordinary resolution, so the alias proves nothing either way.
+    return rules.candidates(unit, receiver, name, available, position)
 
 
 def resolve_call(unit, receiver, name, candidates, position, evidence_id=None):

@@ -607,6 +607,35 @@ def _generated_model_relation(kind, raw, generated):
             "declaration is unavailable at analysis time."), evidence
 
 
+def _qualified_type(source, raw, types_by_fq, types_by_short):
+    """The fully qualified name *raw* denotes in *source*, or None if unknown."""
+    state, matches = _resolve_type(source, raw, types_by_fq, types_by_short)
+    if state == "resolved":
+        return matches[0]["fqname"]
+    imported = source.semantic["imports"].get(_simple(re.sub(r"<.*>", "", raw or "")))
+    if imported:
+        return imported
+    generated = _generated_model(source, raw)
+    return generated[1] if generated else None
+
+
+def _same_type(argument_source, argument, parameter_source, parameter,
+               types_by_fq, types_by_short):
+    """True when an argument's static type is exactly the parameter's type.
+
+    Java selects the most specific applicable method, and a method whose
+    parameter types are exactly the arguments' static types is always it: any
+    other applicable method takes supertypes. Both types must resolve to the
+    same fully qualified name, so equal simple names from different packages
+    never match.
+    """
+    if (argument or "").count("[]") != (parameter or "").count("[]"):
+        return False
+    left = _qualified_type(argument_source, argument, types_by_fq, types_by_short)
+    right = _qualified_type(parameter_source, parameter, types_by_fq, types_by_short)
+    return left is not None and left == right
+
+
 # The Java language definition, not a heuristic. Eight primitives, their
 # java.lang boxes, String and void; boxing in both directions and the widening
 # order from JLS 5.1.2. Closed by the specification, so it cannot drift. The
@@ -1046,9 +1075,21 @@ def prepare(sources, units, diagnostics=None):
                 candidates = [candidate for owner in owners for candidate in callable_methods(owner)
                               if candidate["name"] == invocation["name"]
                               and len(candidate["params"]) == len(invocation["argument_types"])]
-                exact = [candidate for candidate in candidates if all(
-                    _assignable(argument, parameter[1]) is True
+                # Parameters that are exactly the arguments' static types make a
+                # method applicable without any conversion, and Java then
+                # always selects it; a conversion (boxing, widening) never does.
+                identical = [candidate for candidate in candidates if all(
+                    (_simple(argument) in SCALAR_TYPES
+                     and argument.count("[]") == parameter[1].count("[]")
+                     and _simple(argument) == _simple(parameter[1]))
+                    or _same_type(source, argument, candidate["unit"].source, parameter[1],
+                                  types_by_fq, types_by_short)
                     for argument, parameter in zip(invocation["argument_types"], candidate["params"]))]
+                exact = (identical if len(identical) == 1 else
+                         [candidate for candidate in candidates if all(
+                             _assignable(argument, parameter[1]) is True
+                             for argument, parameter in zip(invocation["argument_types"],
+                                                            candidate["params"]))])
                 # A candidate is plausible when no argument is provably incompatible.
                 # `_assignable` returns None for pairs it cannot judge, which is the
                 # normal case for reference types, and None must not veto a match.

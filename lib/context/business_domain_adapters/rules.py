@@ -596,6 +596,14 @@ def prepare(sources, units, diagnostics=None):
             target = resolve(target_name, source)
             reason = None if target else (
                 'Child component is dynamic, ambiguous, or not resolved through source/import evidence.')
+            if target is not None:
+                # Every place the child is rendered, so a language adapter can
+                # follow the props each usage passes.
+                usages = getattr(target, 'jsx_usages', None)
+                if usages is None:
+                    usages = target.jsx_usages = []
+                if (origins[0], start, end) not in usages:
+                    usages.append((origins[0], start, end))
             source.normalized_relations = getattr(source, 'normalized_relations', [])
             source.normalized_relations.append({'source': origins[0], 'target': target,
                 'kind': match.attributes['edge_kind'], 'start': start, 'end': end,

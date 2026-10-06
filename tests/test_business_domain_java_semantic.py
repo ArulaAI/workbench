@@ -1434,3 +1434,19 @@ def test_java_string_literals_decode_exactly(token, expected):
             java_semantic._decode_java_string_literal(token)
     else:
         assert java_semantic._decode_java_string_literal(token) == expected
+
+
+def test_empty_having_value_means_present_and_not_false(tmp_path):
+    facts = _extract(tmp_path, {_MAIN_PROPERTIES: 'app.feature=on\n', **_configuration_class(
+        '@ConditionalOnProperty(name = "app.feature", havingValue = "")')})
+    [observation] = _conditions(facts)
+    assert observation['native_expression'] == 'property["app.feature"] is present and not false'
+
+
+def test_conditions_link_declarations_through_relaxed_binding(tmp_path):
+    facts = _extract(tmp_path, {_MAIN_PROPERTIES: 'app.featureEnabled=true\n', **_configuration_class(
+        '@ConditionalOnProperty(prefix = "app", name = "feature-enabled")')})
+    [observation] = _conditions(facts)
+    assert _linked(facts, observation) == [('true', 'main')]
+    assert not [w for w in facts['warnings']
+                if w['code'] == 'SPRING_PROPERTY_CONDITION_UNAVAILABLE']

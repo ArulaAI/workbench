@@ -104,6 +104,10 @@ def _route(path: str, classification: PathClassification) -> SourceRoute:
                 and rule['category'] != classification.category:
             continue
         matches.append(rule)
+    # A rule naming the path outranks one that only matches its category or
+    # language, so `.vscode/icon.svg` is developer tooling, not just an asset.
+    if any(rule.get('_path_patterns') for rule in matches):
+        matches = [rule for rule in matches if rule.get('_path_patterns')]
     if not matches:
         if classification.category == 'asset' and classification.status == 'unrecognized':
             return SourceRoute(classification, (), 'ignore', 'unrecognized_asset',
@@ -115,6 +119,11 @@ def _route(path: str, classification: PathClassification) -> SourceRoute:
         for rule in matches
     }
     matched_ids = tuple(sorted(rule['id'] for rule in matches))
+    if len(signatures) > 1 and {rule['disposition'] for rule in matches} == {'ignore'}:
+        # Rules that all ignore a path agree on what happens to it.
+        owner = min(rule['id'] for rule in matches)
+        return SourceRoute(classification, matched_ids, 'ignore',
+            next(rule['owner'] for rule in matches if rule['id'] == owner), (), 'routed')
     if len(signatures) != 1:
         return SourceRoute(classification, matched_ids, 'analyze', None, (), 'overlap')
     disposition, owner, _language, capabilities = next(iter(signatures))
@@ -329,9 +338,12 @@ def source_fingerprint(scan: SourceInventory) -> str:
 
 
 # One sensitive-name predicate decides every redaction below.
+# A sensitive word is a whole name segment: delimited by `.`, `_`, `-` or a
+# camelCase boundary (dbPassword, clientSecret), never a fragment (tokenizer).
 _SENSITIVE_NAME_RE = re.compile(
-    r'(?i)(?:^|[._-])(?:password|passwd|secret|credential|token|'
-    r'api[_-]?key|access[_-]?token)(?:$|[._-])')
+    r'(?:^|[._-]|(?<=[a-z0-9])(?=[A-Z]))'
+    r'(?i:password|passwd|secret|credential|token|api[_-]?key|access[_-]?token)'
+    r'(?:$|[._-]|(?=[A-Z0-9]))')
 
 
 def _sensitive_name(name: str) -> bool:
@@ -377,14 +389,14 @@ def _register_redaction_spans(units) -> None:
 
 
 _ASSIGNMENT_RE = re.compile(
-    r'(?m)^([ \t\f]*([^=:\s]+)[ \t\f]*(?:=|:)[ \t\f]*)([^\r\n]*)')
+    r'(?m)^([ \t\f]*([^=:\s]+)[ \t\f]*(?:=(?![=>])|:)[ \t\f]*)([^\r\n]*)')
 _JSON_ASSIGNMENT_RE = re.compile(
     r'(?m)("(?:\\.|[^"\\])+")([ \t\f]*:[ \t\f]*)'
     r'("(?:\\.|[^"\\])*"|[^,{}\[\]\r\n]+)')
 _JSON_KEY_RE = re.compile(
     r'("(?:\\.|[^"\\])+")[ \t\f\r\n]*:[ \t\f\r\n]*')
 _INLINE_ASSIGNMENT_PREFIX_RE = re.compile(
-    r'(?i)(["\']?)([A-Za-z0-9_.-]+)\1([ \t\f]*[=:][ \t\f]*)')
+    r'(?i)(["\']?)([A-Za-z0-9_.-]+)\1([ \t\f]*(?:=(?![=>])|:)[ \t\f]*)')
 
 
 def _redact_assignment(match):
@@ -1243,6 +1255,13 @@ class Extractor:
 
     def _finalize_source_resources(self):
         """Settle each selected source's own Resource; ignored sources have none."""
+        unit_evidence = {}
+        for unit in self.units:
+            if unit.evidence_id:
+                unit_evidence.setdefault(id(unit.source), set()).add(unit.evidence_id)
+        format_subjects = {subject for diagnostic in self.diagnostics
+                           if diagnostic['code'] in _FORMAT_DIAGNOSTIC_CODES
+                           for subject in diagnostic.get('subject_ids', ())}
         for source in self.sources:
             route = self.routes[source.path]
             execution = self.executions_by_source_id[source.resource_id]
@@ -1256,14 +1275,11 @@ class Extractor:
                     reason=f'Reference-only {route.expected_owner}: retained for context; '
                            'no business semantics were inferred.')
                 continue
-            evidence_ids = sorted({unit.evidence_id for unit in self.units
-                if unit.source is source and unit.evidence_id})
+            evidence_ids = sorted(unit_evidence.get(id(source), ()))
             if not evidence_ids:
                 evidence_ids = [self.evidence(source, 0,
                     min(len(source.text), 4096))]
-            has_format_error = any(diagnostic['code'] in _FORMAT_DIAGNOSTIC_CODES
-                and source.resource_id in diagnostic.get('subject_ids', ())
-                for diagnostic in self.diagnostics)
+            has_format_error = source.resource_id in format_subjects
             resource.update(evidence_ids=evidence_ids,
                 resolution='unresolved' if has_format_error else 'resolved',
                 reason=('Selected source reported invalid input.'
