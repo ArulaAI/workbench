@@ -41,6 +41,15 @@ _domains_render_facts() {
         .measurements.traces as $t
         | .coverage as $c
         | "Traces:          \($t.resolved)/\($t.total) resolved (\($t.ambiguous) ambiguous, \($t.unresolved) unresolved)",
+          (if (.trace_blockers // []) | length > 0
+           then "",
+                "Trace resolution blockers:",
+                (.trace_blockers[] | "  \(.label)\(" " * ([36 - (.label | length), 1] | max))\(.traces | tostring | " " * ([3 - length, 0] | max) + .) trace\(if .traces == 1 then "" else "s" end)"),
+                "",
+                "  Note: blocker categories may overlap; a trace can have",
+                "        multiple blockers.",
+                ""
+           else empty end),
           "Relationships:   \($c.edges_resolved) resolved, \($c.edges_unresolved) unresolved, \($c.edges_ambiguous) ambiguous",
           "Unresolved calls: \(.measurements.call_targets.unresolved)"
             + (if (.measurements.call_targets.unresolved_by_language | length) > 0
@@ -50,7 +59,9 @@ _domains_render_facts() {
             + (if (.warnings | length) > 0
                then " (" + ([.warnings | group_by(.code)[] | "\(.[0].code) \(length)"] | join(", ")) + ")"
                else "" end),
-          "Facts written to \(.artifact)"
+          "",
+          "Facts written to:",
+          "\(.artifact)"
     ' "$1"
 }
 

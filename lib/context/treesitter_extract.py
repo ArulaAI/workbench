@@ -500,9 +500,11 @@ def _extract_name_from_match(match: dict, kind: str) -> str | None:
     if not text:
         return None
 
-    # For classes/functions: first identifier-like word after keyword
+    # For classes/functions: first identifier-like word after keyword. The
+    # keyword must be a whole word: ``@MappedSuperclass`` ends in "class" and
+    # would otherwise name the class after the modifier that follows it.
     if kind in ("class", "interface", "type"):
-        m = re.search(r"(?:class|struct|interface|type|enum|model|trait|impl)\s+(\w+)", text)
+        m = re.search(r"\b(?:class|struct|interface|type|enum|model|trait|impl)\s+(\w+)", text)
         if m:
             return m.group(1)
     elif kind in ("function", "method"):

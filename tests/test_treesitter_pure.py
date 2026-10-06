@@ -93,6 +93,11 @@ class TestExtractNameFromMatch:
         result = _extract_name_from_match(match, "class")
         assert result == ""
 
+    def test_keyword_inside_an_annotation_name_is_not_the_class_keyword(self):
+        """``@MappedSuperclass`` ends in "class"; the class is still named by its declaration."""
+        match = _make_match(text="@MappedSuperclass\npublic class BaseEntity {\n}")
+        assert _extract_name_from_match(match, "class") == "BaseEntity"
+
     def test_meta_variable_missing_text_key(self):
         """NAME dict exists but has no 'text' key. get("text","") returns ""."""
         match = _make_match(

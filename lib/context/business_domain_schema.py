@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import tempfile
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -539,6 +540,38 @@ def information_use_closure(model: dict, use: dict) -> dict[str, set[str]]:
     evidence_ids.update(evidence for eid in effect_ids for evidence in model['effects'][eid]['evidence_ids'])
     return {'edge_ids': edge_ids, 'trace_ids': trace_ids, 'binding_ids': binding_ids,
             'effect_ids': effect_ids, 'evidence_ids': evidence_ids}
+
+
+_BLOCKING_SOURCE_CODES = {
+    'SOURCE_CAPABILITY_UNAVAILABLE', 'AMBIGUOUS_ADAPTER',
+    'ADAPTER_UNAVAILABLE',
+}
+
+
+def validate_source_warning_coverage(facts: dict) -> None:
+    """Unsupported repository files and blocking source warnings correspond 1:1."""
+    resources = facts.get('resources', {})
+    all_unsupported = facts.get('coverage', {}).get(
+        'unsupported_source_ids', [])
+    if len(all_unsupported) != len(set(all_unsupported)):
+        raise DomainError('INVALID_ARTIFACT',
+            'Unsupported repository source IDs must be unique')
+    unsupported = [source_id for source_id in all_unsupported
+        if resources.get(source_id, {}).get('kind') == 'repository_file']
+    warning_subjects = []
+    for warning in facts.get('warnings', []):
+        if warning.get('code') not in _BLOCKING_SOURCE_CODES:
+            continue
+        subjects = warning.get('subject_ids', [])
+        evidence = warning.get('evidence_ids', [])
+        if (len(subjects) != 1 or len(evidence) != 1
+                or resources.get(subjects[0], {}).get('kind') != 'repository_file'):
+            raise DomainError('INVALID_ARTIFACT',
+                'Blocking source warnings require one repository-file subject and evidence')
+        warning_subjects.append(subjects[0])
+    if Counter(unsupported) != Counter(warning_subjects):
+        raise DomainError('INVALID_ARTIFACT',
+            'Unsupported repository sources and blocking warnings must correspond exactly')
 
 
 def validate_references(model: dict) -> None:

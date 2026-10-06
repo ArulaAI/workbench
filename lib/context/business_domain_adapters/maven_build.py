@@ -1,6 +1,7 @@
 """Safe Maven generated-source metadata adapter; never executes Maven."""
 from __future__ import annotations
 
+import posixpath
 import re
 import xml.etree.ElementTree as ET
 
@@ -66,6 +67,8 @@ def extract(source):
                 "model_package": model_package or None,
                 "input_spec": input_spec or None,
                 "interface_only": interface_only,
+                "model_name_prefix": _text(configuration, "modelNamePrefix"),
+                "model_name_suffix": _text(configuration, "modelNameSuffix"),
             })
     source.generated_source_config = generated
     if not generated:
@@ -75,6 +78,43 @@ def extract(source):
     start, end = marker.span() if marker else (0, len(source.text))
     return [Unit(source, "openapi-generator", source.path + "::openapi-generator",
                  start, end, "module")]
+
+
+def _spec_path(build_source, input_spec):
+    """The repository path of a generator's input spec, or None if not literal."""
+    directory = posixpath.dirname(build_source.path) or "."
+    path, substituted = re.subn(r"\$\{(?:project\.)?basedir\}", directory, input_spec or "")
+    if not path or "${" in path or posixpath.isabs(path):
+        return None
+    path = posixpath.normpath(path if substituted else posixpath.join(directory, path))
+    return None if path == ".." or path.startswith("../") else path
+
+
+def _schema_spans(spec):
+    """Each ``components.schemas`` entry of an OpenAPI document with its span."""
+    import yaml
+    from yaml.nodes import MappingNode, ScalarNode
+    try:
+        root = yaml.compose(spec.text, Loader=yaml.SafeLoader)
+    except (yaml.YAMLError, RecursionError):
+        return {}
+
+    def member(node, name):
+        if not isinstance(node, MappingNode):
+            return None
+        return next((value for key, value in node.value
+                     if isinstance(key, ScalarNode) and key.value == name), None)
+
+    schemas = member(member(root, "components"), "schemas")
+    if not isinstance(schemas, MappingNode):
+        return {}
+    spans = {}
+    for key, value in schemas.value:
+        if isinstance(key, ScalarNode):
+            # A block value's end mark sits at the next key's indentation.
+            end = len(spec.text[:value.end_mark.index].rstrip())
+            spans[key.value] = (spec, key.start_mark.index, end)
+    return spans
 
 
 def prepare(sources, units, diagnostics=None):
@@ -99,6 +139,19 @@ def prepare(sources, units, diagnostics=None):
     build_unit = next((unit for unit in units if unit.source is build_source), None)
     start = build_unit.start if build_unit else 0
     end = build_unit.end if build_unit else len(build_source.text)
+    # Generated model types are never in the snapshot. What the generator was
+    # told, and the committed schema it reads, are the evidence that remains.
+    analyzed = {unit.source.path: unit.source for unit in units}
+    for source in sources:
+        # The one <plugin> element that configures the generator.
+        plugin = re.search(r"(?s)<plugin>(?:(?!<plugin>).)*?<artifactId>\s*"
+                           r"openapi-generator-maven-plugin\s*</artifactId>.*?</plugin>",
+                           source.text)
+        for config in getattr(source, "generated_source_config", ()):
+            spec = analyzed.get(_spec_path(source, config["input_spec"]))
+            config["generator_evidence"] = ((source, *plugin.span()) if plugin
+                                            else (source, 0, len(source.text)))
+            config["schemas"] = _schema_spans(spec) if spec else {}
     known = {getattr(unit, "generated_interface_name", None) for unit in units}
     for source in java_sources:
         semantic = getattr(source, "semantic", {})

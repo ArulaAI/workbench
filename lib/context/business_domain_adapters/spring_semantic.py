@@ -1,6 +1,7 @@
 """Evidence-activated Spring endpoint enricher for normalized Java units."""
 from __future__ import annotations
 
+import json
 import re
 
 from . import CATALOG, java_semantic
@@ -144,8 +145,203 @@ def _link_contract(contract, implementation):
             "Multiple concrete methods implement this interface contract.")
 
 
+# Spring property conditions. A literal @ConditionalOnProperty links to the
+# repository declarations of its key; which declaration takes effect when
+# deployed is never decided here.
+_CONDITIONAL_ON_PROPERTY_FQN = (
+    'org.springframework.boot.autoconfigure.condition.ConditionalOnProperty')
+_CONDITIONAL_ON_PROPERTY_PACKAGE = (
+    'org.springframework.boot.autoconfigure.condition')
+_CONDITION_REASON = (
+    'Repository declarations were linked; effective deployment precedence '
+    'was not evaluated.')
+
+
+class _ConditionError(ValueError):
+    def __init__(self, cause, start, end):
+        super().__init__(cause)
+        self.cause, self.start, self.end = cause, start, end
+
+
+def _string(argument):
+    try:
+        return java_semantic._decode_java_string_literal(argument['expression'])
+    except java_semantic.JavaLiteralError as error:
+        raise _ConditionError(error.cause,
+            argument['start'] + error.start,
+            argument['start'] + error.end) from None
+
+
+def _scope_for_java(path):
+    parts = tuple(path.split('/'))
+    for index in range(len(parts) - 2):
+        if parts[index:index + 3] == ('src', 'main', 'java'):
+            return 'main'
+        if parts[index:index + 3] == ('src', 'test', 'java'):
+            return 'test'
+    return None
+
+
+def _condition_expression(key, having_value, match_if_missing):
+    quoted_key = json.dumps(key, ensure_ascii=False, separators=(',', ':'))
+    if having_value is None:
+        expression = f'property[{quoted_key}] is present and not false'
+    else:
+        quoted_value = json.dumps(having_value, ensure_ascii=False,
+                                  separators=(',', ':'))
+        expression = f'property[{quoted_key}] == {quoted_value}'
+    return expression + (' or missing' if match_if_missing else '')
+
+
+def _condition_redaction_candidates(annotation):
+    grouped = {}
+    for argument in annotation['arguments']:
+        grouped.setdefault(argument['name'], []).append(argument)
+    decoded_names, unknown_key_component = [], False
+    for argument in (*grouped.get('name', ()), *grouped.get('value', ())):
+        try:
+            decoded_names.append(_string(argument))
+        except _ConditionError:
+            unknown_key_component = True
+    decoded_prefixes = []
+    for argument in grouped.get('prefix', ()):
+        try:
+            decoded_prefixes.append(_string(argument))
+        except _ConditionError:
+            unknown_key_component = True
+    prefixes = decoded_prefixes or ['']
+    keys = [prefix + ('.' if prefix and not prefix.endswith('.') else '') + name
+        for prefix in prefixes for name in decoded_names]
+    keys_or_unknown = [*keys,
+        *([None] if unknown_key_component or not keys else [])]
+    return tuple((key, argument['start'], argument['end'])
+        for key in keys_or_unknown
+        for argument in grouped.get('havingValue', ()))
+
+
+def _property_condition(annotation):
+    grouped = {}
+    for argument in annotation['arguments']:
+        grouped.setdefault(argument['name'], []).append(argument)
+    if set(grouped) - {'name', 'value', 'prefix', 'havingValue',
+                       'matchIfMissing'}:
+        raise ValueError('unsupported_conditional_property_argument')
+    names = grouped.get('name', [])
+    values = grouped.get('value', [])
+    if bool(names) == bool(values):
+        raise ValueError('exactly_one_of_name_or_value_is_required')
+    for scalar in ('prefix', 'havingValue', 'matchIfMissing'):
+        if len(grouped.get(scalar, [])) > 1:
+            raise ValueError(f'{scalar}_must_not_repeat')
+    decoded_names = [_string(item) for item in (names or values)]
+    prefix = (_string(grouped['prefix'][0])
+        if grouped.get('prefix') else '')
+    having_value = (_string(grouped['havingValue'][0])
+        if grouped.get('havingValue') else None)
+    value_spans = (((grouped['havingValue'][0]['start'],
+                     grouped['havingValue'][0]['end']),)
+        if grouped.get('havingValue') else ())
+    match_if_missing = False
+    if grouped.get('matchIfMissing'):
+        literal = grouped['matchIfMissing'][0]['expression']
+        if literal not in {'true', 'false'}:
+            raise ValueError('matchIfMissing_must_be_boolean_literal')
+        match_if_missing = literal == 'true'
+    separator = '.' if prefix and not prefix.endswith('.') else ''
+    return ([prefix + separator + name for name in decoded_names],
+        having_value, match_if_missing, value_spans)
+
+
+def _condition_units(sources):
+    for source in sources:
+        semantic = getattr(source, 'semantic', {})
+        for owner in semantic.get('types', []):
+            yield owner['unit'], owner.get('annotations', [])
+            for method in owner.get('methods', []):
+                yield method['unit'], method.get('annotations', [])
+
+
+def _is_condition_annotation(source, annotation):
+    qualified = annotation['qualified_name']
+    if qualified == _CONDITIONAL_ON_PROPERTY_FQN:
+        return True
+    if qualified != 'ConditionalOnProperty':
+        return False
+    semantic = getattr(source, 'semantic', {})
+    return (semantic.get('imports', {}).get('ConditionalOnProperty')
+            == _CONDITIONAL_ON_PROPERTY_FQN
+        or _CONDITIONAL_ON_PROPERTY_PACKAGE in semantic.get('wildcards', ()))
+
+
+def _prepare_property_conditions(sources, units):
+    pending = []
+    declarations = [unit for unit in units
+        if unit.configuration is not None
+        and unit.configuration.role == 'application_configuration'
+        and unit.configuration.profile is None]
+    for consumer, consumer_annotations in _condition_units(sources):
+        environment = _scope_for_java(consumer.source.path)
+        if environment is None:
+            continue
+        observations = getattr(consumer, 'configuration_observations', None)
+        if observations is None:
+            observations = []
+            consumer.configuration_observations = observations
+        ordinal = 0
+        for annotation in consumer_annotations:
+            if not _is_condition_annotation(consumer.source, annotation):
+                continue
+            redaction_candidates = _condition_redaction_candidates(annotation)
+            try:
+                (keys, having_value, match_if_missing,
+                 value_spans) = _property_condition(annotation)
+            except _ConditionError as error:
+                pending.append({'source_id': consumer.source.resource_id,
+                    'code': 'SPRING_PROPERTY_CONDITION_UNAVAILABLE',
+                    'reason': error.cause, 'span': (error.start, error.end),
+                    'named_value_spans': redaction_candidates})
+                continue
+            except ValueError as error:
+                pending.append({'source_id': consumer.source.resource_id,
+                    'code': 'SPRING_PROPERTY_CONDITION_UNAVAILABLE',
+                    'reason': str(error),
+                    'span': (annotation['start'], annotation['end']),
+                    'named_value_spans': redaction_candidates})
+                continue
+            for key in keys:
+                allowed = {'main'} if environment == 'main' else {'main', 'test'}
+                candidates = tuple(unit for unit in declarations
+                    if unit.configuration.key == key
+                    and unit.configuration.environment in allowed)
+                if not candidates:
+                    pending.append({'source_id': consumer.source.resource_id,
+                        'code': 'SPRING_PROPERTY_CONDITION_UNAVAILABLE',
+                        'reason': 'matching_repository_declaration_unavailable',
+                        'span': (annotation['start'], annotation['end']),
+                        'named_value_spans': redaction_candidates})
+                observations.append(
+                    {'identity_key': f'configuration:{key}:{ordinal}',
+                     'source_location_kind': 'configuration',
+                     'native_expression': _condition_expression(
+                         key, having_value, match_if_missing),
+                     'declaration_units': candidates,
+                     'binding_name': key, 'binding_direction': 'internal',
+                     'span': (annotation['start'] - consumer.start,
+                              annotation['end'] - consumer.start),
+                     'scope': {'environment': environment, 'tenant': None,
+                            'actor': None, 'profile': None,
+                            'effective_from': None, 'effective_to': None,
+                            'version': None, 'entrypoint_ids': None},
+                     'resolution': 'unresolved', 'reason': _CONDITION_REASON,
+                     'named_value_spans': tuple((key, start, end)
+                         for start, end in value_spans)})
+                ordinal += 1
+    return pending
+
+
 def prepare(sources, units, diagnostics=None):
     diagnostics = diagnostics if diagnostics is not None else []
+    pending = _prepare_property_conditions(sources, units)
     all_types = [item for source in sources for item in getattr(source, "semantic", {}).get("types", [])]
     by_unit = {id(item["unit"]): item for item in all_types}
     for interface in (item for item in all_types
@@ -300,7 +496,8 @@ def prepare(sources, units, diagnostics=None):
                     "subject_ids": [source.resource_id], "evidence_ids": []})
     _spring_data_implementations(sources, diagnostics)
     _spring_selection_evidence(sources, units)
-    _persistence(sources, units)
+    _persistence(sources, units, diagnostics)
+    return pending
 
 
 # Spring Data repository interfaces: a project interface extending one of
@@ -596,13 +793,20 @@ def _spring_selection_evidence(sources, units):
             relation["reason"] = f"{relation['reason']} {_NO_PROOF}: " + "; ".join(parts) + "."
 
 
-# Where Spring Boot serves the endpoints of a service. The default profile's
-# application configuration on the main classpath names the port and the
-# servlet context path; a profile-specific file that overrides either is a
-# separate base that applies only while that profile is active. Without any
-# declaration, Spring Boot listens on 8080 at the root context.
+# Where Spring Boot serves the endpoints of a service. The application
+# configuration on the main classpath names the port and the servlet context
+# path. Its documents layer in Spring Boot's order: the classpath root before
+# config/, YAML before Properties in one location, profile-specific files
+# after the others, and later documents of one file after earlier ones. A
+# document applies unconditionally unless its file is profile-specific or it
+# activates on a profile (``spring.config.activate.on-profile``). Each
+# activation that changes the port or context path is a separate base that
+# applies only under it, and the default base then applies only while none of
+# those does. A declared ``spring.profiles.active`` is named on the bases it
+# selects but never assumed, because a runtime override can change it.
+# Without any declaration, Spring Boot listens on 8080 at the root context.
 _BOOT_CONFIGURATION = re.compile(
-    r"(?:^|/)src/main/resources/(?:config/)?application(?:-([^/]+?))?\.(properties|ya?ml)$")
+    r"(?:^|/)src/main/resources/(config/)?application(?:-([^/]+?))?\.(properties|ya?ml)$")
 _SERVER_PORT = "server.port"
 _CONTEXT_PATH = "server.servlet.contextpath"
 _BOOT_DEFAULT_PORT = 8080
@@ -613,28 +817,36 @@ def _relaxed(key):
     return key.strip().lower().replace("-", "").replace("_", "")
 
 
+_ACTIVATION = _relaxed("spring.config.activate.")
+_ON_PROFILE = _relaxed("spring.config.activate.on-profile")
+_LEGACY_ON_PROFILE = _relaxed("spring.profiles")
+
+
 def _boot_properties(source):
-    values, offset = {}, 0
+    """The documents of a Properties file; ``#---`` or ``!---`` separates them."""
+    documents, values, offset = [], {}, 0
     for line in source.text.splitlines(keepends=True):
         content = line.rstrip("\r\n")
+        if re.fullmatch(r"[#!]---", content):
+            documents.append(values)
+            values = {}
         entry = re.match(r"\s*([^#!=:\s][^=:\s]*)\s*[=:\s]\s*(.*?)\s*$", content)
         if entry:
             values[_relaxed(entry.group(1))] = (entry.group(2), source, offset,
                                                  offset + len(content))
         offset += len(line)
-    return values
+    return documents + [values]
 
 
 def _boot_yaml(source):
     import yaml
-    from yaml.nodes import MappingNode, ScalarNode
+    from yaml.nodes import MappingNode, ScalarNode, SequenceNode
     try:
-        document = next(iter(yaml.compose_all(source.text, Loader=yaml.SafeLoader)), None)
+        nodes = list(yaml.compose_all(source.text, Loader=yaml.SafeLoader))
     except (yaml.YAMLError, RecursionError):
-        return {}
-    values = {}
+        return []
 
-    def walk(node, prefix):
+    def walk(node, prefix, values):
         if not isinstance(node, MappingNode):
             return
         for key, value in node.value:
@@ -644,35 +856,90 @@ def _boot_yaml(source):
             if isinstance(value, ScalarNode):
                 values[_relaxed(dotted)] = (str(value.value), source,
                                             key.start_mark.index, value.end_mark.index)
-            walk(value, dotted)
+            elif (isinstance(value, SequenceNode)
+                  and all(isinstance(item, ScalarNode) for item in value.value)):
+                values[_relaxed(dotted)] = (",".join(str(item.value) for item in value.value),
+                                            source, key.start_mark.index, value.end_mark.index)
+            walk(value, dotted, values)
 
-    walk(document, "")
+    documents = []
+    for node in nodes:
+        values = {}
+        walk(node, "", values)
+        documents.append(values)
+    return documents
+
+
+def _activation(profile, values):
+    """The condition under which one configuration document applies, or None."""
+    terms = [f"Spring profile {profile} is active"] if profile else []
+    for key in sorted(values):
+        if key not in (_ON_PROFILE, _LEGACY_ON_PROFILE) and not key.startswith(_ACTIVATION):
+            continue
+        value = values[key][0].strip()
+        if not value:
+            continue
+        if key in (_ON_PROFILE, _LEGACY_ON_PROFILE):
+            terms.append(f"Spring profile {value} is active"
+                         if re.fullmatch(r"[\w.-]+", value)
+                         else f"the active Spring profiles match {value}")
+        else:
+            terms.append(f"{key} is {value}")
+    return " && ".join(terms) or None
+
+
+def _boot_layers(all_sources, scopes):
+    """Each scope's configuration documents as ``(condition, values)``, lowest precedence first."""
+    layers = {}
+    for source in all_sources:
+        found = _BOOT_CONFIGURATION.search(source.path)
+        if not found or source.service_scope not in scopes:
+            continue
+        config_dir, profile, extension = found.groups()
+        documents = _boot_properties(source) if extension == "properties" else _boot_yaml(source)
+        order = (profile is not None, config_dir is not None, extension == "properties",
+                 profile or "", source.path)
+        for index, values in enumerate(documents):
+            layers.setdefault(source.service_scope, []).append(
+                (order, index, _activation(profile, values), values))
+    return {scope: [(condition, values) for _, _, condition, values in sorted(
+                entries, key=lambda entry: entry[:2])]
+            for scope, entries in layers.items()}
+
+
+def _merged(layers, condition=None):
+    values = {}
+    for applies, document in layers:
+        if applies is None or applies == condition:
+            values.update(document)
     return values
+
+
+def _served_at(values):
+    return tuple((values.get(key) or (None,))[0] for key in (_SERVER_PORT, _CONTEXT_PATH))
 
 
 def endpoint_bases(sources, all_sources):
     """Server bases of every service scope this enricher was selected for."""
     scopes = sorted({source.service_scope for source in sources})
-    configurations = {}
-    for source in all_sources:
-        found = _BOOT_CONFIGURATION.search(source.path)
-        if not found or source.service_scope not in scopes:
-            continue
-        values = _boot_properties(source) if found.group(2) == "properties" else _boot_yaml(source)
-        configurations.setdefault(source.service_scope, []).append(
-            (found.group(1), source, values))
+    layers = _boot_layers(all_sources, set(scopes))
     bases = []
     for scope in scopes:
-        entries = sorted(configurations.get(scope, []),
-                         key=lambda entry: (entry[0] or "", entry[1].path))
-        default = {}
-        for profile, _, values in entries:
-            if profile is None:
-                default.update(values)
-        variants = [(None, default)] + [
-            (profile, {**default, **values}) for profile, _, values in entries
-            if profile and (_SERVER_PORT in values or _CONTEXT_PATH in values)]
-        for profile, values in variants:
+        scoped = layers.get(scope, [])
+        default = _merged(scoped)
+        variants = []
+        for condition in dict.fromkeys(applies for applies, _ in scoped if applies):
+            values = _merged(scoped, condition)
+            if _served_at(values) != _served_at(default):
+                variants.append((condition, values))
+        active = default.get(_PROFILES_ACTIVE)
+        declared_active = ({name.strip() for name in active[0].split(",")}
+                           if active and "${" not in active[0] else set())
+        selected = {condition for condition, _ in variants
+                    if condition.removeprefix("Spring profile ").removesuffix(" is active")
+                    in declared_active}
+        otherwise = " && ".join(f"!({condition})" for condition, _ in variants) or None
+        for condition, values in [(otherwise, default)] + variants:
             port_entry, path_entry = values.get(_SERVER_PORT), values.get(_CONTEXT_PATH)
             if port_entry and not port_entry[0].isdigit():
                 continue
@@ -685,14 +952,19 @@ def endpoint_bases(sources, all_sources):
                 declared.append(f"Spring Boot default port {_BOOT_DEFAULT_PORT}")
             if not path_entry:
                 declared.append("Spring Boot default root context path")
+            spans = [entry[1:] for entry in (port_entry, path_entry) if entry]
+            if condition in selected or condition == otherwise and selected:
+                declared.append(f"spring.profiles.active={active[0]} in {active[1].path} "
+                                + ("selects this profile" if condition in selected
+                                   else "selects an overriding profile")
+                                + ", unless overridden at runtime")
+                spans.append(active[1:])
             bases.append({
                 "scope": scope, "role": "implementation", "source_id": None,
                 "port": port, "path": path, "label": ", ".join(declared),
-                "condition": f"Spring profile {profile} is active" if profile else None,
-                "evidence_spans": [entry[1:] for entry in (port_entry, path_entry) if entry],
+                "condition": condition, "evidence_spans": spans,
             })
     return bases
-
 
 # Persistence
 #
@@ -730,15 +1002,10 @@ def configure(sources, all_sources):
     """Record each scope's declared default ``spring.profiles.active``."""
     scopes = {source.service_scope for source in sources}
     declared = {}
-    for source in all_sources:
-        found = _BOOT_CONFIGURATION.search(source.path)
-        if not found or found.group(1) or source.service_scope not in scopes:
-            continue
-        values = (_boot_properties(source) if found.group(2) == "properties"
-                  else _boot_yaml(source))
-        entry = values.get(_PROFILES_ACTIVE)
+    for scope, layers in _boot_layers(all_sources, scopes).items():
+        entry = _merged(layers).get(_PROFILES_ACTIVE)
         if entry and "${" not in entry[0]:
-            declared[source.service_scope] = entry
+            declared[scope] = entry
     for source in sources:
         source.spring_declared_profiles = declared.get(source.service_scope)
 
@@ -865,9 +1132,27 @@ def _table_resource(name, known, entity=None):
                        "runtime naming strategy.")}
 
 
+# The trusted sqlglot parser, verified and loaded once per process. A missing or
+# mismatched install leaves SQL statements unparsed and is reported, rather than
+# aborting extraction.
+_SQL_PARSER = {}
+
+
+def _sql_parser():
+    if "module" not in _SQL_PARSER:
+        try:
+            _SQL_PARSER["module"] = registry.load_trusted_parser("sqlglot")
+        except Exception as exc:
+            _SQL_PARSER.update(module=None, error=type(exc).__name__)
+    return _SQL_PARSER["module"]
+
+
 def _sql_accesses(sql, known):
     """``(kind, resource)`` pairs one SQL statement reads and writes, or None."""
-    sqlglot = registry.load_trusted_parser("sqlglot")
+    sqlglot = _sql_parser()
+    if sqlglot is None:
+        _SQL_PARSER["skipped"] = _SQL_PARSER.get("skipped", 0) + 1
+        return None
     expressions = sqlglot.exp
     try:
         tree = sqlglot.parse_one(sql)
@@ -1062,16 +1347,18 @@ def _spring_data_routes(types):
     return routes
 
 
-def _persistence(sources, units):
+def _persistence(sources, units, diagnostics=None):
     types = _java_types(units)
     entities = _entities(types)
     known = {unit.name.casefold() for unit in units
              if unit.source.language == "sql" and unit.kind == "type"}
     test_path = re.compile(CATALOG["test_path_pattern"])
     declarations = {}
+    unparsed = set()
     for source, entry in types:
         if test_path.search(source.path):
             continue
+        skipped = _SQL_PARSER.get("skipped", 0)
         for method in entry["methods"]:
             unit = method["unit"]
             declarations[id(unit)] = (source, entry, method)
@@ -1079,6 +1366,13 @@ def _persistence(sources, units):
                      if unit.executable_body else _query_operations(source, method, entities, known))
             if found:
                 unit.persistence_operations = getattr(unit, "persistence_operations", []) + found
+        if _SQL_PARSER.get("skipped", 0) > skipped:
+            unparsed.add(source.resource_id)
+    if diagnostics is not None:
+        for resource_id in sorted(unparsed):
+            diagnostics.append({"code": "SPRING_SQL_PARSER_UNAVAILABLE",
+                "message": f"java: sqlglot {_SQL_PARSER['error']}; SQL statements were not parsed",
+                "subject_ids": [resource_id], "evidence_ids": []})
     declared = {source.service_scope: source.spring_declared_profiles for source in sources
                 if getattr(source, "spring_declared_profiles", None)}
     routes = _spring_data_routes(types)

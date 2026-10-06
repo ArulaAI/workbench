@@ -79,11 +79,136 @@ def _annotations(source, node):
                 name = next(_children(annotation, {"identifier", "scoped_identifier"}), None)
             result.append({
                 "name": _text(source, name).rsplit(".", 1)[-1] if name else "",
+                "qualified_name": _text(source, name) if name else "",
                 "text": _text(source, annotation),
                 "start": _char(source, annotation.start_byte),
                 "end": _char(source, annotation.end_byte),
+                "arguments": _annotation_arguments(source, annotation),
             })
     return result
+
+
+class JavaLiteralError(ValueError):
+    def __init__(self, cause: str, start: int, end: int):
+        super().__init__(cause)
+        self.cause, self.start, self.end = cause, start, end
+
+
+def _annotation_arguments(source, annotation):
+    arguments = next(_children(annotation, {'annotation_argument_list'}), None)
+    if arguments is None:
+        return []
+    result = []
+    for child in _children(arguments):
+        if child.type == 'element_value_pair':
+            key = child.child_by_field_name('key')
+            value = child.child_by_field_name('value')
+            name = _text(source, key) if key is not None else ''
+        else:
+            name, value = 'value', child
+        values = (list(_children(value))
+            if value is not None and value.type == 'element_value_array_initializer'
+            else [value])
+        for item in values:
+            if item is not None:
+                result.append({'name': name, 'expression': _text(source, item),
+                    'start': _char(source, item.start_byte),
+                    'end': _char(source, item.end_byte)})
+    return result
+
+
+def _unicode_translate_java(token: str):
+    translated, spans = [], []
+    cursor = 0
+    translated_backslash_run = 0
+    last_raw_character_was_unicode_escape = False
+    while cursor < len(token):
+        eligible = (token[cursor] == '\\' and
+            (last_raw_character_was_unicode_escape
+             or translated_backslash_run % 2 == 0))
+        if eligible:
+            probe = cursor + 1
+            while probe < len(token) and token[probe] == 'u':
+                probe += 1
+            if probe > cursor + 1 and probe + 4 <= len(token) \
+                    and re.fullmatch(r'[0-9a-fA-F]{4}', token[probe:probe + 4]):
+                character = chr(int(token[probe:probe + 4], 16))
+                translated.append(character)
+                spans.append((cursor, probe + 4))
+                cursor = probe + 4
+                translated_backslash_run = (
+                    translated_backslash_run + 1
+                    if character == '\\' else 0)
+                last_raw_character_was_unicode_escape = True
+                continue
+        character = token[cursor]
+        translated.append(character)
+        spans.append((cursor, cursor + 1))
+        cursor += 1
+        translated_backslash_run = (translated_backslash_run + 1
+            if character == '\\' else 0)
+        last_raw_character_was_unicode_escape = False
+    return ''.join(translated), tuple(spans)
+
+
+def _literal_error(cause, spans, start, end):
+    if start < len(spans):
+        raw_start = spans[start][0]
+        raw_end = spans[min(max(start, end - 1), len(spans) - 1)][1]
+    else:
+        raw_start = raw_end = spans[-1][1] if spans else 0
+    raise JavaLiteralError(cause, raw_start, raw_end)
+
+
+def _decode_java_string_literal(token: str) -> str:
+    translated, spans = _unicode_translate_java(token)
+    if (len(translated) < 2 or translated[0] != '"' or translated[-1] != '"'
+            or translated.startswith('"""') or '\r' in translated
+            or '\n' in translated):
+        _literal_error('ordinary_string_literal_required', spans, 0,
+            len(translated))
+    result, cursor, end = [], 1, len(translated) - 1
+    escapes = {'b': '\b', 't': '\t', 'n': '\n', 'f': '\f', 'r': '\r',
+        's': ' ', '"': '"', "'": "'", '\\': '\\'}
+    while cursor < end:
+        char = translated[cursor]
+        if char == '"':
+            _literal_error('unescaped_quote', spans, cursor, cursor + 1)
+        if char != '\\':
+            codepoint, finish = ord(char), cursor + 1
+        else:
+            if cursor + 1 >= end:
+                _literal_error('truncated_escape', spans, cursor, cursor + 1)
+            escaped = translated[cursor + 1]
+            if escaped in escapes:
+                result.append(escapes[escaped])
+                cursor += 2
+                continue
+            if escaped in '01234567':
+                maximum = 3 if escaped in '0123' else 2
+                finish = cursor + 2
+                while finish < end and finish < cursor + 1 + maximum \
+                        and translated[finish] in '01234567':
+                    finish += 1
+                result.append(chr(int(translated[cursor + 1:finish], 8)))
+                cursor = finish
+                continue
+            _literal_error('invalid_escape', spans, cursor, cursor + 2)
+        if 0xD800 <= codepoint <= 0xDBFF:
+            if finish >= end:
+                _literal_error('lone_high_surrogate', spans, cursor, finish)
+            low = ord(translated[finish])
+            if not 0xDC00 <= low <= 0xDFFF:
+                _literal_error('invalid_surrogate_pair', spans, finish, finish + 1)
+            result.append(chr(0x10000 + ((codepoint - 0xD800) << 10)
+                              + low - 0xDC00))
+            cursor = finish + 1
+            continue
+        if 0xDC00 <= codepoint <= 0xDFFF:
+            _literal_error('lone_low_surrogate', spans, cursor, finish)
+        result.append(chr(codepoint))
+        cursor = finish
+    return ''.join(result)
 
 
 def _parameters(source, node):
@@ -434,6 +559,54 @@ def _resolve_type(source, raw, types_by_fq, types_by_short):
     return "unresolved", []
 
 
+def _generated_model(source, raw):
+    """``(config, qualified name or None)`` when a configured generator writes *raw*.
+
+    A generated model type is never in the snapshot. It is recognised only when
+    the source demonstrably names it from the generator's model package: an
+    explicit import from that package, or a wildcard import of exactly one such
+    package when the name carries the configured model-name affixes.
+    """
+    name = re.sub(r"<.*>", "", raw or "").replace("[]", "").strip()
+    simple = _simple(name)
+    configs = [config for config in getattr(source, "generated_source_config", ())
+               if config.get("model_package")]
+    imported = source.semantic["imports"].get(simple)
+    if imported:
+        found = [config for config in configs
+                 if imported.rsplit(".", 1)[0] == config["model_package"]]
+        return (found[0], imported) if len(found) == 1 else None
+    found = [config for config in configs
+             if config["model_package"] in source.semantic["wildcards"]
+             and (config.get("model_name_suffix") or config.get("model_name_prefix"))
+             and simple.startswith(config.get("model_name_prefix") or "")
+             and simple.endswith(config.get("model_name_suffix") or "")
+             and len(simple) > len((config.get("model_name_prefix") or "")
+                                   + (config.get("model_name_suffix") or ""))]
+    if len(found) != 1:
+        return None
+    return found[0], f"{found[0]['model_package']}.{simple}"
+
+
+def _generated_model_relation(kind, raw, generated):
+    """Reason and evidence for a relation to a generated model type."""
+    config, qualified = generated
+    simple = qualified.rsplit(".", 1)[-1]
+    prefix = config.get("model_name_prefix") or ""
+    suffix = config.get("model_name_suffix") or ""
+    schema_name = simple[len(prefix):len(simple) - len(suffix) if suffix else None]
+    schema = config.get("schemas", {}).get(schema_name)
+    evidence = [config["generator_evidence"]] if config.get("generator_evidence") else []
+    if schema:
+        evidence.append(schema)
+        origin = (f"from OpenAPI schema {schema_name} in {schema[0].path}")
+    else:
+        origin = "from an OpenAPI schema that could not be matched"
+    return (f"Java {kind} target {raw} is the generated DTO {qualified}, which "
+            f"openapi-generator-maven-plugin produces at build time {origin}; its "
+            "declaration is unavailable at analysis time."), evidence
+
+
 # The Java language definition, not a heuristic. Eight primitives, their
 # java.lang boxes, String and void; boxing in both directions and the widening
 # order from JLS 5.1.2. Closed by the specification, so it cannot drift. The
@@ -747,6 +920,41 @@ def prepare(sources, units, diagnostics=None):
     methods_by_owner = defaultdict(list)
     for entry in types:
         methods_by_owner[entry["fqname"]].extend(entry["methods"])
+    declaring_source = {id(entry): source for source in java_sources
+                        for entry in source.semantic["types"]}
+    reachable = {}
+
+    def callable_methods(owner):
+        """The methods a call on *owner* can reach: its own, then its supertypes'.
+
+        Supertypes are walked nearest first through resolved heritage, so a
+        method a nearer type redeclares with the same erased parameters
+        overrides, and hides, the one it overrides.
+        """
+        if id(owner) in reachable:
+            return reachable[id(owner)]
+        found, signatures = [], set()
+        seen, level = {id(owner)}, [owner]
+        for _ in range(_MAX_HERITAGE_DEPTH + 1):
+            parents = []
+            for entry in level:
+                for method in methods_by_owner[entry["fqname"]]:
+                    signature = (method["name"],
+                                 tuple(_erased(value, {}) for _, value in method["params"]))
+                    if signature not in signatures:
+                        signatures.add(signature)
+                        found.append(method)
+                source = declaring_source.get(id(entry))
+                for name in (entry["bases"] + entry["interfaces"]) if source else ():
+                    state, matches = _resolve_type(source, name, types_by_fq, types_by_short)
+                    if state == "resolved" and id(matches[0]) not in seen:
+                        seen.add(id(matches[0]))
+                        parents.append(matches[0])
+            if not parents:
+                break
+            level = parents
+        reachable[id(owner)] = found
+        return found
     for source in java_sources:
         source.semantic_relations = []
         source.semantic_results = []
@@ -798,6 +1006,9 @@ def prepare(sources, units, diagnostics=None):
                 state, matches = _resolve_type(source, type_name, types_by_fq, types_by_short)
                 target = matches[0]["unit"] if state == "resolved" else None
                 external = state == "external"
+                generated = _generated_model(source, type_name) if state == "unresolved" else None
+                reason, evidence_spans = (_generated_model_relation(kind, type_name, generated)
+                    if generated else (f"Java {kind} target {type_name} is {state}.", []))
                 source.semantic_relations.append({
                     "source": method["unit"], "target": target,
                     "candidate_targets": [item["unit"] for item in matches],
@@ -813,8 +1024,8 @@ def prepare(sources, units, diagnostics=None):
                     "external_target_id": identifier(
                         "resource", "java-type", source.semantic["imports"].get(
                             _simple(type_name), _simple(type_name))) if external else None,
-                    "reason": None if state == "resolved" else
-                        f"Java {kind} target {type_name} is {state}.",
+                    "reason": None if state == "resolved" else reason,
+                    "evidence_spans": evidence_spans,
                 })
         for method in source.semantic["methods"]:
             for invocation in method["invocations"]:
@@ -832,7 +1043,7 @@ def prepare(sources, units, diagnostics=None):
                     raw_type = invocation["variables"].get(bare, bare)
                     owner_states = [_resolve_type(source, raw_type, types_by_fq, types_by_short)]
                 state, owners = owner_states[0] if owner_states else ("unresolved", [])
-                candidates = [candidate for owner in owners for candidate in methods_by_owner[owner["fqname"]]
+                candidates = [candidate for owner in owners for candidate in callable_methods(owner)
                               if candidate["name"] == invocation["name"]
                               and len(candidate["params"]) == len(invocation["argument_types"])]
                 exact = [candidate for candidate in candidates if all(
@@ -928,9 +1139,10 @@ def activation_evidence(source):
     return {
         "imports": sorted({*semantic.get("imports", {}).values(),
                            *semantic.get("wildcards", [])}),
-        "annotations": sorted({annotation["name"]
+        "annotations": sorted({value
             for item in semantic.get("types", []) + semantic.get("methods", [])
-            for annotation in item.get("annotations", [])}),
+            for annotation in item.get("annotations", [])
+            for value in (annotation["name"], annotation["qualified_name"])}),
     }
 
 
@@ -944,7 +1156,9 @@ def symbol_key(name):
 
 bindings = rules.bindings
 resources = rules.resources
-observations = rules.observations
+def observations(unit):
+    return [*rules.observations(unit),
+            *getattr(unit, 'configuration_observations', ())]
 
 
 def operations(unit):

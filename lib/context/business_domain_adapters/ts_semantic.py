@@ -9,8 +9,11 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from types import MappingProxyType
+
 from . import rules
 from .base import SemanticResult
+from ..layer1_domain_clustering import resolve_typescript_path_alias
 from ..business_domain_schema import identifier, record
 
 
@@ -44,6 +47,9 @@ def _external_import_boundaries(source):
         module = bindings.get(root)
         if not module or module.startswith(('.', '/')):
             continue
+        target = source.resolved_module_targets.get(module)
+        if target is not None and target['state'] != 'external':
+            continue
         start, _ = rules.span(source, {'range': reference.source_range})
         if (start, reference.callee_name) in getattr(
                 source, 'resolved_call_targets', {}):
@@ -55,6 +61,35 @@ def _external_import_boundaries(source):
 
 
 def prepare(sources, units, diagnostics=None):
+    # Path aliases resolve against the configuration the supporting consumer
+    # chose for each source; no alias match leaves the import as it was.
+    source_paths = tuple(sorted(source.path for source in sources))
+    for source in sources:
+        selected = source.supporting_inputs.get(
+            'typescript_module_resolution', {})
+        tsconfig = selected.get('tsconfig', {})
+        typings = selected.get('typings', {})
+        aliases = tsconfig.get('aliases', ())
+        external = {item['name']
+            for item in typings.get('declared_external_modules', ())}
+        resolved = {}
+        for module in _modules(source):
+            result = resolve_typescript_path_alias(
+                module, tsconfig.get('scope_dir', '.'), aliases, source_paths)
+            if result['state'] == 'unmatched':
+                if module not in external:
+                    continue
+                state = 'external'
+            else:
+                state = result['state']
+            if state == 'unresolved' and module in external:
+                state = 'external'
+            resolved[module] = MappingProxyType({
+                'state': state,
+                'candidate_source_paths': tuple(result['candidates']),
+                'external': state == 'external',
+            })
+        source.resolved_module_targets = MappingProxyType(resolved)
     rules.prepare(sources, units, diagnostics)
     definitions = _build_definitions(sources)
     for source in sources:
@@ -76,7 +111,21 @@ def calls(unit):
 
 
 def candidates(unit, receiver, name, available, position=None):
-    return rules.candidates(unit, receiver, name, available, position)
+    lexical = rules.lexical_candidates(unit, receiver, name, available)
+    if lexical:
+        return lexical
+    bindings = rules._import_bindings(unit.source)
+    bound = receiver.split('.', 1)[0] if receiver else name
+    module = bindings.get(bound)
+    target = unit.source.resolved_module_targets.get(module)
+    if target is None:
+        return rules.candidates(unit, receiver, name, available, position)
+    if target['state'] in {'resolved', 'ambiguous'}:
+        paths = set(target['candidate_source_paths'])
+        return sorted((candidate for candidate in available
+            if candidate.source.path in paths),
+            key=lambda candidate: candidate.qualified)
+    return []
 
 
 def resolve_call(unit, receiver, name, candidates, position, evidence_id=None):
@@ -751,9 +800,17 @@ def _requests(unit, env=None, depth=0, stack=()):
     A request whose method or URL is a parameter is decided by the caller, so
     each call site re-evaluates the callee with that call's arguments; the
     result is attributed to the calling unit, never to the shared helper.
+
+    Without bindings the result still depends on how deep the walk is and
+    which callers it came through, so it is cached under that context: a unit
+    first reached deep in another unit's walk keeps its full result for depth 0.
     """
-    if env is None and hasattr(unit, '_endpoint_requests'):
-        return unit._endpoint_requests
+    if env is None:
+        cache = getattr(unit, '_endpoint_requests', None)
+        if cache is None:
+            cache = unit._endpoint_requests = {}
+        if (depth, stack) in cache:
+            return cache[(depth, stack)]
     source = unit.source
     scope = _Scope(unit, env, _parameters(unit), depth)
     results = []
@@ -794,7 +851,7 @@ def _requests(unit, env=None, depth=0, stack=()):
                     request['spans'] + ((source, start, end),)),
                     'position': start - unit.start, 'end': end - unit.start})
     if env is None:
-        unit._endpoint_requests = results
+        cache[(depth, stack)] = results
     return results
 
 

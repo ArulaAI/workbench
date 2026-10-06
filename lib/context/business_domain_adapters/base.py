@@ -2,7 +2,8 @@
 from __future__ import annotations
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Mapping
 
 if TYPE_CHECKING:
     from ..treesitter_extract import SymbolDef, Reference, RuleOutput
@@ -90,10 +91,35 @@ class SemanticResult:
             'reason': self.reason,
         }
 
+@dataclass(frozen=True)
+class DecodedSource:
+    text: str
+    encoding: str
+    original_byte_length: int
+
+
+@dataclass(frozen=True)
+class ConfigurationDeclaration:
+    key: str
+    value: str
+    occurrence: int
+    profile: str | None
+    environment: str
+    role: str
+    value_spans: tuple[tuple[int, int], ...]
+
+
+@dataclass(frozen=True)
+class SupportingConsumerResult:
+    consumed_source_ids: tuple[str, ...]
+    normalized_inputs: tuple[dict, ...]
+    diagnostics: tuple[dict, ...]
+
+
 @dataclass
 class Source:
     path: str
-    language: str
+    language: str | None
     text: str
     source_hash: str
     resource_id: str
@@ -110,6 +136,14 @@ class Source:
     parser_required: bool = False
     adapter_failed: bool = False
     service_scope: str = 'repository'
+    original_byte_length: int = 0
+    redaction_spans: list[tuple[int, int]] = field(default_factory=list)
+    decoder_failure: str | None = None
+    evidence_redaction_required: bool = False
+    supporting_inputs: Mapping[str, Mapping[str, dict]] = field(
+        default_factory=lambda: MappingProxyType({}))
+    resolved_module_targets: Mapping[str, dict] = field(
+        default_factory=lambda: MappingProxyType({}))
 
 @dataclass
 class Unit:
@@ -146,6 +180,7 @@ class Unit:
     required_relationships: tuple[str, ...] | None = None
     required_capabilities: tuple[str, ...] | None = None
     valid_terminal: bool | None = None
+    configuration: ConfigurationDeclaration | None = None
 
     @property
     def text(self) -> str:

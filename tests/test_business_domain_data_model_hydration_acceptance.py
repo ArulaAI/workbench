@@ -21,6 +21,7 @@ from lib.context.business_domain_schema import (
 from lib.context.business_domain_synthesis import (
     Synthesis, input_token_estimate, wire_schema,
 )
+from tests.business_domains.adapter_fixture import install_fixture_adapter
 
 
 CAPABILITIES = {'data_access': 'supported', 'outputs': 'supported'}
@@ -70,8 +71,7 @@ def fixture_facts(tmp_path, monkeypatch, specifications, two_units=False):
     descriptor = {'language': 'fixture', 'source_kind': 'source',
                   'capability': {'id': 'fixture', 'version': '1',
                                  'capabilities': CAPABILITIES}}
-    monkeypatch.setattr(core, 'descriptor', lambda value: descriptor)
-    monkeypatch.setattr(core, 'adapter_for', lambda source: adapter)
+    install_fixture_adapter(monkeypatch, adapter, descriptor)
     (tmp_path / 'flow.opaque').write_text(text)
     facts, _ = Extractor(tmp_path, DEFAULTS).extract()
     validate_references(facts)
@@ -341,8 +341,7 @@ def test_f08_partial_selected_implementation_still_hydrates_reachable_operations
     descriptor = {'language': 'fixture', 'source_kind': 'source',
                   'capability': {'id': 'fixture', 'version': '1',
                                  'capabilities': CAPABILITIES}}
-    monkeypatch.setattr(core, 'descriptor', lambda value: descriptor)
-    monkeypatch.setattr(core, 'adapter_for', lambda source: adapter)
+    install_fixture_adapter(monkeypatch, adapter, descriptor)
     (tmp_path / 'flow.opaque').write_text(text)
     facts, _ = Extractor(tmp_path, DEFAULTS).extract()
     trace = next(iter(facts['traces'].values()))

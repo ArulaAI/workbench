@@ -510,3 +510,141 @@ def test_backend_traces_are_unchanged_by_client_links(tmp_path):
 
     assert backend_traces(backend) == backend_traces(combined)
     assert not [edge for edge in backend['edges'].values() if edge['kind'] == 'routes_to']
+
+
+def test_root_relative_request_that_resolves_by_route_adds_no_routes_to_edge(tmp_path):
+    facts = _project(tmp_path, calls="""export function sameOrigin() { return fetch('/api/vets'); }
+""")
+    # The call's operation already reaches GET /api/vets by method and route;
+    # an unresolved routes_to edge would only add an obligation.
+    assert _routes(facts, 'sameOrigin') == []
+
+
+def test_relative_request_without_one_matching_endpoint_stays_unresolved(tmp_path):
+    facts = _project(tmp_path, calls="""export function unknown() { return fetch('/api/nowhere'); }
+export function otherHost() { return fetch('//cdn.example.com/api/vets'); }
+""")
+    for origin in ('unknown', 'otherHost'):
+        edge, = _routes(facts, origin)
+        assert edge['resolution'] == 'unresolved'
+        assert 'has no fixed origin' in edge['reason']
+
+
+def test_routes_do_not_depend_on_which_caller_is_walked_first(tmp_path):
+    # c1 is walked first and reaches save at the call-depth limit, where save's
+    # own call to submitForm is not followed. save's request must still be found
+    # when save itself is linked.
+    facts = _project(tmp_path, calls="""export function c1() { return c2(); }
+export function c2() { return c3(); }
+export function c3() { return c4(); }
+export function c4() { return save(); }
+export function save() { return submitForm('POST', 'api/owners', {}, status => status); }
+""")
+    assert _resolved(facts, 'save') == ['OwnerController.addOwner()']
+
+
+PAGED_CONTROLLER = """package com.example;
+import org.springframework.data.domain.Sort;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
+@RestController
+public class PagedController {
+  @GetMapping("/api/paged") public String paged() { return Sort.unsorted().toString(); }
+}
+"""
+
+
+def test_a_source_two_spring_descriptors_select_is_prepared_once(tmp_path, monkeypatch):
+    from lib.context.business_domain_adapters import spring_semantic
+    prepared = []
+    original = spring_semantic.prepare
+
+    def counting(sources, units, diagnostics=None):
+        prepared.extend(source.path for source in sources)
+        return original(sources, units, diagnostics)
+
+    monkeypatch.setattr(spring_semantic, 'prepare', counting)
+    _project(tmp_path, extra={'src/main/java/com/example/PagedController.java': PAGED_CONTROLLER})
+    assert prepared.count('src/main/java/com/example/PagedController.java') == 1
+    assert len(prepared) == len(set(prepared))
+
+
+# How traces end. A client HTTP request always stays an external boundary, so
+# trace resolution is unchanged; its obligation and the trace's stop reasons
+# say whether the analyzed source answers it.
+
+def _request_obligations(facts, trace):
+    obligations = [facts['trace_obligations'][key] for key in trace['obligation_ids']]
+    return [item for item in obligations if item['edge_id']
+            and facts['edges'][item['edge_id']]['kind'] == 'invokes_endpoint']
+
+
+def _route_obligations(facts, trace, status):
+    obligations = [facts['trace_obligations'][key] for key in trace['obligation_ids']]
+    return [item for item in obligations if item['status'] == status and item['edge_id']
+            and facts['edges'][item['edge_id']]['kind'] == 'routes_to']
+
+
+def test_routed_request_says_where_it_is_answered_and_stays_external(tmp_path):
+    facts = _project(tmp_path)
+    trace = _action_trace(facts, 'OwnerEditor.onSubmit')
+    request, = _request_obligations(facts, trace)
+    assert (request['kind'], request['status'], request['reason_code']) == (
+        'external_boundary', 'external', 'ROUTED_REQUEST')
+    assert 'OwnerController.addOwner()' in request['reason']
+    assert 'OwnerController.updateOwner(int)' in request['reason']
+    assert 'routed_request' in trace['stop_reasons']
+    # The production build sends the same request to a server nothing declares;
+    # that route stays an unresolved obligation and the trace stays unresolved.
+    assert _route_obligations(facts, trace, 'unresolved')
+    assert trace['resolution'] == 'unresolved'
+
+
+def test_root_relative_request_names_its_endpoint_and_stays_external(tmp_path):
+    facts = _project(tmp_path, extra={'client/src/VetsLoader.tsx': _editor(
+        'VetsLoader', "fetch('/api/vets');", 'Load Vets')})
+    trace = _action_trace(facts, 'VetsLoader.onSubmit')
+    request, = _request_obligations(facts, trace)
+    assert (request['status'], request['reason_code']) == ('external', 'SAME_ORIGIN_REQUEST')
+    assert 'GET /api/vets' in request['reason']
+    assert trace['stop_reasons'] == ['same_origin_endpoint']
+    assert trace['resolution'] == 'unresolved'
+
+
+def test_requests_the_analyzed_source_does_not_answer_keep_their_obligation(tmp_path):
+    facts = _project(tmp_path, extra={
+        'client/src/Remote.tsx': _editor(
+            'Remote', "fetch('http://other.example.com/api/vets');", 'Remote'),
+        'client/src/Dynamic.tsx': _editor('Dynamic', "fetch(owner.link);", 'Dynamic'),
+        'client/src/Unmatched.tsx': _editor('Unmatched', "fetch('/api/nowhere');", 'Unmatched')})
+    for handler in ('Remote.onSubmit', 'Unmatched.onSubmit'):
+        trace = _action_trace(facts, handler)
+        request, = _request_obligations(facts, trace)
+        assert request['status'] == 'external'
+        assert request['reason_code'] not in {'ROUTED_REQUEST', 'SAME_ORIGIN_REQUEST'}
+        assert 'external_boundary' in trace['stop_reasons']
+        assert {'routed_request', 'same_origin_endpoint'}.isdisjoint(trace['stop_reasons'])
+        assert trace['resolution'] == 'unresolved'
+    dynamic = _action_trace(facts, 'Dynamic.onSubmit')
+    assert all(item['reason_code'] not in {'ROUTED_REQUEST', 'SAME_ORIGIN_REQUEST'}
+               for item in _request_obligations(facts, dynamic))
+    assert dynamic['resolution'] == 'unresolved'
+
+
+def test_ambiguous_root_relative_request_is_not_called_answered(tmp_path):
+    facts = _project(tmp_path, extra={
+        'src/main/java/com/example/SecondVets.java': """package com.example;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+@RestController
+@RequestMapping("/api")
+public class SecondVets {
+  @GetMapping("/vets") public String others() { return "vets"; }
+}
+""",
+        'client/src/VetsLoader.tsx': _editor('VetsLoader', "fetch('/api/vets');", 'Load Vets')})
+    trace = _action_trace(facts, 'VetsLoader.onSubmit')
+    request, = _request_obligations(facts, trace)
+    assert request['reason_code'] != 'SAME_ORIGIN_REQUEST'
+    assert 'same_origin_endpoint' not in trace['stop_reasons']

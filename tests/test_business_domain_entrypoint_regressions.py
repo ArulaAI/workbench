@@ -110,6 +110,8 @@ public interface OwnerClient {
     ("@app.route('/orders', methods=('put',))", 'PUT'),
     ("@app.route('/orders', methods=['GET', 'POST'])", None),
     ("@app.route('/orders', methods=ORDER_METHODS)", None),
+    ("@app.route('/orders', defaults=dict(methods=['POST']))", 'GET'),
+    ("@app.route('/orders', endpoint='a,methods=[\\'POST\\']')", 'GET'),
 ])
 def test_generic_route_method_selection(decorator, expected):
     assert _declared_route_method(decorator) == expected
@@ -130,6 +132,88 @@ def show_order(order_id):
     anchors = _http_anchors(facts)
     assert set(anchors) == {('POST', '/orders'), ('GET', '/orders/<order_id>')}
     assert all(anchor['eligibility'] == 'eligible' for anchor in anchors.values())
+
+
+@pytest.mark.parametrize('elsewhere', [
+    '@limiter.limit("5/minute", methods=["POST"])\n@app.route(\'/orders\')\ndef list_orders():\n    return \'ok\'\n',
+    '@app.route(\'/orders\')\ndef list_orders():\n    session.request(methods=[\'DELETE\'])\n    return \'ok\'\n',
+    '@app.route(\'/orders\')\ndef list_orders():\n    options = dict(methods=ALLOWED)\n    return \'ok\'\n',
+])
+def test_flask_method_comes_from_the_route_decorator_only(tmp_path, elsewhere):
+    facts, _ = _extract(tmp_path, {'app.py': 'from flask import Flask\napp = Flask(__name__)\n\n' + elsewhere})
+    assert set(_http_anchors(facts)) == {('GET', '/orders')}
+
+
+def _fastapi(tmp_path, text):
+    facts, _ = _extract(tmp_path, {'api.py': 'from fastapi import FastAPI, APIRouter\n' + text})
+    return _http_anchors(facts)
+
+
+def test_fastapi_router_and_include_prefixes_compose_onto_the_route(tmp_path):
+    anchors = _fastapi(tmp_path, '''app = FastAPI()
+orders = APIRouter(prefix="/orders")
+v1 = APIRouter(prefix="/v1")
+
+@orders.get("/{order_id}")
+def show(order_id: int):
+    return {}
+
+@orders.post("")
+def create():
+    return {}
+
+v1.include_router(orders)
+app.include_router(v1, prefix="/api")
+''')
+    assert set(anchors) == {('GET', '/api/v1/orders/{order_id}'), ('POST', '/api/v1/orders')}
+    assert all(anchor['resolution'] == 'resolved' for anchor in anchors.values())
+
+
+def test_fastapi_app_routes_keep_their_declared_path(tmp_path):
+    anchors = _fastapi(tmp_path, '''app = FastAPI(title="Orders")
+
+@app.get("/items")
+def items():
+    return {}
+''')
+    assert set(anchors) == {('GET', '/items')}
+    assert anchors[('GET', '/items')]['resolution'] == 'resolved'
+
+
+@pytest.mark.parametrize('wiring, reason', [
+    ('', 'not included in this source'),
+    ('app.include_router(router, prefix=API)\n', 'not a literal string'),
+    ('app.include_router(router, prefix="/a")\napp.include_router(router, prefix="/b")\n',
+     'several prefixes'),
+])
+def test_fastapi_router_route_without_a_known_mount_is_unresolved(tmp_path, wiring, reason):
+    anchors = _fastapi(tmp_path, '''app = FastAPI()
+router = APIRouter(prefix="/orders")
+
+@router.get("/{order_id}")
+def show(order_id: int):
+    return {}
+
+''' + wiring)
+    [anchor] = anchors.values()
+    assert anchor['resolution'] == 'unresolved'
+    assert anchor['eligibility'] != 'eligible'
+    assert reason in anchor['reason']
+
+
+def test_fastapi_router_with_a_non_literal_prefix_is_unresolved(tmp_path):
+    anchors = _fastapi(tmp_path, '''app = FastAPI()
+router = APIRouter(prefix=settings.ORDERS)
+
+@router.get("/{order_id}")
+def show(order_id: int):
+    return {}
+
+app.include_router(router)
+''')
+    [anchor] = anchors.values()
+    assert anchor['resolution'] == 'unresolved'
+    assert 'not a literal string' in anchor['reason']
 
 
 # ── Frontend calls ─────────────────────────────────────────────────────────
@@ -276,3 +360,17 @@ $$ LANGUAGE plpgsql;
     assert keys == ['sql:repository:postgres:function:f(integer)',
                     'sql:repository:postgres:function:f(text)']
     assert all(anchor['eligibility'] == 'eligible' for anchor in facts['anchors'].values())
+
+
+def test_postgres_trigger_return_type_is_not_a_trigger_declaration(tmp_path):
+    facts, _ = _extract(tmp_path, {'audit.sql': '''CREATE FUNCTION audit_order() RETURNS trigger AS $$
+BEGIN
+  INSERT INTO audit(id) VALUES (NEW.id);
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+'''})
+    anchors = list(facts['anchors'].values())
+    assert [anchor['operation']['name'] for anchor in anchors] == ['audit_order']
+    assert anchors[0]['representations'][0]['identity_key'] == (
+        'sql:repository:postgres:function:audit_order()')

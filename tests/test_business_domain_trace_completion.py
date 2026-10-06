@@ -11,6 +11,7 @@ from lib.context.business_domain_schema import (
 )
 from lib.context.business_domain_work import whole_graph_scope
 from lib.context.business_domains import accept_candidate
+from tests.business_domains.adapter_fixture import install_fixture_adapter
 
 
 def _selection_facts(tmp_path, monkeypatch, *, language="fixture",
@@ -65,12 +66,11 @@ def _selection_facts(tmp_path, monkeypatch, *, language="fixture",
         "entrypoint_detection": "supported",
         "relationship_resolution": relationship_capability,
     }
-    monkeypatch.setattr(core, "descriptor", lambda value: {
+    install_fixture_adapter(monkeypatch, adapter, {
         "language": language, "source_kind": "source", "adapter": "fixture",
         "capability": {"id": "fixture", "version": "1", "capabilities": capabilities,
                        "diagnostic_codes": ["FIXTURE_CAPABILITY_UNAVAILABLE"]},
     })
-    monkeypatch.setattr(core, "adapter_for", lambda source: adapter)
     (tmp_path / "contract.opaque").write_text("contract")
     for index in range(implementations):
         (tmp_path / f"body{index}.opaque").write_text(f"body {index}")
@@ -90,9 +90,8 @@ def test_anchor_adapter_must_declare_complete_trace_contract(tmp_path, monkeypat
         observations=lambda unit: [], operations=lambda unit: [],
         activation_evidence=lambda source: {},
     )
-    monkeypatch.setattr(core, "descriptor", lambda value: {
+    install_fixture_adapter(monkeypatch, adapter, {
         "language": "fixture", "source_kind": "source", "adapter": "fixture"})
-    monkeypatch.setattr(core, "adapter_for", lambda source: adapter)
     (tmp_path / "source.opaque").write_text("entry")
     with pytest.raises(DomainError, match="trace role"):
         Extractor(tmp_path, DEFAULTS).extract()
@@ -560,12 +559,11 @@ def _mid_trace_selection(tmp_path, monkeypatch, shape):
         bindings=lambda unit: [], resources=lambda unit: [], calls=lambda unit: [],
         observations=lambda unit: [], operations=lambda unit: [],
         activation_evidence=lambda source: {})
-    monkeypatch.setattr(core, "descriptor", lambda value: {
+    install_fixture_adapter(monkeypatch, adapter, {
         "language": "fixture", "source_kind": "source", "adapter": "fixture",
         "capability": {"id": "fixture", "version": "1", "capabilities": {
             "entrypoint_detection": "supported", "relationship_resolution": "supported"},
             "diagnostic_codes": []}})
-    monkeypatch.setattr(core, "adapter_for", lambda source: adapter)
     for name in ("contract", "entry", "declaration", "body0", "body1"):
         (tmp_path / f"{name}.opaque").write_text(name)
     facts, _ = Extractor(tmp_path, DEFAULTS).extract()

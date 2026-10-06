@@ -33,19 +33,142 @@ def span(source, match):
 HTTP_METHODS = frozenset({'GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'})
 
 
+def _call_arguments(text, opening):
+    """Split the call whose ``(`` is at *opening* into top-level argument texts.
+
+    Returns ``(arguments, end)``; *end* is None when the call never closes.
+    """
+    arguments, depth, quote, escaped, begin = [], 0, None, False, opening + 1
+    for index in range(opening, len(text)):
+        char = text[index]
+        if quote:
+            if escaped:
+                escaped = False
+            elif char == '\\':
+                escaped = True
+            elif char == quote:
+                quote = None
+        elif char in '"\'':
+            quote = char
+        elif char in '([{':
+            depth += 1
+        elif char in ')]}':
+            depth -= 1
+            if depth == 0:
+                arguments.append(text[begin:index])
+                return [item.strip() for item in arguments if item.strip()], index + 1
+        elif char == ',' and depth == 1:
+            arguments.append(text[begin:index])
+            begin = index + 1
+    return [], None
+
+
+def _keyword(arguments, name):
+    for argument in arguments:
+        found = re.fullmatch(rf'{name}\s*=\s*(.*)', argument, re.DOTALL)
+        if found:
+            return found.group(1).strip()
+    return None
+
+
+def _string_literal(value):
+    found = re.fullmatch(r'''"([^"]*)"|'([^']*)\'''', value or '')
+    return next(group for group in found.groups() if group is not None) if found else None
+
+
+def _route_decorator(text, receiver, name, route):
+    """Return the ``@receiver.name(...)`` decorator that registers *route*.
+
+    A decorated definition also holds other decorators and the function
+    body, so route keywords are read from this call only.
+    """
+    pattern = rf'@\s*{re.escape(receiver)}\s*\.\s*{re.escape(name)}\s*\('
+    calls = []
+    for found in re.finditer(pattern, text):
+        arguments, end = _call_arguments(text, found.end() - 1)
+        if end is not None:
+            calls.append((arguments, text[found.start():end]))
+    exact = [call for arguments, call in calls if arguments[:1] == [route]]
+    return (exact or [call for _, call in calls] or [None])[0]
+
+
 def _declared_route_method(text):
     """Select the HTTP method of a generic route registration such as Flask's.
 
     ``route('/x')`` defaults to GET.  A literal ``methods=[...]`` naming one
     method selects it; several methods, or a non-literal list, select none.
+    Only the call's own top-level keywords count.
     """
-    listed = re.search(r'\bmethods\s*=\s*[\[(]([^\])]*)[\])]', text)
-    if not listed:
-        return None if re.search(r'\bmethods\s*=', text) else 'GET'
-    methods = {value.upper() for value in re.findall(r'''["'](\w+)["']''', listed.group(1))}
-    if re.sub(r'''["']\w+["']|[\s,]''', '', listed.group(1)):
+    opening = (text or '').find('(')
+    arguments, end = _call_arguments(text, opening) if opening >= 0 else ([], None)
+    if end is None:
         return None
+    listed = _keyword(arguments, 'methods')
+    if listed is None:
+        return 'GET'
+    literal = re.fullmatch(r'[\[(](.*)[\])]', listed, re.DOTALL)
+    if not literal or re.sub(r'''["']\w+["']|[\s,]''', '', literal.group(1)):
+        return None
+    methods = {value.upper() for value in re.findall(r'''["'](\w+)["']''', literal.group(1))}
     return next(iter(methods)) if len(methods) == 1 and methods <= HTTP_METHODS else None
+
+
+_MAX_ROUTER_DEPTH = 8
+
+
+def _fastapi_binding(text, name):
+    """Return ``(kind, arguments)`` for *name* bound to ``FastAPI()``/``APIRouter()``.
+
+    A name bound in this source to neither returns ``(None, None)``; a name
+    bound more than once, or to an unclosed call, returns ``(kind, None)``.
+    """
+    bindings = list(re.finditer(
+        rf'(?m)^[ \t]*{re.escape(name)}\s*(?::[^=\n]+)?=\s*(?:fastapi\s*\.\s*)?'
+        r'(FastAPI|APIRouter)\s*\(', text))
+    if not bindings:
+        return None, None
+    arguments, end = _call_arguments(text, bindings[0].end() - 1)
+    return bindings[0].group(1), (arguments if len(bindings) == 1 and end else None)
+
+
+def _mounted_route(text, receiver, route, depth=0):
+    """Compose FastAPI ``APIRouter`` and ``include_router`` prefixes onto *route*.
+
+    Returns ``(route, reason)``.  Receivers that are not FastAPI objects bound
+    in this source keep their route.  A router route is only resolved when its
+    own prefix and every ``include_router`` of it in this source are literal
+    and agree; a router included nowhere here has an unknown mount prefix.
+    """
+    kind, arguments = _fastapi_binding(text, receiver)
+    if kind in (None, 'FastAPI'):
+        return route, None
+    if arguments is None:
+        return None, f'{receiver} is bound more than once, so its FastAPI prefix is unknown.'
+    own = _keyword(arguments, 'prefix')
+    own = '' if own is None else _string_literal(own)
+    if own is None:
+        return None, f'The APIRouter prefix of {receiver} is not a literal string.'
+    if depth >= _MAX_ROUTER_DEPTH:
+        return None, f'The APIRouter include chain of {receiver} is too deep to resolve.'
+    mounted = set()
+    for include in re.finditer(r'([\w.]+)\s*\.\s*include_router\s*\(', text):
+        included, end = _call_arguments(text, include.end() - 1)
+        if end is None or included[:1] != [receiver]:
+            continue
+        prefix = _keyword(included, 'prefix')
+        prefix = '' if prefix is None else _string_literal(prefix)
+        if prefix is None:
+            return None, f'An include_router prefix for {receiver} is not a literal string.'
+        parent, reason = _mounted_route(text, include.group(1), prefix + own + route, depth + 1)
+        if reason:
+            return None, reason
+        mounted.add(parent)
+    if not mounted:
+        return None, (f'APIRouter {receiver} is not included in this source, '
+                      'so its mount prefix is unknown.')
+    if len(mounted) > 1:
+        return None, f'APIRouter {receiver} is included under several prefixes.'
+    return mounted.pop(), None
 
 
 def _literal_request_method(request):
@@ -132,18 +255,26 @@ def extract(source):
             if (start,end) == (unit.start,unit.end) and unit.kind in metadata.get('symbol_kinds', [unit.kind]):
                 unit.anchor_kind = metadata['anchor_kind']
                 unit.method = metadata.get('method')
+                raw_route = capture(match, metadata.get('route_var'))
+                receiver = capture(match, metadata.get('receiver_var'))
                 if metadata.get('method_var'):
                     method = capture(match,metadata['method_var'])
                     unit.method = method.upper() if method else None
                     if unit.method and unit.method not in HTTP_METHODS:
-                        unit.method = _declared_route_method(match.text)
-                unit.route = capture(match, metadata.get('route_var'))
+                        unit.method = _declared_route_method(
+                            _route_decorator(match.text, receiver, method, raw_route)
+                            if receiver and raw_route else None)
+                unit.route = raw_route
                 if unit.route and metadata.get('route_pattern'):
                     literal = re.fullmatch(metadata['route_pattern'],unit.route)
                     unit.route = literal.group(1) if literal else None
+                if unit.route is not None and receiver:
+                    unit.route, unit.route_reason = _mounted_route(
+                        source.text, receiver, unit.route)
         if unit.anchor_kind:
             unit.anchor_resolution = 'unresolved'
-            unit.anchor_reason = 'Entry-point registration and effective identity have not been fully resolved.'
+            unit.anchor_reason = (getattr(unit, 'route_reason', None) or
+                'Entry-point registration and effective identity have not been fully resolved.')
             if unit.anchor_kind == 'http' and unit.method and unit.route:
                 unit.anchor_resolution = 'resolved'
                 unit.anchor_reason = None
@@ -511,7 +642,8 @@ def calls(unit):
     return result
 
 
-def candidates(unit, receiver, name, available, position=None):
+def lexical_candidates(unit, receiver, name, available):
+    """Candidates proven by lexical scope or a declared receiver type."""
     # Only lexical calls are proven here. Receiver/type/import binding is a
     # separate capability; a globally unique name does not prove a call target.
     if receiver:
@@ -541,6 +673,13 @@ def candidates(unit, receiver, name, available, position=None):
         candidates = [c for c in available if c.source.path == unit.source.path and c.owner == owner]
         if candidates:
             return candidates
+    return []
+
+
+def candidates(unit, receiver, name, available, position=None):
+    lexical = lexical_candidates(unit, receiver, name, available)
+    if lexical or receiver:
+        return lexical
     imported = getattr(unit.source, 'resolved_call_targets', {}).get(
         (unit.start + position, name)) if position is not None else None
     if imported:

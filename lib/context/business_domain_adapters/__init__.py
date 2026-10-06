@@ -48,9 +48,9 @@ def enricher_descriptors(
     )
 
 
-def _load_installed(module_name: str):
+def load_installed(module_name: str):
     if not module_name or not isinstance(module_name, str):
-        return None
+        raise ValueError('Installed module name is required')
     installed = Path(__file__).parent.resolve()
     module = (installed/(module_name+'.py')).resolve()
     if not module.is_relative_to(installed) or not module.is_file():
@@ -58,9 +58,36 @@ def _load_installed(module_name: str):
     return importlib.import_module('.' + module_name, __name__)
 
 
+def descriptor_for_route(source: Source, route) -> list[dict]:
+    """Candidate installed owners for one routed source; selection is the caller's.
+
+    An explicit route names its owner. Otherwise the language candidates are
+    matched against installed adapters, excluding any adapter that requires an
+    explicit pre-decode route, so fallback matching never reaches a decoder.
+    """
+    if route.disposition in {'ignore', 'reference_only'}:
+        return []
+    if route.expected_owner:
+        descriptor = (registry.supporting_consumer_descriptor(route.expected_owner)
+            if route.disposition == 'supporting'
+            else registry.source_adapter_descriptor(route.expected_owner))
+        return [dict(descriptor)] if descriptor else []
+    supplied_languages = route.classification.language_candidate_ids or (
+        (route.classification.language,) if route.classification.language else ())
+    matches = {}
+    detection_text = source.text + '\nSPEED_PATH:' + source.path
+    for language in supplied_languages:
+        for descriptor in registry.source_adapters(language, detection_text,
+                kind='adapter'):
+            if descriptor.get('decoder'):
+                continue
+            matches[descriptor['id']] = descriptor
+    return [matches[key] for key in sorted(matches)]
+
+
 def enrichers_for(path: str | Source, evidence: dict) -> list:
     """Load only evidence-selected enrichers from the installed package."""
-    return [_load_installed(item['module']) for item in enricher_descriptors(path, evidence)
+    return [load_installed(item['module']) for item in enricher_descriptors(path, evidence)
             if item.get('module')]
 
 
@@ -68,4 +95,4 @@ def adapter_for(path: str | Source):
     entry = descriptor(path)
     if not entry or not entry['adapter']:
         return None
-    return _load_installed(entry['adapter'])
+    return load_installed(entry['adapter'])

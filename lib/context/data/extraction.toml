@@ -427,10 +427,17 @@ contract_version = 1
 normalized_output_version = 1
 conformance = "semantic"
 languages = ["java"]
-diagnostic_codes = ["SPRING_ENDPOINT_AMBIGUOUS", "SPRING_CONTRACT_DECLARATION_UNAVAILABLE"]
-[source_adapters.spring_semantic.evidence]
+diagnostic_codes = ["SPRING_ENDPOINT_AMBIGUOUS", "SPRING_CONTRACT_DECLARATION_UNAVAILABLE", "SPRING_PROPERTY_CONDITION_UNAVAILABLE"]
+[[source_adapters.spring_semantic.evidence_any]]
 imports_any = ['^org\.springframework\.web\.bind\.annotation(?:\.|$)']
 annotations_any = ['^(?:RestController|Controller|RequestMapping|GetMapping|PostMapping|PutMapping|PatchMapping|DeleteMapping)$']
+
+[[source_adapters.spring_semantic.evidence_any]]
+imports_any = ['^org\.springframework\.boot\.autoconfigure\.condition(?:\.ConditionalOnProperty)?$']
+annotations_any = ['^ConditionalOnProperty$']
+
+[[source_adapters.spring_semantic.evidence_any]]
+annotations_any = ['^org\.springframework\.boot\.autoconfigure\.condition\.ConditionalOnProperty$']
 [source_adapters.spring_semantic.capabilities]
 parsing = "unsupported"
 declaration_extraction = "unsupported"
@@ -460,7 +467,7 @@ contract_version = 1
 normalized_output_version = 1
 conformance = "semantic"
 languages = ["java"]
-diagnostic_codes = ["SPRING_DATA_RUNTIME_IMPLEMENTATION"]
+diagnostic_codes = ["SPRING_DATA_RUNTIME_IMPLEMENTATION", "SPRING_SQL_PARSER_UNAVAILABLE"]
 [source_adapters.spring_data_semantic.evidence]
 imports_any = ['^org\.springframework\.data(?:\.|$)']
 [source_adapters.spring_data_semantic.capabilities]
@@ -534,7 +541,7 @@ detect_any = [
   '(?i)\b\w+(?:\.\w+)?%(?:TYPE|ROWTYPE)\b',
 ]
 exclude_any = ['(?i)\bLANGUAGE\s+plpgsql\b']
-diagnostic_codes = ["PARTIAL_DIALECT_PARSER", "SQL_MATERIAL_PARSE_ERROR", "SQL_CALL_UNRESOLVED", "SQL_CALL_AMBIGUOUS", "SQL_DYNAMIC_CALL", "SQL_EXTERNAL_PACKAGE_CALL", "SQL_DATA_TARGET_UNRESOLVED", "SQL_OPERATION_PARSE_GAP", "SQL_CONTROL_FLOW_UNRESOLVED", "SQL_CHANGED_VALUES_UNRESOLVED", "SQL_TRANSACTION_SCOPE_UNRESOLVED", "SQL_COMMIT_NOT_ESTABLISHED", "SQL_COMPLETION_UNRESOLVED"]
+diagnostic_codes = ["PARTIAL_DIALECT_PARSER", "SQL_MATERIAL_PARSE_ERROR", "SQL_Q_LITERAL_NORMALIZED", "SQL_CALL_UNRESOLVED", "SQL_CALL_AMBIGUOUS", "SQL_DYNAMIC_CALL", "SQL_EXTERNAL_PACKAGE_CALL", "SQL_DATA_TARGET_UNRESOLVED", "SQL_OPERATION_PARSE_GAP", "SQL_CONTROL_FLOW_UNRESOLVED", "SQL_CHANGED_VALUES_UNRESOLVED", "SQL_TRANSACTION_SCOPE_UNRESOLVED", "SQL_COMMIT_NOT_ESTABLISHED", "SQL_COMPLETION_UNRESOLVED"]
 [source_adapters.oracle_plsql.capabilities]
 parsing = "partial"
 declaration_extraction = "partial"
@@ -570,7 +577,7 @@ detect_any = [
   '(?i)\bLANGUAGE\s+plpgsql\b',
   '(?im)^SPEED_PATH:.*/postgresql/[^/]+\.sql$',
 ]
-diagnostic_codes = ["PARTIAL_DIALECT_PARSER", "SQL_MATERIAL_PARSE_ERROR", "SQL_CALL_UNRESOLVED", "SQL_CALL_AMBIGUOUS", "SQL_DYNAMIC_CALL", "SQL_EXTERNAL_PACKAGE_CALL", "SQL_DATA_TARGET_UNRESOLVED", "SQL_OPERATION_PARSE_GAP", "SQL_CONTROL_FLOW_UNRESOLVED", "SQL_CHANGED_VALUES_UNRESOLVED", "SQL_TRANSACTION_SCOPE_UNRESOLVED", "SQL_COMMIT_NOT_ESTABLISHED", "SQL_COMPLETION_UNRESOLVED"]
+diagnostic_codes = ["PARTIAL_DIALECT_PARSER", "SQL_MATERIAL_PARSE_ERROR", "SQL_Q_LITERAL_NORMALIZED", "SQL_CALL_UNRESOLVED", "SQL_CALL_AMBIGUOUS", "SQL_DYNAMIC_CALL", "SQL_EXTERNAL_PACKAGE_CALL", "SQL_DATA_TARGET_UNRESOLVED", "SQL_OPERATION_PARSE_GAP", "SQL_CONTROL_FLOW_UNRESOLVED", "SQL_CHANGED_VALUES_UNRESOLVED", "SQL_TRANSACTION_SCOPE_UNRESOLVED", "SQL_COMMIT_NOT_ESTABLISHED", "SQL_COMPLETION_UNRESOLVED"]
 [source_adapters.postgresql.capabilities]
 parsing = "partial"
 declaration_extraction = "partial"
@@ -606,7 +613,7 @@ detect_any = [
   '(?i)\bAUTO_INCREMENT\b|\bENGINE\s*=',
   '(?im)^SPEED_PATH:.*/mysql/[^/]+\.sql$',
 ]
-diagnostic_codes = ["PARTIAL_DIALECT_PARSER", "SQL_MATERIAL_PARSE_ERROR", "SQL_CALL_UNRESOLVED", "SQL_CALL_AMBIGUOUS", "SQL_DYNAMIC_CALL", "SQL_EXTERNAL_PACKAGE_CALL", "SQL_DATA_TARGET_UNRESOLVED", "SQL_OPERATION_PARSE_GAP", "SQL_CONTROL_FLOW_UNRESOLVED", "SQL_CHANGED_VALUES_UNRESOLVED", "SQL_TRANSACTION_SCOPE_UNRESOLVED", "SQL_COMMIT_NOT_ESTABLISHED", "SQL_COMPLETION_UNRESOLVED"]
+diagnostic_codes = ["PARTIAL_DIALECT_PARSER", "SQL_MATERIAL_PARSE_ERROR", "SQL_Q_LITERAL_NORMALIZED", "SQL_CALL_UNRESOLVED", "SQL_CALL_AMBIGUOUS", "SQL_DYNAMIC_CALL", "SQL_EXTERNAL_PACKAGE_CALL", "SQL_DATA_TARGET_UNRESOLVED", "SQL_OPERATION_PARSE_GAP", "SQL_CONTROL_FLOW_UNRESOLVED", "SQL_CHANGED_VALUES_UNRESOLVED", "SQL_TRANSACTION_SCOPE_UNRESOLVED", "SQL_COMMIT_NOT_ESTABLISHED", "SQL_COMPLETION_UNRESOLVED"]
 [source_adapters.mysql.capabilities]
 parsing = "partial"
 declaration_extraction = "partial"
@@ -639,7 +646,7 @@ dialects = ["hsqldb"]
 supported_versions = ["HSQLDB 2"]
 recognized_extensions = [".sql"]
 detect_any = ['(?im)^SPEED_PATH:.*/hsqldb/[^/]+\.sql$']
-diagnostic_codes = ["PARTIAL_DIALECT_PARSER", "SQL_MATERIAL_PARSE_ERROR", "SQL_CALL_UNRESOLVED", "SQL_CALL_AMBIGUOUS", "SQL_DYNAMIC_CALL", "SQL_EXTERNAL_PACKAGE_CALL", "SQL_DATA_TARGET_UNRESOLVED", "SQL_OPERATION_PARSE_GAP", "SQL_CONTROL_FLOW_UNRESOLVED", "SQL_CHANGED_VALUES_UNRESOLVED", "SQL_TRANSACTION_SCOPE_UNRESOLVED", "SQL_COMMIT_NOT_ESTABLISHED", "SQL_COMPLETION_UNRESOLVED"]
+diagnostic_codes = ["PARTIAL_DIALECT_PARSER", "SQL_MATERIAL_PARSE_ERROR", "SQL_Q_LITERAL_NORMALIZED", "SQL_CALL_UNRESOLVED", "SQL_CALL_AMBIGUOUS", "SQL_DYNAMIC_CALL", "SQL_EXTERNAL_PACKAGE_CALL", "SQL_DATA_TARGET_UNRESOLVED", "SQL_OPERATION_PARSE_GAP", "SQL_CONTROL_FLOW_UNRESOLVED", "SQL_CHANGED_VALUES_UNRESOLVED", "SQL_TRANSACTION_SCOPE_UNRESOLVED", "SQL_COMMIT_NOT_ESTABLISHED", "SQL_COMPLETION_UNRESOLVED"]
 [source_adapters.hsqldb.capabilities]
 parsing = "partial"
 declaration_extraction = "partial"
@@ -683,3 +690,142 @@ rules = "unsupported"
 control_flow = "unsupported"
 outputs = "unsupported"
 runtime_selection = "unsupported"
+
+# ── Source ownership ──
+# A duplicate extension gets an owner only when one is named here; every other
+# duplicate stays ambiguous rather than following catalog order.
+[extension_owners]
+properties = "properties"
+
+[properties]
+category = "config"
+extraction = "none"
+
+# Path classifiers override a catalog category for one extension.
+[path_classifiers.svg_asset]
+extensions = ["svg"]
+category = "asset"
+reason = "visual_asset"
+
+# Java Properties. Spring application configuration and message bundles are
+# decoded and parsed here; repository code is never executed.
+[source_adapters.java_properties]
+kind = "adapter"
+module = "java_properties"
+decoder = "decode"
+version = "1"
+contract_version = 1
+normalized_output_version = 1
+conformance = "declaration"
+languages = ["properties"]
+detect_any = ['(?:^|\n)SPEED_PATH:(?:.*/)?src/(?:main|test)/resources/(?:application(?:-[^/]+)?|(?:.*/)?messages(?:_[^/]+)?)\.properties\Z']
+diagnostic_codes = ["JAVA_PROPERTIES_SYNTAX_INVALID"]
+
+[source_adapters.java_properties.capabilities]
+parsing = "supported"
+declaration_extraction = "supported"
+entrypoint_detection = "unsupported"
+call_classification = "unsupported"
+callable_resolution = "unsupported"
+overload_resolution = "unsupported"
+type_resolution = "unsupported"
+relationship_resolution = "unsupported"
+framework_enrichment = "unsupported"
+bindings = "supported"
+data_access = "unsupported"
+rules = "unsupported"
+control_flow = "unsupported"
+outputs = "unsupported"
+runtime_selection = "unsupported"
+
+# Supporting inputs are consumed by named owners and never become semantic
+# sources of their own.
+[supporting_consumers.package_manifest]
+module = "package_manifest"
+function = "consume"
+version = "1"
+capabilities = ["runtime_selection"]
+capability_status = "partial"
+diagnostic_codes = ["PACKAGE_JSON_INVALID"]
+
+[supporting_consumers.typescript_module_resolution]
+module = "typescript_module_resolution"
+function = "consume"
+version = "1"
+capabilities = ["type_resolution"]
+capability_status = "partial"
+diagnostic_codes = ["TYPESCRIPT_MODULE_RESOLUTION_INVALID"]
+
+# Source dispositions. Patterns fully match repository-relative POSIX paths.
+[source_dispositions.application_properties]
+path_any = ['(?:.*/)?src/(?:main|test)/resources/application(?:-[^/]+)?\.properties']
+language = "properties"
+disposition = "analyze"
+owner = "java_properties"
+required_capabilities = ["parsing", "declaration_extraction", "bindings"]
+
+[source_dispositions.message_properties]
+path_any = ['(?:.*/)?src/(?:main|test)/resources/(?:.*/)?messages(?:_[^/]+)?\.properties']
+language = "properties"
+disposition = "analyze"
+owner = "java_properties"
+required_capabilities = ["parsing", "declaration_extraction", "bindings"]
+
+[source_dispositions.tool_properties]
+path_any = ['(?:.*/)?\.mvn/wrapper/maven-wrapper\.properties', '(?:.*/)?sonar-project\.properties']
+language = "properties"
+disposition = "ignore"
+owner = "tool_configuration"
+
+[source_dispositions.package_manifest]
+path_any = ['(?:.*/)?package\.json']
+language = "json"
+disposition = "supporting"
+owner = "package_manifest"
+required_capabilities = ["runtime_selection"]
+
+[source_dispositions.typescript_module_resolution]
+path_any = ['(?:.*/)?(?:tsconfig|typings)\.json']
+language = "json"
+disposition = "supporting"
+owner = "typescript_module_resolution"
+required_capabilities = ["type_resolution"]
+
+[source_dispositions.developer_tool_configuration]
+path_any = ['(?:.*/)?\.vscode/.*', '(?:.*/)?tslint\.json']
+disposition = "ignore"
+owner = "developer_tool_configuration"
+
+[source_dispositions.stylesheet]
+path_any = ['.*\.less']
+language = "less"
+disposition = "ignore"
+owner = "stylesheet"
+
+[source_dispositions.visual_asset]
+category = "asset"
+disposition = "ignore"
+owner = "asset"
+
+[source_dispositions.ide_launch_configuration]
+path_any = ['.*\.launch']
+language = "xml"
+disposition = "reference_only"
+owner = "ide_launch_configuration"
+
+[source_dispositions.logging_configuration]
+path_any = ['(?:.*/)?logback\.xml']
+language = "xml"
+disposition = "reference_only"
+owner = "logging_configuration"
+
+[source_dispositions.ci_configuration]
+path_any = ['\.github/workflows/.*\.ya?ml', '\.travis\.yml']
+disposition = "ignore"
+owner = "ci_configuration"
+
+[source_dispositions.speed_configuration]
+path_any = ['speed\.toml']
+language = "toml"
+disposition = "ignore"
+owner = "speed_configuration"

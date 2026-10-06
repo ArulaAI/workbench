@@ -3,13 +3,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from lib.context import business_domain_extract as core
 from lib.context.business_domain_adapters.base import Unit, declare_operation_observation
 from lib.context.business_domain_extract import Extractor
 from lib.context.business_domain_schema import (
     DEFAULTS, DomainError, activity_closure, information_use_closure, record,
     validate_references,
 )
+from tests.business_domains.adapter_fixture import install_fixture_adapter
 
 
 def extract_operation(tmp_path, monkeypatch, operation):
@@ -33,10 +33,9 @@ def extract_operation(tmp_path, monkeypatch, operation):
         bindings=lambda unit: [], resources=lambda unit: [], calls=lambda unit: [],
         observations=lambda unit: [], operations=lambda unit: [normalized(unit)],
     )
-    monkeypatch.setattr(core, 'descriptor', lambda path: {'language':'fixture','source_kind':'source',
+    install_fixture_adapter(monkeypatch, adapter, {'language':'fixture','source_kind':'source',
         'capability': {'id':'fixture', 'version':'1', 'capabilities': {
             'data_access':'supported', 'outputs':'supported'}}})
-    monkeypatch.setattr(core, 'adapter_for', lambda source: adapter)
     (tmp_path/'flow.opaque').write_text('operation()')
     facts, _ = Extractor(tmp_path, DEFAULTS).extract()
     validate_references(facts)

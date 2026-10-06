@@ -7,11 +7,13 @@ import pytest
 from lib.context.business_domain_adapters.base import SemanticResult, Source
 from lib.context.language_registry import (
     LanguageRegistry,
+    RegistryConfigurationError,
     SOURCE_ADAPTER_CAPABILITIES,
     SOURCE_ADAPTER_CONTRACT_VERSION,
     SOURCE_ADAPTER_OUTPUT_VERSION,
 )
 from lib.context.treesitter_extract import _parse_ast_grep_matches, normalize_rule_outputs
+from tests.business_domains.adapter_fixture import install_fixture_adapter
 
 
 def test_installed_adapters_declare_the_complete_capability_contract():
@@ -79,9 +81,12 @@ def test_incomplete_descriptor_is_rejected_without_losing_languages(tmp_path):
 
     registry = LanguageRegistry(data)
 
-    assert registry.classify(".py") == ("source", "python")
-    assert registry._source_adapters == {}
-    assert registry.source_adapter_error == "ValueError"
+    # An invalid descriptor publishes nothing; the normalized cause is kept
+    # for the attempt status instead of degrading to an empty adapter set.
+    assert str(registry.load_error) == "registry_value_invalid"
+    assert registry.source_adapter_error == "registry_value_invalid"
+    with pytest.raises(RegistryConfigurationError):
+        registry.classify(".py")
 
 
 def _fixture_capabilities(status: str = 'supported') -> str:
@@ -99,7 +104,7 @@ def test_new_language_adapter_is_selected_from_installed_descriptor_without_core
         '[source_adapters.fixture]\nmodule="documents"\nversion="1.2.3"\n'
         'contract_version=1\nnormalized_output_version=1\nkind="adapter"\n'
         'conformance="fixture"\nlanguages=["fixture_lang"]\n'
-        '[source_adapters.fixture.evidence]\nsource_any=["openapi"]\n'
+        'detect_any=["openapi"]\n'
         '[source_adapters.fixture.capabilities]\n' + _fixture_capabilities('partial')
     )
 
@@ -111,9 +116,11 @@ def test_new_language_adapter_is_selected_from_installed_descriptor_without_core
     assert selected[0]['module'] == 'documents'
 
     import lib.context.business_domain_adapters as adapters
+    import lib.context.business_domain_extract as core
     from lib.context.business_domain_extract import Extractor
     from lib.context.business_domain_schema import DEFAULTS
     monkeypatch.setattr(adapters, 'registry', registry)
+    monkeypatch.setattr(core, 'registry', registry)
     repository = tmp_path / 'repository'
     repository.mkdir()
     (repository / 'contract.fx').write_text(
@@ -128,7 +135,7 @@ def test_new_language_adapter_is_selected_from_installed_descriptor_without_core
 def test_framework_enricher_activates_only_from_declared_evidence(monkeypatch):
     from lib.context.business_domain_adapters import enrichers_for
     from lib.context.business_domain_adapters import rules
-    from lib.context.language_registry import registry
+    from lib.context.language_registry import _evidence_clauses, registry
 
     descriptor = {
         'kind':'enricher', 'module':'rules', 'version':'1', 'contract_version':1,
@@ -141,6 +148,7 @@ def test_framework_enricher_activates_only_from_declared_evidence(monkeypatch):
         },
     }
     descriptor['capabilities']['framework_enrichment'] = 'supported'
+    descriptor['_evidence_clauses'] = _evidence_clauses(descriptor)
     monkeypatch.setattr(registry, '_source_adapters', {
         **registry._source_adapters, 'fixture_framework':descriptor,
     })
@@ -272,8 +280,7 @@ def test_adapter_provenance_and_exact_diagnostic_and_call_evidence(tmp_path, mon
     selected = {'language':'fixture', 'adapter':'fixture_parser',
         'capability':capability, 'candidates':['fixture_parser'],
         'registry_error':None, 'source_kind':'source'}
-    monkeypatch.setattr(core, 'descriptor', lambda path: selected)
-    monkeypatch.setattr(core, 'adapter_for', lambda source: adapter)
+    install_fixture_adapter(monkeypatch, adapter, selected)
     path = tmp_path / 'source.fixture'
     path.write_text(text)
 
@@ -377,8 +384,7 @@ def test_failed_adapter_reports_only_unsupported_capabilities(tmp_path, monkeypa
         'source_kind': 'source',
     }
     adapter = SimpleNamespace(extract=lambda source: (_ for _ in ()).throw(RuntimeError()))
-    monkeypatch.setattr(core, 'descriptor', lambda path: selected)
-    monkeypatch.setattr(core, 'adapter_for', lambda source: adapter)
+    install_fixture_adapter(monkeypatch, adapter, selected)
     (tmp_path / 'source.fixture').write_text('fixture source')
 
     facts, _ = core.Extractor(tmp_path, DEFAULTS).extract()

@@ -1109,3 +1109,328 @@ def test_spring_evidence_does_not_change_selection_edge_identity(tmp_path):
 
     plain, explained = selection_ids(tmp_path / "plain", False), selection_ids(tmp_path / "explained", True)
     assert len(plain) == 2 and plain == explained
+
+
+# Inherited methods: a call resolves against the receiver type and, nearest
+# first, the project supertypes it inherits from.
+
+def _call_targets(facts, caller):
+    return sorted((right, edge["resolution"]) for left, right, edge in _edge_names(facts, "calls")
+                  if caller in left)
+
+
+ENTITIES = {
+    "src/model/BaseEntity.java": """
+        package model;
+        public class BaseEntity {
+          public Integer getId() { return 1; }
+          public String describe() { return "base"; }
+          public String find(String value) { return value; }
+        }
+    """,
+    "src/model/Person.java": """
+        package model;
+        public class Person extends BaseEntity {
+          public String getFirstName() { return "Ann"; }
+          @Override public String describe() { return "person"; }
+        }
+    """,
+    "src/model/Owner.java": """
+        package model;
+        public class Owner extends Person {
+          public String find(int value) { return String.valueOf(value); }
+        }
+    """,
+}
+
+
+def test_inherited_superclass_methods_resolve_through_the_chain(tmp_path):
+    facts = _extract(tmp_path, {**ENTITIES, "src/app/Use.java": """
+        package app;
+        import model.Owner;
+        public class Use {
+          public Object id(Owner owner) { return owner.getId(); }
+          public Object first(Owner owner) { return owner.getFirstName(); }
+        }
+    """})
+    assert _call_targets(facts, "Use.id") == [("src/model/BaseEntity.java::BaseEntity.getId()", "resolved")]
+    assert _call_targets(facts, "Use.first") == [("src/model/Person.java::Person.getFirstName()", "resolved")]
+
+
+def test_nearest_override_wins_and_overloads_span_the_hierarchy(tmp_path):
+    facts = _extract(tmp_path, {**ENTITIES, "src/app/Use.java": """
+        package app;
+        import model.Owner;
+        public class Use {
+          public Object text(Owner owner) { return owner.describe(); }
+          public Object byNumber(Owner owner) { return owner.find(42); }
+          public Object byName(Owner owner) { return owner.find("x"); }
+        }
+    """})
+    assert _call_targets(facts, "Use.text") == [("src/model/Person.java::Person.describe()", "resolved")]
+    assert _call_targets(facts, "Use.byNumber") == [("src/model/Owner.java::Owner.find(int)", "resolved")]
+    assert _call_targets(facts, "Use.byName") == [("src/model/BaseEntity.java::BaseEntity.find(String)", "resolved")]
+
+
+def test_interface_methods_resolve_through_extended_interfaces_and_defaults(tmp_path):
+    facts = _extract(tmp_path, {
+        "src/app/Base.java": "package app; public interface Base { String ping(); }",
+        "src/app/Sub.java": "package app; public interface Sub extends Base {}",
+        "src/app/Greeter.java": "package app; public interface Greeter { default String hi() { return \"hi\"; } }",
+        "src/app/Polite.java": "package app; public class Polite implements Greeter {}",
+        "src/app/Use.java": """
+            package app;
+            public class Use {
+              public String ping(Sub sub) { return sub.ping(); }
+              public String hi(Polite polite) { return polite.hi(); }
+            }
+        """,
+    })
+    assert _call_targets(facts, "Use.ping") == [("src/app/Base.java::Base.ping()", "resolved")]
+    assert _call_targets(facts, "Use.hi") == [("src/app/Greeter.java::Greeter.hi()", "resolved")]
+
+
+def test_methods_inherited_from_a_generic_supertype_resolve(tmp_path):
+    facts = _extract(tmp_path, {
+        "src/app/Item.java": "package app; public class Item {}",
+        "src/app/Store.java": "package app; public class Store<T> { public void save(T value) {} }",
+        "src/app/ItemStore.java": "package app; public class ItemStore extends Store<Item> {}",
+        "src/app/Use.java": """
+            package app;
+            public class Use {
+              public void keep(ItemStore store, Item item) { store.save(item); }
+            }
+        """,
+    })
+    assert _call_targets(facts, "Use.keep") == [("src/app/Store.java::Store.save(T)", "resolved")]
+
+
+def test_a_method_no_project_type_declares_stays_unresolved(tmp_path):
+    facts = _extract(tmp_path, {**ENTITIES,
+        "src/app/Loop.java": "package app; public class Loop extends Knot {}",
+        "src/app/Knot.java": "package app; public class Knot extends Loop {}",
+        "src/app/Use.java": """
+            package app;
+            import model.Owner;
+            public class Use {
+              public Object missing(Owner owner) { return owner.missing(); }
+              public Object cycle(Loop loop) { return loop.spin(); }
+            }
+        """})
+    assert all(resolution == "unresolved" for _, resolution in
+               _call_targets(facts, "Use.missing") + _call_targets(facts, "Use.cycle"))
+
+
+def test_annotated_superclass_is_recognised_and_its_methods_inherited(tmp_path):
+    # PetClinic's shape: @MappedSuperclass ends in "class", which once named the
+    # base class after the next word ("public"), leaving it out of the hierarchy.
+    facts = _extract(tmp_path, {
+        "src/model/BaseEntity.java": """
+            package model;
+            @MappedSuperclass
+            public class BaseEntity {
+              public Integer getId() { return 1; }
+            }
+        """,
+        "src/model/Pet.java": "package model; public class Pet extends BaseEntity {}",
+        "src/app/Use.java": """
+            package app;
+            import model.Pet;
+            public class Use {
+              public Object id(Pet pet) { return pet.getId(); }
+            }
+        """,
+    })
+    assert ("src/model/Pet.java::Pet", "src/model/BaseEntity.java::BaseEntity") in [
+        (left, right) for left, right, edge in _edge_names(facts, "inherits")
+        if edge["resolution"] == "resolved"]
+    assert _call_targets(facts, "Use.id") == [("src/model/BaseEntity.java::BaseEntity.getId()", "resolved")]
+
+
+# ── F1: Spring property conditions link to repository declarations ──────
+
+import json as _json
+
+_CONDITION_IMPORT = 'import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;\n'
+_MAIN_PROPERTIES = 'src/main/resources/application.properties'
+
+
+def _configuration_class(annotation, imports=_CONDITION_IMPORT, name='SecurityConfig',
+                         path='src/main/java/demo'):
+    return {f'{path}/{name}.java': f'package demo;\n{imports}{annotation}\npublic class {name} {{}}\n'}
+
+
+def _conditions(facts):
+    return sorted((item for item in facts['rule_observations'].values()
+                   if item['source_location_kind'] == 'configuration'),
+                  key=lambda item: item['native_expression'])
+
+
+def _linked(facts, observation):
+    return sorted((facts['bindings'][bid]['expression'],
+                   facts['bindings'][bid]['scope']['environment'])
+                  for bid in observation['input_binding_ids'])
+
+
+def test_production_conditions_link_only_to_the_main_unprofiled_declaration(tmp_path):
+    facts = _extract(tmp_path, {
+        _MAIN_PROPERTIES: 'petclinic.security.enable=false\n',
+        'src/main/resources/application-prod.properties': 'petclinic.security.enable=true\n',
+        'src/test/resources/application.properties': 'petclinic.security.enable=true\n',
+        'src/main/resources/messages/messages.properties': 'petclinic.security.enable=x\n',
+        **_configuration_class(
+            '@ConditionalOnProperty(name = "petclinic.security.enable", havingValue = "true")',
+            name='BasicAuthenticationConfig'),
+        **_configuration_class(
+            '@ConditionalOnProperty(name = "petclinic.security.enable", havingValue = "false")',
+            name='DisableSecurityConfig'),
+    })
+    true_condition, false_condition = _conditions(facts)[::-1]
+    assert false_condition['native_expression'] == 'property["petclinic.security.enable"] == "false"'
+    assert true_condition['native_expression'] == 'property["petclinic.security.enable"] == "true"'
+    for observation in (true_condition, false_condition):
+        assert _linked(facts, observation) == [('false', 'main')]
+        assert observation['resolution'] == 'unresolved'
+        assert observation['scope']['environment'] == 'main'
+        assert 'effective deployment precedence was not evaluated' in observation['reason']
+        for evidence_id in observation['evidence_ids']:
+            assert evidence_id in facts['evidence']
+    assert true_condition['id'] != false_condition['id']
+
+
+def test_test_consumers_keep_main_and_test_candidates(tmp_path):
+    facts = _extract(tmp_path, {
+        _MAIN_PROPERTIES: 'feature.on=false\n',
+        'src/test/resources/application.properties': 'feature.on=true\n',
+        **_configuration_class('@ConditionalOnProperty("feature.on")',
+                               path='src/test/java/demo'),
+    })
+    [observation] = _conditions(facts)
+    assert _linked(facts, observation) == [('false', 'main'), ('true', 'test')]
+    assert observation['native_expression'] == 'property["feature.on"] is present and not false'
+
+
+@pytest.mark.parametrize('annotation, expressions', [
+    ('@ConditionalOnProperty(prefix = "app", name = {"a", "b"}, havingValue = "on", '
+     'matchIfMissing = true)',
+     ['property["app.a"] == "on" or missing', 'property["app.b"] == "on" or missing']),
+    ('@ConditionalOnProperty(prefix = "app.", value = "a")',
+     ['property["app.a"] is present and not false']),
+    ('@ConditionalOnProperty(name = "caf\\u00e9")',
+     ['property["café"] is present and not false']),
+])
+def test_condition_normalization(tmp_path, annotation, expressions):
+    facts = _extract(tmp_path, {_MAIN_PROPERTIES: 'app.a=1\napp.b=2\ncafé=3\n',
+                                **_configuration_class(annotation)})
+    observations = _conditions(facts)
+    assert [item['native_expression'] for item in observations] == expressions
+    assert all(item['input_binding_ids'] for item in observations)
+
+
+@pytest.mark.parametrize('annotation, cause', [
+    ('@ConditionalOnProperty(name = KEY)', 'ordinary_string_literal_required'),
+    ('@ConditionalOnProperty(name = "a" + "b")', 'unescaped_quote'),
+    ('@ConditionalOnProperty(name = "a", value = "b")', 'exactly_one_of_name_or_value_is_required'),
+    ('@ConditionalOnProperty(havingValue = "x")', 'exactly_one_of_name_or_value_is_required'),
+    ('@ConditionalOnProperty(name = "a", matchIfMissing = FLAG)',
+     'matchIfMissing_must_be_boolean_literal'),
+    ('@ConditionalOnProperty(name = "a", unknown = "b")', 'unsupported_conditional_property_argument'),
+])
+def test_dynamic_or_invalid_conditions_have_evidenced_diagnostics(tmp_path, annotation, cause):
+    facts = _extract(tmp_path, {_MAIN_PROPERTIES: 'a=1\n', **_configuration_class(annotation)})
+    assert not _conditions(facts)
+    [warning] = [w for w in facts['warnings']
+                 if w['code'] == 'SPRING_PROPERTY_CONDITION_UNAVAILABLE']
+    assert warning['message'] == cause and warning['evidence_ids']
+
+
+def test_condition_without_a_matching_declaration_is_kept_and_diagnosed(tmp_path):
+    facts = _extract(tmp_path, _configuration_class('@ConditionalOnProperty("missing.key")'))
+    [observation] = _conditions(facts)
+    assert observation['input_binding_ids'] == []
+    assert any(w['message'] == 'matching_repository_declaration_unavailable'
+               for w in facts['warnings'])
+
+
+def test_profiled_and_message_declarations_never_link(tmp_path):
+    facts = _extract(tmp_path, {
+        'src/main/resources/application-prod.properties': 'k=1\n',
+        'src/main/resources/messages.properties': 'k=2\n',
+        **_configuration_class('@ConditionalOnProperty("k")'),
+    })
+    [observation] = _conditions(facts)
+    assert observation['input_binding_ids'] == []
+
+
+@pytest.mark.parametrize('annotation, imports, active', [
+    ('@ConditionalOnProperty("k")', _CONDITION_IMPORT, True),
+    ('@ConditionalOnProperty("k")',
+     'import org.springframework.boot.autoconfigure.condition.*;\n', True),
+    ('@org.springframework.boot.autoconfigure.condition.ConditionalOnProperty("k")', '', True),
+    ('@ConditionalOnProperty("k")', 'import other.ConditionalOnProperty;\n', False),
+    ('@ConditionalOnProperty("k")', '', False),
+])
+def test_spring_activation_requires_exact_evidence(tmp_path, annotation, imports, active):
+    facts = _extract(tmp_path, {_MAIN_PROPERTIES: 'k=1\n',
+                                **_configuration_class(annotation, imports)})
+    assert bool(_conditions(facts)) is active
+
+
+def test_sensitive_condition_values_never_persist(tmp_path):
+    facts = _extract(tmp_path, {
+        _MAIN_PROPERTIES: 'db.password=alpha beta\n',
+        **_configuration_class('@ConditionalOnProperty(name = "db.password", '
+                               'havingValue = "alpha beta")'),
+        **_configuration_class('@ConditionalOnProperty(name = KEY, havingValue = "gamma delta")',
+                               name='Dynamic'),
+        **_configuration_class('@ConditionalOnProperty(prefix = PREFIX, name = "db.password", '
+                               'havingValue = "epsilon zeta")', name='Prefixed'),
+    })
+    [observation] = _conditions(facts)
+    assert observation['native_expression'] == '[REDACTED]'
+    snapshots = ''.join(path.read_text() for path in
+        (tmp_path / '.speed/context/business-domain-snapshots').glob('*.json'))
+    persisted = _json.dumps(facts) + snapshots
+    for secret in ('alpha beta', 'gamma delta', 'epsilon zeta'):
+        assert secret not in persisted
+
+
+def test_observation_binding_projection_is_all_or_nothing(tmp_path, monkeypatch):
+    from lib.context.business_domain_schema import DomainError
+    original = java_semantic.observations
+
+    def partial(unit):
+        return [{**item, 'binding_name': item.get('binding_name', 'x')}
+                for item in original(unit)
+                if item.get('source_location_kind') != 'configuration'] + [
+            {'span': (0, 1), 'source_location_kind': 'configuration',
+             'native_expression': 'x', 'binding_name': 'x'}]
+    monkeypatch.setattr(java_semantic, 'observations', partial)
+    with pytest.raises(DomainError, match='observation_binding_projection_incomplete'):
+        _extract(tmp_path, _configuration_class('@Deprecated'))
+
+
+@pytest.mark.parametrize('token, expected', [
+    ('"plain"', 'plain'),
+    ('"caf\\u00e9"', 'café'),
+    ('"\\uuuu0041"', 'A'),
+    ('"a\\u0022b"', None),
+    ('"\\u005c\\u005c"', '\\'),
+    ('"\\t\\b\\n\\f\\r\\s\\"\\\'\\\\"', '\t\b\n\f\r "\'\\'),
+    ('"\\0\\101\\477\\8"', None),
+    ('"\\101\\477"', 'A\x277'),
+    ('"\\ud83d\\ude00"', '😀'),
+    ('"\\ude00"', None),
+    ('"\\ude00\\ud83d"', None),
+    ('"""text"""', None),
+    ('"a\nb"', None),
+    ('CONSTANT', None),
+    ('"a" + "b"', None),
+    ('call()', None),
+])
+def test_java_string_literals_decode_exactly(token, expected):
+    if expected is None:
+        with pytest.raises(java_semantic.JavaLiteralError):
+            java_semantic._decode_java_string_literal(token)
+    else:
+        assert java_semantic._decode_java_string_literal(token) == expected

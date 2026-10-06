@@ -5,7 +5,8 @@ import pytest
 
 from lib.context.business_domain_extract import Extractor, Source
 from lib.context.business_domain_adapters.sql import extract as sql_units
-from lib.context.business_domain_schema import DEFAULTS, digest, identifier, validate_references
+from lib.context.business_domain_schema import DEFAULTS, DomainError, digest, identifier, validate_references
+from tests.business_domains.adapter_fixture import install_fixture_adapter
 
 
 def extract(tmp_path, files, **limits):
@@ -117,8 +118,9 @@ def test_repository_descriptor_cannot_register_or_shadow_executable_adapter(tmp_
                for c in facts['capabilities'])
 
 
-def test_invalid_installed_adapter_descriptor_preserves_language_registry_and_is_visible(tmp_path, monkeypatch):
-    from lib.context.language_registry import LanguageRegistry, registry
+def test_invalid_installed_adapter_descriptor_fails_the_attempt_visibly(tmp_path, monkeypatch):
+    from lib.context.language_registry import (LanguageRegistry,
+        RegistryConfigurationError, registry)
     data = tmp_path/'registry'
     data.mkdir()
     (data/'languages.toml').write_text('[[language]]\nname="python"\nfile-types=["py"]\n')
@@ -132,15 +134,18 @@ contract_version=1
 entrypoints="partial"
 ''')
     isolated = LanguageRegistry(data)
-    assert isolated.classify('.py') == ('source', 'python')
-    assert isolated._source_adapters == {} and isolated.source_adapter_error == 'ValueError'
+    # Nothing partially validated is published; every query raises the cause.
+    assert str(isolated.load_error) == 'registry_value_invalid'
+    with pytest.raises(RegistryConfigurationError):
+        isolated.classify('.py')
 
-    monkeypatch.setattr(registry, '_source_adapters', {})
-    monkeypatch.setattr(registry, 'source_adapter_error', 'ValueError')
-    facts, _ = extract(tmp_path, {'service.py':'def run():\n    return 1\n'})
-    assert any(w['code'] == 'ADAPTER_REGISTRY_INVALID' for w in facts['warnings'])
-    capability = next(c for c in facts['capabilities'] if c['adapter'] == 'unavailable')
-    assert capability['diagnostic_codes'] == ['ADAPTER_REGISTRY_INVALID']
+    monkeypatch.setattr(registry, 'load_error', isolated.load_error)
+    (tmp_path/'service.py').write_text('def run():\n    return 1\n')
+    with pytest.raises(DomainError) as raised:
+        Extractor(tmp_path, DEFAULTS)
+    assert raised.value.code == 'ADAPTER_REGISTRY_INVALID'
+    assert str(raised.value) == 'registry_value_invalid'
+    assert not (tmp_path/'.speed/context/business-domain-facts.json').exists()
 
 
 def test_contract_only_trace_retains_missing_implementation_obligation(tmp_path):
@@ -292,10 +297,14 @@ def test_inventory_bounds_the_read_even_when_source_grows(tmp_path, monkeypatch)
             sizes.append(size)
             return super().read(size)
     monkeypatch.setattr(Path, 'open', lambda *args, **kwargs: GrowingSource(b'x' * 100))
-    sources, diagnostics = module.inventory(tmp_path, {**DEFAULTS, 'max_source_bytes': 10})
+    config = {**DEFAULTS, 'max_source_bytes': 10}
+    scan = module.scan_inventory(tmp_path, config)
     assert sizes == [11]
-    assert sources == []
-    assert [item['code'] for item in diagnostics] == ['SOURCE_LIMIT']
+    assert dict(scan.retained_bytes) == {}
+    assert [item['code'] for item in scan.diagnostics] == ['SOURCE_LIMIT']
+    decoded = module.inventory(scan, config)
+    assert decoded.sources == ()
+    assert [item['code'] for item in decoded.diagnostics] == ['SOURCE_LIMIT']
 
 
 def test_trace_cycle_and_depth_are_bounded(tmp_path):
@@ -369,7 +378,6 @@ def test_no_source_execution(tmp_path):
 
 def test_core_accepts_an_unknown_language_without_language_branches(tmp_path, monkeypatch):
     from types import SimpleNamespace
-    from lib.context import business_domain_extract as core
     from lib.context.business_domain_adapters.base import Unit, declare_operation_observation
     adapter = SimpleNamespace(
         extract=lambda source: [Unit(source, 'entry', 'entry', 0, len(source.text),
@@ -384,9 +392,8 @@ def test_core_accepts_an_unknown_language_without_language_branches(tmp_path, mo
         observations=lambda unit: [{'span':(0,len(unit.text)),
             'source_location_kind':'workflow', 'native_expression':unit.text}],
         operations=lambda unit: [])
-    monkeypatch.setattr(core, 'descriptor', lambda path: {
+    install_fixture_adapter(monkeypatch, adapter, {
         'language':'unregistered-language', 'source_kind':'source', 'adapter':'fixture'})
-    monkeypatch.setattr(core, 'adapter_for', lambda path: adapter)
     facts, _ = extract(tmp_path, {'flow.opaque':'input -> decision -> output'})
     assert len(facts['traces']) == 1
     assert len(facts['rule_observations']) == 1
@@ -702,7 +709,6 @@ END billing;
 
 def test_resolved_resource_edge_is_a_terminal_not_a_callable(tmp_path, monkeypatch):
     from types import SimpleNamespace
-    from lib.context import business_domain_extract as core
     from lib.context.business_domain_adapters.base import Unit, declare_operation_observation
     adapter = SimpleNamespace(
         extract=lambda source: [Unit(source, 'entry', 'entry', 0, len(source.text),
@@ -718,10 +724,9 @@ def test_resolved_resource_edge_is_a_terminal_not_a_callable(tmp_path, monkeypat
                 'code':'FIXTURE_COMPLETION_UNRESOLVED',
                 'reason':'Runtime completion is not established.'}],
             resolution='unresolved', reason='Runtime completion is not established.')])
-    monkeypatch.setattr(core, 'descriptor', lambda path: {'language':'fixture','source_kind':'source',
+    install_fixture_adapter(monkeypatch, adapter, {'language':'fixture','source_kind':'source',
         'capability':{'id':'fixture','version':'1','capabilities':{
             'data_access':'supported','outputs':'supported'}}})
-    monkeypatch.setattr(core, 'adapter_for', lambda source: adapter)
     facts, _ = extract(tmp_path, {'flow.opaque':'write(value)'})
     trace = next(iter(facts['traces'].values()))
     effect = next(iter(facts['effects'].values()))
@@ -732,7 +737,6 @@ def test_resolved_resource_edge_is_a_terminal_not_a_callable(tmp_path, monkeypat
 
 def test_activity_packet_keeps_typed_resource_edge_closure_without_effect(tmp_path, monkeypatch):
     from types import SimpleNamespace
-    from lib.context import business_domain_extract as core
     from lib.context.business_domain_adapters.base import Unit, declare_operation_observation
     from lib.context.business_domain_work import whole_graph_scope
     adapter = SimpleNamespace(
@@ -745,10 +749,9 @@ def test_activity_packet_keeps_typed_resource_edge_closure_without_effect(tmp_pa
             position=0, end=len(unit.text), kind='data_read', outcome='Fixture read',
             resource={'kind':'table','name':'fixture','resolution':'resolved','reason':None},
             resolution='resolved', reason=None)])
-    monkeypatch.setattr(core, 'descriptor', lambda path: {'language':'fixture','source_kind':'source',
+    install_fixture_adapter(monkeypatch, adapter, {'language':'fixture','source_kind':'source',
         'capability':{'id':'fixture','version':'1','capabilities':{
             'data_access':'supported','outputs':'supported'}}})
-    monkeypatch.setattr(core, 'adapter_for', lambda source: adapter)
     facts, _ = extract(tmp_path, {'flow.opaque':'write(value)'})
     edge = next(edge for edge in facts['edges'].values() if edge['to_ref']['kind'] == 'resource')
     resource = facts['resources'][edge['to_ref']['id']]
@@ -785,3 +788,324 @@ class Repository { void save() { } }
     assert calls[0]['resolution']=='resolved'
     target = facts['symbols'][calls[0]['to_ref']['id']]
     assert 'Repository.save' in target['qualified_name']
+
+
+# ── F1: source routing, selection and coverage ───────────────────────────
+
+import json as _json
+from lib.context import business_domain_extract as _core
+from lib.context.business_domain_schema import validate_source_warning_coverage
+
+# The 26 paths that previously produced SOURCE_CAPABILITY_UNAVAILABLE in the
+# Petclinic baseline, plus the Latin-1 message bundle that failed earlier with
+# SOURCE_ENCODING.
+F1_DISPOSITIONS = {
+    'src/main/resources/application.properties': 'analyze',
+    'src/main/resources/application-hsqldb.properties': 'analyze',
+    'src/main/resources/application-mysql.properties': 'analyze',
+    'src/main/resources/application-postgresql.properties': 'analyze',
+    'src/test/resources/application.properties': 'analyze',
+    'src/main/resources/messages/messages.properties': 'analyze',
+    'src/main/resources/messages/messages_en.properties': 'analyze',
+    'client/package.json': 'supporting',
+    'client/tsconfig.json': 'supporting',
+    'client/typings.json': 'supporting',
+    'Run PetClinicApplication.launch': 'reference_only',
+    'src/main/resources/logback.xml': 'reference_only',
+    '.mvn/wrapper/maven-wrapper.properties': 'ignore',
+    'sonar-project.properties': 'ignore',
+    'client/.vscode/settings.json': 'ignore',
+    'client/tslint.json': 'ignore',
+    'client/src/styles/less/header.less': 'ignore',
+    'client/src/styles/less/petclinic.less': 'ignore',
+    'client/src/styles/less/responsive.less': 'ignore',
+    'client/src/styles/less/typography.less': 'ignore',
+    'client/src/styles/fonts/montserrat-webfont.svg': 'ignore',
+    'client/src/styles/fonts/varela_round-webfont.svg': 'ignore',
+    '.github/workflows/docker-build.yml': 'ignore',
+    '.github/workflows/maven-build.yml': 'ignore',
+    '.travis.yml': 'ignore',
+    'speed.toml': 'ignore',
+}
+MESSAGES_DE = 'src/main/resources/messages/messages_de.properties'
+MAIN_SECURITY = 'petclinic.security.enable=false\nspring.datasource.password=alpha beta\n'
+TEST_SECURITY = 'petclinic.security.enable=true\n'
+
+
+def _f1_repository(root):
+    contents = {path: '' for path in F1_DISPOSITIONS}
+    contents.update({
+        'src/main/resources/application.properties': MAIN_SECURITY,
+        'src/test/resources/application.properties': TEST_SECURITY,
+        'client/package.json': '{"dependencies": {"react": "18"}}',
+        'client/tsconfig.json': '{"compilerOptions": {}}',
+        'client/typings.json': '{"dependencies": {}}',
+        'Run PetClinicApplication.launch': '<launchConfiguration/>',
+        'src/main/resources/logback.xml': '<configuration/>',
+        'speed.toml': '[speed]\n',
+    })
+    for path, text in contents.items():
+        target = root / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text)
+    (root / MESSAGES_DE).write_bytes('welcome=Willkommen bei Grüße\n'.encode('iso-8859-1'))
+    return root
+
+
+def _validated(root):
+    facts, units = Extractor(root, DEFAULTS).extract()
+    validate_references(facts)
+    validate_source_warning_coverage(facts)
+    return facts, units
+
+
+def test_f1_paths_route_once_to_their_installed_disposition(tmp_path):
+    scan = _core.scan_inventory(_f1_repository(tmp_path), DEFAULTS)
+    routes = {route.classification.path: route for route in scan.routes}
+    assert {path: routes[path].disposition for path in F1_DISPOSITIONS} == F1_DISPOSITIONS
+    from collections import Counter
+    assert Counter(F1_DISPOSITIONS.values()) == {
+        'analyze': 7, 'supporting': 3, 'reference_only': 2, 'ignore': 14}
+    assert all(len(routes[path].matched_rule_ids) == 1 for path in F1_DISPOSITIONS)
+    # Ignored paths are never read.
+    assert not {path for path, disposition in F1_DISPOSITIONS.items()
+                if disposition == 'ignore'} & set(scan.retained_bytes)
+
+
+def test_f1_petclinic_shape_has_no_capability_warnings(tmp_path):
+    facts, units = _validated(_f1_repository(tmp_path))
+    codes = [warning['code'] for warning in facts['warnings']]
+    assert 'SOURCE_CAPABILITY_UNAVAILABLE' not in codes and 'SOURCE_ENCODING' not in codes
+    assert facts['coverage']['unsupported_source_ids'] == []
+    resources = {item['name']: item for item in facts['resources'].values()
+                 if item['kind'] == 'repository_file'}
+    analyzed = sorted(path for path, item in resources.items()
+                      if item['language'] == 'properties')
+    assert analyzed == sorted([*(path for path, disposition in F1_DISPOSITIONS.items()
+                                 if disposition == 'analyze'), MESSAGES_DE])
+    assert all(resources[path]['resolution'] == 'resolved' for path in analyzed)
+    for path in ('client/package.json', 'client/tsconfig.json', 'client/typings.json'):
+        assert resources[path]['resolution'] == 'resolved'
+    for path in ('Run PetClinicApplication.launch', 'src/main/resources/logback.xml'):
+        assert resources[path]['resolution'] == 'unresolved'
+        assert resources[path]['reason'].startswith('Reference-only ')
+    assert not {path for path, disposition in F1_DISPOSITIONS.items()
+                if disposition == 'ignore'} & set(resources)
+    security = [binding for binding in facts['bindings'].values()
+                if binding['name'] == 'petclinic.security.enable']
+    assert sorted((b['expression'], b['scope']['environment']) for b in security) == [
+        ('false', 'main'), ('true', 'test')]
+    assert 'alpha beta' not in _json.dumps(facts)
+
+
+def test_selection_and_owner_loading_happen_once_per_source(tmp_path, monkeypatch):
+    selections, loads = [], []
+    original_select, original_load = _core.select_source, _core.load_installed
+
+    def counted_select(source, route):
+        selections.append(source.path)
+        return original_select(source, route)
+
+    def counted_load(module_name):
+        loads.append(module_name)
+        return original_load(module_name)
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError('extraction must never reselect an owner')
+
+    import lib.context.business_domain_adapters as adapters
+    monkeypatch.setattr(_core, 'select_source', counted_select)
+    monkeypatch.setattr(_core, 'load_installed', counted_load)
+    monkeypatch.setattr(adapters, 'adapter_for', forbidden)
+    monkeypatch.setattr(adapters, 'descriptor', forbidden)
+    _f1_repository(tmp_path)
+    (tmp_path / 'Service.java').write_text('class Service { void run() {} }\n')
+    _validated(tmp_path)
+    assert sorted(selections) == sorted(set(selections))
+    assert len(loads) == len(set(loads))
+
+
+def test_properties_outside_an_explicit_route_never_reach_the_decoder(tmp_path, monkeypatch):
+    from lib.context.business_domain_adapters import java_properties
+    calls = []
+    original = java_properties.decode
+    monkeypatch.setattr(java_properties, 'decode',
+                        lambda raw: calls.append(raw) or original(raw))
+    facts, _ = _validated(_write(tmp_path, {'config/app.properties': 'a=1\n'}))
+    assert calls == []
+    [warning] = facts['warnings']
+    assert warning['code'] == 'SOURCE_CAPABILITY_UNAVAILABLE'
+    assert warning['message'] == (
+        'config/app.properties: language=properties; disposition=analyze; required=[]; '
+        'owner=null; candidates=[]; cause=owner_not_installed; lost_facts=[].')
+    assert facts['coverage']['unsupported_source_ids'] == [
+        identifier('resource', 'config/app.properties')]
+
+
+def test_content_selected_sql_still_selects_after_utf8_decode(tmp_path):
+    facts, _ = _validated(_write(tmp_path, {'billing.sql':
+        'CREATE FUNCTION pay() RETURNS void AS $$ BEGIN NULL; END; $$ LANGUAGE plpgsql;'}))
+    assert {item['adapter'] for item in facts['capabilities']} == {'postgresql'}
+
+
+def test_missing_owner_with_three_required_capabilities_is_one_warning(tmp_path, monkeypatch):
+    original = _core.registry.source_adapter_descriptor
+    monkeypatch.setattr(_core.registry, 'source_adapter_descriptor',
+        lambda owner: None if owner == 'java_properties' else original(owner))
+    path = 'src/main/resources/application.properties'
+    facts, _ = _validated(_write(tmp_path, {path: 'a=1\n'}))
+    [warning] = facts['warnings']
+    assert warning['code'] == 'SOURCE_CAPABILITY_UNAVAILABLE'
+    assert warning['message'] == (
+        f'{path}: language=properties; disposition=analyze; '
+        'required=[bindings,declaration_extraction,parsing]; owner=java_properties; '
+        'candidates=[]; cause=owner_not_installed; lost_facts=[bindings,evidence,symbols].')
+    resource = facts['resources'][identifier('resource', path)]
+    assert resource['resolution'] == 'unresolved' and resource['evidence_ids'] == warning['evidence_ids']
+
+
+def test_ambiguous_language_is_one_ambiguity_warning_with_a_valid_snapshot(tmp_path):
+    facts, _ = _validated(_write(tmp_path, {'tool.pl': 'print 1;\n'}))
+    [warning] = facts['warnings']
+    assert warning['code'] == 'AMBIGUOUS_ADAPTER'
+    assert 'language=null' in warning['message'] and 'cause=ambiguous_language' in warning['message']
+    [snapshot] = facts['source_snapshots'].values()
+    assert snapshot['resource_kind'] == 'source'
+
+
+def test_owner_load_failure_and_per_source_extract_failure_are_isolated(tmp_path, monkeypatch):
+    from lib.context.business_domain_adapters import documentation
+    original_extract = documentation.extract
+
+    def flaky(source):
+        if source.path == 'bad.md':
+            raise RuntimeError('boom')
+        return original_extract(source)
+    monkeypatch.setattr(documentation, 'extract', flaky)
+    facts, _ = _validated(_write(tmp_path, {'bad.md': '# Bad\n', 'good.md': '# Good\n'}))
+    [warning] = [w for w in facts['warnings'] if w['code'] == 'ADAPTER_UNAVAILABLE']
+    assert warning['subject_ids'] == [identifier('resource', 'bad.md')]
+    assert 'cause=owner_execution_failed' in warning['message']
+    good = facts['resources'][identifier('resource', 'good.md')]
+    assert good['resolution'] == 'resolved'
+
+    original_load = _core.load_installed
+    monkeypatch.setattr(_core, 'load_installed', lambda name: (_ for _ in ()).throw(
+        ImportError('no')) if name == 'documentation' else original_load(name))
+    facts, _ = _validated(_write(tmp_path / 'second', {'a.md': '# A\n'}))
+    [warning] = facts['warnings']
+    assert warning['code'] == 'ADAPTER_UNAVAILABLE' and 'cause=owner_load_failed' in warning['message']
+    assert facts['coverage']['unsupported_source_ids'] == [identifier('resource', 'a.md')]
+
+
+def test_reference_evidence_is_bounded_and_ignored_sources_create_nothing(tmp_path):
+    facts, _ = _validated(_write(tmp_path, {
+        'src/main/resources/logback.xml': '<!--' + 'x' * 5000 + '-->',
+        'styles/site.less': '.a { color: red; }',
+    }))
+    [resource] = [item for item in facts['resources'].values() if item['kind'] == 'repository_file']
+    assert resource['name'] == 'src/main/resources/logback.xml'
+    assert len(facts['evidence'][resource['evidence_ids'][0]]['excerpt']) == 4096
+    assert not facts['warnings'] and not facts['capabilities']
+
+
+def test_source_fingerprint_ignores_ignored_content_but_not_analyzed_inputs(tmp_path):
+    _write(tmp_path, {'styles/site.less': '.a {}', 'src/main/resources/application.properties': 'a=1\n',
+                      'package.json': '{}'})
+    baseline = _core.source_fingerprint(_core.scan_inventory(tmp_path, DEFAULTS))
+    (tmp_path / 'styles/site.less').write_text('.b {}')
+    assert _core.source_fingerprint(_core.scan_inventory(tmp_path, DEFAULTS)) == baseline
+    for path, text in (('src/main/resources/application.properties', 'a=2\n'),
+                       ('package.json', '{"dependencies": {}}')):
+        (tmp_path / path).write_text(text)
+        changed = _core.source_fingerprint(_core.scan_inventory(tmp_path, DEFAULTS))
+        assert changed != baseline
+        baseline = changed
+
+
+def test_conflicting_concrete_dispositions_fail_before_any_read(tmp_path, monkeypatch):
+    rules = _core.registry.source_dispositions()
+    stylesheet = next(rule for rule in rules if rule['id'] == 'stylesheet')
+    conflicting = dict(stylesheet, id='zz_conflict', disposition='reference_only',
+                       owner='other')
+    monkeypatch.setattr(_core.registry, '_source_dispositions', (*rules, conflicting))
+    _write(tmp_path, {'site.less': '.a {}'})
+    reads = []
+    monkeypatch.setattr(Path, 'open', lambda *a, **k: reads.append(a) or (_ for _ in ()).throw(
+        AssertionError('read')))
+    with pytest.raises(DomainError) as raised:
+        _core.scan_inventory(tmp_path, DEFAULTS)
+    assert raised.value.code == 'ADAPTER_REGISTRY_INVALID'
+    assert str(raised.value) == 'conflicting_source_dispositions:site.less'
+    assert reads == []
+
+
+def test_primary_prepare_failure_aborts_the_attempt(tmp_path, monkeypatch):
+    from lib.context.business_domain_adapters import documentation
+    monkeypatch.setattr(documentation, 'prepare',
+                        lambda *args: (_ for _ in ()).throw(RuntimeError('secret detail')),
+                        raising=False)
+    _write(tmp_path, {'a.md': '# A\n'})
+    with pytest.raises(DomainError) as raised:
+        Extractor(tmp_path, DEFAULTS).extract()
+    assert (raised.value.code, str(raised.value)) == ('ADAPTER_UNAVAILABLE', 'primary_prepare_failed')
+    assert not (tmp_path / '.speed/context/business-domain-facts.json').exists()
+
+
+@pytest.mark.parametrize('mutate, message', [
+    (lambda facts, rid: facts['coverage']['unsupported_source_ids'].append(rid),
+     'correspond exactly'),
+    (lambda facts, rid: facts['warnings'][0]['evidence_ids'].clear(), 'one repository-file'),
+    (lambda facts, rid: facts['coverage']['unsupported_source_ids'].extend([rid, rid]),
+     'must be unique'),
+])
+def test_warning_and_coverage_bijection_is_enforced(tmp_path, mutate, message):
+    facts, _ = _validated(_write(tmp_path, {'tool.pl': 'print 1;\n', 'b.css': 'a {}'}))
+    resource_id = identifier('resource', 'b.css')
+    facts['coverage']['unsupported_source_ids'].remove(resource_id)
+    facts['warnings'] = [w for w in facts['warnings'] if w['subject_ids'] != [resource_id]]
+    validate_source_warning_coverage(facts)
+    mutate(facts, resource_id)
+    with pytest.raises(DomainError, match=message):
+        validate_source_warning_coverage(facts)
+
+
+def test_two_extractions_are_byte_identical_and_never_reach_synthesis(tmp_path, monkeypatch):
+    from lib.context import business_domains
+    from lib.context import business_domain_synthesis
+    from lib.context.business_domain_schema import atomic_write
+    calls = {'construct': 0, 'provider': 0}
+
+    def trap(kind):
+        def raising(*args, **kwargs):
+            calls[kind] += 1
+            raise AssertionError(kind)
+        return raising
+    monkeypatch.setattr(business_domains.Synthesis, '__init__', trap('construct'))
+    monkeypatch.setattr(business_domain_synthesis.Synthesis, '_speed_call_unlogged',
+                        trap('provider'))
+    monkeypatch.setattr(_core, 'now', lambda: '2026-01-01T00:00:00Z')
+    _f1_repository(tmp_path)
+    build = '00000000-0000-4000-8000-000000000001'
+    first, _ = Extractor(tmp_path, DEFAULTS, build).extract()
+    atomic_write(tmp_path / '.speed/context/business-domain-facts.json', first)
+    second, _ = Extractor(tmp_path, DEFAULTS, build).extract()
+    assert _json.dumps(first, sort_keys=True) == _json.dumps(second, sort_keys=True)
+    assert calls == {'construct': 0, 'provider': 0}
+
+
+def test_implementation_fingerprint_covers_the_shared_typescript_parser(monkeypatch, tmp_path):
+    seen = []
+    original = _core.implementation_hash
+    monkeypatch.setattr(_core, 'implementation_hash',
+                        lambda *paths: seen.extend(paths) or original(*paths))
+    _validated(_write(tmp_path, {'a.md': '# A\n'}))
+    assert any(path.name == 'layer1_domain_clustering.py' for path in seen)
+
+
+def _write(root, files):
+    for path, text in files.items():
+        target = root / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text)
+    return root

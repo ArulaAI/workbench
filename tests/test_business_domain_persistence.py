@@ -390,3 +390,42 @@ def test_service_implementation_reach_is_unchanged_by_persistence(tmp_path):
 
     assert reach(with_profile) == reach(without)
     assert sum(reach(with_profile).values()) == 4
+
+
+def test_unavailable_sql_parser_is_reported_and_extraction_continues(tmp_path, monkeypatch):
+    # The SQL language adapter loads its own parser on import; load it first so
+    # only the Spring enricher sees the failing loader.
+    from lib.context.business_domain_adapters import spring_semantic, sql  # noqa: F401
+
+    def unavailable(identity):
+        raise RuntimeError(f'Trusted parser version mismatch: {identity}')
+
+    monkeypatch.setattr(spring_semantic, '_SQL_PARSER', {})
+    monkeypatch.setattr(spring_semantic.registry, 'load_trusted_parser', unavailable)
+    facts = _extract(tmp_path)
+
+    jdbc = next(resource_id for resource_id, resource in facts['resources'].items()
+                if resource['name'].endswith('JdbcOwnerRepositoryImpl.java'))
+    reports = [item for item in facts['warnings'] if item['code'] == 'SPRING_SQL_PARSER_UNAVAILABLE'
+               and item['subject_ids'] == [jdbc]]
+    assert len(reports) == 1 and 'sqlglot RuntimeError' in reports[0]['message']
+    # SQL text is left unparsed; writes that need no SQL parsing are still found.
+    assert _data(facts, 'JdbcOwnerRepositoryImpl.delete') == []
+    assert _data(facts, 'JdbcOwnerRepositoryImpl.save') == [('writes_data', 'owners', 'unresolved')]
+    assert ('reads_data', 'owners', 'resolved') in _data(facts, 'SpringDataOwnerRepository.findByLastName')
+
+
+def test_sql_parser_is_loaded_once_per_process(tmp_path, monkeypatch):
+    from lib.context.business_domain_adapters import spring_semantic, sql  # noqa: F401
+    loads = []
+    original = spring_semantic.registry.load_trusted_parser
+
+    def counting(identity):
+        loads.append(identity)
+        return original(identity)
+
+    monkeypatch.setattr(spring_semantic, '_SQL_PARSER', {})
+    monkeypatch.setattr(spring_semantic.registry, 'load_trusted_parser', counting)
+    facts = _extract(tmp_path)
+    assert loads == ['sqlglot']
+    assert ('reads_data', 'owners', 'resolved') in _data(facts, 'JdbcOwnerRepositoryImpl.findByLastName')
