@@ -29,45 +29,114 @@
     "JAVA_PERSISTENCE_COMPLETION_UNRESOLVED": "transaction_completion",
     "SQL_COMPLETION_UNRESOLVED": "transaction_completion",
     "SQL_COMMIT_NOT_ESTABLISHED": "transaction_completion",
-    "SQL_TRANSACTION_SCOPE_UNRESOLVED": "transaction_completion"
+    "SQL_TRANSACTION_SCOPE_UNRESOLVED": "transaction_completion",
+    "SQL_PLATFORM_TABLE": "library_call"
   },
   "obligation_codes": {
     "ROUTED_REQUEST": "endpoint_in_repo",
     "SAME_ORIGIN_REQUEST": "endpoint_in_repo",
     "CONDITIONAL_IMPLEMENTATION": "config_selected"
   },
-  "library_codes": ["JAVA_EXTERNAL_CALL", "JS_EXTERNAL_CALL", "RULES_AMBIENT_CALL"],
+  "library_codes": [
+    "JAVA_EXTERNAL_CALL",
+    "JS_EXTERNAL_CALL",
+    "RULES_AMBIENT_CALL",
+    "SQL_PLATFORM_CALL"
+  ],
   "known_libraries": {
     "java": {
       "prefixes": [
-        "java.", "javax.", "jakarta.", "org.springframework.", "org.slf4j.",
-        "com.fasterxml.jackson.", "org.hibernate.", "org.apache.commons.",
+        "java.",
+        "javax.",
+        "jakarta.",
+        "org.springframework.",
+        "org.slf4j.",
+        "com.fasterxml.jackson.",
+        "org.hibernate.",
+        "org.apache.commons.",
         "org.mapstruct."
       ]
     },
     "kotlin": {
-      "prefixes": ["java.", "javax.", "jakarta.", "kotlin.", "org.springframework."]
+      "prefixes": [
+        "java.",
+        "javax.",
+        "jakarta.",
+        "kotlin.",
+        "org.springframework."
+      ]
     },
     "javascript": {
       "ambient": true,
-      "modules": ["react", "react-dom", "react-router", "react-router-dom", "moment",
-                  "lodash", "axios", "express", "rxjs", "redux", "react-redux"]
+      "modules": [
+        "react",
+        "react-dom",
+        "react-router",
+        "react-router-dom",
+        "moment",
+        "lodash",
+        "axios",
+        "express",
+        "rxjs",
+        "redux",
+        "react-redux"
+      ]
     },
     "jsx": {
       "ambient": true,
-      "modules": ["react", "react-dom", "react-router", "react-router-dom", "moment",
-                  "lodash", "axios", "rxjs", "redux", "react-redux"]
+      "modules": [
+        "react",
+        "react-dom",
+        "react-router",
+        "react-router-dom",
+        "moment",
+        "lodash",
+        "axios",
+        "rxjs",
+        "redux",
+        "react-redux"
+      ]
     },
     "typescript": {
       "ambient": true,
-      "modules": ["react", "react-dom", "react-router", "react-router-dom", "moment",
-                  "lodash", "axios", "express", "rxjs", "redux", "react-redux",
-                  "@angular/core", "@angular/common", "@angular/router", "@nestjs/common"]
+      "modules": [
+        "react",
+        "react-dom",
+        "react-router",
+        "react-router-dom",
+        "moment",
+        "lodash",
+        "axios",
+        "express",
+        "rxjs",
+        "redux",
+        "react-redux",
+        "@angular/core",
+        "@angular/common",
+        "@angular/router",
+        "@nestjs/common"
+      ]
     },
     "tsx": {
       "ambient": true,
-      "modules": ["react", "react-dom", "react-router", "react-router-dom", "moment",
-                  "lodash", "axios", "rxjs", "redux", "react-redux"]
+      "modules": [
+        "react",
+        "react-dom",
+        "react-router",
+        "react-router-dom",
+        "moment",
+        "lodash",
+        "axios",
+        "rxjs",
+        "redux",
+        "react-redux"
+      ]
+    },
+    "sql": {
+      "modules": [
+        "oracle",
+        "supabase"
+      ]
     }
   },
   "assumptions": {
@@ -78,7 +147,10 @@
     "endpoint_in_repo": "The request reaches the endpoint anchored in this repository. {reason}"
   },
   "kind_order": [
-    "generated_implementation", "config_selected", "transaction_completion",
-    "library_call", "endpoint_in_repo"
+    "generated_implementation",
+    "config_selected",
+    "transaction_completion",
+    "library_call",
+    "endpoint_in_repo"
   ]
 }

@@ -324,3 +324,182 @@ END roll_up;
                if edge["kind"] in {"reads_data", "writes_data"}}
     assert targets == {("writes_data", "velocity_counters"),
                        ("reads_data", "transactions")}
+
+
+# ── Call resolution: keywords, defaults, literal coercion, platforms ─────
+
+def _call_edges(facts, caller):
+    symbols = facts["symbols"]
+    return [edge for edge in facts["edges"].values()
+            if edge["kind"] == "calls"
+            and symbols[edge["from_ref"]["id"]]["qualified_name"].split("::")[-1].split("(")[0]
+                .rsplit(".", 1)[-1] == caller]
+
+
+def _callee(facts, edge):
+    target = edge["to_ref"]
+    if not target:
+        return None
+    if target["kind"] == "symbol":
+        return facts["symbols"][target["id"]]["qualified_name"].split("::")[-1].split("(")[0]
+    return facts["resources"][target["id"]]
+
+
+ROLES = """CREATE TYPE basejump.account_role AS ENUM ('owner', 'member');
+CREATE FUNCTION basejump.has_role_on_account(account_id uuid,
+    account_role basejump.account_role DEFAULT NULL) RETURNS boolean AS $$
+  SELECT true;
+$$ LANGUAGE sql;
+"""
+
+
+def _postgres_caller(body, name="caller"):
+    return (f"CREATE FUNCTION public.{name}(account_id uuid) RETURNS json AS $$\n"
+            f"BEGIN\n{body}\nEND;\n$$ LANGUAGE plpgsql;\n")
+
+
+@pytest.mark.parametrize("body", [
+    "  RETURN (SELECT json_agg(x) FROM accounts x);",
+    "  IF (SELECT count(1) FROM accounts) > 0 THEN RETURN NULL; END IF;",
+    "  RETURN QUERY (SELECT 1);",
+])
+def test_procedural_keywords_before_a_parenthesis_are_not_calls(tmp_path, body):
+    facts, _ = _extract(tmp_path, {"supabase/migrations/1_caller.sql": _postgres_caller(body)})
+    excerpts = [facts["evidence"][edge["evidence_ids"][0]]["excerpt"]
+                for edge in _call_edges(facts, "caller")]
+    assert not [text for text in excerpts if text.casefold().startswith(("return", "if", "query"))]
+
+
+@pytest.mark.parametrize("call", [
+    "basejump.has_role_on_account(account_id)",              # trailing default omitted
+    "basejump.has_role_on_account(account_id, 'owner')",     # literal coerced to the enum
+    "basejump.has_role_on_account(account_id => account_id)",
+])
+def test_defaults_and_literal_coercion_select_the_declared_function(tmp_path, call):
+    facts, _ = _extract(tmp_path, {
+        "supabase/migrations/1_caller.sql": ROLES + _postgres_caller(f"  PERFORM {call};")})
+    [edge] = [edge for edge in _call_edges(facts, "caller")
+              if "has_role_on_account" in facts["evidence"][edge["evidence_ids"][0]]["excerpt"]]
+    assert edge["resolution"] == "resolved"
+    assert _callee(facts, edge) == "basejump.has_role_on_account"
+
+
+def test_a_required_parameter_cannot_be_omitted(tmp_path):
+    roles = ROLES.replace("account_role basejump.account_role DEFAULT NULL",
+                          "account_role basejump.account_role")
+    facts, _ = _extract(tmp_path, {
+        "supabase/migrations/1_caller.sql": roles + _postgres_caller(
+            "  PERFORM basejump.has_role_on_account(account_id);")})
+    [edge] = [edge for edge in _call_edges(facts, "caller")
+              if "has_role_on_account" in facts["evidence"][edge["evidence_ids"][0]]["excerpt"]]
+    assert edge["resolution"] == "unresolved" and edge["to_ref"] is None
+
+
+def test_a_platform_routine_is_a_known_boundary_only_in_a_platform_layout(tmp_path):
+    body = "  RETURN (SELECT auth.uid());"
+    facts, _ = _extract(tmp_path, {
+        "supabase/migrations/1_caller.sql": _postgres_caller(body),
+        "db/2_other.sql": _postgres_caller(body, "other")})
+    [platform] = _call_edges(facts, "caller")
+    resource = _callee(facts, platform)
+    assert resource["provider"] == "module:supabase/postgres"
+    assert "Supabase" in platform["reason"]
+    obligation = next(item for item in facts["trace_obligations"].values()
+                      if item["edge_id"] == platform["id"])
+    assert obligation["boundary"] == "library_call"
+    # Outside a Supabase project layout nothing establishes the platform.
+    [other] = _call_edges(facts, "other")
+    assert other["resolution"] == "unresolved" and other["to_ref"] is None
+
+
+def test_a_repository_declaration_outranks_the_platform_catalog(tmp_path):
+    facts, _ = _extract(tmp_path, {"supabase/migrations/1_caller.sql": (
+        "CREATE FUNCTION auth.uid() RETURNS uuid AS $$ SELECT NULL::uuid; $$ LANGUAGE sql;\n"
+        + _postgres_caller("  RETURN (SELECT auth.uid());"))})
+    [edge] = _call_edges(facts, "caller")
+    assert _callee(facts, edge) == "auth.uid"
+
+
+def test_a_platform_table_is_a_known_boundary_not_a_missing_table(tmp_path):
+    facts, _ = _extract(tmp_path, {"supabase/migrations/1_caller.sql": _postgres_caller(
+        "  RETURN (SELECT json_agg(u.email) FROM auth.users u);")})
+    assert "SQL_PLATFORM_TABLE" in _codes(facts)
+    assert "SQL_DATA_TARGET_UNRESOLVED" not in _codes(facts)
+    [read] = [edge for edge in facts["edges"].values() if edge["kind"] == "reads_data"]
+    obligation = next(item for item in facts["trace_obligations"].values()
+                      if item["edge_id"] == read["id"])
+    assert obligation["boundary"] == "library_call"
+
+
+# ── Control conditions and declarations ──────────────────────────────────
+
+def test_a_query_inside_an_if_condition_is_not_guarded_by_that_if(tmp_path):
+    facts, units = _extract(tmp_path, {"supabase/migrations/1_caller.sql": _postgres_caller(
+        "  IF (SELECT count(1) FROM accounts WHERE id = account_id) > 0 THEN\n"
+        "    DELETE FROM accounts WHERE id = account_id;\n"
+        "  END IF;")})
+    assert "SQL_CONTROL_FLOW_UNRESOLVED" not in _codes(facts)
+    unit = next(unit for unit in units if unit.name == "caller")
+    condition = {statement["kind"].name: statement["control_condition"] for statement in unit.sql_dml}
+    assert condition["SELECT"] is None
+    assert condition["DELETE"].startswith("((SELECT count(1)")
+
+
+ORACLE_CASE = """CREATE OR REPLACE PROCEDURE settle(p_id IN NUMBER) IS
+  v_status VARCHAR2(10);
+BEGIN
+  v_status := CASE WHEN p_id > 0 THEN 'OK' ELSE 'BAD' END;
+  UPDATE settlements SET status = v_status WHERE id = p_id;
+  COMMIT;
+EXCEPTION
+  WHEN OTHERS THEN
+    ROLLBACK;
+    INSERT INTO exception_queue (id) VALUES (p_id);
+END settle;
+/
+CREATE TABLE settlements (id NUMBER, status VARCHAR2(10));
+CREATE TABLE exception_queue (id NUMBER);
+"""
+
+
+def test_a_case_expression_does_not_break_later_control_conditions(tmp_path):
+    facts, units = _extract(tmp_path, {"settle.sql": ORACLE_CASE})
+    assert "SQL_CONTROL_FLOW_UNRESOLVED" not in _codes(facts)
+    unit = next(unit for unit in units if unit.name == "settle")
+    handler = next(statement for statement in unit.sql_dml if statement["kind"].name == "INSERT")
+    assert handler["control_condition"] == "(EXCEPTION WHEN OTHERS)"
+
+
+def test_a_statement_inside_a_case_statement_branch_stays_incomplete(tmp_path):
+    source = ORACLE_CASE.replace(
+        "  v_status := CASE WHEN p_id > 0 THEN 'OK' ELSE 'BAD' END;\n",
+        "  CASE WHEN p_id > 0 THEN\n    DELETE FROM settlements WHERE id = p_id;\n  END CASE;\n")
+    _, units = _extract(tmp_path, {"settle.sql": source})
+    unit = next(unit for unit in units if unit.name == "settle")
+    delete = next(statement for statement in unit.sql_dml if statement["kind"].name == "DELETE")
+    assert delete["control_complete"] is False
+
+
+@pytest.mark.parametrize("declaration, routine", [
+    ("CREATE GLOBAL TEMPORARY TABLE scratch (id NUMBER) ON COMMIT DELETE ROWS;",
+     "CREATE OR REPLACE PROCEDURE purge IS\nBEGIN\n  DELETE FROM scratch;\nEND purge;\n/\n"),
+    ("CREATE TEMPORARY TABLE scratch (id integer);",
+     "CREATE FUNCTION purge() RETURNS void AS $$\nBEGIN\n  DELETE FROM scratch;\nEND;\n"
+     "$$ LANGUAGE plpgsql;\n"),
+    ("CREATE UNLOGGED TABLE IF NOT EXISTS scratch (id integer);",
+     "CREATE FUNCTION purge() RETURNS void AS $$\nBEGIN\n  DELETE FROM scratch;\nEND;\n"
+     "$$ LANGUAGE plpgsql;\n"),
+])
+def test_temporary_and_unlogged_tables_are_declared_tables(tmp_path, declaration, routine):
+    facts, _ = _extract(tmp_path, {"job.sql": declaration + "\n" + routine})
+    [table] = [resource for resource in facts["resources"].values()
+               if resource["kind"] == "table" and resource["name"] == "scratch"]
+    assert table["resolution"] == "resolved"
+
+
+def test_oracle_dual_is_a_platform_table(tmp_path):
+    facts, _ = _extract(tmp_path, {"job.sql": (
+        "CREATE OR REPLACE PROCEDURE tick(p_id IN NUMBER) IS\n  v_now VARCHAR2(20);\nBEGIN\n"
+        "  SELECT SYSDATE INTO v_now FROM dual;\nEND tick;\n/\n")})
+    assert "SQL_PLATFORM_TABLE" in _codes(facts)
+    assert "SQL_DATA_TARGET_UNRESOLVED" not in _codes(facts)

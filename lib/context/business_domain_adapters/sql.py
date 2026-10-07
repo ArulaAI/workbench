@@ -5,7 +5,10 @@ repository declarations. There is deliberately no ``WORD(`` regex fallback.
 """
 from __future__ import annotations
 
+import functools
+import json
 import re
+from pathlib import Path
 
 from ..language_registry import registry
 
@@ -150,7 +153,16 @@ def _postgres_parameter(segment: str) -> tuple[str | None, str | None, str] | No
 
 def _parameters(text: str, dialect: str) -> list[tuple[str, str]]:
     """Normalize Oracle and PostgreSQL argument ordering to ``(name, type)``."""
-    result = []
+    return _parameters_and_defaults(text, dialect)[0]
+
+
+def _parameters_and_defaults(text: str, dialect: str) -> tuple[list, tuple]:
+    """``(_parameters(...), defaults)``: whether each parameter declares a default.
+
+    A parameter written with ``DEFAULT``, ``:=`` or ``=`` may be omitted by a
+    caller; one without may not.
+    """
+    result, defaults = [], []
     for position, segment in enumerate(_parameter_segments(text)):
         if dialect == "postgres":
             parsed = _postgres_parameter(segment)
@@ -167,13 +179,15 @@ def _parameters(text: str, dialect: str) -> list[tuple[str, str]]:
             if not match:
                 continue
             name, mode, type_name = match.groups()
-        type_name = re.split(
+        pieces = re.split(
             r"(?i)\s+(?:DEFAULT|:=)\s*|\s+=\s*", type_name, maxsplit=1,
-        )[0].strip()
+        )
+        type_name = pieces[0].strip()
         normalized_mode = re.sub(r"\s+", " ", mode or "").upper()
         normalized = f"{normalized_mode} {type_name}".strip()
         result.append((name, normalized))
-    return result
+        defaults.append(len(pieces) > 1)
+    return result, tuple(defaults)
 
 
 def _normalized_clause(value: str) -> str:
@@ -426,7 +440,7 @@ def extract(source: Source) -> list[Unit]:
         package_body = bool(package and package.group(1))
         header = code[match.end():start_body]
         param_text = _parameter_list(header)
-        params = _parameters(param_text, _dialect(source))
+        params, defaults = _parameters_and_defaults(param_text, _dialect(source))
         if intro.group() == ";":
             if not owner or package_body:
                 continue
@@ -437,6 +451,7 @@ def extract(source: Source) -> list[Unit]:
                 anchor_kind="sql", anchor_resolution="resolved", executable_body=False,
                 anchor_reason=None)
             unit.sql_declaration_kind = "package_spec"
+            unit.sql_param_defaults = defaults
             unit.sql_routine_kind = match.group(1).casefold()
             unit.sql_contract_key = (owner.casefold(), unit.sql_routine_kind,
                 unit.name.casefold(), _signature(params))
@@ -536,6 +551,7 @@ def extract(source: Source) -> list[Unit]:
             anchor_reason=None if standalone else
                 "Routine body is present; dialect and public package-contract visibility have not been established.")
         unit.sql_declaration_kind = "package_body" if package_body else "standalone_body"
+        unit.sql_param_defaults = defaults
         unit.sql_routine_kind = match.group(1).casefold()
         unit.sql_contract_key = ((owner.casefold(), unit.sql_routine_kind,
             unit.name.casefold(), _signature(params)) if package_body else None)
@@ -578,7 +594,8 @@ def extract(source: Source) -> list[Unit]:
             if len(same_signature) > 1:
                 unit.qualified += ":" + str(same_signature.index(unit))
     for match in re.finditer(
-            r"(?i)\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([\w.$#]+)\s*\(",
+            r"(?i)\bCREATE\s+(?:(?:GLOBAL|LOCAL|PRIVATE)\s+)?(?:(?:TEMPORARY|TEMP|UNLOGGED)\s+)?"
+            r"TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([\w.$#]+)\s*\(",
             code):
         depth = 1; end = match.end()
         while end < len(code) and depth:
@@ -604,6 +621,28 @@ def extract(source: Source) -> list[Unit]:
         module.sql_declaration_complete = True
         units.append(module)
     return units
+
+
+# Procedural statement keywords the tokenizer reads as plain names. Followed
+# by a parenthesis they open an expression (``RETURN (SELECT ...)``,
+# ``IF (...) THEN``), never a call. A quoted or qualified name is a call.
+_PROCEDURAL_KEYWORDS = frozenset({
+    "return", "if", "elsif", "elseif", "while", "when", "case", "then", "else",
+    "and", "or", "not", "in", "exists", "perform", "raise", "into", "using",
+    "returning", "values",
+})
+# Keywords that open an expression only after ``RETURN`` (``RETURN QUERY (...)``).
+_RETURN_KEYWORDS = frozenset({"query", "next"})
+
+
+def _procedural_keyword(tokens, index: int) -> bool:
+    token = tokens[index]
+    if token.token_type != TokenType.VAR or (index and tokens[index - 1].token_type == TokenType.DOT):
+        return False
+    word = token.text.casefold()
+    return word in _PROCEDURAL_KEYWORDS or (
+        word in _RETURN_KEYWORDS and index > 0
+        and tokens[index - 1].text.casefold() == "return")
 
 
 def _is_identifier(token) -> bool:
@@ -690,7 +729,9 @@ def _arguments(tokens, open_index: int, close_index: int, unit: Unit) -> list[di
                 named = part[index - 1].text.casefold()
                 part = part[index + 1:]
                 break
-        result.append({"name": named, "type": _argument_type(part, unit)})
+        values = [token for token in part if token.token_type != TokenType.FARROW]
+        result.append({"name": named, "type": _argument_type(part, unit),
+                       "literal": len(values) == 1 and values[0].token_type == TokenType.STRING})
     return result
 
 
@@ -931,6 +972,24 @@ def _control_condition(unit: Unit, tokens, position: int) -> tuple[
                 break
         return None
 
+    def deciding(index: int) -> bool:
+        """Whether the statement lies inside the condition this IF/ELSIF opens.
+
+        The THEN closing the condition follows the statement, with no
+        statement end between: the statement is evaluated to decide the
+        branch, so this IF does not guard it.
+        """
+        depth = 0
+        for cursor in range(index + 1, len(tokens)):
+            token = tokens[cursor]
+            depth += token.token_type == TokenType.L_PAREN
+            depth -= token.token_type == TokenType.R_PAREN
+            if depth == 0 and token.text.casefold() == "then":
+                return token.start >= position
+            if depth == 0 and token.token_type == TokenType.SEMICOLON:
+                return False
+        return False
+
     def pop(kind: str) -> bool:
         for index in range(len(frames) - 1, -1, -1):
             if frames[index]["kind"] == kind:
@@ -949,13 +1008,33 @@ def _control_condition(unit: Unit, tokens, position: int) -> tuple[
         if word == "end" and following in {"if", "loop", "case"}:
             complete &= pop(following)
             skip.add(index + 1)
+        elif word == "end" and frames and frames[-1]["kind"] == "case":
+            # ``CASE ... END`` closes a CASE expression, not a block.
+            frames.pop()
         elif word == "end":
             complete &= pop("block")
+        elif word == "case":
+            frames.append({"kind": "case", "condition": None,
+                           "condition_span": None, "exception": False})
+        elif frames and frames[-1]["kind"] == "case" and word in {"when", "else"}:
+            # A CASE branch, never an IF's ELSE or an exception handler.
+            continue
         elif token.token_type == TokenType.BEGIN:
             frames.append({"kind": "block", "condition": None,
                            "condition_span": None, "exception": False})
         elif word in {"if", "elsif"}:
             then = next_text(index, "then")
+            if then is None and deciding(index):
+                # Evaluating an ELSIF condition happens only once every
+                # earlier branch of its IF was false.
+                selected = next((frame for frame in reversed(frames)
+                                 if frame["kind"] == "if"), None) if word == "elsif" else None
+                if word == "elsif" and selected is None:
+                    complete = False
+                elif selected:
+                    selected["condition"] = "NOT (" + " OR ".join(selected["branches"]) + ")"
+                    selected["condition_span"] = (token.start, token.end + 1)
+                continue
             if then is None:
                 complete = False
                 continue
@@ -1018,6 +1097,10 @@ def _control_condition(unit: Unit, tokens, position: int) -> tuple[
                     block["condition"] = "EXCEPTION WHEN " + _normalized_clause(
                         unit.text[token.end + 1:tokens[then].start])
                     block["condition_span"] = (token.start, tokens[then].end + 1)
+    # A statement inside a CASE statement's branch runs under a WHEN this
+    # decoder does not record, so its condition is incomplete.
+    if any(frame["kind"] == "case" for frame in frames):
+        complete = False
     conditions = [frame["condition"] for frame in frames if frame["condition"]]
     spans = [frame["condition_span"] for frame in frames
              if frame.get("condition_span")]
@@ -1300,6 +1383,8 @@ def _analyze_unit(unit: Unit, routines: list[Unit], declared_tables: set[str]) -
         name_token = tokens[name_index]
         if (not _is_identifier(name_token)
                 or tokens[name_index + 1].token_type != TokenType.L_PAREN):
+            continue
+        if _procedural_keyword(tokens, name_index):
             continue
         open_index = name_index + 1
         if open_index not in pairs or _is_table_column_list(tokens, name_index):
@@ -1601,10 +1686,13 @@ def _resource(unit: Unit, name: str) -> dict:
     known = getattr(unit, "sql_declared_tables", set())
     resolved = (name.casefold() in known
         or name.rsplit(".", 1)[-1].casefold() in known)
+    platform = None if resolved else _platform_table(unit, name)
     return {"kind": "table", "name": name, "language": unit.source.language,
         "resolution": "resolved" if resolved else "unresolved",
         "reason": None if resolved else
-            "Table identity is syntactically present; repository declaration was not found."}
+            (f"Table {name} is provided by the {platform['name']} platform this repository "
+             "targets; no repository declaration describes it." if platform else
+             "Table identity is syntactically present; repository declaration was not found.")}
 
 
 def resources(unit):
@@ -1637,12 +1725,21 @@ def call_span(unit: Unit, position: int) -> tuple[int, int]:
 
 
 def _candidate_score(call: dict, candidate: Unit):
+    """How well a call's arguments match *candidate*, or None when they cannot.
+
+    A parameter the call omits must declare a default. In PostgreSQL a quoted
+    literal has no type of its own until it is matched, so it is accepted for
+    any parameter type (an enum or a domain, for instance), scoring below an
+    exact type match; other dialects require the types to agree.
+    """
     arguments = call["arguments"]
-    if len(arguments) != len(candidate.params):
+    defaults = getattr(candidate, "sql_param_defaults", ()) or ()
+    if len(arguments) > len(candidate.params):
         return None
     parameters = {name.casefold(): (index, _base_type(type_name))
         for index, (name, type_name) in enumerate(candidate.params)}
-    score = 0
+    coerces_literals = _dialect(candidate.source) == "postgres"
+    score, provided = 0, set()
     for index, argument in enumerate(arguments):
         parameter_index = index
         if argument["name"]:
@@ -1650,12 +1747,19 @@ def _candidate_score(call: dict, candidate: Unit):
             if selected is None:
                 return None
             parameter_index = selected[0]
+        if parameter_index in provided:
+            return None
+        provided.add(parameter_index)
         argument_type = argument["type"]
         parameter_type = _base_type(candidate.params[parameter_index][1])
         if argument_type != "unknown" and parameter_type != "unknown":
-            if argument_type != parameter_type:
+            if argument_type == parameter_type:
+                score += 1
+            elif not (coerces_literals and argument.get("literal")):
                 return None
-            score += 1
+    if any(index not in provided and not (index < len(defaults) and defaults[index])
+           for index in range(len(candidate.params))):
+        return None
     return score
 
 
@@ -1686,6 +1790,34 @@ def candidates(unit, receiver, name, available, position=None):
     best = max(score for score, _ in scored)
     return sorted((candidate for score, candidate in scored if score == best),
         key=lambda candidate: candidate.qualified)[:MAX_SEMANTIC_CANDIDATES]
+
+
+@functools.lru_cache(maxsize=1)
+def _platform_catalog():
+    path = Path(__file__).parents[1] / "data" / "sql_platform_routines.json"
+    return tuple(json.loads(path.read_text())["platforms"])
+
+
+def _platform_table(unit, name):
+    """The catalogued platform that provides table *name* here, or None."""
+    table = name.casefold().replace('"', "")
+    dialect = _dialect(unit.source)
+    return next((platform for platform in _platform_catalog()
+                 if dialect in platform["dialects"]
+                 and table in {item.casefold() for item in platform.get("tables", ())}
+                 and re.search(platform["path_pattern"], unit.source.path)), None)
+
+
+def _platform_routine(unit, receiver, name):
+    """The catalogued platform that provides ``receiver.name`` here, or None."""
+    if not receiver:
+        return None
+    routine = f"{receiver}.{name}".casefold()
+    dialect = _dialect(unit.source)
+    return next((platform for platform in _platform_catalog()
+                 if dialect in platform["dialects"]
+                 and routine in {item.casefold() for item in platform["routines"]}
+                 and re.search(platform["path_pattern"], unit.source.path)), None)
 
 
 def resolve_call(unit, receiver, name, candidates, position, evidence_id=None):
@@ -1721,6 +1853,18 @@ def resolve_call(unit, receiver, name, candidates, position, evidence_id=None):
                 candidate.symbol_id for candidate in candidates)),
             evidence_ids=evidence, diagnostic_code="SQL_CALL_AMBIGUOUS",
             reason=f"{dialect_name} call {name} has {len(candidates)} equally supported overloads.")
+    platform = _platform_routine(unit, receiver, name)
+    if platform:
+        routine = f"{receiver}.{name}".casefold()
+        return SemanticResult(capability="callable_resolution", outcome="external",
+            subject_id=unit.symbol_id,
+            target_id=identifier("resource", "sql-platform-routine",
+                                 platform["name"].casefold(), routine),
+            evidence_ids=evidence, diagnostic_code="SQL_PLATFORM_CALL",
+            reason=(f"{dialect_name} call {routine} is provided by the {platform['name']} "
+                    f"platform this repository targets ({unit.source.path}); no repository "
+                    "declaration answers it."),
+            provider=platform["provider"])
     qualified = f"{receiver}." if receiver else ""
     return SemanticResult(capability="callable_resolution", outcome="unresolved",
         subject_id=unit.symbol_id, evidence_ids=evidence,
@@ -1839,7 +1983,10 @@ def operations(unit):
                    output_names=()):
         gaps = []
         if resource["resolution"] != "resolved":
-            gaps.append({"projection": "target", "code": "SQL_DATA_TARGET_UNRESOLVED",
+            # A platform-provided table is a known boundary, not a missing one.
+            gaps.append({"projection": "target",
+                "code": ("SQL_PLATFORM_TABLE" if _platform_table(unit, resource["name"])
+                         else "SQL_DATA_TARGET_UNRESOLVED"),
                 "reason": resource["reason"]})
         if statement["diagnostic"]:
             gaps.append({"projection": "condition", "code": "SQL_OPERATION_PARSE_GAP",

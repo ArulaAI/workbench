@@ -1,0 +1,49 @@
+{
+  "_comment": [
+    "Routines a database platform provides that a repository calls but never",
+    "declares. A call matches only when no repository declaration answers it,",
+    "the calling file's dialect is listed, and its path shows the repository",
+    "targets that platform (path_pattern). The call is then an external",
+    "platform boundary named by 'provider', which the trace-boundary catalog",
+    "(trace_boundaries.json) classifies; anything else stays a gap.",
+    "'tables' lists the tables the platform provides; a read or write of one the repository does not declare is a platform boundary too, never a declared table."
+  ],
+  "platforms": [
+    {
+      "name": "Supabase",
+      "dialects": [
+        "postgres"
+      ],
+      "path_pattern": "(^|/)supabase/(migrations|functions|schemas)/",
+      "provider": "module:supabase/postgres",
+      "routines": [
+        "auth.uid",
+        "auth.jwt",
+        "auth.role",
+        "auth.email",
+        "storage.foldername",
+        "storage.filename",
+        "storage.extension"
+      ],
+      "tables": [
+        "auth.users",
+        "auth.identities",
+        "auth.sessions",
+        "storage.objects",
+        "storage.buckets"
+      ]
+    },
+    {
+      "name": "Oracle Database",
+      "dialects": [
+        "oracle"
+      ],
+      "path_pattern": "",
+      "provider": "module:oracle/database",
+      "routines": [],
+      "tables": [
+        "dual"
+      ]
+    }
+  ]
+}
