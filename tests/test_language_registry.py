@@ -125,7 +125,9 @@ def test_installed_dispositions_and_consumers_are_immutable_and_exact():
         'package_manifest', 'typescript_module_resolution',
         'developer_tool_configuration', 'stylesheet', 'visual_asset',
         'ide_launch_configuration', 'logging_configuration', 'ci_configuration',
-        'speed_configuration'}
+        'speed_configuration', 'sql_test_and_provisioning_scripts',
+        'stylesheet_css', 'stylesheet_scss', 'build_project_metadata',
+        'platform_bundle_metadata', 'dependency_lock'}
     with pytest.raises(TypeError):
         dispositions['stylesheet']['owner'] = 'other'
     consumer = registry.supporting_consumer_descriptor('package_manifest')

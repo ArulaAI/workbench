@@ -16,6 +16,15 @@ metadata:
   kind: function
   name_from: path
   executable_body: true
+  # Form identity is its submission: action, method and submit label. These
+  # describe where a template engine or framework computes one of them at
+  # render time, so the written value (or the HTML default) is not the one
+  # submitted.
+  computed_action_attribute: '^(?:th:action|data-th-action|th:attr|data-th-attr|asp-.+|:action|v-bind:action|\[action\]|\[attr\.action\]|ng-attr-action|x-bind:action)$'
+  computed_method_attribute: '^(?:th:method|data-th-method|th:attr|data-th-attr|asp-.+|:method|v-bind:method|\[method\]|\[attr\.method\]|ng-attr-method|x-bind:method)$'
+  computed_label_attribute: '^(?:th:text|th:utext|th:value|th:attr|data-th-text|data-th-utext|data-th-value|data-th-attr|v-text|v-html|:value|v-bind:value|\[innertext\]|\[innerhtml\]|\[textcontent\]|\[value\]|ng-bind|ng-bind-html|ng-value|x-text|x-html)$'
+  submission_override_attribute: '^(?:formaction|formmethod|th:formaction|th:formmethod|data-th-formaction|data-th-formmethod)$'
+  template_expression: '\{\{|\$\{|#\{|\*\{|@\{|~\{|<%|@[A-Za-z_(]'
 rule:
   kind: element
   has:

@@ -40,25 +40,80 @@ _domains_render_facts() {
     jq -r '
         .measurements.traces as $t
         | .coverage as $c
-        | "Traces:          \($t.resolved)/\($t.total) resolved (\($t.ambiguous) ambiguous, \($t.unresolved) unresolved)",
+        | def row: "  \(.label)\(" " * ([44 - (.label | length), 1] | max))\(.traces | tostring | " " * ([3 - length, 0] | max) + .) trace\(if .traces == 1 then "" else "s" end)";
+          "Traces:          \($t.resolved)/\($t.total) resolved (\($t.ambiguous) ambiguous, \($t.unresolved) unresolved)",
+          (if $t.complete != null
+           then "Completion:      \($t.complete) complete, \($t.bounded) bounded, \($t.incomplete) incomplete"
+           else empty end),
+          (if (.entry_points // []) | length > 0
+           then "Entry points:    \([.entry_points[].total] | add) ("
+                + ([.entry_points[] | "\(.kind) \(.resolved)/\(.total)"] | join(", "))
+                + " resolved)"
+           else empty end),
           (if (.trace_blockers // []) | length > 0
            then "",
-                "Trace resolution blockers:",
-                (.trace_blockers[] | "  \(.label)\(" " * ([36 - (.label | length), 1] | max))\(.traces | tostring | " " * ([3 - length, 0] | max) + .) trace\(if .traces == 1 then "" else "s" end)"),
+                (if ([.trace_blockers[] | select(.class == "boundary")] | length) > 0
+                 then "Trace boundaries (known; the trace lists each assumption):",
+                      (.trace_blockers[] | select(.class == "boundary") | row)
+                 else empty end),
+                (if ([.trace_blockers[] | select(.class != "boundary")] | length) > 0
+                 then "Trace gaps:",
+                      (.trace_blockers[] | select(.class != "boundary") | row)
+                 else empty end),
                 "",
-                "  Note: blocker categories may overlap; a trace can have",
-                "        multiple blockers.",
+                "  Note: categories may overlap; a trace can have",
+                "        several boundaries and gaps.",
+                ""
+           else empty end),
+          (if (.screen_actions // []) | length > 0
+           then "Screen actions:",
+                (.screen_actions[]
+                 | "  \(.route)\(" " * ([44 - (.route | length), 1] | max))"
+                   + (if .state == "labeled" then .label
+                      elif .state == "ambiguous" then "ambiguous: " + ([.candidates[] | "\u0027\(.)\u0027"] | join(" or "))
+                      elif .state == "labeled_unresolved" then "\(.label) (unresolved: \(.reason // "identity not established"))"
+                      else "unlabeled: \(.reason // "label not statically determined")" end)),
+                ""
+           else empty end),
+          (if (.generated_declarations // []) | length > 0
+           then "Generated declarations (modelled from build-time generators):",
+                (.generated_declarations[]
+                 | "  \(.kind): \(.types) type\(if .types == 1 then "" else "s" end)"
+                   + (if .members > 0 then ", \(.members) member\(if .members == 1 then "" else "s" end)" else "" end)
+                   + (if .calls > 0 then "; \(.calls) call\(if .calls == 1 then " resolves" else "s resolve" end) to them" else "" end)),
                 ""
            else empty end),
           "Relationships:   \($c.edges_resolved) resolved, \($c.edges_unresolved) unresolved, \($c.edges_ambiguous) ambiguous",
-          "Unresolved calls: \(.measurements.call_targets.unresolved)"
-            + (if (.measurements.call_targets.unresolved_by_language | length) > 0
-               then " (" + ([.measurements.call_targets.unresolved_by_language | to_entries[] | "\(.key) \(.value)"] | join(", ")) + ")"
-               else "" end),
-          "Warnings:        \(.warnings | length)"
-            + (if (.warnings | length) > 0
-               then " (" + ([.warnings | group_by(.code)[] | "\(.[0].code) \(length)"] | join(", ")) + ")"
-               else "" end),
+          (.measurements.call_targets as $calls
+           | if $calls.unresolved_sites != null
+             then "Unresolved calls: \($calls.unresolved_sites) call sites on traces"
+                  + (if ($calls.unresolved_sites_by_language | length) > 0
+                     then " (" + ([$calls.unresolved_sites_by_language | to_entries[] | "\(.key) \(.value)"] | join(", ")) + ")"
+                     else "" end)
+                  + (if $calls.unresolved != $calls.unresolved_sites
+                     then "; \($calls.unresolved) counted once per trace" else "" end)
+             else "Unresolved calls: \($calls.unresolved)"
+                  + (if ($calls.unresolved_by_language | length) > 0
+                     then " (" + ([$calls.unresolved_by_language | to_entries[] | "\(.key) \(.value)"] | join(", ")) + ")"
+                     else "" end)
+             end),
+          "Warnings:        \(.warnings | length)",
+          ((.warning_counts // [.warnings | group_by(.code)[] | {code: .[0].code, count: length}])[]
+           | "  \(.code)\(" " * ([44 - (.code | length), 1] | max))\(.count | tostring | " " * ([4 - length, 0] | max) + .)"),
+          ((.coverage.entrypoint_gaps // []) as $g
+           | if ($g | length) > 0
+             then "",
+                  "Entry-point coverage:",
+                  ($g[] | select(.kind != "likely_missed") | "  \(.message)"),
+                  ([$g[] | select(.kind == "likely_missed")] as $m
+                   | if ($m | length) > 0
+                     then "  Likely missed entry points: \($m | length) ("
+                          + ([$m | group_by(.marker_kind)[] | "\(length) \(.[0].marker_kind)"] | join(", ")) + ")",
+                          ($m | group_by(.marker_kind)[]
+                           | "    \(.[0].marker_kind): "
+                             + ([group_by(.framework)[] | "\(.[0].framework) \(length)"] | join(", ")))
+                     else empty end)
+             else empty end),
           "",
           "Facts written to:",
           "\(.artifact)"

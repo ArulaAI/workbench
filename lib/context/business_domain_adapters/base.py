@@ -52,6 +52,10 @@ class SemanticResult:
     diagnostic_code: str | None = None
     reason: str | None = None
     contract_version: int = SEMANTIC_CONTRACT_VERSION
+    # Who answers an external outcome, as ``type:<qualified type>``,
+    # ``module:<module>`` or ``global:<name>``: the key the trace-boundary
+    # catalog matches a library call against. Not part of the normalized shape.
+    provider: str | None = None
 
     def __post_init__(self) -> None:
         if self.contract_version != SEMANTIC_CONTRACT_VERSION:
@@ -181,6 +185,9 @@ class Unit:
     required_capabilities: tuple[str, ...] | None = None
     valid_terminal: bool | None = None
     configuration: ConfigurationDeclaration | None = None
+    # Further spans the symbol itself rests on, beyond its own span: for a type
+    # a build tool generates, the configuration and schema it is generated from.
+    supporting_evidence_spans: list[tuple[Source, int, int]] = field(default_factory=list)
 
     @property
     def text(self) -> str:

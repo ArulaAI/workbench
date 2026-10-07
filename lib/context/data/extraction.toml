@@ -50,6 +50,37 @@ ecmascript = [
   "module", "exports", "process", "Buffer", "__dirname", "__filename",
 ]
 
+# Java's implicit import: every public type of java.lang (Java 21) is in
+# scope in every compilation unit without an import declaration. A type a
+# same-package or single-type import declares still shadows it.
+java_lang = [
+  "Appendable", "AutoCloseable", "CharSequence", "Cloneable", "Comparable", "Iterable",
+  "Readable", "Runnable",
+  "Boolean", "Byte", "Character", "Class", "ClassLoader", "ClassValue", "Double", "Enum",
+  "Float", "InheritableThreadLocal", "Integer", "Long", "Math", "Module", "ModuleLayer",
+  "Number", "Object", "Package", "Process", "ProcessBuilder", "ProcessHandle", "Record",
+  "Runtime", "RuntimePermission", "SecurityManager", "Short", "StackTraceElement",
+  "StackWalker", "StrictMath", "String", "StringBuffer", "StringBuilder", "System",
+  "Thread", "ThreadGroup", "ThreadLocal", "Throwable", "Void",
+  "ArithmeticException", "ArrayIndexOutOfBoundsException", "ArrayStoreException",
+  "ClassCastException", "ClassNotFoundException", "CloneNotSupportedException",
+  "EnumConstantNotPresentException", "Exception", "IllegalAccessException",
+  "IllegalArgumentException", "IllegalCallerException", "IllegalMonitorStateException",
+  "IllegalStateException", "IllegalThreadStateException", "IndexOutOfBoundsException",
+  "InstantiationException", "InterruptedException", "LayerInstantiationException",
+  "MatchException", "NegativeArraySizeException", "NoSuchFieldException",
+  "NoSuchMethodException", "NullPointerException", "NumberFormatException",
+  "ReflectiveOperationException", "RuntimeException", "SecurityException",
+  "StringIndexOutOfBoundsException", "TypeNotPresentException",
+  "UnsupportedOperationException", "WrongThreadException",
+  "AbstractMethodError", "AssertionError", "BootstrapMethodError", "ClassCircularityError",
+  "ClassFormatError", "Error", "ExceptionInInitializerError", "IllegalAccessError",
+  "IncompatibleClassChangeError", "InstantiationError", "InternalError", "LinkageError",
+  "NoClassDefFoundError", "NoSuchFieldError", "NoSuchMethodError", "OutOfMemoryError",
+  "StackOverflowError", "UnknownError", "UnsatisfiedLinkError",
+  "UnsupportedClassVersionError", "VerifyError", "VirtualMachineError",
+]
+
 # ── Source languages with ast-grep rules ──
 # Rule files in lib/context/rules/{language}/
 
@@ -86,6 +117,7 @@ extraction = "rules"
 
 [java]
 extraction = "rules"
+ambient_globals = "java_lang"
 
 [ruby]
 extraction = "rules"
@@ -185,6 +217,12 @@ conformance = "declaration"
 extraction_level = "rules"
 fallback = true
 diagnostic_codes = ["SEMANTIC_RESOLUTION_UNAVAILABLE", "RULES_AMBIENT_CALL"]
+# The rules adapter detects entry points only for languages whose installed
+# rule catalog (lib/context/rules/<rules_language>/) declares business anchors
+# or entry-point registrations. Every other language it parses has no
+# entry-point detection, so G2 reports it as a language gap.
+[source_adapters.rules.capability_languages]
+entrypoint_detection = ["java", "jsx", "python", "tsx"]
 [source_adapters.rules.capabilities]
 parsing = "supported"
 declaration_extraction = "supported"
@@ -210,7 +248,7 @@ contract_version = 1
 normalized_output_version = 1
 conformance = "semantic"
 languages = ["javascript", "jsx", "typescript", "tsx"]
-diagnostic_codes = ["JS_EXTERNAL_CALL", "JS_CALL_UNRESOLVED", "JS_CALL_AMBIGUOUS", "JS_MODULE_UNRESOLVED"]
+diagnostic_codes = ["JS_EXTERNAL_CALL", "JS_CALL_UNRESOLVED", "JS_CALL_AMBIGUOUS", "JS_MODULE_UNRESOLVED", "UI_ACTION_LABEL_RUNTIME", "UI_ACTION_LABEL_AMBIGUOUS"]
 [source_adapters.ts_semantic.capabilities]
 parsing = "supported"
 declaration_extraction = "supported"
@@ -540,7 +578,12 @@ detect_any = [
   '(?i)\bVARCHAR2\s*(?:\(|\b)',
   '(?i)\b\w+(?:\.\w+)?%(?:TYPE|ROWTYPE)\b',
 ]
-exclude_any = ['(?i)\bLANGUAGE\s+plpgsql\b']
+exclude_any = [
+  '(?i)\bLANGUAGE\s+plpgsql\b',
+  '(?is)\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:CONSTRAINT\s+)?TRIGGER\b[^;]*?\bEXECUTE\s+(?:FUNCTION|PROCEDURE)\b',
+  '(?is)\bCREATE\s+POLICY\b[^;]*?\bON\b',
+  '(?i)\b(?:ENABLE|FORCE)\s+ROW\s+LEVEL\s+SECURITY\b',
+]
 diagnostic_codes = ["PARTIAL_DIALECT_PARSER", "SQL_MATERIAL_PARSE_ERROR", "SQL_Q_LITERAL_NORMALIZED", "SQL_CALL_UNRESOLVED", "SQL_CALL_AMBIGUOUS", "SQL_DYNAMIC_CALL", "SQL_EXTERNAL_PACKAGE_CALL", "SQL_DATA_TARGET_UNRESOLVED", "SQL_OPERATION_PARSE_GAP", "SQL_CONTROL_FLOW_UNRESOLVED", "SQL_CHANGED_VALUES_UNRESOLVED", "SQL_TRANSACTION_SCOPE_UNRESOLVED", "SQL_COMMIT_NOT_ESTABLISHED", "SQL_COMPLETION_UNRESOLVED"]
 [source_adapters.oracle_plsql.capabilities]
 parsing = "partial"
@@ -576,8 +619,13 @@ recognized_extensions = [".sql"]
 detect_any = [
   '(?i)\bLANGUAGE\s+plpgsql\b',
   '(?im)^SPEED_PATH:.*/postgresql/[^/]+\.sql$',
+  # PostgreSQL-only DDL: trigger EXECUTE FUNCTION/PROCEDURE clauses and
+  # row-level security.
+  '(?is)\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:CONSTRAINT\s+)?TRIGGER\b[^;]*?\bEXECUTE\s+(?:FUNCTION|PROCEDURE)\b',
+  '(?is)\bCREATE\s+POLICY\b[^;]*?\bON\b',
+  '(?i)\b(?:ENABLE|FORCE)\s+ROW\s+LEVEL\s+SECURITY\b',
 ]
-diagnostic_codes = ["PARTIAL_DIALECT_PARSER", "SQL_MATERIAL_PARSE_ERROR", "SQL_Q_LITERAL_NORMALIZED", "SQL_CALL_UNRESOLVED", "SQL_CALL_AMBIGUOUS", "SQL_DYNAMIC_CALL", "SQL_EXTERNAL_PACKAGE_CALL", "SQL_DATA_TARGET_UNRESOLVED", "SQL_OPERATION_PARSE_GAP", "SQL_CONTROL_FLOW_UNRESOLVED", "SQL_CHANGED_VALUES_UNRESOLVED", "SQL_TRANSACTION_SCOPE_UNRESOLVED", "SQL_COMMIT_NOT_ESTABLISHED", "SQL_COMPLETION_UNRESOLVED"]
+diagnostic_codes = ["PARTIAL_DIALECT_PARSER", "SQL_MATERIAL_PARSE_ERROR", "SQL_Q_LITERAL_NORMALIZED", "SQL_CALL_UNRESOLVED", "SQL_CALL_AMBIGUOUS", "SQL_DYNAMIC_CALL", "SQL_EXTERNAL_PACKAGE_CALL", "SQL_DATA_TARGET_UNRESOLVED", "SQL_OPERATION_PARSE_GAP", "SQL_CONTROL_FLOW_UNRESOLVED", "SQL_CHANGED_VALUES_UNRESOLVED", "SQL_TRANSACTION_SCOPE_UNRESOLVED", "SQL_COMMIT_NOT_ESTABLISHED", "SQL_COMPLETION_UNRESOLVED", "SQL_IMPLEMENTATION_UNAVAILABLE", "SQL_IMPLEMENTATION_AMBIGUOUS"]
 [source_adapters.postgresql.capabilities]
 parsing = "partial"
 declaration_extraction = "partial"
@@ -802,6 +850,35 @@ language = "less"
 disposition = "ignore"
 owner = "stylesheet"
 
+# Files that cannot declare entry points or business behavior and that no
+# installed owner consumes: stylesheets, build project metadata, platform
+# bundle metadata and dependency lock files. They are out of scope, not
+# unsupported, so they are ignored rather than warned about.
+[source_dispositions.stylesheet_css]
+language = "css"
+disposition = "ignore"
+owner = "stylesheet"
+
+[source_dispositions.stylesheet_scss]
+language = "scss"
+disposition = "ignore"
+owner = "stylesheet"
+
+[source_dispositions.build_project_metadata]
+language = "msbuild"
+disposition = "ignore"
+owner = "build_project_metadata"
+
+[source_dispositions.platform_bundle_metadata]
+path_any = ['.*\.plist']
+disposition = "ignore"
+owner = "platform_bundle_metadata"
+
+[source_dispositions.dependency_lock]
+path_any = ['(?:.*/)?(?:package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.ya?ml|bun\.lockb?|Cargo\.lock|Gemfile\.lock|poetry\.lock|Pipfile\.lock|composer\.lock|packages\.lock\.json|go\.sum|uv\.lock|pdm\.lock|mix\.lock|flake\.lock)']
+disposition = "ignore"
+owner = "dependency_lock"
+
 [source_dispositions.visual_asset]
 category = "asset"
 disposition = "ignore"
@@ -829,3 +906,18 @@ path_any = ['speed\.toml']
 language = "toml"
 disposition = "ignore"
 owner = "speed_configuration"
+
+# Test, seed and CI SQL scripts exercise or provision a database; they declare
+# no production entry points. They are retained as test evidence (see
+# catalog.json test_path_pattern) without semantic extraction or dialect
+# selection.
+[source_dispositions.sql_test_and_provisioning_scripts]
+path_any = [
+  '(?:.*/)?(?:tests?|__tests__)/.*\.sql',
+  '(?:.*/)?seeds?/.*\.sql',
+  '(?:.*/)?(?:[^/]*[-_.])?seeds?(?:[-_.][^/]*)?\.sql',
+  '\.(?:github|circleci)/.*\.sql',
+]
+language = "sql"
+disposition = "reference_only"
+owner = "sql_test_and_provisioning_script"

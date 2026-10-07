@@ -233,6 +233,9 @@ metadata:
   target_var: HANDLER
   edge_kind: selects_implementation
   label_pattern: '(?s)<button(?:\s[^>]*)?>([^<{][^<]*)</button>'
+  # A label written as one JSX expression child; the language adapter decides
+  # which literal values it takes.
+  label_expression_pattern: '(?s)>\s*\{((?:[^{}]|\{[^{}]*\})*)\}\s*</button>\s*\Z'
 rule:
   kind: jsx_element
   has:

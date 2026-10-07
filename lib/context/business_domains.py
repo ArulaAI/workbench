@@ -620,6 +620,9 @@ def publication_status(model, external_freshness):
     complete = (
         model['coverage']['anchors_pending'] == 0
         and not model['limits']['truncated']
+        # Any reported entry-point gap (language without detection, likely
+        # missed marker, or zero entry points) keeps publication partial.
+        and not model['coverage'].get('entrypoint_gaps')
         and external_freshness not in ('stale', 'unknown')
         and all(item['status'] == 'supported' for item in model['capabilities'])
         and all(item['resolution'] == 'resolved'

@@ -47,6 +47,76 @@ def test_html_form_reader_emits_anchor_binding_effect_and_interaction(tmp_path):
     assert trace['ui_interaction']['validations']
 
 
+def _form_anchors(facts):
+    return [anchor for anchor in facts['anchors'].values()
+            if anchor['kind'] == 'ui' and any(
+                (item['identity_key'] or '').startswith('ui:repository:form:')
+                for item in anchor['representations'])]
+
+
+def test_html_form_identity_is_its_submission_not_its_file(tmp_path):
+    facts, _ = _extract(tmp_path, {
+        'owners/new.html': '''
+<form action="/owners" METHOD="Post">
+  <input name="name" required>
+  <button type="submit">  Add
+     Owner </button>
+</form>
+''',
+        'owners/copy.html': '''<html><body>
+<form action="/owners" method="post"><button>Add Owner</button></form>
+</body></html>
+''',
+        'search.html': '<form action="/owners/find"><input type="submit" value="Find"></form>\n',
+    })
+
+    forms = {anchor['representations'][0]['identity_key']: anchor
+             for anchor in _form_anchors(facts)}
+    # The same submission written in two files is one entry point.
+    assert set(forms) == {'ui:repository:form:POST:/owners:Add Owner',
+                          'ui:repository:form:GET:/owners/find:Find'}
+    create = forms['ui:repository:form:POST:/owners:Add Owner']
+    assert len(create['representations']) == 2
+    assert create['canonical_anchor_id'] == create['id']
+    assert create['resolution'] == 'resolved'
+    assert create['eligibility'] == 'eligible'
+    assert (create['operation']['method'], create['operation']['path']) == ('POST', '/owners')
+    assert {item['registration']['label'] for item in create['representations']} == {'Add Owner'}
+    search = forms['ui:repository:form:GET:/owners/find:Find']
+    assert (search['operation']['method'], search['operation']['path']) == ('GET', '/owners/find')
+
+
+def test_html_form_identity_marks_parts_it_cannot_determine(tmp_path):
+    facts, _ = _extract(tmp_path, {
+        'thymeleaf.html': '''<form th:action="@{/owners}" method="post">
+  <button type="submit" th:text="${label}">Add Owner</button>
+</form>
+''',
+        'angular.html': '<form (ngSubmit)="save()"><button type="submit">Save</button></form>\n',
+        'choices.html': '''<form action="/visits" method="post">
+  <button name="draft">Save draft</button>
+  <button>Publish</button>
+</form>
+''',
+        'dialog.html': '<form action="/x" method="dialog"><button>Close</button></form>\n',
+        'razor.cshtml': '<form asp-action="Logout"><button>Yes</button></form>\n',
+    })
+
+    forms = _form_anchors(facts)
+    assert {anchor['representations'][0]['identity_key'] for anchor in forms} == {
+        'ui:repository:form:POST:<unresolved>:<unresolved>@thymeleaf.html:0',
+        'ui:repository:form:GET:<unresolved>:Save@angular.html:0',
+        'ui:repository:form:POST:/visits:<unresolved>@choices.html:0',
+        'ui:repository:form:<unresolved>:/x:Close@dialog.html:0',
+        # A tag helper renders both the action and the method.
+        'ui:repository:form:<unresolved>:<unresolved>:Yes@razor.cshtml:0',
+    }
+    for anchor in forms:
+        assert anchor['resolution'] == 'unresolved'
+        assert 'not statically determined' in anchor['reason']
+        assert anchor['representations'][0]['registration']['resolution'] == 'unresolved'
+
+
 def test_typescript_reader_resolves_local_imports_and_external_modules(tmp_path):
     facts, _ = _extract(tmp_path, {
         'api.ts': "export function send() { return fetch('/api/orders'); }\n",

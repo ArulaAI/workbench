@@ -542,6 +542,13 @@ def information_use_closure(model: dict, use: dict) -> dict[str, set[str]]:
             'effect_ids': effect_ids, 'evidence_ids': evidence_ids}
 
 
+# Warning codes of the reported entry-point gaps, by coverage-entry kind.
+ENTRYPOINT_GAP_CODES = {
+    'language_unavailable': 'ENTRYPOINT_DETECTION_UNAVAILABLE',
+    'likely_missed': 'ENTRYPOINT_LIKELY_MISSED',
+    'none_detected': 'ENTRYPOINT_NONE_DETECTED',
+}
+
 _BLOCKING_SOURCE_CODES = {
     'SOURCE_CAPABILITY_UNAVAILABLE', 'AMBIGUOUS_ADAPTER',
     'ADAPTER_UNAVAILABLE',
@@ -572,6 +579,19 @@ def validate_source_warning_coverage(facts: dict) -> None:
     if Counter(unsupported) != Counter(warning_subjects):
         raise DomainError('INVALID_ARTIFACT',
             'Unsupported repository sources and blocking warnings must correspond exactly')
+    # Entry-point gaps (G2) obey the same rule: every structured coverage
+    # entry has exactly one warning with its code and message, and back.
+    gaps = facts.get('coverage', {}).get('entrypoint_gaps', [])
+    if any(ENTRYPOINT_GAP_CODES.get(gap.get('kind')) != gap.get('code')
+           for gap in gaps):
+        raise DomainError('INVALID_ARTIFACT',
+            'Entry-point coverage entries must carry the code of their kind')
+    gap_warnings = Counter((warning['code'], warning['message'])
+        for warning in facts.get('warnings', [])
+        if warning.get('code') in ENTRYPOINT_GAP_CODES.values())
+    if gap_warnings != Counter((gap['code'], gap['message']) for gap in gaps):
+        raise DomainError('INVALID_ARTIFACT',
+            'Entry-point coverage entries and entry-point warnings must correspond exactly')
 
 
 def validate_references(model: dict) -> None:
@@ -666,6 +686,17 @@ def validate_references(model: dict) -> None:
                         'Traversal completion must be independent and consistent with traversal limits')
                 if trace['resolution'] == 'resolved' and not trace['traversal_complete']:
                     raise DomainError('INVALID_TRACE', 'A bounded traversal stop cannot be semantic success')
+            if 'completion' in trace:
+                blocking = [o for o in obligations if o['status'] != 'satisfied']
+                expected = ('complete' if not blocking else
+                            'bounded' if all(o.get('boundary') for o in blocking) else 'incomplete')
+                if trace['completion'] != expected:
+                    raise DomainError('INVALID_TRACE',
+                        'Trace completion disagrees with its boundary and gap obligations')
+                if sorted(item['obligation_id'] for item in trace.get('assumptions', [])) != sorted(
+                        o['id'] for o in blocking if o.get('boundary')):
+                    raise DomainError('INVALID_TRACE',
+                        'A trace lists exactly one assumption per boundary obligation')
             if model.get('schema_version', 1) >= 2:
                 edge_evidence = {evidence_id for edge_id in trace['edge_ids']
                     for evidence_id in model['edges'][edge_id]['evidence_ids']}

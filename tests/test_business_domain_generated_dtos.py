@@ -1,9 +1,11 @@
-"""Generated DTOs stay technical and unresolved, with explicit generator evidence.
+"""Generated DTOs resolve to the model the generator writes from a committed schema.
 
 A Maven OpenAPI generator writes model classes at build time; the snapshot
-never contains them. A relation to one stays unresolved, but its reason names
-the generated type and its evidence cites the generator configuration and,
-when the name maps onto it exactly, the committed schema. Nothing is invented.
+never contains them. When the configured model package, affixes and a literal
+input spec map a name onto a committed schema exactly, the class is built from
+that schema and a relation to it resolves; its symbol cites the generator
+configuration and the schema. A generated name with no matching schema stays
+unresolved, its reason naming the generated type. Nothing is invented.
 """
 import pytest
 
@@ -101,18 +103,23 @@ def _evidence(facts, edge):
             for evidence_id in edge['evidence_ids']}
 
 
-def test_generated_dto_relation_is_unresolved_and_says_why(facts):
+def _target(facts, edge):
+    return facts['symbols'][edge['to_ref']['id']]
+
+
+def test_generated_dto_with_a_matching_schema_resolves_to_the_generated_type(facts):
     edge = _edge(facts, 'create', 'accepts_type')
-    assert edge['resolution'] == 'unresolved' and edge['to_ref'] is None
-    assert edge['reason'] == (
-        'Java accepts_type target OwnerFieldsDto is the generated DTO '
-        'com.example.dto.OwnerFieldsDto, which openapi-generator-maven-plugin produces at '
-        'build time from OpenAPI schema OwnerFields in src/main/resources/openapi.yml; its '
-        'declaration is unavailable at analysis time.')
+    assert edge['resolution'] == 'resolved' and edge['reason'] is None
+    target = _target(facts, edge)
+    assert target['kind'] == 'type'
+    assert target['qualified_name'] == 'pom.xml::generated-model:com.example.dto.OwnerFieldsDto'
 
 
-def test_evidence_cites_the_generator_plugin_and_the_matching_schema(facts):
-    evidence = _evidence(facts, _edge(facts, 'create', 'accepts_type'))
+def test_the_generated_type_cites_the_generator_plugin_and_the_matching_schema(facts):
+    target = _target(facts, _edge(facts, 'create', 'accepts_type'))
+    evidence = {facts['evidence'][evidence_id]['locator']['path']: facts['evidence'][evidence_id]
+                for evidence_id in target['evidence_ids']}
+    assert set(evidence) == {'pom.xml', 'src/main/resources/openapi.yml'}
     plugin = evidence['pom.xml']['excerpt']
     assert plugin.startswith('<plugin>') and plugin.endswith('</plugin>')
     assert 'openapi-generator-maven-plugin' in plugin
@@ -137,10 +144,16 @@ def test_generated_dto_without_a_matching_schema_invents_no_schema_evidence(
     assert 'pom.xml' in _evidence(facts, edge)
 
 
-def test_no_dto_symbol_resource_or_anchor_is_created(facts):
-    assert not [symbol for symbol in facts['symbols'].values()
-                if 'Dto' in symbol['qualified_name'].rsplit('::', 1)[-1].split('.')[0]
-                or symbol['file'].endswith('Dto.java')]
+def test_only_the_schema_backed_dto_and_its_accessors_are_created(facts):
+    dto = [symbol for symbol in facts['symbols'].values()
+           if 'Dto' in symbol['qualified_name'].rsplit('::', 1)[-1].split('(')[0]
+           or symbol['file'].endswith('Dto.java')]
+    assert sorted(symbol['qualified_name'].split('::', 1)[1] for symbol in dto) == [
+        'generated-model:com.example.dto.OwnerFieldsDto',
+        'generated-model:com.example.dto.OwnerFieldsDto.getFirstName()',
+        'generated-model:com.example.dto.OwnerFieldsDto.setFirstName(String)',
+    ]
+    assert {symbol['file'] for symbol in dto} == {'pom.xml'}
     assert not [resource for resource in facts['resources'].values()
                 if 'Dto' in resource['name']]
     assert not [anchor for anchor in facts['anchors'].values()
@@ -165,6 +178,10 @@ def test_wildcard_dto_needs_the_configured_affix_to_be_recognized(tmp_path):
     facts = _facts(tmp_path, suffix='')
     edge = _edge(facts, 'create', 'accepts_type')
     assert edge['reason'] == 'Java accepts_type target OwnerFieldsDto is unresolved.'
+    # Without the suffix the generator names the schema's class OwnerFields.
+    assert [symbol['qualified_name'] for symbol in facts['symbols'].values()
+            if symbol['kind'] == 'type' and 'generated-model:' in symbol['qualified_name']] == [
+        'pom.xml::generated-model:com.example.dto.OwnerFields']
     # An explicit import from the model package is still generated.
     assert 'generated DTO com.example.dto.PetDto' in _edge(facts, 'pet', 'accepts_type')['reason']
 
@@ -174,3 +191,5 @@ def test_a_non_literal_input_spec_establishes_no_schema(tmp_path):
     edge = _edge(facts, 'create', 'accepts_type')
     assert 'could not be matched' in edge['reason']
     assert 'src/main/resources/openapi.yml' not in _evidence(facts, edge)
+    assert not [symbol for symbol in facts['symbols'].values()
+                if 'generated-model:' in symbol['qualified_name']]

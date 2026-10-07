@@ -3,6 +3,7 @@
 This adapter does not recognize language keywords, decorators or frameworks.
 Those decisions belong to the existing rules/{language} catalog.
 """
+import copy
 import re
 from .base import (SemanticResult, Unit, declare_anchor_registration,
                    declare_anchor_representation,
@@ -320,6 +321,13 @@ def extract(source):
             label_match = re.search(metadata['label_pattern'], match.text)
             label = label_match.group(1).strip() if label_match else None
             label = label or None
+        # A label written as an expression is kept with its offset; only a
+        # language adapter can say which values it takes.
+        label_expression = None
+        if label is None and metadata.get('label_expression_pattern'):
+            found = re.search(metadata['label_expression_pattern'], source.text[start:end])
+            if found and found.group(1).strip():
+                label_expression = (found.group(1), start + found.start(1))
         method = metadata.get('method')
         name = (target or 'dynamic route') if registration_kind == 'route' else (
             label or 'unlabeled action')
@@ -338,6 +346,7 @@ def extract(source):
         registration.anchor_route_expression = raw_route
         registration.anchor_owner_unit = owner
         registration.anchor_label = label
+        registration.anchor_label_expression = label_expression
         registration.anchor_match = match
         registration.anchor_correspondence_relationship_kind = metadata['edge_kind']
         declare_anchor_representation(registration, metadata['role'], identity_key,
@@ -429,6 +438,114 @@ def _ambient_boundaries(source, resolve_name):
     return boundaries
 
 
+_MAX_COMPOSITION_DEPTH = 8
+
+
+def _route_contexts(owner, route_context):
+    """Every route displaying *owner*, with the composition chain that shows it.
+
+    Returns ``[(route_registration, chain)]``. A chain lists the ``(origin,
+    start, end)`` composition usages from the routed page down to the usage
+    that renders *owner*; a directly routed owner has an empty chain. Only
+    resolved composition counts, and a usage in a test source never does.
+    """
+    found = []
+
+    def walk(unit, chain, seen):
+        for route in route_context.get(id(unit), []):
+            found.append((route, chain))
+        if len(chain) >= _MAX_COMPOSITION_DEPTH:
+            return
+        for origin, start, end in getattr(unit, 'jsx_usages', None) or ():
+            if (id(origin) in seen
+                    or re.search(CATALOG['test_path_pattern'], origin.source.path)):
+                continue
+            walk(origin, ((origin, start, end),) + chain, seen | {id(origin)})
+
+    if owner is not None:
+        walk(owner, (), {id(owner)})
+    return found
+
+
+def _route_copy(unit, path):
+    """One action registration per route that displays its shared component."""
+    action = copy.copy(unit)
+    action.qualified = f'{unit.qualified}@{path if path is not None else "dynamic-route"}'
+    action.anchor_correspondence_units = []
+    action.anchor_evidence_spans = list(unit.anchor_evidence_spans)
+    action.anchor_registration_evidence_spans = []
+    return action
+
+
+def _place_action(unit, target, owner, path, contexts):
+    """Scope an action to the route that displays it and declare it."""
+    unit.route = path
+    unit.anchor_route_contexts = contexts
+    unit.anchor_action_target = target
+    scope = unit.route or (owner.qualified if owner else unit.source.path)
+    unit.anchor_identity_key = (f'ui:{unit.source.service_scope}:action:'
+        f'{scope}:{unit.method}:{unit.start}:{unit.end}')
+    # A route reached through composition is evidenced by the route
+    # registration and every usage between its page and this component.
+    unit.anchor_placement_evidence_spans = [] if not any(chain for _, chain in contexts) else [
+        item for route, chain in contexts
+        for item in [(route.source, route.start, route.end)] + [
+            (origin.source, start, end) for origin, start, end in chain]]
+    reason = None if target else (
+        'Action callback is dynamic, ambiguous, or not resolved through lexical/import evidence.')
+    unit.anchor_correspondence_units = [target] if target else []
+    unit.anchor_correspondence_state = 'resolved' if target else 'unresolved'
+    unit.anchor_correspondence_reason = reason
+    declare_action(unit)
+    unit.anchor_context_unit = owner
+    unit.source.normalized_relations = getattr(unit.source, 'normalized_relations', [])
+    unit.source.normalized_relations.append({'source': unit, 'target': target,
+        'kind': unit.anchor_correspondence_relationship_kind,
+        'start': unit.start, 'end': unit.end,
+        'resolution': 'resolved' if target else 'unresolved',
+        'reason': reason})
+    if owner and owner is not target:
+        unit.source.normalized_relations.append({'source': unit, 'target': owner,
+            'kind': 'composes', 'start': unit.start, 'end': unit.end,
+            'resolution': 'resolved', 'reason': None})
+
+
+def declare_action(unit):
+    """Declare a placed action registration from its target and label state.
+
+    A language adapter that evaluates a label expression records
+    ``anchor_label`` (one value), ``anchor_label_candidates`` (several it
+    cannot choose between) or ``anchor_label_reason`` (why no literal value
+    exists), with the spans that evidence it, and declares again.
+    """
+    target = unit.anchor_action_target
+    label = unit.anchor_label
+    candidates = list(getattr(unit, 'anchor_label_candidates', None) or ())
+    label_reason = getattr(unit, 'anchor_label_reason', None)
+    callback_reason = (None if target else
+        'Action callback is dynamic, ambiguous, or not resolved through lexical/import evidence.')
+    if label:
+        resolution, reason = ('resolved', None) if target else ('unresolved', callback_reason)
+    else:
+        resolution = 'ambiguous' if target and len(candidates) > 1 else 'unresolved'
+        reason = (' '.join(filter(None, (callback_reason, label_reason))) if label_reason
+                  else callback_reason or 'Visible action label is not statically resolved.')
+    unit.name = label or 'unlabeled action'
+    unit.anchor_resolution = resolution
+    unit.anchor_reason = reason
+    semantic_target = (f'{target.owner}.{target.name}' if target and target.owner
+                       else target.name if target else unit.anchor_target_name)
+    spans = [*(getattr(unit, 'anchor_placement_evidence_spans', None) or ()),
+             *(getattr(unit, 'anchor_label_evidence_spans', None) or ())]
+    declare_anchor_registration(unit, 'action', event=unit.method,
+        target=semantic_target, scope=unit.route or (
+            unit.anchor_owner_unit.qualified if unit.anchor_owner_unit
+            else unit.source.path),
+        condition=getattr(unit, 'anchor_label_condition', None), label=label,
+        resolution=resolution, reason=reason,
+        evidence_spans=[(unit.source, unit.start, unit.end), *spans] if spans else None)
+
+
 def prepare(sources, units, diagnostics=None):
     """Resolve normalized UI registrations/composition through the CSG owner."""
     relevant = [unit for unit in units if unit.source in sources]
@@ -503,7 +620,7 @@ def prepare(sources, units, diagnostics=None):
         targets = ([target] if target else dynamic_selections.get(
             (unit.source.path, unit.anchor_target_name), []))
         for candidate in targets:
-            route_context.setdefault(id(candidate), []).append(unit.route)
+            route_context.setdefault(id(candidate), []).append(unit)
         complete = bool(unit.route and len(targets) == 1)
         ambiguous = len(targets) > 1
         unit.anchor_correspondence_units = targets
@@ -545,42 +662,6 @@ def prepare(sources, units, diagnostics=None):
                         (lifecycle.source, start, end)],
                     'resolution': 'resolved', 'reason': None})
 
-    for unit in registrations:
-        if unit.anchor_registration_kind != 'action':
-            continue
-        target = resolve(unit.anchor_target_name, unit.source)
-        owner = getattr(unit, 'anchor_owner_unit', None)
-        contexts = route_context.get(id(owner), [])
-        unit.route = contexts[0] if len(contexts) == 1 else None
-        scope = unit.route or (owner.qualified if owner else unit.source.path)
-        unit.anchor_identity_key = (f'ui:{unit.source.service_scope}:action:'
-            f'{scope}:{unit.method}:{unit.start}:{unit.end}')
-        complete = bool(target and unit.anchor_label)
-        reason = None if complete else (
-            'Visible action label is not statically resolved.' if target else
-            'Action callback is dynamic, ambiguous, or not resolved through lexical/import evidence.')
-        unit.anchor_correspondence_units = [target] if target else []
-        unit.anchor_correspondence_state = 'resolved' if target else 'unresolved'
-        unit.anchor_correspondence_reason = (None if target else reason)
-        unit.anchor_resolution = 'resolved' if complete else 'unresolved'
-        unit.anchor_reason = reason
-        semantic_target = (f'{target.owner}.{target.name}' if target and target.owner
-                           else target.name if target else unit.anchor_target_name)
-        declare_anchor_registration(unit, 'action', event=unit.method,
-            target=semantic_target, scope=scope, label=unit.anchor_label,
-            resolution=unit.anchor_resolution, reason=unit.anchor_reason)
-        unit.anchor_context_unit = owner
-        unit.source.normalized_relations = getattr(unit.source, 'normalized_relations', [])
-        unit.source.normalized_relations.append({'source': unit, 'target': target,
-            'kind': unit.anchor_correspondence_relationship_kind,
-            'start': unit.start, 'end': unit.end,
-            'resolution': 'resolved' if target else 'unresolved',
-            'reason': None if target else reason})
-        if owner and owner is not target:
-            unit.source.normalized_relations.append({'source': unit, 'target': owner,
-                'kind': 'composes', 'start': unit.start, 'end': unit.end,
-                'resolution': 'resolved', 'reason': None})
-
     for source in sources:
         for match in source.rule_outputs:
             if match.output_type != 'component_composition':
@@ -608,6 +689,30 @@ def prepare(sources, units, diagnostics=None):
             source.normalized_relations.append({'source': origins[0], 'target': target,
                 'kind': match.attributes['edge_kind'], 'start': start, 'end': end,
                 'resolution': 'resolved' if target else 'unresolved', 'reason': reason})
+
+    # Composition is known before actions are placed: an action in a shared
+    # component is displayed on every route whose page composes it.
+    for unit in registrations:
+        if unit.anchor_registration_kind != 'action':
+            continue
+        target = resolve(unit.anchor_target_name, unit.source)
+        owner = getattr(unit, 'anchor_owner_unit', None)
+        placements = {}
+        for route, chain in _route_contexts(owner, route_context):
+            placements.setdefault(route.route, []).append((route, chain))
+        placed = ([(unit, path, contexts) for path, contexts in placements.items()]
+                  if len(placements) <= 1 else
+                  [(_route_copy(unit, path), path, contexts)
+                   for path, contexts in placements.items()])
+        if len(placed) > 1:
+            collections = [units] + ([unit.source.units]
+                                     if unit.source.units is not units else [])
+            for collection in collections:
+                index = next(position for position, item in enumerate(collection)
+                             if item is unit)
+                collection[index:index + 1] = [action for action, _, _ in placed]
+        for action, path, contexts in (placed or [(unit, None, [])]):
+            _place_action(action, target, owner, path, contexts)
 
 
 def parameter_direction(type_name):
@@ -722,7 +827,7 @@ def resolve_call(unit, receiver, name, candidates, position, evidence_id=None):
             target_id=identifier('resource', 'ambient-call',
                                  unit.source.language, root, name),
             evidence_ids=evidence, diagnostic_code='RULES_AMBIENT_CALL',
-            reason=reason)
+            reason=reason, provider=f'global:{root}')
     return SemanticResult(capability='callable_resolution', outcome='unresolved',
         subject_id=unit.symbol_id, evidence_ids=evidence,
         diagnostic_code='CALL_TARGET_UNRESOLVED',

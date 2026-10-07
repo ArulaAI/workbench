@@ -20,7 +20,7 @@
     "Cargo.toml",
     "go.mod"
   ],
-  "test_path_pattern": "(^|/)(tests?|__tests__)(/|$)|Test\\.java$",
+  "test_path_pattern": "(^|/)(tests?|__tests__)(/|$)|Test\\.java$|(^|/)seeds?/.*\\.sql$|(^|/)([^/]*[-_.])?seeds?([-_.][^/]*)?\\.sql$|^\\.(github|circleci)/.*\\.sql$",
   "source_kind_by_category": {
     "config": "configuration",
     "doc": "documentation",

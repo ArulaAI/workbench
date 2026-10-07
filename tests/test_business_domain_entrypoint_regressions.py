@@ -65,7 +65,8 @@ import static org.springframework.web.bind.annotation.RequestMethod.GET;
 @RestController
 @RequestMapping("/api")
 public class OwnerController {
-    static final String PETS = "/pets";
+    // Not final, so not a compile-time constant: the route stays dynamic.
+    static String PETS = "/pets";
     @GetMapping(value = "/owners", produces = "application/json")
     public String owners() { return "x"; }
     @GetMapping(PETS)
@@ -81,6 +82,115 @@ public class OwnerController {
     constant = anchors[('GET', None)]
     assert constant['resolution'] == 'unresolved'
     assert all(item['identity_key'] is None for item in constant['representations'])
+
+
+ROUTE_PATHS = '''package demo.api;
+public final class Paths {
+    public static final String API = "/api";
+    public static final String OWNERS = API + "/owners";
+    public static String MUTABLE = "/mutable";
+    public static final String LOOP_A = LOOP_B + "/a";
+    public static final String LOOP_B = LOOP_A + "/b";
+    public static final String CALLED = "/called".trim();
+}
+'''
+
+ROUTE_NAMES = '''package demo.api;
+public interface Routes {
+    String ID = "{id}";
+    String VETS = Paths.API + ("/vets");
+}
+'''
+
+
+def _constant_routes(tmp_path, controllers):
+    files = {'src/main/java/demo/api/Paths.java': ROUTE_PATHS,
+             'src/main/java/demo/api/Routes.java': ROUTE_NAMES}
+    files.update({f'src/main/java/demo/web/{name}': text
+                  for name, text in controllers.items()})
+    return _extract(tmp_path, files)
+
+
+def test_spring_routes_evaluate_compile_time_string_constants(tmp_path):
+    facts, _ = _constant_routes(tmp_path, {'OwnerController.java': '''package demo.web;
+import org.springframework.web.bind.annotation.*;
+import demo.api.Paths;
+import static demo.api.Routes.ID;
+@RestController
+@RequestMapping(Paths.OWNERS)
+public class OwnerController {
+    static final String PETS = "/pets";
+    @GetMapping("/" + ID)
+    public String owner() { return "x"; }
+    @PostMapping(value = PETS, produces = "application/json")
+    public String pets() { return "x"; }
+}
+''', 'VetController.java': '''package demo.web;
+import org.springframework.web.bind.annotation.*;
+import demo.api.Routes;
+@RestController
+public class VetController implements Routes {
+    @DeleteMapping(VETS + "/" + ID)
+    public String delete() { return "x"; }
+    @GetMapping(demo.api.Paths.API + "/specialties")
+    public String specialties() { return "x"; }
+}
+'''})
+    anchors = _http_anchors(facts)
+    for key in [('GET', '/api/owners/{id}'), ('POST', '/api/owners/pets'),
+                ('DELETE', '/api/vets/{id}'), ('GET', '/api/specialties')]:
+        assert anchors[key]['resolution'] == 'resolved', key
+        assert anchors[key]['eligibility'] == 'eligible', key
+
+    def excerpts(anchor):
+        return {facts['evidence'][eid]['excerpt'] for eid in anchor['evidence_ids']}
+    # The constant declarations a route is computed from are its evidence.
+    assert {'public static final String API = "/api";',
+            'public static final String OWNERS = API + "/owners";',
+            'String ID = "{id}";'} <= excerpts(anchors[('GET', '/api/owners/{id}')])
+    assert 'String VETS = Paths.API + ("/vets");' in excerpts(
+        anchors[('DELETE', '/api/vets/{id}')])
+
+
+def test_spring_routes_keep_non_constant_expressions_unresolved(tmp_path):
+    facts, _ = _constant_routes(tmp_path, {'OwnerController.java': '''package demo.web;
+import org.springframework.web.bind.annotation.*;
+import demo.api.Paths;
+import static external.Routes.REMOTE;
+@RestController
+@RequestMapping("/api")
+public class OwnerController {
+    @GetMapping(Paths.MUTABLE)
+    public String mutable() { return "x"; }
+    @GetMapping(Paths.LOOP_A)
+    public String loop() { return "x"; }
+    @PostMapping(Paths.CALLED)
+    public String called() { return "x"; }
+    @PutMapping(Unknown.ROUTE)
+    public String unknown() { return "x"; }
+    @DeleteMapping(REMOTE)
+    public String remote() { return "x"; }
+}
+''', 'BaseController.java': '''package demo.web;
+import org.springframework.web.bind.annotation.*;
+import static demo.api.Paths.API;
+@RestController
+public class BaseController extends external.Controller {
+    // A field inherited from the absent supertype could shadow the import.
+    @PatchMapping(API)
+    public String inherited() { return "x"; }
+    @GetMapping(demo.api.Paths.API)
+    public String qualified() { return "x"; }
+}
+'''})
+    anchors = [anchor for anchor in facts['anchors'].values() if anchor['kind'] == 'http']
+    dynamic = [anchor for anchor in anchors if anchor['operation']['path'] is None]
+    assert sorted(anchor['operation']['method'] for anchor in dynamic) == [
+        'DELETE', 'GET', 'GET', 'PATCH', 'POST', 'PUT']
+    assert all(anchor['resolution'] == 'unresolved' and anchor['eligibility'] != 'eligible'
+               for anchor in dynamic)
+    # A qualified constant does not depend on the class hierarchy.
+    assert ('GET', '/api') in _http_anchors(facts)
 
 
 def test_feign_client_does_not_shadow_the_exposed_endpoint(tmp_path):

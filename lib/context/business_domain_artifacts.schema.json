@@ -378,6 +378,114 @@
       ],
       "additionalProperties": false
     },
+    "EntryPointGap": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "enum": [
+            "language_unavailable",
+            "likely_missed",
+            "none_detected"
+          ]
+        },
+        "code": {
+          "enum": [
+            "ENTRYPOINT_DETECTION_UNAVAILABLE",
+            "ENTRYPOINT_LIKELY_MISSED",
+            "ENTRYPOINT_NONE_DETECTED"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "language": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "files": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "framework": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "marker": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "marker_kind": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "line": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "code",
+        "message",
+        "language",
+        "files",
+        "framework",
+        "marker",
+        "marker_kind",
+        "path",
+        "line"
+      ],
+      "additionalProperties": false
+    },
     "Coverage": {
       "type": "object",
       "properties": {
@@ -444,6 +552,12 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/Diagnostic"
+          }
+        },
+        "entrypoint_gaps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EntryPointGap"
           }
         }
       },
@@ -1022,6 +1136,17 @@
           "anyOf": [
             {
               "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "provider": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
             },
             {
               "type": "null"
@@ -2685,6 +2810,53 @@
             "pattern": "^[a-z_]+:[^ ]+$"
           },
           "uniqueItems": true
+        },
+        "completion": {
+          "enum": [
+            "complete",
+            "bounded",
+            "incomplete"
+          ]
+        },
+        "assumptions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "obligation_id": {
+                "type": "string",
+                "pattern": "^[a-z_]+:[^ ]+$"
+              },
+              "kind": {
+                "enum": [
+                  "generated_implementation",
+                  "config_selected",
+                  "transaction_completion",
+                  "library_call",
+                  "endpoint_in_repo"
+                ]
+              },
+              "statement": {
+                "type": "string",
+                "minLength": 1
+              },
+              "evidence_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[a-z_]+:[^ ]+$"
+                },
+                "uniqueItems": true
+              }
+            },
+            "required": [
+              "obligation_id",
+              "kind",
+              "statement",
+              "evidence_ids"
+            ],
+            "additionalProperties": false
+          }
         }
       },
       "required": [
@@ -6009,52 +6181,120 @@
     "PendingRepairArtifact": {
       "type": "object",
       "properties": {
-        "schema_version": {"const": 1},
-        "kind": {"const": "pending_repair"},
-        "packet_key": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-        "provider_projection_version": {"const": 1},
-        "semantic_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-        "stage": {"enum": ["activity", "grouping", "evidence_review"]},
-        "updated_at": {"type": "string", "format": "date-time"},
-        "next_operation": {"const": "repair"},
+        "schema_version": {
+          "const": 1
+        },
+        "kind": {
+          "const": "pending_repair"
+        },
+        "packet_key": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "provider_projection_version": {
+          "const": 1
+        },
+        "semantic_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "stage": {
+          "enum": [
+            "activity",
+            "grouping",
+            "evidence_review"
+          ]
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "next_operation": {
+          "const": "repair"
+        },
         "attempted_repair_signatures": {
           "type": "array",
-          "items": {"type": "string", "pattern": "^(schema|semantic):[0-9a-f]{64}$"},
+          "items": {
+            "type": "string",
+            "pattern": "^(schema|semantic):[0-9a-f]{64}$"
+          },
           "uniqueItems": true
         },
         "correction": {
           "type": "object",
           "properties": {
-            "code": {"type": "string"},
-            "message": {"type": "string"},
-            "repair_kind": {"enum": ["schema", "semantic", "verifier_contract"]},
+            "code": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "repair_kind": {
+              "enum": [
+                "schema",
+                "semantic",
+                "verifier_contract"
+              ]
+            },
             "rejected_candidate": {},
-            "findings": {"type": "array", "items": {"$ref": "#/$defs/ValidationFinding"}},
+            "findings": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ValidationFinding"
+              }
+            },
             "verification_report": {},
             "allowed_reference_ids": {
               "type": "object",
               "properties": {
                 "claim_ids": {
                   "type": "array",
-                  "items": {"type": "string", "pattern": "^claim:[^ ]+$"},
+                  "items": {
+                    "type": "string",
+                    "pattern": "^claim:[^ ]+$"
+                  },
                   "uniqueItems": true
                 },
                 "evidence_ids": {
                   "type": "array",
-                  "items": {"type": "string", "pattern": "^ev:[^ ]+$"},
+                  "items": {
+                    "type": "string",
+                    "pattern": "^ev:[^ ]+$"
+                  },
                   "uniqueItems": true
                 }
               },
               "minProperties": 1,
               "additionalProperties": false
             },
-            "instruction": {"type": "string", "minLength": 1}
+            "instruction": {
+              "type": "string",
+              "minLength": 1
+            }
           },
-          "required": ["code", "message", "repair_kind", "rejected_candidate", "findings", "verification_report", "instruction"],
+          "required": [
+            "code",
+            "message",
+            "repair_kind",
+            "rejected_candidate",
+            "findings",
+            "verification_report",
+            "instruction"
+          ],
           "additionalProperties": false
         }
       },
-      "required": ["schema_version", "kind", "packet_key", "provider_projection_version", "semantic_hash", "stage", "updated_at", "next_operation", "correction"],
+      "required": [
+        "schema_version",
+        "kind",
+        "packet_key",
+        "provider_projection_version",
+        "semantic_hash",
+        "stage",
+        "updated_at",
+        "next_operation",
+        "correction"
+      ],
       "additionalProperties": false
     },
     "DigestDomainProjection": {
@@ -6240,6 +6480,7 @@
           "enum": [
             "satisfied",
             "ambiguous",
+            "conditional",
             "unresolved",
             "external",
             "limit_reached"
@@ -6260,6 +6501,22 @@
             "pattern": "^[a-z_]+:[^ ]+$"
           },
           "uniqueItems": true
+        },
+        "boundary": {
+          "anyOf": [
+            {
+              "enum": [
+                "generated_implementation",
+                "config_selected",
+                "transaction_completion",
+                "library_call",
+                "endpoint_in_repo"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [

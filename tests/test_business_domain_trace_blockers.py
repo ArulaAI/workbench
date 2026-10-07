@@ -130,12 +130,24 @@ def test_terminal_output_lists_blockers_with_the_overlap_note(petclinic_shaped, 
     traces = result['measurements']['traces']
     assert rendered[0] == (f"Traces:          {traces['resolved']}/{traces['total']} resolved "
                            f"({traces['ambiguous']} ambiguous, {traces['unresolved']} unresolved)")
-    assert rendered[2] == 'Trace resolution blockers:'
-    for item in result['trace_blockers']:
+    assert rendered[1] == (f"Completion:      {traces['complete']} complete, "
+                           f"{traces['bounded']} bounded, {traces['incomplete']} incomplete")
+    boundaries = [item for item in result['trace_blockers'] if item['class'] == 'boundary']
+    gaps = [item for item in result['trace_blockers'] if item['class'] == 'gap']
+    sections = {line: index for index, line in enumerate(rendered)}
+    if boundaries:
+        assert 'Trace boundaries (known; the trace lists each assumption):' in sections
+    assert 'Trace gaps:' in sections
+    for item in boundaries + gaps:
         suffix = 'trace' if item['traces'] == 1 else 'traces'
         assert any(line.startswith('  ' + item['label']) and
                    line.endswith(f"{item['traces']} {suffix}") for line in rendered)
-    assert '  Note: blocker categories may overlap; a trace can have' in rendered
+    # Every gap row follows the gap heading; every boundary row precedes it.
+    gap_heading = sections['Trace gaps:']
+    for item in gaps:
+        assert any(index > gap_heading and line.startswith('  ' + item['label'])
+                   for index, line in enumerate(rendered))
+    assert '  Note: categories may overlap; a trace can have' in rendered
     assert rendered[-2:] == ['Facts written to:', result['artifact']]
 
 
@@ -163,9 +175,13 @@ def test_petclinic_blockers_cover_every_unresolved_trace():
     facts = json.loads(PETCLINIC.read_text())
     traces = extraction_measurements(facts)['traces']
     blockers = trace_blockers(facts)
-    assert (traces['resolved'], traces['total']) == (2, 52)
-    assert {item['category'] for item in blockers} == {
-        'generated_implementation', 'ambiguous_implementation', 'persistence',
-        'library_call', 'missing_call_target', 'http_boundary',
-        'ambiguous_call_target', 'contract_only', 'navigation_depth'}
+    # 52 traces before per-route actions; each shared action now has one per screen.
+    assert (traces['resolved'], traces['total']) == (2, 54)
+    assert traces['complete'] == traces['resolved']
+    boundaries = {item['category'] for item in blockers if item['class'] == 'boundary'}
+    gaps = {item['category'] for item in blockers if item['class'] == 'gap'}
+    assert boundaries == {'generated_implementation', 'config_selected', 'transaction_completion',
+                          'library_call', 'endpoint_in_repo'}
+    assert {'missing_call_target', 'navigation_depth', 'ambiguous_call_target',
+            'http_boundary', 'contract_only'} <= gaps
     assert all(item['traces'] <= traces['unresolved'] + traces['ambiguous'] for item in blockers)

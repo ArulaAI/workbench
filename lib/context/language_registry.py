@@ -223,6 +223,19 @@ def _validate_installed_policy(config, by_name, adapters):
             'required_capabilities': tuple(sorted(required)),
             '_path_patterns': patterns}))
 
+    for descriptor in adapters.values():
+        scoped = descriptor.get('capability_languages')
+        if scoped is None:
+            continue
+        if (not isinstance(scoped, dict) or not scoped
+                or set(scoped) - SOURCE_ADAPTER_CAPABILITIES
+                or any(descriptor['capabilities'][feature] == 'unsupported'
+                       for feature in scoped)
+                or not all(isinstance(languages, list) and languages
+                           and all(language in by_name for language in languages)
+                           for languages in scoped.values())):
+            _fail('source_adapter_capability_languages_invalid')
+
     supporting_owners = {item['owner'] for item in dispositions
         if item['disposition'] == 'supporting'}
     if supporting_owners != set(consumers):
@@ -533,6 +546,21 @@ class LanguageRegistry:
         self.require_valid()
         descriptor = self._supporting_consumers.get(owner_id)
         return _freeze({'id': owner_id, **descriptor}) if descriptor else None
+
+    @staticmethod
+    def effective_capabilities(descriptor: Mapping,
+                               language: str | None) -> dict[str, str]:
+        """A descriptor's capability statuses for one language.
+
+        ``capability_languages`` limits a declared capability to the listed
+        languages; for every other language that capability is unsupported.
+        """
+        statuses = dict(descriptor.get('capabilities', {}))
+        for feature, languages in (descriptor.get('capability_languages')
+                                   or {}).items():
+            if language not in languages:
+                statuses[feature] = 'unsupported'
+        return statuses
 
     def source_dispositions(self) -> tuple[Mapping, ...]:
         self.require_valid()

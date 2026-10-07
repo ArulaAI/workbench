@@ -253,6 +253,17 @@ def _segment_packet(model: dict, anchor_id: str, primary_symbols,
             selected_obligations.add(obligation_id)
             trace_obligations.add(obligation_id)
         trace['obligation_ids'] = sorted(trace_obligations)
+        if 'completion' in trace:
+            # A slice keeps the assumptions of the boundaries it carries; a
+            # segment cut is a gap of the slice, never a boundary.
+            blocking = [sliced['trace_obligations'][obligation_id]
+                        for obligation_id in trace['obligation_ids']
+                        if sliced['trace_obligations'][obligation_id]['status'] != 'satisfied']
+            trace['assumptions'] = [item for item in trace.get('assumptions', [])
+                                    if item['obligation_id'] in trace_obligations]
+            trace['completion'] = ('complete' if not blocking else
+                                   'bounded' if all(item.get('boundary') for item in blocking)
+                                   else 'incomplete')
         evidence = {eid for symbol_id in trace['symbol_ids']
                     for eid in model['symbols'][symbol_id]['evidence_ids']}
         evidence.update(eid for edge_id in trace['edge_ids']

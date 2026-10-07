@@ -44,6 +44,266 @@ def _paths(text):
     return [literal[1:-1] for literal in re.findall(_STRING_LITERAL, args)] or [""]
 
 
+# Compile-time String constants (JLS 15.29) used as mapping routes. Only string
+# literals, ``+`` concatenation, parentheses and names of ``static final``
+# String fields (or interface constants) declared in the analyzed sources are
+# evaluated. Anything else keeps the route dynamic.
+_CONSTANT_TOKEN = re.compile(r'\s*(?:(' + _STRING_LITERAL + r')|([A-Za-z_$][\w$]*)|([+().]))')
+_STRING_TYPES = frozenset({"String", "java.lang.String"})
+_STATIC_IMPORT = re.compile(r'^\s*import\s+static\s+([\w$.]+?)(\.\*)?\s*;', re.MULTILINE)
+_MAX_CONSTANT_DEPTH = 16
+_UNKNOWN = "unknown"
+
+
+class _Constants:
+    """Closed-world evaluator for String constants named in mapping annotations.
+
+    A name resolves only when Java's own lookup order (fields of the scope's
+    types and their supertypes, single static imports, static imports on
+    demand) selects exactly one constant declared in the analyzed sources.
+    A non-constant field, an absent supertype or import, or a cycle that
+    could shadow or supply the name keeps the expression unevaluated.
+    """
+
+    def __init__(self, sources):
+        by_fq = {}
+        self.by_short = {}
+        self.fields = {}
+        self.enclosing = {}
+        self.static_imports = {}
+        self.memo = {}
+        for source in sources:
+            entries = [entry for entry in source.semantic.get("types", [])
+                       if entry.get("node") is not None]
+            for entry in entries:
+                by_fq.setdefault(entry["fqname"], []).append(entry)
+                self.by_short.setdefault(entry["name"], []).append(entry)
+                self.fields[id(entry)] = self._declared(source, entry)
+                self.enclosing[id(entry)] = sorted(
+                    (item for item in entries if item is not entry
+                     and item["node"].start_byte < entry["node"].start_byte
+                     and entry["node"].end_byte < item["node"].end_byte),
+                    key=lambda item: item["node"].start_byte, reverse=True)
+            singles, wildcards = {}, []
+            for found in _STATIC_IMPORT.finditer(source.text):
+                if found.group(2):
+                    wildcards.append(found.group(1))
+                else:
+                    singles[found.group(1).rsplit(".", 1)[-1]] = found.group(1)
+            self.static_imports[id(source)] = (singles, wildcards)
+        # A fully qualified name declared twice cannot select one declaration.
+        self.unique = {name: entries[0] for name, entries in by_fq.items()
+                       if len(entries) == 1}
+
+    @staticmethod
+    def _declared(source, entry):
+        """``{field: (initializer, start, end) | None}``; None marks a non-constant field."""
+        body = entry["node"].child_by_field_name("body")
+        fields = {}
+        if body is None:
+            return fields
+        interface = entry["kind"] == "interface_declaration"
+        for field in java_semantic._children(body, {"field_declaration", "constant_declaration"}):
+            constant = interface or {"static", "final"} <= java_semantic._keyword_modifiers(field)
+            string = java_semantic._type_text(
+                source, field.child_by_field_name("type")) in _STRING_TYPES
+            for declarator in java_semantic._children(field, {"variable_declarator"}):
+                name = declarator.child_by_field_name("name")
+                value = declarator.child_by_field_name("value")
+                if name is None:
+                    continue
+                fields[java_semantic._text(source, name)] = (
+                    (java_semantic._text(source, value),
+                     java_semantic._char(source, field.start_byte),
+                     java_semantic._char(source, field.end_byte))
+                    if constant and string and value is not None else None)
+        return fields
+
+    def route(self, entry, expression, member):
+        """``(value, declaration spans)`` of a route expression, or None.
+
+        *member* is False for an annotation on the type declaration itself:
+        the type's own members are not in scope there.
+        """
+        chain = ([entry] if member else []) + self.enclosing.get(id(entry), [])
+        return self._evaluate(expression, entry["unit"].source, chain, frozenset())
+
+    def _evaluate(self, expression, source, chain, active):
+        tokens, position = [], 0
+        while expression[position:].strip():
+            found = _CONSTANT_TOKEN.match(expression, position)
+            if not found:
+                return None
+            tokens.append(found.groups())
+            position = found.end()
+        index = 0
+
+        def operand():
+            nonlocal index
+            if index >= len(tokens):
+                return None
+            literal, name, symbol = tokens[index]
+            index += 1
+            if literal:
+                try:
+                    return java_semantic._decode_java_string_literal(literal), []
+                except java_semantic.JavaLiteralError:
+                    return None
+            if symbol == "(":
+                inner = concatenation()
+                if inner is None or index >= len(tokens) or tokens[index][2] != ")":
+                    return None
+                index += 1
+                return inner
+            if not name:
+                return None
+            parts = [name]
+            while (index + 1 < len(tokens) and tokens[index][2] == "."
+                   and tokens[index + 1][1]):
+                parts.append(tokens[index + 1][1])
+                index += 2
+            return self._name(parts, source, chain, active)
+
+        def concatenation():
+            nonlocal index
+            result = operand()
+            while result is not None and index < len(tokens) and tokens[index][2] == "+":
+                index += 1
+                following = operand()
+                result = (None if following is None else
+                          (result[0] + following[0], result[1] + following[1]))
+            return result
+
+        result = concatenation()
+        return result if index == len(tokens) else None
+
+    def _name(self, parts, source, chain, active):
+        if len(parts) == 1:
+            key = self._simple(parts[0], source, chain)
+        else:
+            owners = self._types(parts[:-1], source, chain)
+            key = (self._member(owners[0], parts[-1], frozenset())
+                   if len(owners) == 1 else None)
+        return self._constant(key, active) if isinstance(key, tuple) else None
+
+    def _constant(self, key, active):
+        entry, name = key
+        marker = (id(entry), name)
+        if marker in self.memo:
+            return self.memo[marker]
+        if marker in active or len(active) >= _MAX_CONSTANT_DEPTH:
+            return None
+        expression, start, end = self.fields[id(entry)][name]
+        source = entry["unit"].source
+        result = self._evaluate(expression, source,
+            [entry] + self.enclosing.get(id(entry), []), active | {marker})
+        if result is not None:
+            result = (result[0], [(source, start, end)] + result[1])
+        if not active:
+            self.memo[marker] = result
+        return result
+
+    def _member(self, entry, name, seen):
+        """A declared or inherited field: ``(entry, name)``, ``_UNKNOWN`` or None."""
+        fields = self.fields.get(id(entry), {})
+        if name in fields:
+            return (entry, name) if fields[name] is not None else _UNKNOWN
+        if id(entry) in seen or len(seen) >= _MAX_CONSTANT_DEPTH:
+            return _UNKNOWN
+        found = {}
+        for written in entry["bases"] + entry["interfaces"]:
+            parents = self._types(
+                java_semantic._without_type_arguments(written).split("."),
+                entry["unit"].source, self.enclosing.get(id(entry), []))
+            if len(parents) != 1:
+                return _UNKNOWN
+            inherited = self._member(parents[0], name, seen | {id(entry)})
+            if inherited == _UNKNOWN:
+                return _UNKNOWN
+            if inherited:
+                found[(id(inherited[0]), inherited[1])] = inherited
+        if len(found) > 1:
+            return _UNKNOWN
+        return next(iter(found.values()), None)
+
+    def _simple(self, name, source, chain):
+        for entry in chain:
+            found = self._member(entry, name, frozenset())
+            if found:
+                return found
+        singles, wildcards = self.static_imports.get(id(source), ({}, []))
+        if name in singles:
+            owner = self.unique.get(singles[name].rsplit(".", 1)[0])
+            return self._member(owner, name, frozenset()) if owner else None
+        matches = []
+        for qualified in wildcards:
+            owner = self.unique.get(qualified)
+            found = self._member(owner, name, frozenset()) if owner else _UNKNOWN
+            if found == _UNKNOWN:
+                return None
+            if found:
+                matches.append(found)
+        return matches[0] if len(matches) == 1 else None
+
+    def _types(self, parts, source, chain):
+        """Declarations a written type name selects within the analyzed sources."""
+        candidates = []
+        written = ".".join(parts)
+        if written in self.unique:
+            candidates.append(self.unique[written])
+        first, rest = parts[0], parts[1:]
+        heads = [self.unique[fq] for fq in (entry["fqname"] + "." + first for entry in chain)
+                 if fq in self.unique][:1]
+        if not heads:
+            semantic = source.semantic
+            imported = semantic.get("imports", {}).get(first)
+            same = ".".join(filter(None, [semantic.get("package"), first]))
+            if imported:
+                heads = [self.unique[imported]] if imported in self.unique else []
+            elif same in self.unique:
+                heads = [self.unique[same]]
+            else:
+                heads = [entry for entry in self.by_short.get(first, [])
+                         if any(entry["fqname"] == prefix + "." + first
+                                for prefix in semantic.get("wildcards", []))]
+        for head in heads:
+            target = ".".join([head["fqname"], *rest])
+            if target in self.unique and self.unique[target] not in candidates:
+                candidates.append(self.unique[target])
+        return candidates
+
+
+def _resolve_route_constants(units):
+    """Evaluate mapping routes written through compile-time String constants.
+
+    The evaluated routes and the constant declarations they used are kept on
+    the parsed annotation, so every mapping consumer sees the same value.
+    """
+    sources = {id(unit.source): unit.source for unit in units
+               if unit.source.language == "java"
+               and getattr(unit.source, "semantic", {}).get("types")}
+    constants = _Constants(sources.values())
+    for source in sources.values():
+        for entry in source.semantic["types"]:
+            targets = [(annotation, False) for annotation in entry["annotations"]]
+            targets.extend((annotation, True) for method in entry["methods"]
+                           for annotation in method["annotations"])
+            for annotation, member in targets:
+                if (annotation["name"] not in _MAPPING_METHODS
+                        and annotation["name"] != "RequestMapping"
+                        or _paths(annotation["text"]) != [_DYNAMIC_ROUTE]):
+                    continue
+                results = [constants.route(entry, argument["expression"], member)
+                           for argument in annotation["arguments"]
+                           if argument["name"] in {"value", "path"}]
+                if not results or None in results:
+                    continue
+                annotation["route_values"] = [value for value, _ in results]
+                annotation["route_evidence"] = list({
+                    (span[0].path, span[1], span[2]): span
+                    for _, spans in results for span in spans}.values())
+
+
 def _request_methods(text):
     """Return HTTP methods selected by a RequestMapping ``method`` attribute."""
     selected = re.search(r"\bmethod\s*=\s*(\{[^}]*\}|[\w.]+)", text)
@@ -57,12 +317,13 @@ def _mappings(annotations):
     mappings = []
     for annotation in annotations:
         name, text = annotation["name"], annotation["text"]
+        paths = annotation.get("route_values") or _paths(text)
         if name in _MAPPING_METHODS:
-            mappings.extend((_MAPPING_METHODS[name], path, annotation) for path in _paths(text))
+            mappings.extend((_MAPPING_METHODS[name], path, annotation) for path in paths)
         elif name == "RequestMapping":
             methods = _request_methods(text)
             mappings.extend((method if methods else None, path, annotation)
-                            for method in (methods or [None]) for path in _paths(text))
+                            for method in (methods or [None]) for path in paths)
     return mappings
 
 
@@ -99,10 +360,11 @@ def _apply_endpoint(unit, combinations, base_owner, diagnostics, source):
         unit.method = http_method
         unit.route = route
         unit.anchor_evidence_spans = [
-            (owner["unit"].source, annotation["start"], annotation["end"])
-            for owner, annotation in ((base_owner, base_annotation),
+            span for owner, annotation in ((base_owner, base_annotation),
                 (mapping_owner, mapping_annotation))
             if annotation
+            for span in [(owner["unit"].source, annotation["start"], annotation["end"]),
+                         *annotation.get("route_evidence", ())]
         ]
         unit.anchor_resolution = "resolved" if http_method and route else "unresolved"
         unit.anchor_reason = (None if http_method and route else
@@ -119,6 +381,8 @@ def _apply_endpoint(unit, combinations, base_owner, diagnostics, source):
                  for item in combinations if item[2]]
         spans.extend((item[4]["unit"].source, item[3]["start"], item[3]["end"])
                      for item in combinations if item[3])
+        spans.extend(span for item in combinations for annotation in (item[2], item[3])
+                     if annotation for span in annotation.get("route_evidence", ()))
         unit.anchor_evidence_spans = list({
             (span[0].path, span[1], span[2]): span for span in spans
         }.values())
@@ -353,6 +617,7 @@ def _prepare_property_conditions(sources, units):
 def prepare(sources, units, diagnostics=None):
     diagnostics = diagnostics if diagnostics is not None else []
     pending = _prepare_property_conditions(sources, units)
+    _resolve_route_constants(units)
     all_types = [item for source in sources for item in getattr(source, "semantic", {}).get("types", [])]
     by_unit = {id(item["unit"]): item for item in all_types}
     for interface in (item for item in all_types
@@ -508,6 +773,7 @@ def prepare(sources, units, diagnostics=None):
     _spring_data_implementations(sources, diagnostics)
     _spring_selection_evidence(sources, units)
     _persistence(sources, units, diagnostics)
+    _profile_alternatives(units, diagnostics)
     return pending
 
 
@@ -1448,6 +1714,77 @@ def _persistence(sources, units, diagnostics=None):
         declaration.persistence_operations = getattr(declaration, "persistence_operations", []) + [
             _operation(declaration, 0, len(declaration.text), operation, resource, "spring-data",
                        [gap], condition)]
+
+
+def _profile_alternatives(units, diagnostics):
+    """Record a choice every candidate of which @Profile gates as conditional paths.
+
+    When each candidate implementation of a declaration, and the Spring Data
+    proxy if one implements it too, names the profiles it runs under, which one
+    runs is a matter of configuration, not an unknown: the ambiguous selection
+    becomes one selection per alternative, each carrying its @Profile as its
+    condition. Nothing is chosen; every alternative stays a path. A candidate
+    without a decidable @Profile, or a truncated candidate list, keeps the
+    choice ambiguous.
+    """
+    # The choice lives on the declaring interface, which need not be a source
+    # Spring was selected for.
+    sources = sorted({id(unit.source): unit.source for unit in units
+                      if unit.source.language == "java"
+                      and getattr(unit.source, "semantic", None)}.values(),
+                     key=lambda source: source.path)
+    repositories = {}
+    for source in sources:
+        for entry in getattr(source, "semantic", {}).get("types", []):
+            if _spring_data_base(source, entry):
+                repositories[identifier("resource", "spring-data-repository", entry["fqname"])] = entry
+
+    def gate(entry):
+        guard, annotation = _profile_guard(entry) if entry else (None, None)
+        if not guard:
+            return None
+        return (f"{annotation['text']} on {entry['name']} matches the active Spring profiles",
+                (entry["unit"].source, annotation["start"], annotation["end"]))
+
+    for source in sources:
+        relations = getattr(source, "semantic_relations", None)
+        if not relations:
+            continue
+        rewritten = []
+        for relation in relations:
+            if (relation["kind"] != "selects_implementation" or relation.get("outcome") != "ambiguous"
+                    or len(relation["candidate_targets"]) >= MAX_SEMANTIC_CANDIDATES):
+                rewritten.append(relation)
+                continue
+            declaration = relation["source"]
+            gates = [(unit, gate(getattr(unit, "semantic_method", {}).get("owner")))
+                     for unit in relation["candidate_targets"]]
+            proxies = [other for other in relations if other["source"] is declaration
+                       and other["kind"] == "selects_implementation"
+                       and other.get("outcome") == "external"]
+            proxy_gates = [(other, gate(repositories.get(other.get("external_target_id"))))
+                           for other in proxies]
+            if any(found is None for _, found in gates + proxy_gates):
+                rewritten.append(relation)
+                continue
+            for other, (condition, span) in proxy_gates:
+                other["condition"] = condition
+                other["evidence_spans"] = list(other.get("evidence_spans", [])) + [span]
+            for unit, (condition, span) in gates:
+                rewritten.append({"source": declaration, "target": unit, "candidate_targets": [unit],
+                    "kind": "selects_implementation", "start": relation["start"], "end": relation["end"],
+                    "resolution": "resolved", "outcome": "exact", "reason": None,
+                    "condition": condition,
+                    "evidence_spans": [(unit.source, unit.start, unit.end), span]})
+            # Every earlier report of this choice as ambiguous is withdrawn: it
+            # is a configuration choice. Reports name the declaration followed
+            # by ';' or, once Spring Data fragments joined, ','.
+            named = tuple(f" implement {declaration.semantic_identity}{mark}" for mark in ";,")
+            diagnostics[:] = [item for item in diagnostics
+                              if not (item.get("code") == "JAVA_IMPLEMENTATION_AMBIGUOUS"
+                                      and any(text in (item.get("message") or "")
+                                              for text in named))]
+        source.semantic_relations = rewritten
 
 
 def owners_span(candidate):

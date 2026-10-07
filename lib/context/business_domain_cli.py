@@ -8,6 +8,7 @@ unavailable, 130 cancelled.
 """
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -29,28 +30,39 @@ def _progress(event):
 
 
 # Why traces are not resolved, read from the obligations each trace already
-# records. This only reports; it never changes how a trace is resolved.
-BLOCKER_LABELS = {
+# records. This only reports; it never changes how a trace is resolved. A
+# blocker is a boundary when extraction classified its obligation as one (the
+# trace then lists the assumption), and a gap otherwise.
+BOUNDARY_LABELS = {
     'generated_implementation': 'Generated/runtime implementation',
+    'config_selected': 'Profile/config-selected implementation',
+    'transaction_completion': 'Caller/container transaction completion',
+    'library_call': 'Known library/platform calls',
+    'endpoint_in_repo': 'HTTP calls to endpoints in this repository',
+}
+GAP_LABELS = {
+    'generated_implementation': 'Generated implementation without catalog evidence',
     'ambiguous_implementation': 'Ambiguous implementation selection',
-    'persistence': 'Persistence completion',
-    'library_call': 'Library calls',
+    'persistence': 'Unresolved persistence target or statement',
+    'library_call': 'Calls into unknown libraries',
     'missing_call_target': 'Missing call targets',
-    'http_boundary': 'HTTP boundaries',
+    'http_boundary': 'HTTP calls to no known endpoint',
     'ambiguous_call_target': 'Ambiguous call targets (overloads)',
     'contract_only': 'Contract-only/unpinnable',
-    'navigation_depth': 'Navigation/depth',
+    'navigation_depth': 'Navigation/depth or symbol limit',
     'other': 'Other',
 }
+BLOCKER_LABELS = GAP_LABELS
 _HTTP_EDGES = {'invokes_endpoint', 'emits'}
 
 
 def _blocker(obligation, edge_kind):
-    """The blocker category of one obligation that is not satisfied."""
+    """The gap category of one obligation that is not satisfied."""
     kind, status = obligation['kind'], obligation['status']
     if kind == 'implementation_selection':
         return {'external': 'generated_implementation',
-                'ambiguous': 'ambiguous_implementation'}.get(status, 'contract_only')
+                'ambiguous': 'ambiguous_implementation',
+                'conditional': 'ambiguous_implementation'}.get(status, 'contract_only')
     if kind == 'data_target':
         return 'persistence'
     if kind == 'external_boundary':
@@ -67,22 +79,112 @@ def _blocker(obligation, edge_kind):
 
 
 def trace_blockers(facts):
-    """Unique traces per blocker category; a trace counts once per category."""
+    """Unique traces per blocker category; a trace counts once per category.
+
+    Each item is a ``boundary`` or a ``gap``: boundaries first, then gaps,
+    each by trace count and then in label order.
+    """
     obligations, edges = facts['trace_obligations'], facts['edges']
-    traces = {category: set() for category in BLOCKER_LABELS}
+    traces = {}
     for trace in facts['traces'].values():
         for obligation_id in trace['obligation_ids']:
             obligation = obligations[obligation_id]
             if obligation['status'] == 'satisfied':
                 continue
-            edge = edges.get(obligation.get('edge_id') or '')
-            traces[_blocker(obligation, edge['kind'] if edge else None)].add(trace['id'])
-    order = list(BLOCKER_LABELS)
-    return [{'category': category, 'label': BLOCKER_LABELS[category],
+            if obligation.get('boundary'):
+                key = ('boundary', obligation['boundary'])
+            else:
+                edge = edges.get(obligation.get('edge_id') or '')
+                key = ('gap', _blocker(obligation, edge['kind'] if edge else None))
+            traces.setdefault(key, set()).add(trace['id'])
+    labels = {'boundary': BOUNDARY_LABELS, 'gap': GAP_LABELS}
+    order = {'boundary': list(BOUNDARY_LABELS), 'gap': list(GAP_LABELS)}
+    return [{'class': kind, 'category': category, 'label': labels[kind][category],
              'traces': len(ids)}
-            for category, ids in sorted(traces.items(),
-                key=lambda item: (-len(item[1]), order.index(item[0])))
-            if ids]
+            for (kind, category), ids in sorted(traces.items(), key=lambda item: (
+                item[0][0] != 'boundary', -len(item[1]), order[item[0][0]].index(item[0][1])))]
+
+
+def _registration(anchor):
+    return next((item['registration'] for item in anchor.get('representations', [])
+                 if item.get('registration')), None)
+
+
+def entry_point_counts(facts):
+    """``[{kind, resolved, total}]`` per entry-point kind, most frequent first.
+
+    The kind is the registration an adapter declared (``http_route``,
+    ``route``, ``action``, ``database_trigger``...), or the anchor kind when
+    the anchor has no registration of its own.
+    """
+    counts = {}
+    for anchor in facts['anchors'].values():
+        registration = _registration(anchor)
+        kind = registration['kind'] if registration else anchor['kind']
+        entry = counts.setdefault(kind, {'kind': kind, 'resolved': 0, 'total': 0})
+        entry['total'] += 1
+        entry['resolved'] += anchor['resolution'] == 'resolved'
+    return sorted(counts.values(), key=lambda item: (-item['total'], item['kind']))
+
+
+_CANDIDATE_LABELS = re.compile(r"one of ((?:'[^']*'(?:, )?)+)")
+
+
+def screen_actions(facts):
+    """Each UI action anchor with its screen and label, or why it has none."""
+    actions = []
+    for anchor in facts['anchors'].values():
+        registration = _registration(anchor)
+        if not registration or registration['kind'] != 'action':
+            continue
+        label = registration.get('label')
+        candidates = []
+        if not label:
+            found = _CANDIDATE_LABELS.search(registration.get('reason') or anchor.get('reason') or '')
+            candidates = re.findall(r"'([^']*)'", found.group(1)) if found else []
+        reason = (registration.get('reason') or anchor.get('reason') or '').split(';')[0]
+        actions.append({
+            # The screen, or the declaring file when no route is established.
+            'route': (anchor['operation'].get('path')
+                      or facts['symbols'][anchor['symbol_id']]['file']),
+            'label': label, 'candidates': candidates,
+            'state': ('ambiguous' if candidates else
+                      'labeled' if label and anchor['resolution'] == 'resolved' else
+                      'labeled_unresolved' if label else 'unlabeled'),
+            'reason': reason.rstrip('.') or None})
+    return sorted(actions, key=lambda item: (item['route'] or '', item['label'] or ''))
+
+
+def generated_declarations(facts):
+    """Build-time declarations modelled from generator inputs, and calls into them.
+
+    Generated symbols are named ``<build file>::generated-<kind>:<name>``; the
+    kind is whatever the generating adapter declared.
+    """
+    generated = {}
+    for symbol in facts['symbols'].values():
+        marker = symbol['qualified_name'].split('::', 1)[-1]
+        if not marker.startswith('generated-'):
+            continue
+        kind = marker.split(':', 1)[0].removeprefix('generated-')
+        entry = generated.setdefault(kind, {'kind': kind, 'types': 0, 'members': 0, 'calls': 0})
+        entry['types' if symbol['kind'] == 'type' else 'members'] += 1
+    for edge in facts['edges'].values():
+        target = edge['to_ref'] if edge['kind'] == 'calls' and edge['resolution'] == 'resolved' else None
+        if target and target['kind'] == 'symbol':
+            marker = facts['symbols'][target['id']]['qualified_name'].split('::', 1)[-1]
+            if marker.startswith('generated-'):
+                generated[marker.split(':', 1)[0].removeprefix('generated-')]['calls'] += 1
+    return sorted(generated.values(), key=lambda item: item['kind'])
+
+
+def warning_counts(warnings):
+    """``[{code, count}]``, most frequent first, then by code."""
+    counts = {}
+    for warning in warnings:
+        counts[warning['code']] = counts.get(warning['code'], 0) + 1
+    return [{'code': code, 'count': count}
+            for code, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))]
 
 
 def _relative(root, path):
@@ -101,6 +203,10 @@ def facts_only(root):
     return {'mode': 'facts', 'artifact': _relative(root, target),
             'measurements': extraction_measurements(facts),
             'trace_blockers': trace_blockers(facts),
+            'warning_counts': warning_counts(facts['warnings']),
+            'entry_points': entry_point_counts(facts),
+            'screen_actions': screen_actions(facts),
+            'generated_declarations': generated_declarations(facts),
             'coverage': facts['coverage'], 'warnings': facts['warnings']}, 0
 
 

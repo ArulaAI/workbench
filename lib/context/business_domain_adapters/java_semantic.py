@@ -8,13 +8,17 @@ declarations that are absent remain explicit capability boundaries.
 """
 from __future__ import annotations
 
+import json
 import re
 from collections import defaultdict
+from functools import lru_cache
+from pathlib import Path
 
 from tree_sitter import Language, Parser
 import tree_sitter_java
 
 from . import CATALOG, rules
+from ..language_registry import registry
 from .base import (MAX_SEMANTIC_CANDIDATES, SemanticResult, Unit, declare_operation_observation,
                    declare_trace_contract)
 from ..business_domain_schema import identifier
@@ -495,12 +499,8 @@ def _parse(source, units):
                     type_info["field_units"].append(field_unit)
     for method in info["methods"]:
         variables = {**(method["owner"]["fields"] if method["owner"] else {}), **method["variables"]}
-        for local in _walk(method["node"], {"local_variable_declaration"}):
-            type_node = local.child_by_field_name("type")
-            for declarator in _children(local, {"variable_declarator"}):
-                name_node = declarator.child_by_field_name("name")
-                if name_node:
-                    variables[_text(source, name_node)] = _type_text(source, type_node)
+        for name, written in _local_declarations(source, method["node"]).items():
+            variables[name] = written
         for call in _walk(method["node"], {"method_invocation"}):
             name_node = call.child_by_field_name("name")
             object_node = call.child_by_field_name("object")
@@ -508,6 +508,7 @@ def _parse(source, units):
             named_args = list(_children(args_node)) if args_node else []
             invocation = {
                 "receiver": _text(source, object_node) if object_node else None,
+                "receiver_node": object_node,
                 "name": _text(source, name_node) if name_node else "",
                 "position": _char(source, call.start_byte)-method["unit"].start,
                 "end": _char(source, call.end_byte)-method["unit"].start,
@@ -519,6 +520,45 @@ def _parse(source, units):
             info["invocations"].append(invocation)
     source.semantic = info
     return info
+
+
+# A name a method declares with two different types: which one a use means
+# depends on block scope this flat table does not keep, so it is unknown.
+_UNKNOWN_LOCAL_TYPE = "<unknown local type>"
+
+
+def _local_declarations(source, node):
+    """Each local name a method body declares with its written type.
+
+    Locals, enhanced-for variables, try-with-resources variables and
+    single-type catch parameters all declare a typed name. A name declared
+    with different types in separate blocks is recorded as unknown rather
+    than taking whichever declaration came last; a multi-catch parameter
+    (``A | B``) has no single type and is recorded as unknown too.
+    """
+    found = {}
+
+    def declare(name_node, written):
+        if name_node is None or not written:
+            return
+        name = _text(source, name_node)
+        found.setdefault(name, set()).add(written)
+
+    for local in _walk(node, {"local_variable_declaration"}):
+        written = _type_text(source, local.child_by_field_name("type"))
+        for declarator in _children(local, {"variable_declarator"}):
+            declare(declarator.child_by_field_name("name"), written)
+    for item in _walk(node, {"enhanced_for_statement", "resource"}):
+        type_node = item.child_by_field_name("type")
+        if type_node is not None:
+            declare(item.child_by_field_name("name"), _type_text(source, type_node))
+    for parameter in _walk(node, {"catch_formal_parameter"}):
+        catch_type = next(iter(_children(parameter, {"catch_type"})), None)
+        written = _text(source, catch_type) if catch_type is not None else None
+        declare(parameter.child_by_field_name("name"),
+                _UNKNOWN_LOCAL_TYPE if written and "|" in written else written)
+    return {name: next(iter(types)) if len(types) == 1 else _UNKNOWN_LOCAL_TYPE
+            for name, types in found.items()}
 
 
 def extract(source):
@@ -554,9 +594,80 @@ def _resolve_type(source, raw, types_by_fq, types_by_short):
         return "resolved", candidates
     if len(candidates) > 1:
         return "ambiguous", sorted(candidates, key=lambda item:item["fqname"])[:8]
-    if simple in {"String", "Object", "Class", "Integer", "Long", "Boolean", "Exception", "RuntimeException"}:
+    if name in (simple, f"java.lang.{simple}") and simple in _java_lang():
+        return "external", []
+    if _TYPE_NAME.fullmatch(name) and _external_wildcards(source, simple, types_by_short):
         return "external", []
     return "unresolved", []
+
+
+# A simple type name as Java code conventionally writes one. A receiver that
+# is an expression, an untyped local (a lambda parameter) or an ALL_CAPS
+# constant is not a type, so no import can make it one.
+_TYPE_NAME = re.compile(r"[A-Z](?=[A-Za-z0-9_]*[a-z])[A-Za-z0-9_]*")
+
+
+# Receivers whose static type comes from the expression, not from a name.
+_EXPRESSION_RECEIVERS = frozenset({"method_invocation", "object_creation_expression",
+                                   "parenthesized_expression", "cast_expression",
+                                   "string_literal"})
+_PRIMITIVES = frozenset({"void", "boolean", "byte", "char", "short", "int", "long",
+                         "float", "double"})
+_MAX_CHAIN = 8
+
+
+@lru_cache(maxsize=1)
+def _library_signatures():
+    path = Path(__file__).parents[1] / "data" / "library_signatures.json"
+    return json.loads(path.read_text()).get("java", {})
+
+
+def _library_return(qualified, name, count):
+    """The catalogued return type of a library method, or None when not catalogued."""
+    methods = _library_signatures().get(re.sub(r"<.*>", "", qualified), {})
+    return methods.get(f"{name}/{count}") or methods.get(f"{name}/*")
+
+
+def _java_lang():
+    """The simple names Java's implicit ``java.lang.*`` import puts in scope."""
+    return registry.ambient_globals("java")
+
+
+def _external_wildcards(source, simple, types_by_short):
+    """The non-local on-demand imports a simple type name can only come from.
+
+    A name no analyzed type declares, written in a file whose every on-demand
+    import names a package outside the project, compiles only as a type of one
+    of those packages: a dependency the snapshot never contains. Any local
+    on-demand import, or any analyzed type of that name, keeps it unresolved.
+    """
+    wildcards = source.semantic["wildcards"]
+    if not wildcards or types_by_short.get(simple):
+        return []
+    namespaces = source.semantic.get("local_namespaces", ())
+    if any(prefix == namespace or prefix.startswith(namespace + ".")
+           or namespace.startswith(prefix + ".") for prefix in wildcards
+           for namespace in namespaces):
+        return []
+    return sorted(wildcards)
+
+
+def _external_provider(source, raw, types_by_short):
+    """``type:<qualified name>`` of an external receiver type, or None when unnamed."""
+    name = re.sub(r"<.*>", "", raw or "").replace("[]", "").strip()
+    simple = _simple(name)
+    if "." in name and name[0].islower():
+        return f"type:{name}"
+    if simple in source.semantic["imports"]:
+        return f"type:{source.semantic['imports'][simple]}"
+    if simple in _java_lang():
+        return f"type:java.lang.{simple}"
+    wildcards = (_external_wildcards(source, simple, types_by_short)
+                 if _TYPE_NAME.fullmatch(name) else [])
+    # Several on-demand packages are each a candidate provider; the catalog
+    # decides whether every one of them is a known library.
+    return ("type:" + "|".join(f"{package}.{simple}" for package in wildcards)
+            if wildcards else None)
 
 
 def _generated_model(source, raw):
@@ -607,8 +718,31 @@ def _generated_model_relation(kind, raw, generated):
             "declaration is unavailable at analysis time."), evidence
 
 
+def _generated_model_type(unit):
+    """The type entry of a model class a build-time generator writes.
+
+    The build adapter supplies the class and its bean accessors as units of the
+    build file; the entry lets a typed receiver reach those accessors and an
+    argument of the class match a parameter exactly.
+    """
+    entry = {"node": None, "unit": unit, "name": unit.name, "fqname": unit.generated_model_name,
+             "kind": "class_declaration", "bases": [], "interfaces": [], "type_parameters": [],
+             "annotations": [], "fields": {}, "field_units": [], "methods": []}
+    for accessor in getattr(unit, "generated_accessors", ()):
+        method = {"node": None, "unit": accessor, "name": accessor.name, "owner": entry,
+                  "params": list(accessor.params), "return_type": accessor.generated_return_type,
+                  "type_parameters": [], "annotations": [], "variables": dict(accessor.params),
+                  "invocations": []}
+        entry["methods"].append(method)
+    return entry
+
+
 def _qualified_type(source, raw, types_by_fq, types_by_short):
     """The fully qualified name *raw* denotes in *source*, or None if unknown."""
+    if not hasattr(source, "semantic"):
+        # A generated declaration writes its project types fully qualified.
+        name = re.sub(r"<.*>", "", raw or "").replace("[]", "").strip()
+        return name if name in types_by_fq else None
     state, matches = _resolve_type(source, raw, types_by_fq, types_by_short)
     if state == "resolved":
         return matches[0]["fqname"]
@@ -942,6 +1076,9 @@ def prepare(sources, units, diagnostics=None):
         "kind": "interface_declaration", "bases": [], "interfaces": [],
         "annotations": [], "fields": {}, "field_units": [], "methods": [],
     } for unit in units if getattr(unit, "generated_interface_name", None)}.values())
+    types.extend(_generated_model_type(unit) for unit in
+                 {unit.generated_model_name: unit for unit in units
+                  if getattr(unit, "generated_model_name", None)}.values())
     types_by_fq = {entry["fqname"]: entry for entry in types}
     types_by_short = defaultdict(list)
     for entry in types:
@@ -952,6 +1089,101 @@ def prepare(sources, units, diagnostics=None):
     declaring_source = {id(entry): source for source in java_sources
                         for entry in source.semantic["types"]}
     reachable = {}
+
+    def typed_state(context, written):
+        """``(state, owners, provider)`` of a type written in *context*.
+
+        A context of None means *written* is already fully qualified, as the
+        library signature catalog writes it.
+        """
+        if context is not None:
+            state, owners = _resolve_type(context, written, types_by_fq, types_by_short)
+            return state, owners, (_external_provider(context, written, types_by_short)
+                                   if state == "external" else None)
+        name = re.sub(r"<.*>", "", written)
+        if name in types_by_fq:
+            return "resolved", [types_by_fq[name]], None
+        if name in _PRIMITIVES or any(name.startswith(namespace + ".")
+                                      for namespace in namespaces):
+            return "unresolved", [], None
+        return "external", [], f"type:{name}"
+
+    def expression_type(source, method, node, variables, depth=0):
+        """``(context, written type)`` of a receiver expression, or None when unknown.
+
+        A call's type is the declared return type of the one project method
+        it reaches, or the catalogued return type of a library method; a
+        type parameter, an uncatalogued library method or several candidate
+        return types leave it unknown, so the chain stays unresolved.
+        """
+        if node is None or depth > _MAX_CHAIN:
+            return None
+        kind = node.type
+        if kind == "parenthesized_expression":
+            return expression_type(source, method, next(_children(node), None), variables, depth + 1)
+        if kind == "string_literal":
+            return None, "java.lang.String"
+        if kind in {"object_creation_expression", "cast_expression"}:
+            written = node.child_by_field_name("type")
+            return (source, _type_text(source, written)) if written is not None else None
+        if kind == "identifier":
+            name = _text(source, node)
+            return source, variables.get(name, name)
+        if kind == "field_access":
+            target, field = node.child_by_field_name("object"), node.child_by_field_name("field")
+            if target is not None and target.type in {"this", "super"} and field is not None:
+                written = variables.get(_text(source, field))
+                return (source, written) if written else None
+            return None
+        if kind != "method_invocation":
+            return None
+        target = node.child_by_field_name("object")
+        name = _text(source, node.child_by_field_name("name"))
+        arguments = node.child_by_field_name("arguments")
+        count = len(list(_children(arguments))) if arguments is not None else 0
+        if target is None:
+            if not method["owner"]:
+                return None
+            state, owners, provider = "resolved", [method["owner"]], None
+        else:
+            typed = expression_type(source, method, target, variables, depth + 1)
+            if typed is None:
+                return None
+            state, owners, provider = typed_state(*typed)
+        if state == "resolved" and len(owners) == 1:
+            found = [candidate for candidate in callable_methods(owners[0])
+                     if candidate["name"] == name and len(candidate["params"]) == count]
+            returns = {(id(candidate["unit"].source), candidate["return_type"]) for candidate in found}
+            if not found:
+                # A member every class inherits from java.lang.Object.
+                inherited = _library_return("java.lang.Object", name, count)
+                return (None, inherited) if inherited and inherited not in _PRIMITIVES else None
+            if len(returns) != 1:
+                return None
+            chosen = found[0]
+            written = chosen["return_type"]
+            generic = {parameter if isinstance(parameter, str) else parameter[0]
+                       for parameter in chosen.get("type_parameters") or ()}
+            if (not written or written in _PRIMITIVES
+                    or re.sub(r"<.*>|\[\]", "", written) in generic):
+                return None
+            declaring = chosen["unit"].source
+            if getattr(declaring, "semantic", None):
+                return declaring, written
+            # A generated declaration has no imports: only a qualified name or
+            # an implicitly imported java.lang type is known.
+            if "." in written:
+                return None, written
+            simple = re.sub(r"<.*>", "", written)
+            return (None, f"java.lang.{written}") if simple in _java_lang() else None
+        if state == "external" and provider:
+            returns = {_library_return(candidate, name, count)
+                       for candidate in provider.split(":", 1)[1].split("|")}
+            if len(returns) == 1:
+                written = returns.pop()
+                if written and written not in _PRIMITIVES:
+                    return None, written
+        return None
 
     def callable_methods(owner):
         """The methods a call on *owner* can reach: its own, then its supertypes'.
@@ -1066,15 +1298,34 @@ def prepare(sources, units, diagnostics=None):
                 if receiver and receiver.split(".")[0] in {"this", "super"}:
                     bare = receiver.split(".", 1)[1] if "." in receiver else None
                 owner_states = []
-                if bare is None and method["owner"]:
-                    owner_states = [("resolved", [method["owner"]])]
-                elif bare:
-                    raw_type = invocation["variables"].get(bare, bare)
-                    owner_states = [_resolve_type(source, raw_type, types_by_fq, types_by_short)]
-                state, owners = owner_states[0] if owner_states else ("unresolved", [])
+                node = invocation.get("receiver_node")
+                if node is not None and node.type in _EXPRESSION_RECEIVERS:
+                    # A chained call: its receiver's type is the type of the
+                    # expression, read from declarations and the catalog.
+                    typed = expression_type(source, method, node, invocation["variables"])
+                    state, owners, provider = (typed_state(*typed) if typed
+                                               else ("unresolved", [], None))
+                    invocation["provider"] = provider if state == "external" else None
+                else:
+                    if bare is None and method["owner"]:
+                        owner_states = [("resolved", [method["owner"]])]
+                    elif bare:
+                        raw_type = invocation["variables"].get(bare, bare)
+                        owner_states = [_resolve_type(source, raw_type, types_by_fq, types_by_short)]
+                    state, owners = owner_states[0] if owner_states else ("unresolved", [])
+                    invocation["provider"] = (_external_provider(
+                        source, invocation["variables"].get(bare, bare), types_by_short)
+                        if state == "external" and bare else None)
                 candidates = [candidate for owner in owners for candidate in callable_methods(owner)
                               if candidate["name"] == invocation["name"]
                               and len(candidate["params"]) == len(invocation["argument_types"])]
+                if (state == "resolved" and not candidates and owners
+                        and _library_return("java.lang.Object", invocation["name"],
+                                            len(invocation["argument_types"]))):
+                    # Every class inherits java.lang.Object's members; a project
+                    # type that does not redeclare one runs the platform's.
+                    state, owners = "external", []
+                    invocation["provider"] = "type:java.lang.Object"
                 # Parameters that are exactly the arguments' static types make a
                 # method applicable without any conversion, and Java then
                 # always selects it; a conversion (boxing, widening) never does.
@@ -1159,6 +1410,7 @@ def resolve_call(unit, receiver, name, candidates, position, evidence_id=None):
         candidate_target_ids=tuple(sorted(candidate.symbol_id for candidate in candidates))
             if outcome == "ambiguous" else (),
         evidence_ids=(evidence_id or unit.evidence_id,), diagnostic_code=code, reason=reason,
+        provider=invocation.get("provider") if invocation and outcome == "external" else None,
     )
 
 

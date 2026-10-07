@@ -120,3 +120,39 @@ def test_artifact_contract_states_the_attempt_boundary():
     assert ('may write its attempt FactsArtifact and StatusArtifact and may add immutable '
             'snapshot blobs, but it cannot replace the prior validated DomainArtifact, '
             'published build ID, baseline or history') in contract
+
+
+# ── G2: entry-point gaps make a published run partial and are listed ─────
+
+def _publish(root, extra=None):
+    root.mkdir(parents=True, exist_ok=True)
+    write_service(root)
+    for name, text in (extra or {}).items():
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+    return discover(root, provider=PassingProvider())
+
+
+def test_an_entry_point_gap_publishes_partial_and_lists_the_gaps(tmp_path):
+    from lib.context.business_domains import publication_status
+    clean, _ = _publish(tmp_path / 'clean')
+    gapped, status = _publish(tmp_path / 'gapped', {
+        'src/OrdersApi.cs': 'app.MapGet("/orders", () => Results.Ok());\n'})
+    assert clean is not None and gapped is not None
+    # The fixture's rules adapter is partial on its own; set that aside so the
+    # entry-point gap is the only difference between the two publications.
+    def without_capability_gaps(model):
+        return publication_status({**model, 'capabilities': []}, status['external_freshness'])
+    assert not clean['coverage'].get('entrypoint_gaps')
+    assert without_capability_gaps(clean) == 'complete'
+    assert without_capability_gaps(gapped) == 'partial'
+    assert gapped['status'] == 'partial'
+    # The published model and the status artifact both list every gap.
+    gaps = gapped['coverage']['entrypoint_gaps']
+    assert {gap['code'] for gap in gaps} == {'ENTRYPOINT_DETECTION_UNAVAILABLE',
+                                             'ENTRYPOINT_LIKELY_MISSED'}
+    missed = next(gap for gap in gaps if gap['code'] == 'ENTRYPOINT_LIKELY_MISSED')
+    assert (missed['path'], missed['line']) == ('src/OrdersApi.cs', 1)
+    listed = {(warning['code'], warning['message']) for warning in status['warnings']}
+    assert {(gap['code'], gap['message']) for gap in gaps} <= listed

@@ -49,7 +49,8 @@ def prepare(sources, units, diagnostics=None):
             root = receiver.removeprefix('this.').split('.', 1)[0]
             if root in clients and reference.callee_name in {'get','post','put','patch','delete'}:
                 boundaries[(start, reference.callee_name)] = ('angular-http',
-                    f'{reference.callee_name} is provided by the evidenced Angular HttpClient.')
+                    f'{reference.callee_name} is provided by the evidenced Angular HttpClient.',
+                    'module:@angular/common/http')
         source.framework_call_boundaries = boundaries
         for match in source.rule_outputs:
             if match.output_type != 'ui_transition' \

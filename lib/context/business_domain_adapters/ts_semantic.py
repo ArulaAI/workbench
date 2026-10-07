@@ -100,6 +100,7 @@ def prepare(sources, units, diagnostics=None):
     for source in sources:
         source.external_import_boundaries = _external_import_boundaries(source)
         source.build_definitions = definitions
+    return _prepare_action_labels(sources, units) or None
 
 
 def calls(unit):
@@ -316,11 +317,12 @@ def resolve_call(unit, receiver, name, candidates, position, evidence_id=None):
         boundary = getattr(unit.source, 'external_import_boundaries', {}).get(
             (unit.start + position, name))
     if boundary and not candidates:
-        owner, reason = boundary
+        owner, reason, *provider = boundary
         return SemanticResult(capability='callable_resolution', outcome='external',
             subject_id=unit.symbol_id,
             target_id=identifier('resource', 'javascript-external-call', owner, name),
-            evidence_ids=evidence, diagnostic_code=code, reason=reason)
+            evidence_ids=evidence, diagnostic_code=code, reason=reason,
+            provider=provider[0] if provider else f'module:{owner}')
     return rules.resolve_call(unit, receiver, name, candidates, position, evidence_id)
 
 
@@ -1089,3 +1091,550 @@ def _build_definitions(sources):
                     index.setdefault((source.service_scope, key.group(2) or key.group(3)),
                                      []).append((value, source, entry_at, entry_at + len(entry)))
     return index
+
+
+# Action labels
+#
+# A button whose text is a JSX expression is labelled only by the string
+# literals that expression can produce: a literal, a conditional over
+# literals, or a ``const`` assigned only such values. A choice between several
+# literals is made per route, and only when the page on that route passes a
+# literal value for every flag the choice tests: the prop itself, an object
+# literal (directly, through a ``const`` or a function returning one) holding
+# the flag, or an object literal without it, which leaves the flag undefined.
+# A flag read from component state counts only when the constructor seeds that
+# state from the prop, so the choice is the label the screen first renders.
+# Any other value leaves every literal a candidate; an expression with a
+# runtime part leaves the action explicitly unlabeled.
+
+LABEL_RUNTIME_CODE = 'UI_ACTION_LABEL_RUNTIME'
+LABEL_AMBIGUOUS_CODE = 'UI_ACTION_LABEL_AMBIGUOUS'
+_MAX_LABEL_DEPTH = 4
+_PROPS_SOURCE = re.compile(r'\bconst\s*\{([^{}]*)\}\s*=\s*(this\.props|this\.state|props)\s*;?')
+
+
+def _literal_value(text):
+    """``(True, value)`` for a JavaScript literal token, else ``(False, None)``."""
+    text = text.strip()
+    tokens = {'true': True, 'false': False, 'null': None, 'undefined': None}
+    if text in tokens:
+        return True, tokens[text]
+    if re.fullmatch(r'-?\d+(?:\.\d+)?', text):
+        return True, float(text)
+    string = _string(text)
+    return (True, string) if string is not None else (False, None)
+
+
+def _truthy(value):
+    return value not in (None, False, 0, 0.0, '')
+
+
+def _object_entries(text):
+    """Key -> value text and offset of an object literal, or None if it may hide keys."""
+    entries = {}
+    for entry, at in _split(text[1:-1], ','):
+        entry, entry_at = _strip(entry, 1 + at)
+        if not entry:
+            continue
+        if entry.startswith('...') or entry.startswith('['):
+            return None
+        key = re.match(r'''(?:(["'])([\w$]+)\1|([A-Za-z_$][\w$]*))\s*(:)?''', entry)
+        if not key:
+            return None
+        name = key.group(2) or key.group(3)
+        if key.group(4):
+            entries[name] = (entry[key.end():], entry_at + key.end())
+        elif key.end() == len(entry):
+            entries[name] = (name, entry_at)
+        else:
+            # A method or accessor: the key exists, its value is not a literal.
+            entries[name] = (None, entry_at)
+    return entries
+
+
+def _path_value(unit, text, start, path, spans, depth=0):
+    """``(True, value)`` when *text* followed by *path* is a literal, else ``(False, reason)``."""
+    text, start = _strip(text, start)
+    source = unit.source
+    if depth > _MAX_LABEL_DEPTH:
+        return False, 'a value built through too many steps to follow'
+    if text.startswith('(') and _close(text, 0) == len(text) - 1:
+        return _path_value(unit, text[1:-1], start + 1, path, spans, depth + 1)
+    if text.startswith('{') and _close(text, 0) == len(text) - 1:
+        if not path:
+            return True, {}
+        entries = _object_entries(text)
+        if entries is None:
+            return False, 'an object with spread or computed keys'
+        spans.append((source, start, start + len(text)))
+        if path[0] not in entries:
+            # A literal object without the key leaves it undefined.
+            return ((True, None) if len(path) == 1 else
+                    (False, f'an object without {path[0]}'))
+        value, at = entries[path[0]]
+        if value is None:
+            return False, f'an object whose {path[0]} is not a literal value'
+        return _path_value(unit, value, start + at, path[1:], spans, depth + 1)
+    if not path:
+        known, value = _literal_value(text)
+        if known:
+            spans.append((source, start, start + len(text)))
+            return True, value
+    call = _CALL.match(text)
+    if call and _close(text, call.end() - 1) == len(text) - 1:
+        target = _call_target(source, call.group(1), start)
+        shape = _function_shape(target) if target else None
+        if not shape or shape[1] is None:
+            return False, f'{call.group(1)}(), which does not return one evaluable expression'
+        spans.append((source, start, start + len(text)))
+        spans.append((target.source, target.start, target.end))
+        return _path_value(target, shape[1], shape[2], path, spans, depth + 1)
+    if re.fullmatch(_IDENTIFIER, text):
+        declaration = _constant(unit, text, start) or _module_constant(source, text)
+        if declaration:
+            value, at, declared = declaration
+            spans.append((source, *declared))
+            return _path_value(unit, value, at, path, spans, depth + 1)
+    return False, f'`{" ".join(text.split())}`, a runtime value'
+
+
+def _component_name(unit):
+    return f'{unit.owner}.{unit.name}' if unit.owner else unit.name
+
+
+def _seeded_state(owner, key):
+    """The prop a class component's constructor seeds state *key* from, or None."""
+    classes = [unit for unit in owner.source.units
+               if unit.kind == 'class' and unit.name == owner.owner]
+    constructors = [unit for unit in owner.source.units
+                    if unit.owner == owner.owner and unit.name == 'constructor']
+    if len(classes) != 1 or len(constructors) != 1:
+        return None
+    constructor = constructors[0]
+    if re.search(r'(?m)^\s*(?:(?:public|private|protected|readonly)\s+)*state\s*(?::[^=;\n]+)?=(?!=)',
+                 classes[0].text):
+        return None
+    assignments = list(re.finditer(r'\bthis\.state\s*=(?!=)', classes[0].text))
+    if len(assignments) != 1:
+        return None
+    at = classes[0].start + assignments[0].end()
+    text, at = _strip(owner.source.text[at:_statement_end(owner.source.text, at)], at)
+    if not (text.startswith('{') and _close(text, 0) == len(text) - 1
+            and constructor.start <= at < constructor.end):
+        return None
+    entries = _object_entries(text)
+    value = entries.get(key) if entries else None
+    if not value or value[0] is None:
+        return None
+    seeded = ' '.join(value[0].split())
+    props = r'(?:this\.props' + ('|props' if _parameters(constructor)[:1] == ('props',)
+                                 else '') + r')'
+    found = (re.fullmatch(rf'{props}\.({_IDENTIFIER})', seeded)
+             or re.fullmatch(rf'Object\.assign\(\s*\{{\s*\}}\s*,\s*{props}\.({_IDENTIFIER})\s*\)', seeded)
+             or re.fullmatch(rf'\{{\s*\.\.\.\s*{props}\.({_IDENTIFIER})\s*,?\s*\}}', seeded))
+    if not found:
+        return None
+    return found.group(1), [(owner.source, assignments[0].start() + classes[0].start,
+                             at + len(text))]
+
+
+def _flag_prop(owner, names, before):
+    """``(prop, path, spans)`` when a flag is read from one of *owner*'s props."""
+    if names[:2] == ['this', 'props'] and len(names) > 2:
+        return names[2], names[3:], []
+    if names[:2] == ['this', 'state'] and len(names) > 2:
+        seeded = _seeded_state(owner, names[2])
+        return (seeded[0], names[3:], seeded[1]) if seeded else None
+    if names[0] == 'props' and len(names) > 1 and _parameters(owner)[:1] == ('props',):
+        return names[1], names[2:], []
+    bindings = []
+    signature = _DESTRUCTURED_PROPS.match(owner.text)
+    if signature:
+        for part in signature.group(1).split(','):
+            key, _, local = part.partition(':')
+            if (local or key).split('=', 1)[0].strip() == names[0]:
+                bindings.append(('props', key.strip(), '=' in part,
+                                 (owner.source, owner.start, owner.start + signature.end())))
+    text = owner.source.text
+    for found in _PROPS_SOURCE.finditer(text, owner.start, before):
+        for part in found.group(1).split(','):
+            key, _, local = part.partition(':')
+            if (local or key).split('=', 1)[0].strip() == names[0]:
+                bindings.append((found.group(2), key.strip(), '=' in part,
+                                 (owner.source, found.start(), found.end())))
+    if len(bindings) != 1 or bindings[0][2]:
+        return None
+    origin, key, _, span = bindings[0]
+    if origin == 'this.state':
+        seeded = _seeded_state(owner, key)
+        return (seeded[0], names[1:], [span, *seeded[1]]) if seeded else None
+    return key, names[1:], [span]
+
+
+def _top_level_text(text):
+    top = [' '] * len(text)
+    for index, character, depth in _scan(text):
+        if depth == 0:
+            top[index] = character
+    return ''.join(top)
+
+
+# State spread into a component carries a literal flag only along one chain,
+# each step of which the source fixes:
+#
+#   const LITERAL = {...}                  the flag, in an object nothing else uses
+#   Promise.resolve(LITERAL)               a promise of exactly that object
+#   load(..., promise, ...)                load() returns only
+#                                            Promise.all([..., param, ...])
+#                                            .then(results => ({key: results[i]}))
+#   .then(model => this.setState(model))   the only state the page ever sets
+#   if (!this.state) return ...;           nothing renders before that state
+#   <Component {...this.state} />          state keys become props
+#
+# Any other step (a loaded value, a second state write, an initial state, a
+# reused literal) leaves the flag unknown.
+
+_THEN = re.compile(r'\.\s*then\s*\(')
+_SET_STATE_CALLBACKS = (
+    re.compile(rf'\(?\s*({_IDENTIFIER})\s*(?::[^()=]*)?\)?\s*=>\s*this\.setState\(\s*\1\s*\)'),
+    re.compile(rf'\(?\s*({_IDENTIFIER})\s*(?::[^()=]*)?\)?\s*=>\s*'
+               rf'\{{\s*this\.setState\(\s*\1\s*\)\s*;?\s*\}}'),
+    re.compile(r'this\.setState\.bind\(\s*this\s*\)'),
+)
+_STATE_WRITE = re.compile(
+    r'(?m)\bthis\.state(?:\s*[.\[][\w$.\[\]\'"]*)?\s*(?:(?<![=!<>])=(?![=>])|\+\+|--)'
+    r'|^\s*(?:(?:public|private|protected|readonly)\s+)*state\s*(?::[^=;\n]+)?=(?!=)')
+
+
+def _arguments_text(text, opening):
+    """Top-level arguments of the call whose ``(`` is at *opening*, or None on a spread."""
+    closing = _close(text, opening)
+    pieces = [_strip(piece, opening + 1 + at)
+              for piece, at in _split(text[opening + 1:closing], ',')]
+    if pieces and not pieces[-1][0]:
+        pieces.pop()
+    if any(not piece or piece.startswith('...') for piece, _ in pieces):
+        return None
+    return pieces
+
+
+def _sole_use(source, name, declared, used):
+    """Why the ``const`` *name* may not hold its literal, or None when *used* is its only use."""
+    start, end = declared
+    line = source.text[source.text.rfind('\n', 0, start) + 1:end]
+    if re.match(r'\s*export\b', line):
+        return f'{name} is exported, so other modules may change it'
+    for found in re.finditer(rf'(?<![\w$.]){re.escape(name)}(?![\w$])', source.text):
+        if found.start() != used and not start <= found.start() < end:
+            number = source.text.count('\n', 0, found.start()) + 1
+            return f'{name} is also used on line {number}, so the object may be changed'
+    return None
+
+
+def _promise_value(unit, text, start, path, spans, depth=0):
+    """``(True, value)`` when the promise *text* resolves to a literal at *path*."""
+    text, start = _strip(text, start)
+    source = unit.source
+    if depth > _MAX_LABEL_DEPTH:
+        return False, 'a value built through too many steps to follow'
+    resolve = re.match(r'Promise\s*\.\s*resolve\s*\(', text)
+    if resolve and _close(text, resolve.end() - 1) == len(text) - 1:
+        arguments = _arguments_text(text, resolve.end() - 1)
+        if not arguments or len(arguments) != 1:
+            return False, f'`{" ".join(text.split())}`, which has no single argument'
+        value, at = arguments[0]
+        at += start
+        if re.fullmatch(_IDENTIFIER, value):
+            declaration = _constant(unit, value, at) or _module_constant(source, value)
+            why = declaration and _sole_use(source, value, declaration[2], at)
+            if why:
+                return False, why
+        spans.append((source, start, start + len(text)))
+        return _path_value(unit, value, at, path, spans, depth + 1)
+    if re.fullmatch(_IDENTIFIER, text):
+        declaration = _constant(unit, text, start)
+        if declaration:
+            value, at, declared = declaration
+            spans.append((source, *declared))
+            return _promise_value(unit, value, at, path, spans, depth + 1)
+    return False, f'`{" ".join(text.split())}`, a runtime value'
+
+
+def _model_value(unit, name, call_at, opening, key, path, spans):
+    """``(True, value)`` for ``key.path`` of the object a call to *name* resolves to.
+
+    The callee must return ``Promise.all([...]).then(results => ({...}))``
+    and nothing else; ``results[i]`` is the i-th array element, either a
+    parameter the caller binds or a promise the callee builds itself.
+    """
+    source = unit.source
+    target = _call_target(source, name, call_at)
+    shape = _function_shape(target) if target else None
+    if not shape or shape[1] is None:
+        return False, f'{name}() does not return one evaluable expression'
+    params, body, body_at = shape
+    # _function_shape counts top-level returns only; a nested one is another path.
+    code = {index for index, _, _ in _scan(target.text)}
+    returns = [found for found in re.finditer(r'(?<![\w$.])return(?![\w$])', target.text)
+               if found.start() in code]
+    if len(returns) > 1:
+        return False, f'{name}() has {len(returns)} return statements'
+    shown = f'{name}() does not return Promise.all([...]).then(results => ({{...}}))'
+    every = re.match(r'Promise\s*\.\s*all\s*\(', body)
+    if not every:
+        return False, shown
+    closing = _close(body, every.end() - 1)
+    array, array_at = _strip(body[every.end():closing], every.end())
+    if not (array.startswith('[') and _close(array, 0) == len(array) - 1):
+        return False, shown
+    elements = [_strip(piece, array_at + 1 + at) for piece, at in _split(array[1:-1], ',')]
+    if elements and not elements[-1][0]:
+        elements.pop()
+    if any(not piece or piece.startswith('...') for piece, _ in elements):
+        return False, f'{name}() passes Promise.all an array with holes or spreads'
+    then = _THEN.match(body, closing + 1)
+    if not then or body[_close(body, then.end() - 1) + 1:].strip():
+        return False, shown
+    handlers = _arguments_text(body, then.end() - 1)
+    if not handlers or len(handlers) != 1:
+        return False, f'{name}() handles Promise.all with other than one callback'
+    handler, handler_at = handlers[0]
+    arrow = re.match(rf'\(?\s*({_IDENTIFIER})\s*(?::[^()=]*)?\)?\s*=>\s*', handler)
+    if not arrow:
+        return False, shown
+    result, result_at = _strip(handler[arrow.end():], handler_at + arrow.end())
+    # ``=> {`` opens a block, so only a parenthesized object literal is returned.
+    if not (result.startswith('(') and _close(result, 0) == len(result) - 1):
+        return False, shown
+    result, result_at = _strip(result[1:-1], result_at + 1)
+    if not (result.startswith('{') and _close(result, 0) == len(result) - 1):
+        return False, shown
+    entries = _object_entries(result)
+    if entries is None:
+        return False, f'{name}() resolves to an object with spread or computed keys'
+    if key not in entries or entries[key][0] is None:
+        return False, f'{name}() resolves to an object without a {key} value'
+    value, value_at = _strip(entries[key][0], result_at + entries[key][1])
+    found_spans = [(target.source, target.start, target.end)]
+    index = re.fullmatch(rf'{re.escape(arrow.group(1))}\s*\[\s*(\d+)\s*\]', value)
+    if not index:
+        known, found = _path_value(target, value, body_at + value_at, path, found_spans)
+    elif int(index.group(1)) >= len(elements):
+        return False, f'{name}() reads {value} past the end of its Promise.all array'
+    else:
+        element, element_at = elements[int(index.group(1))]
+        if element in params:
+            uses = re.findall(rf'(?<![\w$.]){re.escape(element)}(?![\w$])', target.text)
+            if len(uses) != 2 or params.count(element) != 1:
+                return False, f'{name}() uses or reassigns its parameter {element} elsewhere'
+            arguments = _arguments_text(source.text, opening)
+            position = params.index(element)
+            if arguments is None or position >= len(arguments):
+                return False, f'the call to {name}() does not pass {element}'
+            argument, argument_at = arguments[position]
+            known, found = _promise_value(unit, argument, argument_at, path, found_spans)
+        else:
+            known, found = _promise_value(target, element, body_at + element_at,
+                                          path, found_spans)
+    if not known:
+        return False, f'{name}() resolves {key} from {found}'
+    spans.extend(found_spans)
+    return True, found
+
+
+def _state_value(origin, usage, key, path, spans):
+    """``(True, value)`` when ``this.state.key.path`` is a literal wherever *usage* renders."""
+    source = origin.source
+    classes = [unit for unit in source.units
+               if unit.kind == 'class' and unit.name == origin.owner]
+    if origin.kind != 'method' or len(classes) != 1:
+        return False, 'reads this.state outside one class component'
+    page = classes[0]
+    text = page.text
+    if not re.match(rf'class\s+{re.escape(page.name)}\b[^{{]*?\bextends\s+'
+                    r'(?:React\s*\.\s*)?(?:Pure)?Component\b', text):
+        return False, f'{page.name} extends a class that may set state itself'
+    if _STATE_WRITE.search(text):
+        return False, f'{page.name} assigns this.state directly'
+    writes = list(re.finditer(r'\b(?:setState|replaceState)\b', text))
+    if len(writes) != 1:
+        return False, (f'{page.name} sets state in {len(writes)} places' if writes
+                       else f'{page.name} never sets state')
+    write = writes[0].start()
+    # Without an initial state, ``this.state`` is null until the one write;
+    # the guard keeps the usage from rendering before then.
+    before = source.text[origin.start:usage]
+    depths = {index: depth for index, _, depth in _scan(before)}
+    guards = [found for found in
+              re.finditer(r'\bif\s*\(\s*!\s*this\.state\s*\)\s*\{?\s*return\b', before)
+              if depths.get(found.start()) == 1]
+    if not guards:
+        return False, (f'{_component_name(origin)} may render it before {page.name} '
+                       'sets state, with no `if (!this.state) return` guard')
+    thens = [(found, _close(text, found.end() - 1)) for found in _THEN.finditer(text)
+             if found.end() - 1 < write < _close(text, found.end() - 1)]
+    if not thens:
+        return False, f'{page.name} sets state outside a promise callback'
+    then, then_close = thens[-1]
+    callback = text[then.end():then_close].strip()
+    if not any(pattern.fullmatch(callback) for pattern in _SET_STATE_CALLBACKS):
+        return False, f'{page.name} sets state to other than the resolved value'
+    calls = [found for found in _CALL.finditer(text, 0, then.start())
+             if not re.match(r'[\w$.]', text[found.start() - 1:found.start()])
+             and _close(text, found.end() - 1) < then.start()
+             and not text[_close(text, found.end() - 1) + 1:then.start()].strip()]
+    if len(calls) != 1:
+        return False, f'{page.name} sets state from a promise that is not one direct call'
+    call = calls[0]
+    owners = [unit for unit in source.units if unit.owner == page.name
+              and unit.kind == 'method' and unit.start <= page.start + call.start() < unit.end]
+    if len(owners) != 1:
+        return False, f'{page.name} sets state outside one of its methods'
+    known, value = _model_value(owners[0], call.group(1), page.start + call.start(),
+                                page.start + call.end() - 1, key, path, spans)
+    if not known:
+        return False, value
+    spans.append((source, page.start + call.start(), page.start + then_close + 1))
+    spans.append((source, origin.start + guards[-1].start(), origin.start + guards[-1].end()))
+    return True, value
+
+
+def _passed_value(owner, origin, start, end, prop, path, spans):
+    """``(True, value)`` for the literal a JSX usage passes for ``prop.path``."""
+    tag = _opening_tag(origin.source.text[start:end])
+    top = _top_level_text(tag)
+    spreads = re.findall(r'\{\s*\.\.\.\s*([^{}]*?)\s*\}', tag)
+    if (spreads == ['this.state'] and len(re.findall(r'\{\s*\.\.\.', tag)) == 1
+            and not re.search(rf'(?<![\w$.-]){re.escape(prop)}(?![\w$-])', top)):
+        found = [(origin.source, start, start + len(tag))]
+        known, value = _state_value(origin, start, prop, path, found)
+        if not known:
+            return False, f'spreads this.state into the component, and {value}'
+        spans.extend(found)
+        return True, value
+    if re.search(r'\{\s*\.\.\.', tag):
+        return False, f'spreads runtime props into the component, so {prop} has no literal value'
+    for found in re.finditer(rf'(?<![\w$.-]){re.escape(prop)}\s*=\s*(["\'{{])', tag):
+        if top[found.start()] == ' ':
+            continue
+        opening = found.start(1)
+        if tag[opening] == '{':
+            closing = _close(tag, opening)
+            known, value = _path_value(origin, tag[opening + 1:closing],
+                                       start + opening + 1, path, spans)
+        else:
+            known, value = _path_value(origin, tag[opening:_skip_literal(tag, opening)],
+                                       start + opening, path, spans)
+        return (known, value) if known else (False, f'passes {prop} as {value}')
+    spans.append((origin.source, start, start + len(tag)))
+    if re.search(rf'(?<![\w$.-]){re.escape(prop)}(?![\w$-])(?!\s*=)', top):
+        return (True, True) if not path else (False, f'passes {prop} as a bare flag')
+    if path:
+        return False, f'does not pass {prop}'
+    if re.search(r'\bdefaultProps\b', owner.source.text):
+        return False, f'does not pass {prop}, which may take a default value'
+    return True, None
+
+
+def _test_truth(owner, test, before, usage, spans):
+    """``(truth, None)`` for a flag the usage fixes, else ``(None, why)``."""
+    origin, start, end = usage
+    negated, text = False, ' '.join(test.split())
+    while True:
+        if text.startswith('!'):
+            negated, text = not negated, text[1:].strip()
+        elif text.startswith('(') and _close(text, 0) == len(text) - 1:
+            text = text[1:-1].strip()
+        else:
+            break
+    flag = _flag_prop(owner, text.split('.'), before) if _NAME.fullmatch(text) else None
+    if flag is None:
+        return None, f'`{text}` is not read from a prop of {_component_name(owner)}'
+    prop, path, flag_spans = flag
+    found = []
+    known, value = _passed_value(owner, origin, start, end, prop, path, found)
+    if not known:
+        return None, f'{_component_name(origin)} {value}'
+    spans.extend(flag_spans + found)
+    return _truthy(value) != negated, None
+
+
+def _choose_label(owner, values, before, contexts):
+    """The label each route shows, as ``(labels, conditions, spans, why)``."""
+    if not contexts:
+        return None, None, [], 'no route displays this component'
+    if any(not chain for _, chain in contexts):
+        return None, None, [], ('the route renders this component itself, so no page '
+                                'passes the flags its label tests')
+    kept, spans, whys = {}, [], []
+    for _, chain in contexts:
+        for value in values:
+            selected = True
+            for test, taken in value.conditions:
+                truth, why = _test_truth(owner, test, before, chain[-1], spans)
+                if truth is None:
+                    whys.append(why)
+                elif truth != taken:
+                    selected = False
+                    break
+            if selected:
+                kept.setdefault(value.parts[0][1].strip(), value)
+    why = '; '.join(dict.fromkeys(whys)) or None
+    if len(kept) == 1:
+        [(label, value)] = kept.items()
+        conditions = ' && '.join(test if taken else f'!({test})'
+                                 for test, taken in value.conditions) or None
+        return label, conditions, spans + list(value.spans), None
+    return list(kept), None, spans, why
+
+
+def _prepare_action_labels(sources, units):
+    selected = {id(source) for source in sources}
+    diagnostics = []
+    for unit in units:
+        if (id(unit.source) not in selected or _is_test(unit.source)
+                or getattr(unit, 'anchor_registration_kind', None) != 'action'
+                or unit.anchor_label or not getattr(unit, 'anchor_label_expression', None)
+                or getattr(unit, 'anchor_owner_unit', None) is None):
+            continue
+        owner = unit.anchor_owner_unit
+        text, at = _strip(*unit.anchor_label_expression)
+        written = ' '.join(text.split())
+        where = unit.route or _component_name(owner)
+        values = _evaluate(_Scope(owner, None, _parameters(owner), 0), text, at)
+        literal = all(len(value.parts) == 1 and value.parts[0][0] == 'lit'
+                      and value.parts[0][1].strip() for value in values)
+        unit.anchor_label_evidence_spans = [(unit.source, at, at + len(text))]
+        code = None
+        if not literal:
+            code = LABEL_RUNTIME_CODE
+            unit.anchor_label_reason = (f'Visible action label on {where} is the runtime '
+                f'expression `{written}`; no literal text names this action.')
+        else:
+            labels = list(dict.fromkeys(value.parts[0][1].strip() for value in values))
+            if len(labels) == 1:
+                unit.anchor_label = labels[0]
+                unit.anchor_label_evidence_spans += [span for value in values
+                                                     for span in value.spans]
+            else:
+                chosen, condition, spans, why = _choose_label(
+                    owner, values, at, getattr(unit, 'anchor_route_contexts', []))
+                if isinstance(chosen, str):
+                    unit.anchor_label = chosen
+                    unit.anchor_label_condition = condition
+                    unit.anchor_label_evidence_spans += spans
+                else:
+                    code = LABEL_AMBIGUOUS_CODE
+                    candidates = chosen or labels
+                    unit.anchor_label_candidates = candidates
+                    unit.anchor_label_evidence_spans += spans
+                    unit.anchor_label_reason = (
+                        f'Visible action label on {where} is one of '
+                        + ', '.join(f"'{label}'" for label in candidates)
+                        + f': {why or "no source evidence selects one"}.')
+        rules.declare_action(unit)
+        if code:
+            diagnostics.append({'source_id': unit.source.resource_id, 'code': code,
+                                'reason': unit.anchor_label_reason,
+                                'span': (at, at + len(text))})
+    return diagnostics

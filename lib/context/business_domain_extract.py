@@ -21,6 +21,9 @@ from .business_domain_adapters.base import (
     resolve_anchor_identity,
 )
 from .business_domain_identity import reconcile_anchors
+from .business_domain_entrypoints import (GAP_CODES, LANGUAGE_GAP, LIKELY_MISSED,
+    NONE_DETECTED, MarkerCatalogError, covered, gap_record, load_catalog,
+    scan_markers)
 from .language_registry import (SOURCE_ADAPTER_CAPABILITIES, PathClassification,
     RegistryConfigurationError, registry)
 from .business_domain_schema import (DEFAULTS, DomainError, account_artifact_bytes,
@@ -34,6 +37,72 @@ IGNORED = set(CATALOG['ignored_directories'])
 NON_TRAVERSAL_EDGES = frozenset({'implements', 'inherits', 'has_field',
     'accepts_type', 'returns_type', 'tests_behavior', 'documents_behavior',
     'exposes_endpoint'})
+# Which unsatisfied obligations are known boundaries rather than gaps.
+TRACE_BOUNDARIES = MappingProxyType(json.loads(
+    (Path(__file__).parent / 'data' / 'trace_boundaries.json').read_text()))
+
+
+def _known_provider(language, provider):
+    """Whether the trace-boundary catalog lists *provider* as a library of *language*."""
+    known = TRACE_BOUNDARIES['known_libraries'].get(language or '')
+    if not known or not provider or ':' not in provider:
+        return False
+    kind, names = provider.split(':', 1)
+    # ``a|b`` lists candidate providers: known only when every one is.
+    candidates = names.split('|')
+    if kind == 'global':
+        return bool(known.get('ambient'))
+    if kind == 'module':
+        return all(any(name == module or name.startswith(module + '/')
+                       for module in known.get('modules', ())) for name in candidates)
+    if kind == 'type':
+        return all(any(name.startswith(prefix) for prefix in known.get('prefixes', ()))
+                   for name in candidates)
+    return False
+
+
+def trace_boundary(obligation, edge, codes, resource):
+    """The boundary kind of one unsatisfied obligation, or None when it is a gap.
+
+    *codes* are the adapter diagnostic codes attached to the obligation's edge
+    and *resource* is the edge's target resource, if any. Only catalogued
+    evidence makes a boundary; anything else stays a gap.
+    """
+    if obligation['status'] == 'satisfied':
+        return None
+    kind = TRACE_BOUNDARIES['obligation_codes'].get(obligation['reason_code'])
+    if kind or edge is None:
+        return kind
+    if (obligation['kind'], obligation['status']) in {
+            ('implementation_selection', 'external'), ('data_target', 'unresolved')}:
+        kinds = {TRACE_BOUNDARIES['diagnostic_codes'].get(code) for code in codes}
+        if not edge['to_ref'] or not kinds or None in kinds:
+            return None
+        return min(kinds, key=TRACE_BOUNDARIES['kind_order'].index)
+    if (obligation['kind'] == 'external_boundary' and edge['kind'] == 'calls' and resource
+            and set(codes) & set(TRACE_BOUNDARIES['library_codes'])
+            and _known_provider(resource.get('language'), resource.get('provider'))):
+        return 'library_call'
+    return None
+
+
+def _conditional_alternatives(selections):
+    """Selections that are each taken under a declared condition, or [].
+
+    A declaration whose every selects_implementation relationship names one
+    target under an evidenced activation condition (a profile, a property) is
+    a set of conditional paths, not an unknown choice. Each must name its
+    target: an ambiguous or unnamed selection keeps the choice a gap.
+    """
+    if len(selections) < 2 or any(not edge['condition'] or not edge['to_ref']
+                                  or edge['resolution'] == 'ambiguous'
+                                  for edge in selections):
+        return []
+    if len({edge['to_ref']['id'] for edge in selections}) < 2:
+        return []
+    return sorted(selections, key=lambda edge: (edge['to_ref']['id'], edge['id']))
+
+
 def source_paths(root: Path) -> list[str]:
     try:
         result = subprocess.run(['git', '-C', str(root), 'ls-files', '-co', '--exclude-standard', '-z'], capture_output=True, timeout=30, check=True)
@@ -61,6 +130,30 @@ class SourceInventory:
     routes: tuple[SourceRoute, ...]
     retained_bytes: Mapping[str, bytes]
     diagnostics: tuple[dict, ...]
+    # Bytes of ignored paths that the entry-point marker catalog searches.
+    # They are never decoded into Sources or analyzed.
+    marker_bytes: Mapping[str, bytes] = MappingProxyType({})
+
+
+def _entrypoint_catalog():
+    try:
+        return load_catalog()
+    except MarkerCatalogError as error:
+        raise DomainError('ADAPTER_REGISTRY_INVALID', str(error)) from None
+
+
+def _read_contained(root: Path, relative: str, limit: int) -> bytes | None:
+    """Bytes of one contained regular file within *limit*, else None."""
+    path = root / relative
+    if (path.is_symlink() or not path.is_file()
+            or not path.resolve().is_relative_to(root)):
+        return None
+    try:
+        with path.open('rb') as stream:
+            raw = stream.read(limit + 1)
+    except OSError:
+        return None
+    return raw if len(raw) <= limit else None
 
 
 @dataclass(frozen=True)
@@ -142,9 +235,16 @@ def scan_inventory(root: Path, config: dict) -> SourceInventory:
         raise DomainError('ADAPTER_REGISTRY_INVALID',
             f'conflicting_source_dispositions:{paths}')
     retained = {}
+    marker_bytes = {}
     diagnostics = []
+    catalog = _entrypoint_catalog()
     for route in routes:
         if route.disposition == 'ignore':
+            relative = route.classification.path
+            if catalog.scans(relative):
+                raw = _read_contained(root, relative, config['max_source_bytes'])
+                if raw is not None:
+                    marker_bytes[relative] = raw
             continue
         relative = route.classification.path
         path = root / relative
@@ -168,7 +268,8 @@ def scan_inventory(root: Path, config: dict) -> SourceInventory:
                 subject_ids=[], evidence_ids=[]))
             continue
         retained[relative] = raw
-    return SourceInventory(routes, MappingProxyType(retained), tuple(diagnostics))
+    return SourceInventory(routes, MappingProxyType(retained), tuple(diagnostics),
+        MappingProxyType(marker_bytes))
 
 
 def inventory(scan: SourceInventory, config: dict) -> DecodedSourceInventory:
@@ -318,7 +419,11 @@ def load_selection(source: Source, selection: SourceSelection,
 
 def source_fingerprint(scan: SourceInventory) -> str:
     """Routing decisions for every path plus raw-byte hashes of retained paths."""
+    marker_bytes = ({'marker_bytes': {path: digest(raw)
+        for path, raw in sorted(scan.marker_bytes.items())}}
+        if scan.marker_bytes else {})
     return digest({
+        **marker_bytes,
         'routes': [{
             'path': route.classification.path,
             'category': route.classification.category,
@@ -788,6 +893,8 @@ class Extractor:
         self.anchor_units: dict[int, tuple[str, str]] = {}
         # Evidence id of a root-relative request -> the endpoint anchor it reaches.
         self.same_origin_requests: dict[str, str] = {}
+        # Edge id -> adapter diagnostic codes of the semantic result behind it.
+        self.edge_codes: dict[str, set[str]] = {}
         self.snapshot_objects: dict[str,dict]={}
         self.external_freshness = 'not_applicable'
         self.snapshot_inputs = {}
@@ -837,7 +944,15 @@ class Extractor:
     def add_unit(self, unit: Unit) -> None:
         unit.symbol_id=identifier('symbol',unit.qualified)
         unit.evidence_id=self.evidence(unit.source,unit.start,unit.end)
-        self.facts['symbols'][unit.symbol_id]=record('Symbol',id=unit.symbol_id,qualified_name=unit.qualified,signature=unit.name+'('+','.join(t for _,t in unit.params)+')',kind=unit.kind,file=unit.source.path,evidence_ids=[unit.evidence_id])
+        supporting = []
+        for source, start, end in unit.supporting_evidence_spans:
+            if (not isinstance(source, Source) or type(start) is not int or type(end) is not int
+                    or not 0 <= start < end <= len(source.text)):
+                raise ValueError('Unit supporting evidence requires a valid source span')
+            evidence_id = self.evidence(source, start, end)
+            if evidence_id != unit.evidence_id and evidence_id not in supporting:
+                supporting.append(evidence_id)
+        self.facts['symbols'][unit.symbol_id]=record('Symbol',id=unit.symbol_id,qualified_name=unit.qualified,signature=unit.name+'('+','.join(t for _,t in unit.params)+')',kind=unit.kind,file=unit.source.path,evidence_ids=[unit.evidence_id, *supporting])
         if self.facts['evidence'][unit.evidence_id]['source_kind']=='test':unit.anchor_kind=None
         trace_contract = (
             getattr(unit, 'trace_role', None),
@@ -951,8 +1066,8 @@ class Extractor:
                     if parser_id else descriptor['id'])
                 source.adapter_version = (descriptor.get('parser_version')
                     or descriptor.get('version', '1'))
-                source.declared_capabilities = dict(
-                    descriptor.get('capabilities', {}))
+                source.declared_capabilities = registry.effective_capabilities(
+                    descriptor, source.language)
                 source.parser_required = bool(parser_id)
             self.units.extend(execution.output)
             if execution.output:
@@ -1298,6 +1413,7 @@ class Extractor:
         self._finalize_source_resources()
         self._capabilities()
         self._traces()
+        self._entrypoint_coverage()
         from .business_domain_snapshots import capture_supplied
         self.external_freshness,self.snapshot_inputs = capture_supplied(self)
         self.facts['coverage']['anchors_total']=len(self.facts['anchors'])
@@ -1493,12 +1609,14 @@ class Extractor:
                 providers.append((descriptor, {
                     feature: status for feature in descriptor['capabilities']}))
             elif descriptor:
-                statuses = dict(descriptor.get('capabilities', {}))
+                statuses = registry.effective_capabilities(
+                    descriptor, source.language)
                 if execution.cause:
                     statuses = {feature: 'unsupported'
                         for feature in SOURCE_ADAPTER_CAPABILITIES}
                 providers.append((descriptor, statuses))
-                providers.extend((enricher, dict(enricher['capabilities']))
+                providers.extend((enricher, registry.effective_capabilities(
+                        enricher, source.language))
                     for enricher in self.enricher_descriptors_by_source_id.get(
                         source.resource_id, ()))
             else:
@@ -1523,6 +1641,93 @@ class Extractor:
                     capabilities[digest(capability)] = capability
         self.facts['capabilities'] = [capabilities[key]
             for key in sorted(capabilities)]
+
+    def _entrypoint_coverage(self) -> None:
+        """Report every entry-point gap: language gaps, likely misses, silent zero.
+
+        Which languages can host entry points, and which markers denote one,
+        come from data/entrypoint_markers.toml; whether a language's selected
+        adapters detect entry points comes from their declared capabilities.
+        """
+        catalog = _entrypoint_catalog()
+        gaps = []
+        analyzed = [source for source in self.sources
+            if self.routes[source.path].disposition == 'analyze']
+        by_language = {}
+        for source in analyzed:
+            classification = self.routes[source.path].classification
+            if (classification.language is None
+                    or classification.category not in catalog.categories
+                    or classification.language in catalog.non_entrypoint_languages):
+                continue
+            statuses = source.capability_statuses.get(
+                'entrypoint_detection', {'unsupported'})
+            if statuses <= {'unsupported'}:
+                by_language.setdefault(classification.language, []).append(source)
+        for language, sources in sorted(by_language.items()):
+            name = catalog.display_name(language)
+            count = len(sources)
+            message = (f'{name}: {count} file{"" if count == 1 else "s"}, '
+                       'entry-point detection unavailable')
+            gaps.append((gap_record(LANGUAGE_GAP, message, language=language,
+                                    files=count), [], []))
+
+        spans = {}
+        for anchor in self.facts['anchors'].values():
+            evidence_ids = set(anchor['evidence_ids'])
+            for representation in anchor.get('representations', ()):
+                evidence_ids.update(representation['evidence_ids'])
+                if representation.get('registration'):
+                    evidence_ids.update(
+                        representation['registration']['evidence_ids'])
+            for evidence_id in evidence_ids:
+                locator = self.facts['evidence'][evidence_id]['locator']
+                spans.setdefault(locator['path'], []).append(
+                    (locator['start_line'], locator['end_line']))
+        texts = {source.path: source for source in self.sources
+                 if catalog.scans(source.path)}
+        for relative, raw in self.scan.marker_bytes.items():
+            try:
+                text = raw.decode('utf-8')
+            except UnicodeDecodeError:
+                continue
+            texts[relative] = Source(path=relative,
+                language=self.routes[relative].classification.language,
+                text=text, source_hash=digest(raw),
+                resource_id=identifier('resource', relative),
+                original_byte_length=len(raw))
+        # A byte-order mark is encoding, not content; dropping it keeps
+        # offsets on the same lines and lets `^` match the first line.
+        bom = {path: source.text.startswith('\ufeff')
+               for path, source in texts.items()}
+        hits = scan_markers(catalog, ((path, source.text[1:] if bom[path]
+            else source.text) for path, source in texts.items()),
+            CATALOG['test_path_pattern'])
+        for hit in hits:
+            if covered(hit, spans):
+                continue
+            source = texts[hit.path]
+            offset = 1 if bom[hit.path] else 0
+            message = (f'{hit.path}:{hit.start_line}: likely missed '
+                       f'{hit.marker.kind} entry point ({hit.marker.framework_label}: '
+                       f'{hit.marker.name})')
+            evidence_id = self.evidence(source, hit.start + offset,
+                                        hit.end + offset)
+            subjects = ([source.resource_id]
+                        if source.resource_id in self.facts['resources'] else [])
+            gaps.append((gap_record(LIKELY_MISSED, message, hit=hit),
+                         subjects, [evidence_id]))
+
+        if not self.facts['anchors'] and not gaps:
+            count = len(analyzed)
+            message = ('No entry points detected; no entry-point markers found '
+                       f'in {count} analyzed file{"" if count == 1 else "s"}')
+            gaps.append((gap_record(NONE_DETECTED, message, files=count), [], []))
+        self.facts['coverage']['entrypoint_gaps'] = [gap for gap, _, _ in gaps]
+        for gap, subjects, evidence_ids in gaps:
+            self.diagnostics.append(record('Diagnostic', code=GAP_CODES[gap['kind']],
+                message=gap['message'], subject_ids=subjects,
+                evidence_ids=evidence_ids))
 
     def _documentation_edges(self) -> None:
         """Link authored documentation to exact operations or its service scope."""
@@ -1672,12 +1877,24 @@ class Extractor:
             if unit.anchor_id:
                 unit.anchor_id = replacements.get(unit.anchor_id, unit.anchor_id)
 
+    def _ref_name(self, ref) -> str:
+        if ref['kind'] == 'symbol':
+            return self.facts['symbols'][ref['id']]['qualified_name'].split('::', 1)[-1]
+        return self.facts['resources'][ref['id']]['name']
+
     def _traces(self) -> None:
         """Evaluate mechanical traversal and semantic completion independently."""
         outgoing: dict[str, list[dict]] = {}
         for edge in self.facts['edges'].values():
             outgoing.setdefault(edge['from_ref']['id'], []).append(edge)
         units_by_symbol = {unit.symbol_id: unit for unit in self.units}
+        # Every adapter code an edge carries: its semantic result's and the
+        # projection gaps reported against it.
+        edge_codes = {edge_id: set(codes) for edge_id, codes in self.edge_codes.items()}
+        for warning in self.facts['warnings']:
+            for subject in warning.get('subject_ids') or ():
+                if subject in self.facts['edges']:
+                    edge_codes.setdefault(subject, set()).add(warning['code'])
         units_by_anchor: dict[str, list[Unit]] = {}
         for unit in self.units:
             if unit.anchor_id:
@@ -1917,6 +2134,18 @@ class Extractor:
                     continue
                 selections = [edge for edge in outgoing.get(symbol, [])
                               if edge['kind'] == 'selects_implementation']
+                alternatives = _conditional_alternatives(selections)
+                if alternatives:
+                    require('implementation_selection', symbol, 'conditional',
+                            'CONDITIONAL_IMPLEMENTATION',
+                            'Configuration selects which implementation runs; each alternative is '
+                            'a conditional path: ' + '; '.join(
+                                f"{self._ref_name(edge['to_ref'])} when {edge['condition']}"
+                                for edge in alternatives) + '.',
+                            targets=sorted({edge['to_ref']['id'] for edge in alternatives
+                                            if edge['to_ref']['kind'] == 'symbol'}))
+                    frontier.add(symbol); reasons.add('conditional_implementation')
+                    continue
                 if any(edge['resolution'] != 'resolved' or not edge['to_ref']
                        or edge['to_ref']['kind'] != 'symbol' for edge in selections):
                     continue
@@ -1971,16 +2200,41 @@ class Extractor:
                 | {eid for edge_id in edges
                    for eid in self.facts['edges'][edge_id]['evidence_ids']})
             incomplete = any(self.facts['trace_obligations'][oid]['status'] != 'satisfied' for oid in obligations)
+            # A conditional selection is never ambiguous: each alternative is a
+            # path under its condition. The trace is still not resolved,
+            # because which condition holds is decided at runtime.
             hard_incomplete = any(self.facts['trace_obligations'][oid]['status'] in {
-                'unresolved', 'external', 'limit_reached'} for oid in obligations)
+                'unresolved', 'external', 'limit_reached', 'conditional'} for oid in obligations)
             has_ambiguity = any(self.facts['trace_obligations'][oid]['status'] == 'ambiguous'
                                 for oid in obligations)
             resolution = 'unresolved' if hard_incomplete else 'ambiguous' if has_ambiguity else 'resolved'
+            # Completion keeps resolution as it is and says whether what stops
+            # the trace is a known boundary, with its assumption, or a gap.
+            assumptions, gaps = [], 0
+            for oid in sorted(set(obligations)):
+                obligation = self.facts['trace_obligations'][oid]
+                edge = self.facts['edges'].get(obligation['edge_id'] or '')
+                resource = (self.facts['resources'].get(edge['to_ref']['id'])
+                            if edge and edge['to_ref'] and edge['to_ref']['kind'] == 'resource'
+                            else None)
+                boundary = trace_boundary(obligation, edge,
+                                          edge_codes.get(edge['id'], ()) if edge else (), resource)
+                obligation['boundary'] = boundary
+                if boundary:
+                    assumptions.append({'obligation_id': oid, 'kind': boundary,
+                        'statement': TRACE_BOUNDARIES['assumptions'][boundary].format(
+                            reason=obligation['reason'],
+                            provider=(resource or {}).get('provider') or ''),
+                        'evidence_ids': list(obligation['evidence_ids'])})
+                elif obligation['status'] != 'satisfied':
+                    gaps += 1
+            completion = ('incomplete' if gaps else 'bounded' if assumptions else 'complete')
             traversal_complete = not any(reason in {'depth_limit', 'symbol_limit'} for reason in reasons)
             self.facts['traces'][tid] = record('Trace', id=tid, anchor_id=anchor['id'],
                 symbol_ids=sorted(seen), edge_ids=sorted(edges), frontier_ids=sorted(frontier),
                 obligation_ids=sorted(set(obligations)), stop_reasons=sorted(reasons), evidence_ids=evidence,
                 traversal_complete=traversal_complete, resolution=resolution,
+                completion=completion, assumptions=assumptions,
                 reason='Trace has unsatisfied implementation, capability or traversal obligations.' if incomplete else None)
             # The canonical representation's unit owns the anchor's display and
             # registration fields; fall back only for symbol-id collisions.
@@ -2067,8 +2321,11 @@ class Extractor:
                     self.facts['resources'].setdefault(result['target_id'], record('Resource',
                         id=result['target_id'], kind='service', name=f'External call: {receiver or unit.owner}.{name}',
                         language=unit.source.language, evidence_ids=list(result['evidence_ids']),
-                        resolution='unresolved', reason=result['reason']))
+                        resolution='unresolved', reason=result['reason'],
+                        provider=getattr(semantic, 'provider', None)))
                 edgeid=identifier('edge',unit.symbol_id,call_position,name)
+                if result['diagnostic_code']:
+                    self.edge_codes.setdefault(edgeid, set()).add(result['diagnostic_code'])
                 self.facts['edges'][edgeid]=record('Edge',id=edgeid,
                     from_ref={'kind':'symbol','id':unit.symbol_id},
                     to_ref={'kind':'symbol','id':target.symbol_id} if target else external_ref,
@@ -2148,6 +2405,8 @@ class Extractor:
                         name=f'External type: {relation.get("external_target_id")}',
                         language=source.language, evidence_ids=evidence_ids,
                         resolution='resolved', reason=None))
+                if semantic['diagnostic_code']:
+                    self.edge_codes.setdefault(edge_id, set()).add(semantic['diagnostic_code'])
                 self.facts['edges'][edge_id] = record('Edge',id=edge_id,
                     from_ref={'kind':'symbol','id':origin.symbol_id},
                     to_ref={'kind':'symbol','id':target.symbol_id} if target else external_ref,
@@ -2362,6 +2621,15 @@ def extraction_measurements(facts: dict) -> dict:
         language = obligation_language(obligation)
         unresolved_by_language[language] = \
             unresolved_by_language.get(language, 0) + 1
+    # The same call site is an obligation of every trace that reaches it, so
+    # sites are counted once, by edge (or by obligation when it has none).
+    unresolved_sites = {}
+    for obligation in unresolved_calls:
+        unresolved_sites.setdefault(obligation.get('edge_id') or obligation['id'],
+                                    obligation_language(obligation))
+    sites_by_language = {}
+    for language in unresolved_sites.values():
+        sites_by_language[language] = sites_by_language.get(language, 0) + 1
 
     ui_anchor_ids = {
         anchor['id'] for anchor in facts['anchors'].values()
@@ -2377,10 +2645,14 @@ def extraction_measurements(facts: dict) -> dict:
             'resolved': sum(trace['resolution'] == 'resolved' for trace in traces),
             'ambiguous': sum(trace['resolution'] == 'ambiguous' for trace in traces),
             'unresolved': sum(trace['resolution'] == 'unresolved' for trace in traces),
+            **{level: sum(trace.get('completion') == level for trace in traces)
+               for level in ('complete', 'bounded', 'incomplete')},
         },
         'call_targets': {
             'unresolved': len(unresolved_calls),
             'unresolved_by_language': dict(sorted(unresolved_by_language.items())),
+            'unresolved_sites': len(unresolved_sites),
+            'unresolved_sites_by_language': dict(sorted(sites_by_language.items())),
         },
         'ui_interactions': {
             'eligible_traces': len(ui_traces),

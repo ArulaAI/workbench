@@ -180,9 +180,18 @@ def _normalized_clause(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
 
 
+_SQL_NAME = r'(?:"[^"]+"|[\w$#]+)(?:\s*\.\s*(?:"[^"]+"|[\w$#]+))*'
+
+
+def _sql_name(value: str) -> str:
+    """Normalize a possibly quoted, possibly qualified SQL name."""
+    return ".".join(part.strip().strip('"')
+                    for part in re.findall(r'"[^"]+"|[^.\s]+', value))
+
+
 def _trigger_registration(header: str) -> tuple[dict, str | None]:
     match = re.match(
-        r"(?is)^\s*(BEFORE|AFTER|INSTEAD\s+OF)\s+(.+?)\s+ON\s+([\w$#.]+)\b(.*)$",
+        r"(?is)^\s*(BEFORE|AFTER|INSTEAD\s+OF)\s+(.+?)\s+ON\s+(" + _SQL_NAME + r")(?![\w$#])(.*)$",
         header,
     )
     if not match:
@@ -224,9 +233,162 @@ def _routine_identity(unit: Unit) -> str | None:
             f"{unit.sql_routine_kind}:{owner}{unit.name}({signature})").casefold()
 
 
+# PostgreSQL routine and trigger declarations are always CREATE statements.
+# GRANT/COMMENT/ALTER/DROP ... FUNCTION and EXECUTE FUNCTION inside CREATE
+# TRIGGER name a routine without declaring one.
+_POSTGRES_CREATE = re.compile(
+    r"(?i)\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:CONSTRAINT\s+)?$")
+_DOLLAR_QUOTE = re.compile(r"\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$")
+
+
+def _statement_semicolon(code: str, position: int) -> int:
+    """First statement-terminating semicolon outside parentheses, or -1."""
+    depth = 0
+    for index in range(position, len(code)):
+        character = code[index]
+        if character == "(":
+            depth += 1
+        elif character == ")" and depth:
+            depth -= 1
+        elif character == ";" and depth == 0:
+            return index
+    return -1
+
+
+def _dollar_body(code: str, position: int) -> tuple[int, int, int, int] | None:
+    """Locate a PostgreSQL dollar-quoted routine body after a header.
+
+    Returns ``(open_start, body_start, body_end, close_end)``. A header ended by
+    ``;`` first has no dollar-quoted body (for example a string-literal body).
+    """
+    opener = _DOLLAR_QUOTE.search(code, position)
+    semicolon = code.find(";", position)
+    if not opener or 0 <= semicolon < opener.start():
+        return None
+    close = code.find(opener.group(), opener.end())
+    if close < 0:
+        return opener.start(), opener.end(), len(code), len(code)
+    return opener.start(), opener.end(), close, close + len(opener.group())
+
+
+def _postgres_language(code: str, header_start: int, span) -> str | None:
+    open_start, _, _, close_end = span
+    finish = code.find(";", close_end)
+    tail = code[close_end:len(code) if finish < 0 else finish]
+    language = (re.search(r"(?i)\bLANGUAGE\s+'?([\w]+)", code[header_start:open_start])
+                or re.search(r"(?i)\bLANGUAGE\s+'?([\w]+)", tail))
+    return language.group(1).casefold() if language else None
+
+
+def _postgres_trigger(source: Source, code: str, match) -> list[Unit]:
+    """Model ``CREATE TRIGGER ... EXECUTE FUNCTION f()`` as a registration.
+
+    The registration selects the named function in ``prepare`` once every
+    PostgreSQL source has been extracted; the function may be declared later
+    or in another file.
+    """
+    semicolon = _statement_semicolon(code, match.end())
+    finish = len(code) if semicolon < 0 else semicolon + 1
+    statement = code[match.end():finish]
+    execute = re.search(
+        r"(?is)\bEXECUTE\s+(?:FUNCTION|PROCEDURE)\s+(" + _SQL_NAME + r")\s*\(",
+        statement)
+    header = statement[:execute.start()] if execute else statement.rstrip(";")
+    fields, reason = _trigger_registration(header)
+    function = _sql_name(execute.group(1)) if execute else None
+    if reason is None and function is None:
+        reason = "Trigger function could not be resolved from the EXECUTE clause."
+    name = match.group(2)
+    resolution = "unresolved" if reason else "resolved"
+    registration = Unit(source, name.split(".")[-1],
+        source.path + "::trigger-registration:" + name,
+        match.start(), finish, "declarative_operation", [], None,
+        anchor_kind="sql", anchor_resolution=resolution,
+        executable_body=False, anchor_reason=reason)
+    registration.sql_declaration_kind = "trigger_registration"
+    registration.sql_routine_kind = "trigger"
+    registration.sql_trigger_registration = fields
+    registration.sql_trigger_function = function
+    declare_trace_contract(registration, "contract")
+    declare_anchor_registration(registration, "database_trigger",
+        **fields, label=None, resolution=resolution, reason=reason,
+        evidence_spans=[(source, match.start(), finish)])
+    declare_anchor_representation(registration, "registration",
+        _routine_identity(registration),
+        "unresolved" if reason else "eligible", "public")
+    return [registration]
+
+
+def _parenthesized(code: str, open_index: int) -> int:
+    """Index just after the parenthesis closing the one at ``open_index``."""
+    depth = 0
+    for index in range(open_index, len(code)):
+        if code[index] == "(":
+            depth += 1
+        elif code[index] == ")":
+            depth -= 1
+            if depth == 0:
+                return index + 1
+    return len(code)
+
+
+_POLICY = re.compile(
+    r"(?is)\bCREATE\s+POLICY\s+(" + _SQL_NAME + r")\s+ON\s+(" + _SQL_NAME + r")")
+_ROW_SECURITY = re.compile(
+    r"(?is)\bALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?(" + _SQL_NAME + r")"
+    r"\s+(ENABLE|FORCE)\s+ROW\s+LEVEL\s+SECURITY\b")
+
+
+def _postgres_policies(source: Source, code: str) -> list[Unit]:
+    """Row-level security declarations as non-callable rule-bearing units."""
+    units = []
+    for match in _POLICY.finditer(code):
+        semicolon = _statement_semicolon(code, match.end())
+        finish = len(code) if semicolon < 0 else semicolon + 1
+        tail = code[match.end():finish]
+        clauses = {}
+        for key, pattern in (("using", r"\bUSING\s*\("),
+                             ("with_check", r"\bWITH\s+CHECK\s*\(")):
+            found = re.search(r"(?is)" + pattern, tail)
+            if found:
+                start = match.end() + found.start()
+                clauses[key] = (start, _parenthesized(code, match.end() + found.end() - 1))
+        first_clause = min((start for start, _ in clauses.values()), default=finish)
+        head = code[match.end():first_clause]
+        mode = re.search(r"(?i)\bAS\s+(PERMISSIVE|RESTRICTIVE)\b", head)
+        command = re.search(r"(?i)\bFOR\s+(ALL|SELECT|INSERT|UPDATE|DELETE)\b", head)
+        roles = re.search(r"(?is)\bTO\s+(.+?)\s*$", head)
+        table = _sql_name(match.group(2))
+        name = _sql_name(match.group(1))
+        unit = Unit(source, name, source.path + "::policy:" + table + ":" + name,
+            match.start(), finish, "module")
+        unit.sql_declaration_kind = "row_security_policy"
+        unit.sql_policy = {
+            "name": name, "table": table,
+            "mode": mode.group(1).upper() if mode else "PERMISSIVE",
+            "command": command.group(1).upper() if command else "ALL",
+            "roles": (", ".join(_normalized_clause(role) for role in
+                roles.group(1).split(",")) if roles else None),
+            "clauses": {key: (start - match.start(), end - match.start())
+                        for key, (start, end) in clauses.items()},
+        }
+        units.append(unit)
+    for match in _ROW_SECURITY.finditer(code):
+        semicolon = _statement_semicolon(code, match.end())
+        finish = len(code) if semicolon < 0 else semicolon + 1
+        table = _sql_name(match.group(1))
+        unit = Unit(source, table, source.path + "::row-security:" + table
+            + ":" + match.group(2).casefold(), match.start(), finish, "module")
+        unit.sql_declaration_kind = "row_security_enablement"
+        unit.sql_policy = {"table": table, "mode": match.group(2).upper()}
+        units.append(unit)
+    return units
+
+
 def extract(source: Source) -> list[Unit]:
     _ensure_parser()
     code = mask_sql(source.text)
+    postgres = _dialect(source) == "postgres"
     packages = list(re.finditer(
         r"(?i)\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:(?:NON)?EDITIONABLE\s+)?"
         r"PACKAGE\s+(BODY\s+)?([\w$#]+(?:\.[\w$#]+)*)", code))
@@ -236,11 +398,29 @@ def extract(source: Source) -> list[Unit]:
         if (match.group(1).casefold() == 'trigger' and
                 re.search(r"(?i)\bRETURNS\s+$", code[max(0, match.start() - 64):match.start()])):
             continue
+        dollar = None
+        if postgres:
+            if not _POSTGRES_CREATE.search(code[max(0, match.start() - 64):match.start()]):
+                continue
+            if match.group(1).casefold() == 'trigger':
+                units.extend(_postgres_trigger(source, code, match))
+                continue
+            # A PostgreSQL routine body is the dollar-quoted string. Bounding
+            # the body by its quotes keeps a LANGUAGE sql body (no BEGIN) from
+            # absorbing the following statements up to some later BEGIN.
+            dollar = _dollar_body(code, match.end())
+            if dollar is None:
+                continue
+            language = _postgres_language(code, match.end(), dollar)
+            if language not in {None, "plpgsql", "sql"}:
+                continue
         tail = code[match.end():]
         intro = re.search(r"(?i)\b(IS|AS|BEGIN)\b|;", tail)
         if not intro:
             continue
         start_body = match.end() + intro.start()
+        if dollar is not None:
+            start_body = min(start_body, dollar[0])
         package = _package_at(packages, code, match.start())
         owner = package.group(2) if package else None
         package_body = bool(package and package.group(1))
@@ -265,12 +445,22 @@ def extract(source: Source) -> list[Unit]:
                 _routine_identity(unit), "eligible", "public")
             units.append(unit)
             continue
-        begin = re.search(r"(?i)\bBEGIN\b", code[start_body:])
-        if not begin:
+        body_limit = dollar[2] if dollar is not None else len(code)
+        begin = re.search(r"(?i)\bBEGIN\b", code[start_body:body_limit])
+        if dollar is not None and (not begin or language == "sql"):
+            # LANGUAGE sql: the dollar-quoted body is the SQL statement list.
+            begin = None
+            begin_at = dollar[1]
+            tokens = []
+            depth, finish = 0, dollar[2]
+        elif not begin:
             continue
-        begin_at = start_body + begin.start()
-        tokens = list(re.finditer(r"(?i)\b(BEGIN|IF|LOOP|CASE|END)\b|;", code[begin_at:]))
-        depth, finish, skip_qualifier = 0, len(code), False
+        else:
+            begin_at = start_body + begin.start()
+            tokens = list(re.finditer(r"(?i)\b(BEGIN|IF|LOOP|CASE|END)\b|;",
+                                      code[begin_at:body_limit]))
+            depth, finish = 0, body_limit
+        skip_qualifier = False
         for token in tokens:
             word = token.group().upper()
             if skip_qualifier and word in ("IF", "LOOP", "CASE"):
@@ -350,7 +540,9 @@ def extract(source: Source) -> list[Unit]:
         unit.sql_contract_key = ((owner.casefold(), unit.sql_routine_kind,
             unit.name.casefold(), _signature(params)) if package_body else None)
         unit.sql_body_start = begin_at - unit.start
-        unit.sql_material_start = (match.end() + intro.end()) - unit.start
+        unit.sql_material_start = ((match.end() + intro.end()) if begin
+                                   else begin_at) - unit.start
+        unit.sql_statement_body = begin is None
         unit.sql_declaration_complete = depth == 0
         declare_trace_contract(unit, "implementation")
         declare_anchor_representation(unit,
@@ -370,6 +562,8 @@ def extract(source: Source) -> list[Unit]:
             set(unit.required_capabilities)
             | {"call_classification", "callable_resolution"}))
         units.append(unit)
+    if postgres:
+        units.extend(_postgres_policies(source, code))
     groups = {}
     for unit in units:
         groups.setdefault(unit.qualified.casefold(), []).append(unit)
@@ -529,10 +723,60 @@ def _collection_names(tokens, body_index: int, inherited_types=()) -> set[str]:
 
 
 def _statement_end(tokens, start_index: int) -> int:
+    """Last token of the statement starting at ``start_index``.
+
+    A statement nested in an enclosing parenthesis, such as the scalar
+    subquery in ``IF (SELECT ...) THEN`` or ``x := (SELECT ...);``, ends
+    before the parenthesis that closes it.
+    """
+    depth = 0
     for index in range(start_index, len(tokens)):
-        if tokens[index].token_type == TokenType.SEMICOLON:
+        token_type = tokens[index].token_type
+        if token_type == TokenType.SEMICOLON:
             return index
+        if token_type == TokenType.L_PAREN:
+            depth += 1
+        elif token_type == TokenType.R_PAREN:
+            if depth == 0:
+                return max(start_index, index - 1)
+            depth -= 1
     return len(tokens) - 1
+
+
+_CLAUSE_TOKENS = frozenset({
+    TokenType.FROM, TokenType.WHERE, TokenType.GROUP_BY, TokenType.ORDER_BY,
+    TokenType.HAVING, TokenType.LIMIT, TokenType.OFFSET, TokenType.FETCH,
+    TokenType.UNION, TokenType.EXCEPT, TokenType.INTERSECT, TokenType.FOR,
+    TokenType.WINDOW, TokenType.SEMICOLON})
+
+
+def _plpgsql_into(tokens, start_index: int, end_index: int) -> tuple[int, int] | None:
+    """Token range of a PL/pgSQL ``INTO [STRICT] target[, ...]`` clause.
+
+    In PL/pgSQL, ``SELECT ... INTO`` assigns variables and may appear after
+    the select list or at the end of the statement; it is not SQL.
+    """
+    into = _top_level_token(tokens, start_index + 1, end_index,
+                            kinds=(TokenType.INTO,))
+    if into is None:
+        return None
+    cursor = into + 1
+    if cursor <= end_index and tokens[cursor].text.casefold() == "strict":
+        cursor += 1
+    last = None
+    # Target variables may share a spelling with a non-reserved keyword
+    # (for example ``name``), so accept any word that does not open a clause.
+    while (cursor <= end_index
+           and re.fullmatch(r"[A-Za-z_][\w$]*|\"[^\"]+\"", tokens[cursor].text)
+           and tokens[cursor].token_type not in _CLAUSE_TOKENS):
+        last = cursor
+        cursor += 1
+        if cursor <= end_index and tokens[cursor].token_type in {
+                TokenType.DOT, TokenType.COMMA}:
+            cursor += 1
+            continue
+        break
+    return (into, last) if last is not None else None
 
 
 def _table_after(tokens, index: int):
@@ -580,7 +824,10 @@ def _select_outputs(unit: Unit, tokens, start_index: int, end_index: int) -> lis
                             kinds=(TokenType.INTO,))
     from_index = _top_level_token(tokens, start_index + 1, end_index,
                                   kinds=(TokenType.FROM,))
-    expressions_end = into if into is not None else from_index
+    trailing_into = (into is not None and from_index is not None
+                     and into > from_index)
+    expressions_end = (from_index if trailing_into
+                       else into if into is not None else from_index)
     if expressions_end is None:
         return []
     expressions = [_token_expression(unit, part) for part in
@@ -590,6 +837,13 @@ def _select_outputs(unit: Unit, tokens, start_index: int, end_index: int) -> lis
     if into is not None and from_index is not None and into < from_index:
         destinations = [unit.text[part[0].start:part[-1].end + 1].strip()
             for part in _split_tokens(tokens, into + 1, from_index)]
+    elif trailing_into:
+        # PL/pgSQL also accepts INTO after the FROM/WHERE/LIMIT clauses.
+        clause = _plpgsql_into(tokens, into - 1, end_index)
+        if clause:
+            destinations = [unit.text[part[0].start:part[-1].end + 1].strip()
+                for part in _split_tokens(tokens, into + 1, clause[1] + 1)]
+    destinations = [re.sub(r"(?i)^STRICT\s+", "", item) for item in destinations]
     result = []
     for index, expression in enumerate(expressions):
         destination = destinations[index] if index < len(destinations) else None
@@ -801,8 +1055,19 @@ def _parse_dml(unit: Unit, tokens, start_index: int, end_index: int) -> dict:
     statement = unit.text[start:end]
     parsed = None
     diagnostic = None
+    parse_text = statement
+    if _dialect(unit.source) == "postgres":
+        select_index, _ = _with_operation(tokens, start_index, end_index)
+        clause = (_plpgsql_into(tokens, select_index, end_index)
+                  if tokens[select_index].token_type == TokenType.SELECT else None)
+        if clause:
+            # Blank the variable assignment, preserving offsets for errors.
+            first = tokens[clause[0]].start - start
+            last = tokens[clause[1]].end + 1 - start
+            parse_text = (statement[:first] + " " * (last - first)
+                          + statement[last:])
     try:
-        parsed = parse_one(statement.rstrip().rstrip(";"), read=_parser_dialect(unit.source),
+        parsed = parse_one(parse_text.rstrip().rstrip(";"), read=_parser_dialect(unit.source),
             error_level=ErrorLevel.RAISE)
     except ParseError as error:
         detail = error.errors[0] if error.errors else {}
@@ -857,6 +1122,19 @@ def _parse_dml(unit: Unit, tokens, start_index: int, end_index: int) -> dict:
             tables.append(write_target)
             columns, column_values = _update_values(
                 unit, tokens, start_index, end_index, write_target)
+    elif kind == TokenType.MERGE:
+        while cursor <= end_index and tokens[cursor].token_type != TokenType.INTO:
+            cursor += 1
+        if cursor <= end_index:
+            write_target, _ = _table_after(tokens, cursor)
+            if write_target:
+                tables.append(write_target)
+        using = _top_level_token(tokens, operation_index + 1, end_index,
+                                 kinds=(TokenType.USING,))
+        if using is not None:
+            source_table, _ = _table_after(tokens, using)
+            if source_table:
+                tables.append(source_table)
     elif kind == TokenType.DELETE:
         while cursor <= end_index and tokens[cursor].token_type != TokenType.FROM:
             cursor += 1
@@ -955,8 +1233,15 @@ def _analyze_unit(unit: Unit, routines: list[Unit], declared_tables: set[str]) -
             "start": 0, "end": max(1, len(unit.text))})
         return
     body_position = getattr(unit, "sql_body_start", 0)
-    body_index = next((index for index, token in enumerate(tokens)
-        if token.start >= body_position and token.token_type == TokenType.BEGIN), 0)
+    if getattr(unit, "sql_statement_body", False):
+        # A statement-list body has no BEGIN; scanning starts at its first
+        # token, so the routine's own declaration is never read as a call.
+        body_index = next((index for index, token in enumerate(tokens)
+            if token.start >= body_position), len(tokens)) - 1
+        body_index = max(0, body_index)
+    else:
+        body_index = next((index for index, token in enumerate(tokens)
+            if token.start >= body_position and token.token_type == TokenType.BEGIN), 0)
     material_position = getattr(unit, "sql_material_start", body_position)
     material_index = next((index for index, token in enumerate(tokens)
         if token.start >= material_position), body_index)
@@ -976,8 +1261,10 @@ def _analyze_unit(unit: Unit, routines: list[Unit], declared_tables: set[str]) -
             "start": max(0, len(unit.text) - 1), "end": len(unit.text)})
     collections = _collection_names(tokens, body_index,
         getattr(unit.source, "sql_collection_types", ()))
+    # MERGE is one statement: its WHEN ... UPDATE/INSERT branches and USING
+    # subquery are parts of it, not statements of their own.
     dml_starts = {TokenType.WITH, TokenType.SELECT, TokenType.INSERT,
-                  TokenType.UPDATE, TokenType.DELETE}
+                  TokenType.UPDATE, TokenType.DELETE, TokenType.MERGE}
     cursor = material_index
     while cursor < len(tokens):
         if tokens[cursor].token_type in dml_starts:
@@ -1094,6 +1381,83 @@ def _analyze_unit(unit: Unit, routines: list[Unit], declared_tables: set[str]) -
             unit.anchor_reason = None
 
 
+def _select_trigger_functions(routines: list[Unit]) -> None:
+    """Select the function a PostgreSQL ``CREATE TRIGGER`` executes.
+
+    ``EXECUTE FUNCTION f(args)`` passes literal trigger arguments; trigger
+    functions themselves declare no parameters. A qualified reference must
+    match the declaring schema; an unqualified one matches an unqualified or
+    ``public`` declaration.
+    """
+    functions = {}
+    for unit in routines:
+        if (getattr(unit, "sql_declaration_kind", None) == "standalone_body"
+                and unit.sql_routine_kind == "function" and not unit.params):
+            owner = (unit.owner or "public").casefold()
+            functions.setdefault((owner, unit.name.casefold()), []).append(unit)
+    for registration in routines:
+        reference = getattr(registration, "sql_trigger_function", None)
+        if not reference or registration.anchor_resolution != "resolved":
+            continue
+        schema, _, name = reference.rpartition(".")
+        matches = sorted(functions.get(((schema or "public").casefold(),
+                                        name.casefold()), []),
+                         key=lambda unit: unit.qualified)[:MAX_SEMANTIC_CANDIDATES]
+        span = (registration.start, registration.end)
+        registration.anchor_correspondence_relationship_kind = "selects_implementation"
+        if len(matches) == 1:
+            function = matches[0]
+            registration.anchor_correspondence_units = [function]
+            registration.anchor_correspondence_state = "resolved"
+            registration.anchor_correspondence_reason = (
+                f"The trigger's EXECUTE clause names {reference}(), the one "
+                "matching function declared in the analyzed SQL.")
+            registration.source.semantic_relations.append({
+                "source": registration, "target": function,
+                "candidate_targets": [], "kind": "selects_implementation",
+                "start": span[0], "end": span[1], "resolution": "resolved",
+                "outcome": "exact", "reason": None,
+                "evidence_spans": [(function.source, function.start,
+                    function.start + max(1, function.sql_body_start))]})
+            # PostgreSQL rejects direct calls to a trigger function; the
+            # trigger is its entry point and the function its implementation.
+            function.anchor_kind = None
+            function.anchor_resolution = None
+            function.anchor_reason = None
+            continue
+        if matches:
+            reason = (f"Trigger function {reference}() matches {len(matches)} "
+                      "declarations in the analyzed SQL.")
+            code = "SQL_IMPLEMENTATION_AMBIGUOUS"
+            registration.anchor_correspondence_units = matches
+            registration.anchor_correspondence_state = "ambiguous"
+            registration.anchor_correspondence_reason = reason
+            registration.source.semantic_relations.append({
+                "source": registration, "target": None,
+                "candidate_targets": matches, "kind": "selects_implementation",
+                "start": span[0], "end": span[1], "resolution": "ambiguous",
+                "outcome": "ambiguous", "diagnostic_code": code,
+                "reason": reason})
+        else:
+            reason = (f"Trigger function {reference}() is not declared in the "
+                      "analyzed SQL.")
+            code = "SQL_IMPLEMENTATION_UNAVAILABLE"
+            registration.anchor_correspondence_state = "unresolved"
+            registration.anchor_correspondence_reason = reason
+        # The firing registration is evidenced, but the entry point's behavior
+        # is not, so the registration is not an eligible canonical anchor.
+        registration.anchor_resolution = (
+            "ambiguous" if matches else "unresolved")
+        registration.anchor_reason = reason
+        registration.anchor_registration = {
+            **registration.anchor_registration,
+            "candidate_targets": sorted({unit.qualified for unit in matches}),
+            "resolution": registration.anchor_resolution, "reason": reason}
+        registration.anchor_eligibility = "unresolved"
+        registration.source.sql_diagnostics.append({
+            "code": code, "reason": reason, "span": span})
+
+
 def prepare(sources, units, diagnostics=None):
     """Analyze SQL syntax, select package bodies, and establish local scope."""
     diagnostics = diagnostics if diagnostics is not None else []
@@ -1130,6 +1494,16 @@ def prepare(sources, units, diagnostics=None):
             'end': registration.end, 'resolution': 'resolved',
             'outcome': 'exact', 'reason': None,
         })
+    _select_trigger_functions(routines)
+    policies = [unit for unit in units if id(unit.source) in source_ids
+        and getattr(unit, "sql_declaration_kind", None) in {
+            "row_security_policy", "row_security_enablement"}]
+    secured = {unit.sql_policy["table"].casefold() for unit in policies
+        if unit.sql_declaration_kind == "row_security_enablement"}
+    for unit in policies:
+        unit.sql_declared_tables = declared_tables
+        unit.sql_row_security_enabled = (
+            unit.sql_policy["table"].casefold() in secured)
     contracts = [unit for unit in routines
         if getattr(unit, "sql_declaration_kind", None) == "package_spec"]
     bodies_by_key = {}
@@ -1355,7 +1729,59 @@ def resolve_call(unit, receiver, name, candidates, position, evidence_id=None):
             "matching package, arity, names and types."))
 
 
+_POLICY_EFFECT = {
+    "using": "existing rows are visible or targetable only when the USING predicate holds",
+    "with_check": "new or updated rows are accepted only when the WITH CHECK predicate holds",
+}
+
+
+def _without_comments(text: str) -> str:
+    pattern = re.compile(r"--[^\n]*|/\*[\s\S]*?\*/|'(?:''|[^'])*'")
+    return pattern.sub(lambda match: match.group()
+                       if match.group().startswith("'") else " ", text)
+
+
+def _row_security_observations(unit: Unit) -> list[dict]:
+    """PostgreSQL row-level security declarations as authorization rules."""
+    policy = unit.sql_policy
+    table = policy["table"]
+    resource = _resource(unit, table)
+    statement = _normalized_clause(_without_comments(unit.text))
+    if unit.sql_declaration_kind == "row_security_enablement":
+        return [{"span": (0, len(unit.text)), "identity_key": "row_security",
+            "source_location_kind": "sql", "native_expression": statement,
+            "resource": resource, "resolution": "unresolved",
+            "reason": (f"Row-level security is {'forced' if policy['mode'] == 'FORCE' else 'enabled'} "
+                       f"on {table}: rows are denied unless a policy permits the command; "
+                       "the permitting policies and the roles that bypass them "
+                       "require trace interpretation.")}]
+    enabled = ("row-level security enablement for this table is declared in the analyzed SQL"
+               if getattr(unit, "sql_row_security_enabled", False) else
+               "row-level security enablement for this table was not observed in the analyzed SQL")
+    head = f'CREATE POLICY "{policy["name"]}" ON {table} AS {policy["mode"]} FOR {policy["command"]}'
+    if policy["roles"]:
+        head += f' TO {policy["roles"]}'
+    scope = {"environment": None, "tenant": None, "actor": policy["roles"],
+             "profile": None, "effective_from": None, "effective_to": None,
+             "version": None, "entrypoint_ids": None}
+    clauses = policy["clauses"] or {"statement": (0, len(unit.text))}
+    result = []
+    for key, (start, end) in sorted(clauses.items(), key=lambda item: item[1]):
+        clause = _normalized_clause(_without_comments(unit.text[start:end]))
+        effect = _POLICY_EFFECT.get(key, "the policy declares no row predicate")
+        result.append({"span": (start, end), "identity_key": f"policy:{key}",
+            "source_location_kind": "sql",
+            "native_expression": (head + " " + clause) if key in _POLICY_EFFECT else statement,
+            "resource": resource, "scope": scope, "resolution": "unresolved",
+            "reason": (f"{policy['mode'].capitalize()} row-level security policy for "
+                       f"{policy['command']} on {table}: {effect}; {enabled}.")})
+    return result
+
+
 def observations(unit):
+    if getattr(unit, "sql_declaration_kind", None) in {
+            "row_security_policy", "row_security_enablement"}:
+        return _row_security_observations(unit)
     if unit.kind == "type":
         result = []
         code = mask_sql(unit.text)
@@ -1422,7 +1848,7 @@ def operations(unit):
             gaps.append({"projection": "condition", "code": "SQL_CONTROL_FLOW_UNRESOLVED",
                 "reason": "The enclosing procedural control condition could not be completely decoded."})
         if kind == "data_write" and statement["kind"] in {
-                TokenType.INSERT, TokenType.UPDATE} and not inline_inputs:
+                TokenType.INSERT, TokenType.UPDATE, TokenType.MERGE} and not inline_inputs:
             gaps.append({"projection": "input_bindings", "code": "SQL_CHANGED_VALUES_UNRESOLVED",
                 "reason": "Changed fields or their value expressions could not be completely decoded."})
         if kind == "data_write" and not transaction["scope"]:

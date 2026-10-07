@@ -834,10 +834,42 @@ def test_spring_data_candidate_sits_beside_source_implementations_without_narrow
         """,
     }))
 
+    # Every alternative names its @Profile, so the choice is configuration:
+    # one conditional selection per alternative, the proxy's included.
+    rows = _selections_from(facts, "OwnerRepository.save(Owner)")
+    assert [(resolution, kind) for resolution, kind, _, _ in rows] == [
+        ("resolved", "symbol"), ("resolved", "symbol"), ("unresolved", "resource")]
+    assert [row[2] for row in rows[:2]] == ["JdbcOwnerRepository.save(Owner)",
+                                            "JpaOwnerRepository.save(Owner)"]
+    assert [row[3]["condition"].split(" on ")[0] for row in rows] == [
+        '@Profile("jdbc")', '@Profile("jpa")', '@Profile("spring-data-jpa")']
+    assert "JAVA_IMPLEMENTATION_AMBIGUOUS" not in [warning["code"] for warning in facts["warnings"]]
+
+
+def test_an_alternative_without_a_profile_keeps_the_choice_ambiguous(tmp_path):
+    facts = _extract(tmp_path, _repositories({
+        f"{_SPRING_DATA}/JdbcOwnerRepository.java": """
+            package org.acme.repository;
+            import org.springframework.context.annotation.Profile;
+            @Profile("jdbc")
+            public class JdbcOwnerRepository implements OwnerRepository {
+              public void save(Owner owner) {}
+              public Owner findById(int id) { return null; }
+            }
+        """,
+        f"{_SPRING_DATA}/JpaOwnerRepository.java": """
+            package org.acme.repository;
+            public class JpaOwnerRepository implements OwnerRepository {
+              public void save(Owner owner) {}
+              public Owner findById(int id) { return null; }
+            }
+        """,
+    }))
+
     rows = _selections_from(facts, "OwnerRepository.save(Owner)")
     assert [(resolution, kind) for resolution, kind, _, _ in rows] == [
         ("ambiguous", "candidates"), ("unresolved", "resource")]
-    assert rows[0][2] == ["JdbcOwnerRepository.save(Owner)", "JpaOwnerRepository.save(Owner)"]
+    assert rows[1][3]["condition"] is None
 
 
 _FRAGMENT = {
@@ -939,9 +971,12 @@ def _order_selection(tmp_path, *files):
         merged.update(item)
     facts = _extract(tmp_path, merged)
     # The static selection: a declared profile may add a separate conditioned
-    # selection beside it, but never changes this one.
+    # selection beside it, but never changes this one. When every candidate
+    # names its @Profile the selection is one conditional path per candidate,
+    # and the first (Jdbc) stands for them.
     rows = [row for row in _selections_from(facts, "OrderRepository.save(Order)")
-            if row[3]["condition"] is None]
+            if row[3]["condition"] is None
+            or row[3]["condition"].startswith("@Profile(")][:1]
     [(resolution, kind, target, edge)] = rows
     excerpts = [facts["evidence"][item]["excerpt"] for item in edge["evidence_ids"]]
     return resolution, target, edge, excerpts
@@ -1026,21 +1061,20 @@ def test_profile_is_evidence_and_configuration_is_not_proof(tmp_path):
         _candidate("JdbcOrderRepository", '@Profile("jdbc")', imports),
         {"src/main/resources/application.properties": "spring.profiles.active=jpa\n"})
 
-    assert resolution == "ambiguous"
-    assert target == ["JdbcOrderRepository.save(Order)", "JpaOrderRepository.save(Order)"]
-    assert 'JpaOrderRepository: @Profile("jpa")' in edge["reason"]
-    assert 'JdbcOrderRepository: @Profile("jdbc")' in edge["reason"]
-    assert "not established statically" in edge["reason"]
-    # The declared profile adds one conditioned selection; the property is a
-    # default a runtime override can change, so it is a condition, not proof.
+    assert resolution == "resolved" and target == "JdbcOrderRepository.save(Order)"
+    assert edge["condition"].startswith('@Profile("jdbc") on JdbcOrderRepository')
+    assert '@Profile("jdbc")' in excerpts
+    # The declared profile conditions its alternative; the property is a
+    # default a runtime override can change, so it is a condition, not proof,
+    # and the other alternative stays a path.
     facts = _extract(tmp_path, {**_ORDER_TYPES,
         **_candidate("JpaOrderRepository", '@Profile("jpa")', imports),
         **_candidate("JdbcOrderRepository", '@Profile("jdbc")', imports),
         "src/main/resources/application.properties": "spring.profiles.active=jpa\n"})
-    conditioned = [row for row in _selections_from(facts, "OrderRepository.save(Order)")
-                   if row[3]["condition"]]
-    [(resolution, _, target, edge)] = conditioned
-    assert resolution == "resolved" and target == "JpaOrderRepository.save(Order)"
+    rows = _selections_from(facts, "OrderRepository.save(Order)")
+    assert [(resolution, target) for resolution, _, target, _ in rows] == [
+        ("resolved", "JdbcOrderRepository.save(Order)"), ("resolved", "JpaOrderRepository.save(Order)")]
+    edge = rows[1][3]
     assert "spring.profiles.active=jpa" in edge["condition"]
     assert "runtime profile override" in edge["condition"]
     assert 'JdbcOrderRepository (@Profile("jdbc"))' in edge["condition"]
@@ -1081,7 +1115,7 @@ def test_spring_evidence_is_deterministic(tmp_path):
     first = _order_selection(tmp_path / "first", *files)
     second = _order_selection(tmp_path / "second", *reversed(files))
 
-    assert first[2]["reason"] == second[2]["reason"]
+    assert first[2]["condition"] == second[2]["condition"]
     assert sorted(first[3]) == sorted(second[3])
 
 

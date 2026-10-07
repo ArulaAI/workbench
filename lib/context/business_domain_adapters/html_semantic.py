@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from html.parser import HTMLParser
 
 from . import rules
 from .base import (declare_anchor_registration, declare_anchor_representation,
@@ -11,12 +12,102 @@ from .base import (declare_anchor_registration, declare_anchor_representation,
 PREPARE_PHASE = 50
 
 
+# Marks an identity part that is not statically determined. Such an identity
+# also carries the form's location, so incomplete forms never merge.
+_UNRESOLVED_PART = '<unresolved>'
+_SUBMIT_INPUT_TYPES = frozenset({'submit', 'image'})
+_HTTP_FORM_METHODS = frozenset({'get', 'post'})
+
+
+class _FormReader(HTMLParser):
+    """The form's own attributes and its submit controls, in document order."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.form = None
+        self.controls = []
+        self._button = None
+
+    def handle_starttag(self, tag, attrs):
+        attributes = {name: value for name, value in attrs}
+        if tag == 'form' and self.form is None:
+            self.form = attributes
+        elif tag == 'button' and (attributes.get('type') or 'submit').strip().lower() == 'submit':
+            self._button = {'attributes': attributes, 'text': []}
+            self.controls.append(self._button)
+        elif tag == 'input' and (attributes.get('type') or '').strip().lower() in _SUBMIT_INPUT_TYPES:
+            self.controls.append({'attributes': attributes,
+                                  'text': [attributes.get('value') or '']})
+
+    def handle_endtag(self, tag):
+        if tag == 'button':
+            self._button = None
+
+    def handle_data(self, data):
+        if self._button is not None:
+            self._button['text'].append(data)
+
+
+def _computed(attributes, pattern):
+    return bool(pattern) and any(re.fullmatch(pattern, name) for name in attributes)
+
+
+def _form_submission(text, metadata):
+    """``(method, action, label, missing)`` of a form; unknown parts are None.
+
+    Each value is the literal one the browser submits. A part a template
+    engine computes, or one the markup leaves open, is reported missing
+    rather than guessed.
+    """
+    reader = _FormReader()
+    reader.feed(text)
+    reader.close()
+    form = reader.form or {}
+    template = metadata.get('template_expression')
+    dynamic = lambda value: bool(template and re.search(template, value))
+    overridden = any(_computed(control['attributes'],
+                               metadata.get('submission_override_attribute'))
+                     for control in reader.controls)
+    missing = []
+    action = (form.get('action') or '').strip()
+    if (overridden or not action or dynamic(action)
+            or _computed(form, metadata.get('computed_action_attribute'))):
+        action = None
+        missing.append('action')
+    written = (form.get('method') or '').strip().lower()
+    computed_method = _computed(form, metadata.get('computed_method_attribute'))
+    if overridden or dynamic(written) or (computed_method and not written) or (
+            written and written not in _HTTP_FORM_METHODS):
+        method = None
+        missing.append('method')
+    else:
+        # HTML submits with GET when no method is written.
+        method = (written or 'get').upper()
+    labels = set()
+    for control in reader.controls:
+        label = ' '.join(''.join(control['text']).split())
+        if (not label or dynamic(label)
+                or _computed(control['attributes'], metadata.get('computed_label_attribute'))):
+            labels.add(None)
+        else:
+            labels.add(label)
+    label = next(iter(labels)) if len(labels) == 1 else None
+    if label is None:
+        missing.append('label')
+    return method, action, label, missing
+
+
+def _identity_part(value):
+    return _UNRESOLVED_PART if value is None else value
+
+
 def extract(source):
     units = rules.extract(source)
-    form_spans = {rules.span(source, match) for match in source.rule_outputs
-                  if match.rule_id == 'html-form-definition'}
+    forms = {rules.span(source, match): match.attributes for match in source.rule_outputs
+             if match.rule_id == 'html-form-definition'}
     for unit in units:
-        unit.html_form = (unit.start, unit.end) in form_spans
+        unit.html_form = (unit.start, unit.end) in forms
+        unit.html_form_metadata = forms.get((unit.start, unit.end), {})
     return units
 
 
@@ -26,13 +117,29 @@ def prepare(sources, units, diagnostics=None):
         for unit in source.units:
             if not getattr(unit, 'html_form', False):
                 continue
+            method, action, label, missing = _form_submission(
+                source.text[unit.start:unit.end], unit.html_form_metadata)
+            scope = source.service_scope
+            # The label is the last part, so escaping its separators keeps the
+            # key unambiguous for actions that themselves contain ':'.
+            written_label = (None if label is None else
+                             label.replace('%', '%25').replace(':', '%3A'))
+            identity = (f'ui:{scope}:form:{_identity_part(method)}:'
+                        f'{_identity_part(action)}:{_identity_part(written_label)}')
+            if missing:
+                identity += f'@{source.path}:{unit.start}'
+            reason = (None if not missing else
+                      'Form submission ' + ', '.join(missing) +
+                      (' is' if len(missing) == 1 else ' are') +
+                      ' not statically determined; identity keeps the form location.')
             unit.anchor_kind = 'ui'
-            unit.anchor_resolution = 'resolved'
-            unit.anchor_reason = None
-            identity = f'ui:{source.service_scope}:form:{source.path}:{unit.start}'
+            unit.method = method
+            unit.route = action
+            unit.anchor_resolution = 'unresolved' if missing else 'resolved'
+            unit.anchor_reason = reason
             declare_anchor_representation(unit, 'exposure', identity, 'eligible', 'external')
             declare_anchor_registration(unit, 'action', event='submit', target=unit.name,
-                scope=source.service_scope, resolution='resolved', reason=None)
+                scope=scope, label=label, resolution=unit.anchor_resolution, reason=reason)
             declare_trace_contract(unit, 'implementation')
 
 

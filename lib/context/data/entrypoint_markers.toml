@@ -1,0 +1,267 @@
+# lib/context/data/entrypoint_markers.toml
+#
+# Entry-point coverage catalog (G2). Two independent reports read this file:
+#
+# 1. Per language. A recognized language whose category is listed under
+#    [coverage].categories, and that is not listed as unable to declare entry
+#    points, gets one coverage entry when no adapter selected for its files
+#    declares entrypoint_detection (see extraction.toml). Display names only
+#    label that entry.
+#
+# 2. Per signal. Every marker below is a regular expression (Python `re`)
+#    searched in files whose repository-relative POSIX path fully matches one
+#    of the framework's `paths`. A file is searched only when every pattern in
+#    `requires_all` is found somewhere in it. One hit is one entry point; the
+#    reported line is the first line of the hit. Hits of one framework never
+#    overlap: a later hit inside an earlier one is the same entry point.
+#    Markers in test paths (the adapter catalog's test_path_pattern) are not
+#    reported.
+#
+# A hit is a likely missed entry point unless an extracted anchor (its own
+# evidence, a representation's evidence or its registration evidence) cites
+# a span in the same file whose lines intersect the hit's lines.
+#
+# Encode exclusions in the expression, not in code: a route-group prefix, a
+# class-level route prefix, an interface declaration or a generic constraint
+# is not an entry point and must not match.
+
+version = 1
+
+# Marker kinds. A marker must use one of these.
+[kinds]
+http_route = "An HTTP endpoint handled by one callable"
+rpc = "A remote procedure exposed by a service definition"
+message_handler = "A handler invoked for messages or integration events from a broker"
+event_handler = "A handler invoked for in-process application events"
+scheduled_job = "A callable invoked on a schedule"
+page = "A navigable UI page or client-side route"
+cli = "A command-line command"
+
+[coverage]
+# Language categories (language registry) whose files can declare entry points.
+categories = ["source"]
+# Recognized source languages whose files cannot declare entry points:
+# documentation, styling and build metadata.
+non_entrypoint_languages = ["markdown", "css", "scss", "less", "msbuild"]
+
+[display_names]
+bash = "Bash"
+c = "C"
+c_sharp = "C#"
+cpp = "C++"
+elixir = "Elixir"
+go = "Go"
+haskell = "Haskell"
+html = "HTML"
+java = "Java"
+javascript = "JavaScript"
+jsx = "JSX"
+kotlin = "Kotlin"
+lua = "Lua"
+php = "PHP"
+python = "Python"
+ruby = "Ruby"
+rust = "Rust"
+scala = "Scala"
+sql = "SQL"
+swift = "Swift"
+tsx = "TSX"
+typescript = "TypeScript"
+zig = "Zig"
+
+# ── .NET ──
+
+[frameworks.aspnetcore_minimal_api]
+label = "ASP.NET Core minimal API"
+paths = ['.*\.cs']
+
+[[frameworks.aspnetcore_minimal_api.markers]]
+id = "map_verb"
+name = "MapGet/MapPost/MapPut/MapDelete/MapPatch/MapMethods"
+kind = "http_route"
+# MapGroup only declares a prefix shared by the routes mapped on the group.
+pattern = '\.Map(?:Get|Post|Put|Delete|Patch|Methods)\s*(?:<[^<>\n]*>)?\s*\('
+
+[frameworks.aspnetcore_mvc]
+label = "ASP.NET Core MVC"
+paths = ['.*\.cs']
+
+[[frameworks.aspnetcore_mvc.markers]]
+id = "action_attribute"
+name = "[HttpGet]/[HttpPost]/[HttpPut]/[HttpDelete]/[HttpPatch]/[Route] action"
+kind = "http_route"
+# One action: its first routing attribute, any further attributes, then a
+# method signature. A [Route] on a class is a prefix: the lookahead rejects a
+# type declaration, so it never matches.
+pattern = '''(?m)^[ \t]*\[(?:Http(?:Get|Post|Put|Delete|Patch|Head|Options)|Route)\b(?:\((?:[^()"\n]|"[^"\n]*")*\))?\](?:\s*\[(?:[^\[\]\n]|\[[^\[\]\n]*\])*\])*\s*(?:(?:public|internal|protected|private|static|virtual|override|async|sealed|new)\s+)+(?!(?:abstract\s+|partial\s+|static\s+|sealed\s+)*(?:class|record|struct|interface)\b)[^\n;{=]*\('''
+
+[frameworks.aspnetcore_grpc]
+label = "ASP.NET Core gRPC"
+paths = ['.*\.cs']
+
+[[frameworks.aspnetcore_grpc.markers]]
+id = "service_override"
+name = "gRPC service method override taking ServerCallContext"
+kind = "rpc"
+pattern = '\boverride\b[^;{}()\n]*\([^()]*\bServerCallContext\b[^()]*\)'
+
+[frameworks.dotnet_integration_events]
+label = ".NET integration event bus"
+paths = ['.*\.cs']
+
+[[frameworks.dotnet_integration_events.markers]]
+id = "handler_class"
+name = "class implementing IIntegrationEventHandler<T>"
+kind = "message_handler"
+# Only a class whose base list names the generic interface. The interface's
+# own declaration and a `where T : class, IIntegrationEventHandler<T>`
+# constraint have no `class <Name>` before the base list, so they never match.
+pattern = '\bclass\s+[A-Za-z_]\w*\b[^{};]*?[:,]\s*IIntegrationEventHandler\s*<'
+
+[frameworks.blazor]
+label = "Blazor"
+paths = ['.*\.razor']
+
+[[frameworks.blazor.markers]]
+id = "page_directive"
+name = "@page directive"
+kind = "page"
+pattern = '(?m)^[ \t]*@page\s+"'
+
+[frameworks.razor_pages]
+label = "ASP.NET Core Razor Pages"
+paths = ['.*\.cshtml']
+
+[[frameworks.razor_pages.markers]]
+id = "page_directive"
+name = "@page directive"
+kind = "page"
+pattern = '(?m)^[ \t]*@page\b'
+
+[frameworks.maui_xaml]
+label = ".NET MAUI XAML"
+paths = ['.*\.xaml']
+
+[[frameworks.maui_xaml.markers]]
+id = "page_root"
+name = "ContentPage root element"
+kind = "page"
+# The document's root element is a page (or a page base type derived from
+# one). Views, templates, shells and navigation containers are not pages.
+pattern = '(?s)\A\s*(?:<\?xml(?:(?!\?>).)*\?>\s*)?(?:<!--(?:(?!-->).)*-->\s*)*<(?:\w+:)?(?:ContentPage|TabbedPage|FlyoutPage|CarouselPage)\w*\b'
+
+# ── JVM ──
+
+[frameworks.spring_web]
+label = "Spring Web"
+paths = ['.*\.(?:java|kt)']
+
+[[frameworks.spring_web.markers]]
+id = "mapping_method"
+name = "@GetMapping/@PostMapping/@PutMapping/@DeleteMapping/@PatchMapping/@RequestMapping method"
+kind = "http_route"
+# One handler method: its first mapping annotation, further annotations, then
+# a method signature. A class-level @RequestMapping is a prefix and is
+# rejected by the type-declaration lookahead.
+pattern = '''@(?:Get|Post|Put|Delete|Patch|Request)Mapping\b(?:\s*\((?:[^()"]|"(?:[^"\\\n]|\\.)*")*\))?(?:\s*@[\w.]+(?:\s*\((?:[^()"]|"(?:[^"\\\n]|\\.)*")*\))?)*\s*(?:(?:public|protected|private|static|final|abstract|synchronized|default|suspend|open|override|fun)\s+)*(?!(?:class|interface|enum|record|object)\b)[\w<>\[\],.?: ]*?\b\w+\s*\('''
+
+[frameworks.spring_scheduling]
+label = "Spring scheduling"
+paths = ['.*\.(?:java|kt)']
+
+[[frameworks.spring_scheduling.markers]]
+id = "scheduled"
+name = "@Scheduled"
+kind = "scheduled_job"
+pattern = '@Scheduled\b'
+
+[frameworks.spring_kafka]
+label = "Spring for Apache Kafka"
+paths = ['.*\.(?:java|kt)']
+
+[[frameworks.spring_kafka.markers]]
+id = "kafka_listener"
+name = "@KafkaListener"
+kind = "message_handler"
+pattern = '@KafkaListener\b'
+
+[frameworks.spring_events]
+label = "Spring application events"
+paths = ['.*\.(?:java|kt)']
+
+[[frameworks.spring_events.markers]]
+id = "event_listener"
+name = "@EventListener"
+kind = "event_handler"
+pattern = '@(?:Transactional)?EventListener\b'
+
+[frameworks.jaxrs]
+label = "JAX-RS"
+paths = ['.*\.(?:java|kt)']
+requires_all = ['\b(?:javax|jakarta)\.ws\.rs\b']
+
+[[frameworks.jaxrs.markers]]
+id = "resource_method"
+name = "@Path/@GET/@POST/@PUT/@DELETE/@PATCH resource method"
+kind = "http_route"
+# One resource method: its first JAX-RS annotation, further annotations, then
+# a method signature. A class-level @Path is the resource prefix and is
+# rejected by the type-declaration lookahead.
+pattern = '''@(?:Path|GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\b(?:\s*\((?:[^()"]|"(?:[^"\\\n]|\\.)*")*\))?(?:\s*@[\w.]+(?:\s*\((?:[^()"]|"(?:[^"\\\n]|\\.)*")*\))?)*\s*(?:(?:public|protected|private|static|final|abstract|synchronized|default)\s+)*(?!(?:class|interface|enum|record)\b)[\w<>\[\],.? ]*?\b\w+\s*\('''
+
+# ── JavaScript and TypeScript ──
+
+[frameworks.express]
+label = "Express"
+paths = ['.*\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)']
+requires_all = ['''(?:\brequire\s*\(\s*['"]express['"]\s*\)|\bfrom\s+['"]express['"])''']
+
+[[frameworks.express.markers]]
+id = "route_method"
+name = "app.get/router.get (get/post/put/delete/patch/all)"
+kind = "http_route"
+pattern = '''\b(?:app|router|[A-Za-z_$][\w$]*Router)\s*\.\s*(?:get|post|put|delete|patch|all)\s*\(\s*['"`]/'''
+
+[frameworks.nestjs]
+label = "NestJS"
+paths = ['.*\.(?:ts|mts|cts|js|mjs|cjs)']
+# @Controller only declares the shared prefix; it is required context, and
+# each handler decorator is one entry point.
+requires_all = ['''['"]@nestjs/common['"]''', '@Controller\s*\(']
+
+[[frameworks.nestjs.markers]]
+id = "handler_decorator"
+name = "@Get/@Post/@Put/@Delete/@Patch/@All handler in a @Controller"
+kind = "http_route"
+pattern = '@(?:Get|Post|Put|Delete|Patch|All|Head|Options)\s*\('
+
+[frameworks.react_router]
+label = "React Router"
+paths = ['.*\.(?:js|jsx|ts|tsx|mjs)']
+requires_all = ['''['"]react-router(?:-dom)?(?:/[^'"]*)?['"]''']
+
+[[frameworks.react_router.markers]]
+id = "route_element"
+name = "<Route path|index element=> / <Route path component=>"
+kind = "page"
+# A <Route> without path or index is a layout wrapper, not a navigable page.
+pattern = '<Route\b(?=[^<>]*\b(?:path|index)\b)[^<>]*?\b(?:element|component|render)\s*='
+
+[[frameworks.react_router.markers]]
+id = "data_router"
+name = "createBrowserRouter/createHashRouter/createMemoryRouter route table"
+kind = "page"
+pattern = '\bcreate(?:Browser|Hash|Memory)Router\s*\('
+
+# ── Python ──
+
+[frameworks.django]
+label = "Django URLconf"
+paths = ['(?:.*/)?urls\.py']
+
+[[frameworks.django.markers]]
+id = "url_path"
+name = "path()/re_path() view route"
+kind = "http_route"
+# include() mounts another URLconf: it is a prefix, not a view.
+pattern = '''\b(?:re_)?path\s*\(\s*r?(['"])[^'"\n]*\1\s*,(?!\s*include\s*\()'''

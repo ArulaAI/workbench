@@ -852,6 +852,17 @@ def _f1_repository(root):
     return root
 
 
+# Entry-point coverage (G2) reports every zero-entry-point run; these tests
+# are about source-capability warnings, so they read the other warnings.
+_ENTRYPOINT_CODES = {'ENTRYPOINT_DETECTION_UNAVAILABLE', 'ENTRYPOINT_LIKELY_MISSED',
+                     'ENTRYPOINT_NONE_DETECTED'}
+
+
+def _source_warnings(facts):
+    return [warning for warning in facts['warnings']
+            if warning['code'] not in _ENTRYPOINT_CODES]
+
+
 def _validated(root):
     facts, units = Extractor(root, DEFAULTS).extract()
     validate_references(facts)
@@ -933,7 +944,7 @@ def test_properties_outside_an_explicit_route_never_reach_the_decoder(tmp_path, 
                         lambda raw: calls.append(raw) or original(raw))
     facts, _ = _validated(_write(tmp_path, {'config/app.properties': 'a=1\n'}))
     assert calls == []
-    [warning] = facts['warnings']
+    [warning] = _source_warnings(facts)
     assert warning['code'] == 'SOURCE_CAPABILITY_UNAVAILABLE'
     assert warning['message'] == (
         'config/app.properties: language=properties; disposition=analyze; required=[]; '
@@ -954,7 +965,7 @@ def test_missing_owner_with_three_required_capabilities_is_one_warning(tmp_path,
         lambda owner: None if owner == 'java_properties' else original(owner))
     path = 'src/main/resources/application.properties'
     facts, _ = _validated(_write(tmp_path, {path: 'a=1\n'}))
-    [warning] = facts['warnings']
+    [warning] = _source_warnings(facts)
     assert warning['code'] == 'SOURCE_CAPABILITY_UNAVAILABLE'
     assert warning['message'] == (
         f'{path}: language=properties; disposition=analyze; '
@@ -966,7 +977,7 @@ def test_missing_owner_with_three_required_capabilities_is_one_warning(tmp_path,
 
 def test_ambiguous_language_is_one_ambiguity_warning_with_a_valid_snapshot(tmp_path):
     facts, _ = _validated(_write(tmp_path, {'tool.pl': 'print 1;\n'}))
-    [warning] = facts['warnings']
+    [warning] = _source_warnings(facts)
     assert warning['code'] == 'AMBIGUOUS_ADAPTER'
     assert 'language=null' in warning['message'] and 'cause=ambiguous_language' in warning['message']
     [snapshot] = facts['source_snapshots'].values()
@@ -993,7 +1004,7 @@ def test_owner_load_failure_and_per_source_extract_failure_are_isolated(tmp_path
     monkeypatch.setattr(_core, 'load_installed', lambda name: (_ for _ in ()).throw(
         ImportError('no')) if name == 'documentation' else original_load(name))
     facts, _ = _validated(_write(tmp_path / 'second', {'a.md': '# A\n'}))
-    [warning] = facts['warnings']
+    [warning] = _source_warnings(facts)
     assert warning['code'] == 'ADAPTER_UNAVAILABLE' and 'cause=owner_load_failed' in warning['message']
     assert facts['coverage']['unsupported_source_ids'] == [identifier('resource', 'a.md')]
 
@@ -1006,7 +1017,8 @@ def test_reference_evidence_is_bounded_and_ignored_sources_create_nothing(tmp_pa
     [resource] = [item for item in facts['resources'].values() if item['kind'] == 'repository_file']
     assert resource['name'] == 'src/main/resources/logback.xml'
     assert len(facts['evidence'][resource['evidence_ids'][0]]['excerpt']) == 4096
-    assert not facts['warnings'] and not facts['capabilities']
+    assert not _source_warnings(facts) and not facts['capabilities']
+    assert [gap['kind'] for gap in facts['coverage']['entrypoint_gaps']] == ['none_detected']
 
 
 def test_source_fingerprint_ignores_ignored_content_but_not_analyzed_inputs(tmp_path):
@@ -1060,8 +1072,9 @@ def test_primary_prepare_failure_aborts_the_attempt(tmp_path, monkeypatch):
      'must be unique'),
 ])
 def test_warning_and_coverage_bijection_is_enforced(tmp_path, mutate, message):
-    facts, _ = _validated(_write(tmp_path, {'tool.pl': 'print 1;\n', 'b.css': 'a {}'}))
-    resource_id = identifier('resource', 'b.css')
+    # CSS is now an ignored stylesheet; TOML still has no installed owner.
+    facts, _ = _validated(_write(tmp_path, {'tool.pl': 'print 1;\n', 'b.toml': 'a = 1\n'}))
+    resource_id = identifier('resource', 'b.toml')
     facts['coverage']['unsupported_source_ids'].remove(resource_id)
     facts['warnings'] = [w for w in facts['warnings'] if w['subject_ids'] != [resource_id]]
     validate_source_warning_coverage(facts)

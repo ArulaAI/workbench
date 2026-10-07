@@ -247,3 +247,225 @@ def test_a_nested_element_inside_an_attribute_keeps_its_own_props(tmp_path):
     assert edge['resolution'] == 'ambiguous'
     assert sorted(_name(facts, target) for target in edge['candidate_target_ids']) == [
         'PageA.onFieldChange', 'PageA.other']
+
+
+# ── Java local declarations and implicit/on-demand imports ───────────────
+
+ENTITY = """package com.example.model;
+public class BaseEntity { public Integer getId() { return null; } }
+"""
+PET = 'package com.example.model;\npublic class Pet extends BaseEntity {}\n'
+VET = 'package com.example.model;\npublic class Vet extends BaseEntity { public String getName() { return null; } }\n'
+
+
+def _service(body, imports='import com.example.model.*;\nimport java.util.*;\n'):
+    return {
+        'src/com/example/model/BaseEntity.java': ENTITY,
+        'src/com/example/model/Pet.java': PET,
+        'src/com/example/model/Vet.java': VET,
+        'src/com/example/service/Service.java': (
+            f'package com.example.service;\n{imports}public class Service {{\n'
+            f'  public void run(List<Pet> pets, java.io.InputStream input) {{\n{body}\n  }}\n}}\n'),
+    }
+
+
+def _calls(facts, name):
+    return [edge for edge in facts['edges'].values()
+            if edge['kind'] == 'calls' and _name(facts, edge['from_ref']['id']).startswith('Service.run')
+            and f'.{name}(' in facts['evidence'][edge['evidence_ids'][0]]['excerpt']]
+
+
+@pytest.mark.parametrize('declaration', [
+    'for (Pet pet : pets) { pet.getId(); }',
+    'for (final Pet pet : pets) { pet.getId(); }',
+    'try (Pet pet = load()) { pet.getId(); }',
+])
+def test_loop_and_resource_variables_have_their_declared_type(tmp_path, declaration):
+    facts = _extract(tmp_path, _service(declaration))
+    [edge] = _calls(facts, 'getId')
+    # getId is inherited from BaseEntity through Pet's heritage.
+    assert edge['resolution'] == 'resolved'
+    assert _name(facts, edge['to_ref']['id']) == 'BaseEntity.getId()'
+
+
+def test_a_name_declared_with_two_types_is_not_guessed(tmp_path):
+    facts = _extract(tmp_path, _service(
+        'if (pets.isEmpty()) { Pet item = null; item.getId(); }\n'
+        'else { Vet item = null; item.getName(); }'))
+    for name in ('getId', 'getName'):
+        [edge] = _calls(facts, name)
+        assert edge['resolution'] != 'resolved' and edge['to_ref'] is None
+
+
+def test_catch_parameters_are_typed_and_multi_catch_is_unknown(tmp_path):
+    facts = _extract(tmp_path, _service(
+        'try { } catch (IllegalStateException e) { e.getMessage(); }\n'
+        'try { } catch (IllegalStateException | IllegalArgumentException both) { both.getCause(); }'))
+    [single] = _calls(facts, 'getMessage')
+    assert single['resolution'] == 'unresolved' and single['to_ref']['kind'] == 'resource'
+    assert facts['resources'][single['to_ref']['id']]['provider'] == 'type:java.lang.IllegalStateException'
+    [multi] = _calls(facts, 'getCause')
+    assert multi['to_ref'] is None
+
+
+def test_java_lang_types_are_implicitly_imported_library_types(tmp_path):
+    facts = _extract(tmp_path, _service('Number key = null; key.intValue();'))
+    [edge] = _calls(facts, 'intValue')
+    assert facts['resources'][edge['to_ref']['id']]['provider'] == 'type:java.lang.Number'
+
+
+def test_a_same_package_type_shadows_java_lang(tmp_path):
+    files = _service('Number key = null; key.intValue();')
+    files['src/com/example/service/Number.java'] = (
+        'package com.example.service;\npublic class Number { public int intValue() { return 0; } }\n')
+    facts = _extract(tmp_path, files)
+    [edge] = _calls(facts, 'intValue')
+    assert _name(facts, edge['to_ref']['id']) == 'Number.intValue()'
+
+
+def test_a_type_only_a_library_wildcard_can_supply_is_external(tmp_path):
+    facts = _extract(tmp_path, _service(
+        'Map<String, Object> params = new HashMap<>(); params.put("id", 1);',
+        imports='import com.example.model.Pet;\nimport java.util.*;\n'))
+    [edge] = _calls(facts, 'put')
+    assert edge['to_ref'] and edge['to_ref']['kind'] == 'resource'
+    assert facts['resources'][edge['to_ref']['id']]['provider'] == 'type:java.util.Map'
+
+
+def test_several_library_wildcards_leave_the_provider_unnamed(tmp_path):
+    facts = _extract(tmp_path, _service(
+        'Map<String, Object> params = null; params.put("id", 1);',
+        imports='import com.example.model.Pet;\nimport java.util.*;\nimport java.util.concurrent.*;\n'))
+    [edge] = _calls(facts, 'put')
+    # External; each on-demand package is a candidate provider.
+    assert edge['to_ref']['kind'] == 'resource'
+    assert facts['resources'][edge['to_ref']['id']]['provider'] == (
+        'type:java.util.Map|java.util.concurrent.Map')
+
+
+@pytest.mark.parametrize('body', [
+    'pets.forEach(item -> item.getName());',          # untyped lambda parameter
+    'pets.iterator().next().getName();',              # receiver is an expression
+    'LIMIT.getName();',                               # an ALL_CAPS constant
+])
+def test_only_a_type_name_can_come_from_a_wildcard(tmp_path, body):
+    facts = _extract(tmp_path, _service(body, imports='import com.example.model.Pet;\nimport java.util.*;\n'))
+    [edge] = [edge for edge in _calls(facts, 'getName')
+              if 'forEach' not in facts['evidence'][edge['evidence_ids'][0]]['excerpt']]
+    assert edge['to_ref'] is None
+
+
+def test_a_local_wildcard_keeps_an_undeclared_name_unresolved(tmp_path):
+    # com.example.model is the project's; a missing type there is a gap.
+    facts = _extract(tmp_path, _service('Owner owner = null; owner.getName();',
+                                        imports='import com.example.model.*;\n'))
+    [edge] = _calls(facts, 'getName')
+    assert edge['resolution'] == 'unresolved' and edge['to_ref'] is None
+
+
+
+def test_a_library_wildcard_beside_a_local_one_is_not_enough(tmp_path):
+    # Map could still be a project type the snapshot lacks in com.example.model.
+    facts = _extract(tmp_path, _service('Map<String, Object> params = null; params.put("id", 1);'))
+    [edge] = _calls(facts, 'put')
+    assert edge['resolution'] == 'unresolved' and edge['to_ref'] is None
+
+
+# ── Chained calls: declared and catalogued return types ──────────────────
+
+REPOSITORY = """package com.example.service;
+import jakarta.persistence.EntityManager;
+import org.springframework.web.util.UriComponentsBuilder;
+import com.example.model.*;
+import java.util.List;
+public class Repo {
+  private EntityManager em;
+  public void run(Pet pet, Vet vet, List<Vet> vets) {
+    this.em.createQuery("DELETE FROM Pet").executeUpdate();
+    this.em.createQuery("SELECT p FROM Pet p", Pet.class).getResultList();
+    this.em.createQuery("SELECT p FROM Pet p", Pet.class).getSingleResult().getId();
+    UriComponentsBuilder.newInstance().path("/pets/{id}").buildAndExpand(1).toUri();
+    pet.getOwner().getName();
+    pet.getId().toString().trim();
+    pet.getOwner().equals(vet);
+    vets.stream().map(item -> item).filter(item -> true);
+    pet.unknown().getName();
+  }
+}
+"""
+OWNED = {
+    'src/com/example/model/BaseEntity.java': ENTITY,
+    'src/com/example/model/Owner.java': ('package com.example.model;\n'
+        'public class Owner extends BaseEntity { public String getName() { return null; } }\n'),
+    'src/com/example/model/Pet.java': ('package com.example.model;\n'
+        'public class Pet extends BaseEntity { public Owner getOwner() { return null; } }\n'),
+    'src/com/example/model/Vet.java': VET,
+    'src/com/example/service/Repo.java': REPOSITORY,
+}
+
+
+@pytest.fixture(scope='module')
+def chains(tmp_path_factory):
+    return _extract(tmp_path_factory.mktemp('chains'), OWNED)
+
+
+def _chained(facts, name, excerpt=''):
+    return [edge for edge in facts['edges'].values() if edge['kind'] == 'calls'
+            and _name(facts, edge['from_ref']['id']).startswith('Repo.run')
+            and facts['evidence'][edge['evidence_ids'][0]]['excerpt'].endswith(f'{name}()' if not excerpt else excerpt)]
+
+
+def _provider(facts, edge):
+    return facts['resources'][edge['to_ref']['id']]['provider'] if edge['to_ref'] else None
+
+
+@pytest.mark.parametrize('name, provider', [
+    ('executeUpdate', 'type:jakarta.persistence.Query'),
+    ('getResultList', 'type:jakarta.persistence.TypedQuery'),
+    ('toUri', 'type:org.springframework.web.util.UriComponents'),
+    ('trim', 'type:java.lang.String'),
+])
+def test_a_catalogued_library_return_types_the_next_call(chains, name, provider):
+    [edge] = _chained(chains, name)
+    assert _provider(chains, edge) == provider
+
+
+def test_a_project_method_return_types_the_next_call(chains):
+    [edge] = _chained(chains, 'getName', 'pet.getOwner().getName()')
+    assert edge['resolution'] == 'resolved'
+    assert _name(chains, edge['to_ref']['id']) == 'Owner.getName()'
+
+
+def test_object_members_are_inherited_by_every_class(chains):
+    [edge] = _chained(chains, 'equals', 'pet.getOwner().equals(vet)')
+    assert _provider(chains, edge) == 'type:java.lang.Object'
+
+
+def test_a_raw_generic_library_type_keeps_the_chain_typed(chains):
+    [edge] = _chained(chains, 'filter', 'vets.stream().map(item -> item).filter(item -> true)')
+    assert _provider(chains, edge) == 'type:java.util.stream.Stream'
+
+
+@pytest.mark.parametrize('name, excerpt', [
+    # TypedQuery<X>.getSingleResult() returns a type parameter: not catalogued.
+    ('getId', 'getSingleResult().getId()'),
+    # An undeclared project method has no return type to follow.
+    ('getName', 'pet.unknown().getName()'),
+])
+def test_an_unknown_return_type_ends_the_chain_as_a_gap(chains, name, excerpt):
+    [edge] = _chained(chains, name, excerpt)
+    assert edge['resolution'] == 'unresolved' and edge['to_ref'] is None
+
+
+def test_the_library_signature_catalog_is_well_formed():
+    import json
+    import re
+    from pathlib import Path
+    catalog = json.loads((Path(__file__).parents[1] / 'lib/context/data/library_signatures.json').read_text())
+    primitives = {'void', 'boolean', 'byte', 'char', 'short', 'int', 'long', 'float', 'double'}
+    for owner, methods in catalog['java'].items():
+        assert re.fullmatch(r'[a-z]\w*(\.\w+)+', owner), owner
+        for key, returned in methods.items():
+            assert re.fullmatch(r'\w+/(\d+|\*)', key), (owner, key)
+            # Qualified or primitive: never a type parameter or a simple name.
+            assert returned in primitives or re.fullmatch(r'[a-z]\w*(\.\w+)+', returned), (owner, key)

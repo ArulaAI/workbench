@@ -1,0 +1,84 @@
+{
+  "_comment": [
+    "Which unsatisfied trace obligations are known boundaries rather than gaps.",
+    "A boundary is a place where the analyzed source stops on purpose and the",
+    "behavior past it follows from declared evidence: a runtime-generated",
+    "implementation, a profile-selected alternative, a transaction the caller or",
+    "container completes, a documented library or platform API, or an HTTP call",
+    "answered by an endpoint anchored in this repository. Everything not listed",
+    "here stays a gap. A boundary never changes a trace's resolution; it only",
+    "decides whether the trace is bounded or incomplete.",
+    "",
+    "diagnostic_codes: adapter diagnostic codes attached to the obligation's edge.",
+    "  An obligation is a boundary only when every code on its edge is listed.",
+    "obligation_codes: trace obligation reason codes that are boundaries by themselves.",
+    "library_codes: codes an adapter emits for a call that leaves the source; the",
+    "  call is a boundary only when its provider is listed under known_libraries for",
+    "  the calling language. An unknown provider stays a gap.",
+    "known_libraries: per language. 'prefixes' match qualified type providers",
+    "  (type:java.util.List), 'modules' match imported modules exactly or by a",
+    "  '/' subpath (module:react, module:react-dom/client), and 'ambient' accepts the",
+    "  names the language registry binds without declaration (global:console).",
+    "  A provider may list candidates separated by '|' (type:java.util.X|jakarta.persistence.X);",
+    "  it is known only when every candidate is."
+  ],
+  "diagnostic_codes": {
+    "SPRING_DATA_RUNTIME_IMPLEMENTATION": "generated_implementation",
+    "SPRING_DATA_GENERATED_QUERY": "generated_implementation",
+    "JAVA_GENERATED_IMPLEMENTATION": "generated_implementation",
+    "JAVA_PERSISTENCE_COMPLETION_UNRESOLVED": "transaction_completion",
+    "SQL_COMPLETION_UNRESOLVED": "transaction_completion",
+    "SQL_COMMIT_NOT_ESTABLISHED": "transaction_completion",
+    "SQL_TRANSACTION_SCOPE_UNRESOLVED": "transaction_completion"
+  },
+  "obligation_codes": {
+    "ROUTED_REQUEST": "endpoint_in_repo",
+    "SAME_ORIGIN_REQUEST": "endpoint_in_repo",
+    "CONDITIONAL_IMPLEMENTATION": "config_selected"
+  },
+  "library_codes": ["JAVA_EXTERNAL_CALL", "JS_EXTERNAL_CALL", "RULES_AMBIENT_CALL"],
+  "known_libraries": {
+    "java": {
+      "prefixes": [
+        "java.", "javax.", "jakarta.", "org.springframework.", "org.slf4j.",
+        "com.fasterxml.jackson.", "org.hibernate.", "org.apache.commons.",
+        "org.mapstruct."
+      ]
+    },
+    "kotlin": {
+      "prefixes": ["java.", "javax.", "jakarta.", "kotlin.", "org.springframework."]
+    },
+    "javascript": {
+      "ambient": true,
+      "modules": ["react", "react-dom", "react-router", "react-router-dom", "moment",
+                  "lodash", "axios", "express", "rxjs", "redux", "react-redux"]
+    },
+    "jsx": {
+      "ambient": true,
+      "modules": ["react", "react-dom", "react-router", "react-router-dom", "moment",
+                  "lodash", "axios", "rxjs", "redux", "react-redux"]
+    },
+    "typescript": {
+      "ambient": true,
+      "modules": ["react", "react-dom", "react-router", "react-router-dom", "moment",
+                  "lodash", "axios", "express", "rxjs", "redux", "react-redux",
+                  "@angular/core", "@angular/common", "@angular/router", "@nestjs/common"]
+    },
+    "tsx": {
+      "ambient": true,
+      "modules": ["react", "react-dom", "react-router", "react-router-dom", "moment",
+                  "lodash", "axios", "rxjs", "redux", "react-redux"]
+    }
+  },
+  "assumptions": {
+    "generated_implementation": "The generated implementation behaves as its declaration specifies. {reason}",
+    "config_selected": "The active configuration selects one of the listed alternatives. {reason}",
+    "transaction_completion": "The caller or container completes the transaction. {reason}",
+    "library_call": "{provider} behaves as its published API documents. {reason}",
+    "endpoint_in_repo": "The request reaches the endpoint anchored in this repository. {reason}"
+  },
+  "kind_order": [
+    "generated_implementation", "config_selected", "transaction_completion",
+    "library_call", "endpoint_in_repo"
+  ]
+}

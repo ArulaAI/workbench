@@ -1,0 +1,126 @@
+{
+  "_comment": [
+    "Declared return types of library methods, so a call chained on a library",
+    "call (em.createQuery(q).executeUpdate()) knows the type it is called on.",
+    "Per language, then per qualified type, then '<method>/<argument count>'",
+    "('<method>/*' for varargs) to the qualified return type. Only documented",
+    "API signatures belong here. A method whose return type is a type",
+    "parameter (TypedQuery<X>.getSingleResult(), Map<K,V>.get()) is left out:",
+    "its static type is not known, so the chain stops and stays a gap. A",
+    "primitive or void return ends the chain.",
+    "A raw generic type (Stream for Stream<R>) is a known receiver type even when its type argument is not."
+  ],
+  "java": {
+    "jakarta.persistence.EntityManager": {
+      "createQuery/1": "jakarta.persistence.Query",
+      "createQuery/2": "jakarta.persistence.TypedQuery",
+      "createNamedQuery/1": "jakarta.persistence.Query",
+      "createNamedQuery/2": "jakarta.persistence.TypedQuery",
+      "createNativeQuery/1": "jakarta.persistence.Query",
+      "createNativeQuery/2": "jakarta.persistence.Query"
+    },
+    "javax.persistence.EntityManager": {
+      "createQuery/1": "javax.persistence.Query",
+      "createQuery/2": "javax.persistence.TypedQuery",
+      "createNamedQuery/1": "javax.persistence.Query",
+      "createNamedQuery/2": "javax.persistence.TypedQuery",
+      "createNativeQuery/1": "javax.persistence.Query",
+      "createNativeQuery/2": "javax.persistence.Query"
+    },
+    "jakarta.persistence.Query": {
+      "setParameter/2": "jakarta.persistence.Query",
+      "setMaxResults/1": "jakarta.persistence.Query",
+      "setFirstResult/1": "jakarta.persistence.Query",
+      "getResultList/0": "java.util.List",
+      "getSingleResult/0": "java.lang.Object",
+      "executeUpdate/0": "int"
+    },
+    "javax.persistence.Query": {
+      "setParameter/2": "javax.persistence.Query",
+      "setMaxResults/1": "javax.persistence.Query",
+      "setFirstResult/1": "javax.persistence.Query",
+      "getResultList/0": "java.util.List",
+      "getSingleResult/0": "java.lang.Object",
+      "executeUpdate/0": "int"
+    },
+    "jakarta.persistence.TypedQuery": {
+      "setParameter/2": "jakarta.persistence.TypedQuery",
+      "setMaxResults/1": "jakarta.persistence.TypedQuery",
+      "setFirstResult/1": "jakarta.persistence.TypedQuery",
+      "getResultList/0": "java.util.List"
+    },
+    "javax.persistence.TypedQuery": {
+      "setParameter/2": "javax.persistence.TypedQuery",
+      "setMaxResults/1": "javax.persistence.TypedQuery",
+      "setFirstResult/1": "javax.persistence.TypedQuery",
+      "getResultList/0": "java.util.List"
+    },
+    "org.springframework.web.util.UriComponentsBuilder": {
+      "newInstance/0": "org.springframework.web.util.UriComponentsBuilder",
+      "fromPath/1": "org.springframework.web.util.UriComponentsBuilder",
+      "fromUriString/1": "org.springframework.web.util.UriComponentsBuilder",
+      "path/1": "org.springframework.web.util.UriComponentsBuilder",
+      "pathSegment/*": "org.springframework.web.util.UriComponentsBuilder",
+      "queryParam/*": "org.springframework.web.util.UriComponentsBuilder",
+      "buildAndExpand/*": "org.springframework.web.util.UriComponents",
+      "build/0": "org.springframework.web.util.UriComponents",
+      "build/1": "org.springframework.web.util.UriComponents",
+      "toUriString/0": "java.lang.String"
+    },
+    "org.springframework.web.util.UriComponents": {
+      "toUri/0": "java.net.URI",
+      "toUriString/0": "java.lang.String",
+      "encode/0": "org.springframework.web.util.UriComponents",
+      "expand/*": "org.springframework.web.util.UriComponents"
+    },
+    "java.lang.Object": {
+      "toString/0": "java.lang.String",
+      "hashCode/0": "int",
+      "equals/1": "boolean",
+      "getClass/0": "java.lang.Class"
+    },
+    "java.lang.Integer": {
+      "toString/0": "java.lang.String",
+      "intValue/0": "int",
+      "longValue/0": "long"
+    },
+    "java.lang.Long": {
+      "toString/0": "java.lang.String",
+      "intValue/0": "int",
+      "longValue/0": "long"
+    },
+    "java.lang.String": {
+      "trim/0": "java.lang.String",
+      "toLowerCase/0": "java.lang.String",
+      "toUpperCase/0": "java.lang.String",
+      "substring/1": "java.lang.String",
+      "substring/2": "java.lang.String",
+      "toString/0": "java.lang.String",
+      "length/0": "int",
+      "isEmpty/0": "boolean",
+      "startsWith/1": "boolean",
+      "equals/1": "boolean"
+    },
+    "java.util.Collection": {
+      "stream/0": "java.util.stream.Stream"
+    },
+    "java.util.List": {
+      "stream/0": "java.util.stream.Stream"
+    },
+    "java.util.Set": {
+      "stream/0": "java.util.stream.Stream"
+    },
+    "java.util.stream.Stream": {
+      "map/1": "java.util.stream.Stream",
+      "filter/1": "java.util.stream.Stream",
+      "sorted/0": "java.util.stream.Stream",
+      "sorted/1": "java.util.stream.Stream",
+      "distinct/0": "java.util.stream.Stream",
+      "limit/1": "java.util.stream.Stream",
+      "skip/1": "java.util.stream.Stream",
+      "peek/1": "java.util.stream.Stream",
+      "flatMap/1": "java.util.stream.Stream",
+      "count/0": "long"
+    }
+  }
+}

@@ -324,18 +324,28 @@ def test_query_annotation_declares_its_reads(facts):
 
 def test_declared_profile_adds_a_conditioned_selection_and_keeps_the_alternatives(facts):
     selections = _selections(facts, 'OwnerRepository.delete')
-    conditioned = [edge for edge in selections if edge['condition']]
-    assert len(conditioned) == 1
-    edge = conditioned[0]
+    declared = [edge for edge in selections
+                if 'spring.profiles.active' in (edge['condition'] or '')]
+    assert len(declared) == 1
+    edge = declared[0]
     assert edge['resolution'] == 'resolved'
     assert _name(facts, edge['to_ref']['id']).startswith('SpringDataOwnerRepositoryImpl.delete(')
     assert 'spring.profiles.active=hsqldb,spring-data-jpa' in edge['condition']
     assert 'runtime profile override' in edge['condition']
     assert 'JdbcOwnerRepositoryImpl' in edge['condition'] and 'JpaOwnerRepositoryImpl' in edge['condition']
-    # The static selection is untouched: every implementation stays a candidate.
-    ambiguous = [edge for edge in selections if edge['resolution'] == 'ambiguous']
-    assert len(ambiguous) == 1 and len(ambiguous[0]['candidate_target_ids']) == 3
-    query = [edge for edge in _selections(facts, 'OwnerRepository.findByLastName') if edge['condition']]
+    # Every implementation names its @Profile, so each stays a path under its
+    # own condition rather than one ambiguous choice.
+    assert not [edge for edge in selections if edge['resolution'] == 'ambiguous']
+    assert sorted(_name(facts, edge['to_ref']['id']).split('.')[0] for edge in selections) == [
+        'JdbcOwnerRepositoryImpl', 'JpaOwnerRepositoryImpl', 'SpringDataOwnerRepositoryImpl']
+    assert all(edge['condition'] for edge in selections)
+    # The Java adapter's earlier ambiguity report is withdrawn, including the
+    # one rewritten when the Spring Data fragment joined the candidates.
+    assert not [warning for warning in facts['warnings']
+                if warning['code'] == 'JAVA_IMPLEMENTATION_AMBIGUOUS'
+                and 'OwnerRepository.delete(' in warning['message']]
+    query = [edge for edge in _selections(facts, 'OwnerRepository.findByLastName')
+             if 'spring.profiles.active' in (edge['condition'] or '')]
     assert [_name(facts, edge['to_ref']['id']).split('(')[0] for edge in query] == [
         'SpringDataOwnerRepository.findByLastName']
 
@@ -355,7 +365,14 @@ def test_traces_reach_tables_through_the_declared_profile(facts):
     names = {_name(facts, symbol_id).split('(')[0] for symbol_id in find['symbol_ids']}
     assert {'ClinicServiceImpl.findOwnerByLastName', 'OwnerRepository.findByLastName',
             'SpringDataOwnerRepository.findByLastName'} <= names
-    assert 'JdbcOwnerRepositoryImpl.findByLastName' not in names
+    # Every profile alternative is followed; the choice is a config_selected
+    # boundary with its assumption, never a resolution.
+    assert 'JdbcOwnerRepositoryImpl.findByLastName' in names
+    conditional = [facts['trace_obligations'][oid] for oid in find['obligation_ids']
+                   if facts['trace_obligations'][oid]['reason_code'] == 'CONDITIONAL_IMPLEMENTATION']
+    assert conditional and all(item['boundary'] == 'config_selected' for item in conditional)
+    assert {item['obligation_id'] for item in find['assumptions']} >= {
+        item['id'] for item in conditional}
     assert _trace_tables(facts, find) == ['owners', 'pets']
     delete = _trace(facts, '/api/owners', 'DELETE')
     assert 'SpringDataOwnerRepositoryImpl.delete' in {
@@ -366,14 +383,15 @@ def test_traces_reach_tables_through_the_declared_profile(facts):
 
 def test_without_a_declared_profile_selection_stays_unresolved(tmp_path):
     facts = _extract(tmp_path, profiles=None)
+    # Only @Profile conditions remain; no declared property selects anything.
     assert not [edge for edge in facts['edges'].values()
-                if edge['kind'] == 'selects_implementation' and edge['condition']]
+                if edge['kind'] == 'selects_implementation'
+                and 'spring.profiles.active' in (edge['condition'] or '')]
     assert _data(facts, 'OwnerRepository.save') == []
     find = _trace(facts, '/api/owners', 'GET')
     names = {_name(facts, symbol_id).split('(')[0] for symbol_id in find['symbol_ids']}
     assert 'ClinicServiceImpl.findOwnerByLastName' in names
-    assert not {'JdbcOwnerRepositoryImpl.findByLastName', 'JpaOwnerRepositoryImpl.findByLastName',
-                'SpringDataOwnerRepository.findByLastName'} & names
+    assert find['resolution'] != 'resolved'
     # The source statements are still facts about their methods.
     assert _data(facts, 'JdbcOwnerRepositoryImpl.findByLastName') == [('reads_data', 'owners', 'resolved')]
 
