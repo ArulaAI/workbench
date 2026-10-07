@@ -29,6 +29,8 @@ import sysconfig
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
+from typing import Mapping
 
 # Shebang interpreter → language name (used when file has no extension)
 _SHEBANG_MAP: dict[str, str] = {
@@ -63,6 +65,179 @@ SOURCE_ADAPTER_EVIDENCE_KEYS = frozenset({
     "configuration_any", "generated_sources_any",
 })
 
+_IDENTIFIER = re.compile(r'[a-z][a-z0-9_]*\Z')
+_CATEGORIES = frozenset({'source', 'config', 'schema', 'asset'})
+_DISPOSITIONS = frozenset({'analyze', 'supporting', 'reference_only', 'ignore'})
+_ROUTABLE_CAPABILITIES = frozenset({
+    'parsing', 'declaration_extraction', 'bindings', 'runtime_selection',
+    'type_resolution',
+})
+
+
+class RegistryConfigurationError(ValueError):
+    pass
+
+
+@dataclass(frozen=True)
+class PathClassification:
+    path: str
+    category: str
+    language: str | None
+    language_candidate_ids: tuple[str, ...]
+    status: str
+    reason: str | None = None
+
+
+def _fail(cause: str) -> None:
+    raise RegistryConfigurationError(cause)
+
+
+def _freeze(value):
+    if isinstance(value, (dict, MappingProxyType)):
+        return MappingProxyType({key: _freeze(item) for key, item in value.items()})
+    if isinstance(value, list):
+        return tuple(_freeze(item) for item in value)
+    return value
+
+
+def _compile_patterns(values, cause):
+    if not isinstance(values, (list, tuple)) or not values or not all(
+            isinstance(value, str) and value for value in values):
+        _fail(cause)
+    try:
+        return tuple(re.compile(value) for value in values)
+    except re.error:
+        _fail(cause)
+
+
+def _evidence_clauses(descriptor):
+    single = descriptor.get('evidence')
+    alternatives = descriptor.get('evidence_any')
+    if (single is None) == (alternatives is None):
+        _fail('enricher_evidence_conflict')
+    clauses = alternatives if alternatives is not None else [single]
+    if not isinstance(clauses, list) or not clauses or not all(
+            isinstance(clause, dict) and clause for clause in clauses):
+        _fail('enricher_evidence_invalid')
+    for clause in clauses:
+        if set(clause) - SOURCE_ADAPTER_EVIDENCE_KEYS:
+            _fail('enricher_evidence_invalid')
+        for values in clause.values():
+            _compile_patterns(values, 'enricher_evidence_invalid')
+    return tuple(_freeze(clause) for clause in clauses)
+
+
+def _validate_installed_policy(config, by_name, adapters):
+    raw_consumers = config.get('supporting_consumers', {})
+    raw_classifiers = config.get('path_classifiers', {})
+    raw_dispositions = config.get('source_dispositions', {})
+    if not all(isinstance(value, dict) for value in
+            (raw_consumers, raw_classifiers, raw_dispositions)):
+        _fail('installed_policy_table_invalid')
+
+    consumers = {}
+    consumer_fields = {'module', 'function', 'version', 'capabilities',
+        'capability_status', 'diagnostic_codes'}
+    for identity, raw in sorted(raw_consumers.items()):
+        if not _IDENTIFIER.fullmatch(identity) or set(raw) != consumer_fields:
+            _fail('supporting_consumer_invalid')
+        if (not _IDENTIFIER.fullmatch(raw.get('module', ''))
+                or not _IDENTIFIER.fullmatch(raw.get('function', ''))
+                or not isinstance(raw.get('version'), str) or not raw['version']
+                or raw.get('capability_status') not in {'supported', 'partial'}):
+            _fail('supporting_consumer_invalid')
+        capabilities = raw.get('capabilities')
+        diagnostics = raw.get('diagnostic_codes')
+        if (not isinstance(capabilities, list) or not capabilities
+                or len(capabilities) != len(set(capabilities))
+                or set(capabilities) - SOURCE_ADAPTER_CAPABILITIES
+                or not isinstance(diagnostics, list) or not diagnostics
+                or len(diagnostics) != len(set(diagnostics))
+                or not all(isinstance(code, str)
+                           and re.fullmatch(r'[A-Z][A-Z0-9_]*', code)
+                           for code in diagnostics)):
+            _fail('supporting_consumer_invalid')
+        consumers[identity] = _freeze(raw)
+
+    classifiers, claimed_extensions = [], set()
+    for identity, raw in sorted(raw_classifiers.items()):
+        if (not _IDENTIFIER.fullmatch(identity) or not isinstance(raw, dict)
+                or set(raw) != {'extensions', 'category', 'reason'}
+                or raw.get('category') not in _CATEGORIES
+                or not isinstance(raw.get('reason'), str)
+                or not _IDENTIFIER.fullmatch(raw['reason'])):
+            _fail('path_classifier_invalid')
+        extensions = raw.get('extensions')
+        if not isinstance(extensions, list) or not extensions or not all(
+                isinstance(value, str) and re.fullmatch(r'[a-z0-9]+', value)
+                for value in extensions):
+            _fail('path_classifier_invalid')
+        normalized = tuple('.' + value for value in extensions)
+        if claimed_extensions.intersection(normalized) \
+                or len(set(normalized)) != len(normalized):
+            _fail('path_classifier_extension_duplicate')
+        claimed_extensions.update(normalized)
+        classifiers.append(_freeze({'id': identity, **raw,
+            'extensions': normalized}))
+
+    dispositions = []
+    allowed_fields = {'path_any', 'language', 'category', 'disposition',
+        'owner', 'required_capabilities'}
+    for identity, raw in sorted(raw_dispositions.items()):
+        if (not _IDENTIFIER.fullmatch(identity) or not isinstance(raw, dict)
+                or set(raw) - allowed_fields
+                or raw.get('disposition') not in _DISPOSITIONS
+                or not isinstance(raw.get('owner'), str)
+                or not _IDENTIFIER.fullmatch(raw['owner'])
+                or not ({'path_any', 'language', 'category'} & set(raw))):
+            _fail('source_disposition_invalid')
+        if raw.get('language') is not None and raw['language'] not in by_name:
+            _fail('source_disposition_language_unknown')
+        if raw.get('category') is not None \
+                and raw['category'] not in _CATEGORIES:
+            _fail('source_disposition_category_invalid')
+        patterns = (_compile_patterns(raw['path_any'],
+            'source_disposition_pattern_invalid') if 'path_any' in raw else ())
+        required = raw.get('required_capabilities', [])
+        if (not isinstance(required, list)
+                or not all(isinstance(value, str) for value in required)
+                or len(required) != len(set(required))
+                or set(required) - _ROUTABLE_CAPABILITIES):
+            _fail('source_disposition_capability_invalid')
+        owner = raw['owner']
+        if raw['disposition'] == 'analyze':
+            descriptor = adapters.get(owner)
+            if (descriptor is None or descriptor.get('kind') != 'adapter'
+                    or raw.get('language') not in descriptor.get('languages', [])
+                    or any(descriptor['capabilities'][capability] == 'unsupported'
+                           for capability in required)):
+                _fail('source_disposition_owner_invalid')
+        elif raw['disposition'] == 'supporting':
+            descriptor = consumers.get(owner)
+            if descriptor is None or not set(required).issubset(
+                    descriptor['capabilities']):
+                _fail('source_disposition_owner_invalid')
+        elif required:
+            _fail('nonexecuting_disposition_has_capabilities')
+        dispositions.append(_freeze({'id': identity, **raw,
+            'required_capabilities': tuple(sorted(required)),
+            '_path_patterns': patterns}))
+
+    supporting_owners = {item['owner'] for item in dispositions
+        if item['disposition'] == 'supporting'}
+    if supporting_owners != set(consumers):
+        _fail('supporting_consumer_owner_mismatch')
+    analyze_owners = {item['owner'] for item in dispositions
+        if item['disposition'] == 'analyze'}
+    for identity, descriptor in adapters.items():
+        decoder = descriptor.get('decoder')
+        if decoder is not None and (not isinstance(decoder, str)
+                or not _IDENTIFIER.fullmatch(decoder)
+                or identity not in analyze_owners):
+            _fail('source_adapter_decoder_invalid')
+    return (MappingProxyType(consumers), tuple(classifiers),
+            tuple(dispositions))
+
 
 @dataclass(frozen=True)
 class Language:
@@ -86,35 +261,70 @@ class LanguageRegistry:
     - ``extraction.toml`` (SPEED-specific) for extraction depth, categories,
       grammar overrides, and fence labels
 
-    If either file is missing or malformed, the registry initializes empty and
-    ``classify()`` returns ``("asset", None)`` for every extension.
+    If either file is missing or malformed, or installed policy fails
+    validation, nothing is published: ``load_error`` holds the normalized
+    cause and every public query raises it.
     """
 
     def __init__(self, data_dir: Path | None = None) -> None:
         if data_dir is None:
             data_dir = Path(__file__).parent / "data"
 
-        self._by_extension: dict[str, Language] = {}
-        self._by_name: dict[str, Language] = {}
+        self._by_extension: Mapping[str, Language] = MappingProxyType({})
+        self._by_name: Mapping[str, Language] = MappingProxyType({})
+        self._extension_candidates: Mapping[str, tuple[Language, ...]] = MappingProxyType({})
         self._installed: set[str] = set()
-        self._source_adapters: dict[str, dict] = {}
-        self._trusted_parsers: dict[str, dict] = {}
-        self.source_adapter_error: str | None = None
-
+        self._source_adapters: Mapping[str, Mapping] = MappingProxyType({})
+        self._supporting_consumers: Mapping[str, Mapping] = MappingProxyType({})
+        self._path_classifiers: tuple[Mapping, ...] = ()
+        self._source_dispositions: tuple[Mapping, ...] = ()
+        self._trusted_parsers: Mapping[str, Mapping] = MappingProxyType({})
+        self.load_error: RegistryConfigurationError | None = None
         try:
-            self._load(data_dir)
-        except Exception:
-            # Graceful degradation: empty registry, classify returns ("asset", None)
-            self._by_extension = {}
-            self._by_name = {}
-            self._source_adapters = {}
-            self._trusted_parsers = {}
-            self.source_adapter_error = "REGISTRY_LOAD_FAILED"
+            state = self._load(data_dir)
+        except RegistryConfigurationError as error:
+            self.load_error = error
+        else:
+            self._by_name = state['by_name']
+            self._by_extension = state['by_extension']
+            self._extension_candidates = state['extension_candidates']
+            self._source_adapters = state['source_adapters']
+            self._supporting_consumers = state['supporting_consumers']
+            self._path_classifiers = state['path_classifiers']
+            self._source_dispositions = state['source_dispositions']
+            self._trusted_parsers = state['trusted_parsers']
+            self._scan_installed_grammars()
 
-        self._scan_installed_grammars()
+    @property
+    def source_adapter_error(self) -> str | None:
+        """Normalized load cause for legacy callers; None when valid."""
+        return str(self.load_error) if self.load_error is not None else None
 
-    def _load(self, data_dir: Path) -> None:
-        """Parse both TOML files and build lookup dicts."""
+    def require_valid(self) -> None:
+        if self.load_error is not None:
+            raise self.load_error
+
+    def _load(self, data_dir: Path) -> Mapping:
+        try:
+            return self._load_candidate(data_dir)
+        except RegistryConfigurationError:
+            raise
+        except FileNotFoundError:
+            _fail('registry_file_missing')
+        except PermissionError:
+            _fail('registry_file_unreadable')
+        except tomllib.TOMLDecodeError:
+            _fail('registry_toml_invalid')
+        except json.JSONDecodeError:
+            _fail('trusted_parser_manifest_json_invalid')
+        except (OSError, KeyError, TypeError, ValueError, re.error):
+            _fail('registry_value_invalid')
+
+    def _load_candidate(self, data_dir: Path) -> Mapping:
+        """Parse and validate installed metadata without mutating self."""
+        by_name = {}
+        extension_claimants = {}
+        adapters = {}
         # Load Helix languages.toml
         with open(data_dir / "languages.toml", "rb") as f:
             helix = tomllib.load(f)
@@ -139,10 +349,8 @@ class LanguageRegistry:
                     or not isinstance(parser.get('version'), str) \
                     or not re.fullmatch(r'[0-9a-f]{64}', parser.get('wheel_sha256', '')):
                 raise ValueError('Invalid trusted parser artifact')
-        self._trusted_parsers = trusted_parsers
 
         try:
-            adapters = {}
             for name, descriptor in extraction_config.get('source_adapters', {}).items():
                 if not re.fullmatch(r'[a-z][a-z0-9_]*', name):
                     raise ValueError('Invalid installed source adapter identity')
@@ -159,8 +367,12 @@ class LanguageRegistry:
                     raise ValueError('Invalid source adapter conformance level')
                 if kind == 'adapter' and not descriptor.get('languages') and not descriptor.get('extraction_level'):
                     raise ValueError('Source adapter must declare language or extraction capability')
-                if kind == 'enricher' and not descriptor.get('evidence'):
-                    raise ValueError('Framework enricher must declare activation evidence')
+                if kind == 'enricher':
+                    evidence_clauses = _evidence_clauses(descriptor)
+                elif ('evidence' in descriptor or 'evidence_any' in descriptor):
+                    raise ValueError('Ordinary adapters cannot declare activation evidence')
+                else:
+                    evidence_clauses = ({},)
                 if kind == 'enricher' and not isinstance(descriptor.get('framework'), str):
                     raise ValueError('Framework enricher must declare framework identity')
                 capabilities = descriptor.get('capabilities', {})
@@ -192,23 +404,14 @@ class LanguageRegistry:
                             or not all(re.fullmatch(r'\.[a-z0-9]+', value)
                                        for value in descriptor['recognized_extensions'])):
                         raise ValueError('Parser-backed adapter has an incomplete dialect contract')
-                evidence = descriptor.get('evidence', {})
-                if set(evidence) - SOURCE_ADAPTER_EVIDENCE_KEYS:
-                    raise ValueError('Unsupported source adapter evidence kind')
-                for values in evidence.values():
-                    if not isinstance(values, list) or not values or not all(isinstance(v, str) for v in values):
-                        raise ValueError('Source adapter evidence predicates must be arrays')
-                for pattern in (descriptor.get('detect_any', []) + descriptor.get('exclude_any', [])
-                                + [p for values in evidence.values() for p in values]):
+                for pattern in (descriptor.get('detect_any', [])
+                                + descriptor.get('exclude_any', [])):
                     re.compile(pattern)
-                descriptor = {'kind':kind, **descriptor}
+                descriptor = {'kind': kind, **descriptor,
+                              '_evidence_clauses': evidence_clauses}
                 adapters[name] = descriptor
-            self._source_adapters = adapters
-        except (TypeError, ValueError, re.error) as exc:
-            # Adapter registration is an optional capability layer. Preserve
-            # the primary language registry and make the deployment fault visible.
-            self._source_adapters = {}
-            self.source_adapter_error = type(exc).__name__
+        except (TypeError, ValueError, re.error):
+            raise
 
         # Build Language objects for every Helix [[language]] entry
         for entry in helix.get("language", []):
@@ -264,11 +467,49 @@ class LanguageRegistry:
                 ambient_globals=tuple(sorted(set(ambient))),
             )
 
-            self._by_name[name] = lang
-            for ext in extensions:
-                # First language to claim an extension wins
-                if ext not in self._by_extension:
-                    self._by_extension[ext] = lang
+            by_name[name] = lang
+            for extension in extensions:
+                extension_claimants.setdefault(extension, []).append(lang)
+
+        # Catalog order never chooses between claimants: a duplicate extension
+        # has an owner only when installed configuration names one.
+        configured_owners = extraction_config.get('extension_owners', {})
+        if not isinstance(configured_owners, dict):
+            _fail('extension_owners_invalid')
+        by_extension = {}
+        extension_candidates = {}
+        used_owners = set()
+        for extension, claimants in sorted(extension_claimants.items()):
+            unique = {candidate.name: candidate for candidate in claimants}
+            extension_candidates[extension] = tuple(
+                unique[name] for name in sorted(unique))
+            if len(unique) == 1:
+                by_extension[extension] = next(iter(unique.values()))
+                continue
+            configured = configured_owners.get(extension.removeprefix('.'))
+            if configured is None:
+                continue
+            if configured not in unique:
+                _fail('extension_owner_not_claimant')
+            by_extension[extension] = unique[configured]
+            used_owners.add(extension.removeprefix('.'))
+        if set(configured_owners) != used_owners:
+            _fail('extension_owner_unused')
+
+        supporting_consumers, path_classifiers, source_dispositions = \
+            _validate_installed_policy(extraction_config, by_name, adapters)
+        return {
+            'by_name': MappingProxyType(by_name),
+            'by_extension': MappingProxyType(by_extension),
+            'extension_candidates': MappingProxyType(extension_candidates),
+            'source_adapters': MappingProxyType({identity: _freeze(descriptor)
+                for identity, descriptor in adapters.items()}),
+            'supporting_consumers': supporting_consumers,
+            'path_classifiers': path_classifiers,
+            'source_dispositions': source_dispositions,
+            'trusted_parsers': MappingProxyType({identity: _freeze(parser)
+                for identity, parser in trusted_parsers.items()}),
+        }
 
     def _scan_installed_grammars(self) -> None:
         """Detect installed tree-sitter grammar packages via importlib.metadata."""
@@ -283,15 +524,54 @@ class LanguageRegistry:
 
     # ── Public query methods ──────────────────────────────────
 
+    def source_adapter_descriptor(self, owner_id: str) -> Mapping | None:
+        self.require_valid()
+        descriptor = self._source_adapters.get(owner_id)
+        return _freeze({'id': owner_id, **descriptor}) if descriptor else None
+
+    def supporting_consumer_descriptor(self, owner_id: str) -> Mapping | None:
+        self.require_valid()
+        descriptor = self._supporting_consumers.get(owner_id)
+        return _freeze({'id': owner_id, **descriptor}) if descriptor else None
+
+    def source_dispositions(self) -> tuple[Mapping, ...]:
+        self.require_valid()
+        return self._source_dispositions
+
+    def classify_path(self, path: str) -> PathClassification:
+        """Classify one repository path; duplicate claimants stay ambiguous."""
+        self.require_valid()
+        extension = Path(path).suffix.lower()
+        candidates = self._extension_candidates.get(extension, ())
+        language = self._by_extension.get(extension)
+        if language is not None:
+            result = PathClassification(path, language.category, language.name,
+                tuple(candidate.name for candidate in candidates), 'classified')
+        elif candidates:
+            categories = {candidate.category for candidate in candidates}
+            result = PathClassification(path,
+                next(iter(categories)) if len(categories) == 1 else 'source',
+                None, tuple(candidate.name for candidate in candidates), 'ambiguous')
+        else:
+            result = PathClassification(path, 'asset', None, (), 'unrecognized')
+        matches = [item for item in self._path_classifiers
+            if extension in item['extensions']]
+        if len(matches) > 1:
+            _fail('path_classifier_overlap')
+        if matches:
+            match = matches[0]
+            result = PathClassification(path, match['category'], result.language,
+                result.language_candidate_ids, result.status, match['reason'])
+        return result
+
     def classify(self, ext: str) -> tuple[str, str | None]:
         """Classify a file extension into (category, language_name).
 
-        Returns ("asset", None) for unknown extensions.
+        Returns ("asset", None) for unknown extensions and no language for an
+        unresolved duplicate extension.
         """
-        lang = self._by_extension.get(ext)
-        if lang is None:
-            return "asset", None
-        return lang.category, lang.name
+        result = self.classify_path('file' + ext)
+        return result.category, result.language
 
     def classify_by_shebang(self, abs_path: str) -> tuple[str, str | None]:
         """Fallback classification by reading the file's shebang line.
@@ -299,6 +579,7 @@ class LanguageRegistry:
         Used when the file has no extension (e.g., the ``speed`` CLI script).
         Returns ("asset", None) if no shebang or unrecognized interpreter.
         """
+        self.require_valid()
         try:
             with open(abs_path, "r", encoding="utf-8", errors="ignore") as f:
                 first_line = f.readline(256)
@@ -321,10 +602,12 @@ class LanguageRegistry:
 
     def can_parse(self, name: str) -> bool:
         """Check whether a language is known AND has its grammar installed."""
+        self.require_valid()
         return name in self._by_name and name in self._installed
 
     def grammar(self, name: str) -> tuple[str, str] | None:
         """Return (grammar_module, grammar_func) for a language, or None."""
+        self.require_valid()
         lang = self._by_name.get(name)
         if lang is None:
             return None
@@ -332,6 +615,7 @@ class LanguageRegistry:
 
     def extraction_level(self, name: str) -> str:
         """Return the extraction level for a language: "rules", "skeleton", or "none"."""
+        self.require_valid()
         lang = self._by_name.get(name)
         if lang is None:
             return "none"
@@ -339,6 +623,7 @@ class LanguageRegistry:
 
     def rules_language(self, name: str) -> str:
         """Return the declarative catalog shared by this parser language."""
+        self.require_valid()
         lang = self._by_name.get(name)
         return lang.rules_language if lang else name
 
@@ -348,6 +633,7 @@ class LanguageRegistry:
         Empty for a language that declares none, so a caller can ask about any
         language without knowing which ones have an ambient environment.
         """
+        self.require_valid()
         lang = self._by_name.get(name)
         return frozenset(lang.ambient_globals) if lang else frozenset()
 
@@ -365,6 +651,7 @@ class LanguageRegistry:
         Target repositories supply text to match, never executable configuration.
         Multiple matches are returned explicitly rather than selected by order.
         """
+        self.require_valid()
         supplied = {'source': [source_text] if source_text is not None else []}
         for key, values in (evidence or {}).items():
             supplied[key] = [values] if isinstance(values, str) else list(values)
@@ -376,15 +663,16 @@ class LanguageRegistry:
                 continue
             if descriptor.get('extraction_level') and self.extraction_level(name) != descriptor['extraction_level']:
                 continue
-            detection = descriptor.get('detect_any', [])
+            detection = descriptor.get('detect_any', ())
             if detection and (source_text is None or not any(re.search(p, source_text) for p in detection)):
                 continue
             if source_text is not None and any(re.search(p, source_text) for p in descriptor.get('exclude_any', [])):
                 continue
-            required = descriptor.get('evidence', {})
-            if any(not any(re.search(pattern, value) for pattern in patterns
-                           for value in supplied.get(key.removesuffix('_any'), []))
-                   for key, patterns in required.items()):
+            clauses = descriptor.get('_evidence_clauses', ({},))
+            if not any(all(any(re.search(pattern, value)
+                    for pattern in patterns
+                    for value in supplied.get(key.removesuffix('_any'), []))
+                    for key, patterns in clause.items()) for clause in clauses):
                 continue
             matches.append({'id':identity, **descriptor})
         specific = [candidate for candidate in matches if not candidate.get('fallback')]
@@ -397,6 +685,7 @@ class LanguageRegistry:
         checked before import so a target repository cannot shadow or alter the
         parser implementation that an adapter executes.
         """
+        self.require_valid()
         parser = self._trusted_parsers.get(identity)
         if not parser:
             raise RuntimeError(f"Trusted parser is not registered: {identity}")
@@ -441,6 +730,7 @@ class LanguageRegistry:
 
     def fence_label_for(self, path: str) -> str:
         """Return the code fence language label for a file path."""
+        self.require_valid()
         for ext in sorted(self._by_extension, key=len, reverse=True):
             if path.endswith(ext):
                 return self._by_extension[ext].fence_label

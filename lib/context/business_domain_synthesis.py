@@ -22,7 +22,7 @@ from .business_domain_schema import (
     DEFINITIONS, REFERENCE_TARGETS, COLLECTIONS, DomainError, atomic_write, canonical, digest, identifier,
     now, read_json, record, validate, validate_references, implementation_hash,
     validation_finding, validation_findings, candidate_scope_findings,
-    verification_report_findings,
+    verification_report_findings, activity_closure, information_use_closure,
 )
 from .business_domain_work import whole_graph_scope
 
@@ -352,21 +352,67 @@ class ProviderProjection:
     def project_schema(self, schema):
         return self._rewrite(copy.deepcopy(schema), self.aliases)
 
-    def extend_aliases(self, *values):
-        """Alias request-owned records that are not part of the graph."""
+    def extend_aliases(self, *values, registry=None):
+        """Alias request-owned records that are not part of the graph.
+
+        With a run-level registry a record keeps its alias in every request of
+        the run, so aliases the provider wrote into prose keep naming it.
+        """
         identifiers = set()
         for value in values:
             identifiers.update(_record_ids(value))
         additions = sorted(identifiers - set(self.aliases))
         offset = len(self.aliases)
-        aliases = {identifier: f'_ref:{offset + index}'
-                   for index, identifier in enumerate(additions)}
+        if registry is not None:
+            numbers = registry.assign(additions, offset)
+            aliases = {identifier: f'_ref:{numbers[identifier]}'
+                       for identifier in additions}
+        else:
+            aliases = {identifier: f'_ref:{offset + index}'
+                       for index, identifier in enumerate(additions)}
         self.aliases.update(aliases)
         self.canonical_ids.update(
             {alias: identifier for identifier, alias in aliases.items()})
 
     def decode_response(self, value):
         return self._rewrite(copy.deepcopy(value), self.canonical_ids)
+
+
+class AliasRegistry:
+    """Run-level ``_ref:N`` numbers for records that are not graph records.
+
+    Candidate record IDs are content-derived, so sorting them anew for every
+    request renumbers records whenever a repair adds or re-identifies one.
+    The provider cites these numbers in prose, which normalization cannot
+    rewrite, so a citation would silently move to another record.  Numbers
+    here are handed out once, never reused, and move with a record only
+    through ``inherit``.
+    """
+
+    def __init__(self):
+        self.numbers: dict[str, int] = {}
+        self.next_number: int | None = None
+        self.lock = threading.Lock()
+
+    def assign(self, identifiers, first_number):
+        """Return the number of every identifier, numbering new ones in order."""
+        with self.lock:
+            if self.next_number is None or self.next_number < first_number:
+                self.next_number = first_number
+            for identifier in identifiers:
+                if identifier not in self.numbers:
+                    self.numbers[identifier] = self.next_number
+                    self.next_number += 1
+            return {identifier: self.numbers[identifier]
+                    for identifier in identifiers}
+
+    def inherit(self, previous_id, record_id):
+        """Move a re-identified record's number to its new identity."""
+        with self.lock:
+            if previous_id in self.numbers and record_id not in self.numbers:
+                self.numbers[record_id] = self.numbers.pop(previous_id)
+                return True
+            return False
 
 
 PROJECTION_INSTRUCTIONS = (
@@ -1036,8 +1082,83 @@ def _normalize_payload(payload, aliases, output_type):
     return normalized
 
 
+def _derive_deterministic_fields(payload, graph):
+    """Replace provider hints with the values SPEED derives from the graph.
+
+    Acceptance overwrites an activity's bindings, effects and information
+    uses, and an information use's traces, bindings and effects, with exact
+    projections of the accepted traces; a rule cannot claim enforcement
+    verified on a trace that is not resolved; and an information use cannot be
+    resolved while its operation facts are not. Applying the same derivations
+    here, before semantic identities are allocated, means the provider is never
+    asked (or judged by Verify) for what the graph already determines, and a
+    record's identity does not change because one response copied these lists
+    more completely than another. Nothing the provider chose semantically is
+    altered: membership, traces, concepts, rules, text and support stay its own.
+    """
+    if not isinstance(payload.get('activities'), dict):
+        return payload
+    context = (graph or {}).get('context', {})
+    if any(key not in context for key in ('traces', 'edges', 'bindings', 'effects')):
+        return payload
+    payload = copy.deepcopy(payload)
+    traces = context['traces']
+    model = {key: context[key] for key in ('traces', 'edges', 'bindings', 'effects')}
+    model['anchors'] = context.get('anchors', {})
+    model['activities'] = payload['activities']
+    model['information_uses'] = payload.get('information_uses', {})
+    for activity in payload['activities'].values():
+        if not set(activity.get('trace_ids', [])) <= set(traces):
+            continue
+        for field, identifiers in activity_closure(model, activity).items():
+            activity[field] = sorted(identifiers)
+        # Trace resolution is authoritative: a rule an incompletely traced
+        # activity applies cannot be verified on that trace. This is the same
+        # support ceiling single-activity acceptance applies.
+        if any(traces[trace_id]['resolution'] != 'resolved'
+               for trace_id in activity['trace_ids']):
+            for rule_id in activity.get('rule_ids', []):
+                rule = payload.get('rules', {}).get(rule_id)
+                if rule is not None and rule.get('enforcement_status') == 'verified_on_trace':
+                    rule['enforcement_status'] = 'declared_only'
+    for use in model['information_uses'].values():
+        activity = payload['activities'].get(use.get('activity_id'))
+        if activity is None or not set(activity.get('trace_ids', [])) <= set(traces):
+            continue
+        try:
+            closure = information_use_closure(model, use)
+        except DomainError:
+            # An ungrounded use is left exactly as proposed; acceptance and
+            # Verify report it.
+            continue
+        for field in ('trace_ids', 'binding_ids', 'effect_ids'):
+            use[field] = sorted(closure[field])
+        # Operation-fact resolution is authoritative: a use whose edges or
+        # effects are not resolved (persistence writes stay unresolved until
+        # completion is proven) cannot itself be resolved.  This is the
+        # ceiling reference validation enforces; claims below it stay as they
+        # are.
+        if use.get('resolution') == 'resolved':
+            facts = ([model['edges'][edge_id] for edge_id in sorted(closure['edge_ids'])]
+                     + [model['effects'][effect_id]
+                        for effect_id in sorted(closure['effect_ids'])])
+            open_facts = [fact for fact in facts if fact['resolution'] != 'resolved']
+            if open_facts:
+                use['resolution'] = ('ambiguous' if all(
+                    fact['resolution'] == 'ambiguous' for fact in open_facts)
+                    else 'unresolved')
+                if not use.get('reason'):
+                    reasons = sorted({fact['reason'] for fact in open_facts
+                                      if fact.get('reason')})
+                    use['reason'] = (
+                        f'The operation facts of this use are {use["resolution"]}'
+                        + (f': {reasons[0]}' if reasons else '.'))
+    return payload
+
+
 def _normalize_ids_with_aliases(payload, graph):
     """Allocate stable semantic IDs and retain the response-local alias map."""
+    payload = _derive_deterministic_fields(payload, graph)
     records = _provider_records(payload)
     aliases = {}
     for collections in DEPENDENCY_GROUPS:
@@ -1107,12 +1228,14 @@ def normalize_repair_payload(payload, graph, previous, expected_parent_hash):
             rejected_candidate=copy.deepcopy(payload['candidate']),
             repair_kind='semantic')
 
-    replacement = normalize_ids(payload['candidate'], graph)
+    replacement, provider_ids = _normalize_ids_with_aliases(
+        payload['candidate'], graph)
     normalized_changes = derive_identity_changes(previous, replacement)
     return {
         'parent_candidate_hash': payload['parent_candidate_hash'],
         'candidate': replacement,
         'identity_changes': normalized_changes,
+        'provider_ids': provider_ids,
     }
 
 
@@ -1367,6 +1490,8 @@ class Synthesis:
         self.last_response_keys = {}
         self.last_identity_changes = {}
         self.pending_responses = {}
+        self.alias_registries = {}
+        self.alias_registries_lock = threading.Lock()
 
     def _speed_call(self, action, *args, timeout=30):
         boundary = (self.recorder.boundary(
@@ -1578,12 +1703,44 @@ class Synthesis:
         validate(request, 'SemanticRequest')
         return request
 
+    def alias_registry(self, graph):
+        """The run's alias registry for one graph scope."""
+        with self.alias_registries_lock:
+            return self.alias_registries.setdefault(
+                graph['scope_id'], AliasRegistry())
+
+    def _inherit_aliases(self, graph, projection, provider_ids, candidate):
+        """Carry each re-identified record's alias to its new identity.
+
+        The provider continues a supplied record either under its exact
+        ``_ref:N`` alias, which decodes to the previous canonical ID, or as
+        ``<kind>:N`` with that alias's number.  When normalization gives the
+        continued record a new content-derived ID and the previous one is
+        gone, the new identity keeps the number the provider cited.
+        """
+        registry = self.alias_registry(graph)
+        present = set(_candidate_records(candidate))
+        inherited = []
+        for provider_id, record_id in sorted(provider_ids.items()):
+            kind, _, number = provider_id.partition(':')
+            previous = (projection.canonical_ids.get(f'_ref:{number}')
+                        if number.isdigit() else None) or provider_id
+            if (previous == record_id
+                    or previous in present
+                    or previous.partition(':')[0] != kind
+                    or record_id.partition(':')[0] != kind):
+                continue
+            if registry.inherit(previous, record_id):
+                inherited.append((previous, record_id))
+        return inherited
+
     def project_exchange(self, request, schema, projection=None):
         """Create the sole compact provider representation."""
         projection = projection or ProviderProjection(request['graph'])
         projection.extend_aliases(
             request['candidate'], request['deterministic_findings'],
-            request['verification_report'])
+            request['verification_report'],
+            registry=self.alias_registry(request['graph']))
         projected = copy.deepcopy(request)
         projected['graph'] = copy.deepcopy(projection.wire_packet)
         projected['provider_projection'] = {
@@ -1727,6 +1884,84 @@ class Synthesis:
         return allowed
 
     @classmethod
+    def _restore_out_of_scope_revisions(cls, previous, repaired,
+                                        identity_changes, findings, report):
+        """Keep the previous content of records a repair revised unasked.
+
+        A repair returns a complete replacement, and may reword records no
+        finding named. A record revised under its own identity outside the
+        findings' dependency closure is put back exactly as it was, so the
+        unrequested edit never lands and the round is not spent rejecting it.
+
+        The previous body may reference records the same repair retired, for
+        example claims it rewrote under new identities. Those dependencies are
+        restored with it, transitively, when they too lie outside the closure,
+        so a restoration never leaves a dangling reference. When a dependency
+        was retired inside the closure, as a finding asked, the record is not
+        restored and its revision stays for the regression guard to judge.
+        Records retired, added or re-identified outside the closure that no
+        restored record needs are not restored here and remain regressions.
+        """
+        named = {
+            subject_id
+            for finding in [*(findings or []),
+                            *((report or {}).get('findings', []))]
+            for subject_id in finding.get('subject_ids', [])
+        }
+        allowed = cls._repair_subject_closure(previous, named)
+        seeds = sorted({change['from_ids'][0] for change in identity_changes
+                        if change['kind'] == 'revised'} - allowed)
+        if not seeds:
+            return repaired, identity_changes, []
+        before = _candidate_records(previous)
+        after = _candidate_records(repaired)
+
+        def references(value):
+            if isinstance(value, str):
+                yield value
+            elif isinstance(value, list):
+                for item in value:
+                    yield from references(item)
+            elif isinstance(value, dict):
+                for item in value.values():
+                    yield from references(item)
+
+        def requirement(record_id, chosen):
+            """The records restoring one record needs, or None if it cannot be."""
+            needed, pending = {record_id}, [record_id]
+            while pending:
+                for reference in references(before[pending.pop()][1]):
+                    if (reference in after or reference not in before
+                            or reference in needed or reference in chosen):
+                        continue
+                    if reference in allowed:
+                        return None
+                    needed.add(reference)
+                    pending.append(reference)
+            return needed
+
+        chosen: set[str] = set()
+        for record_id in seeds:
+            needed = requirement(record_id, chosen)
+            if needed is not None:
+                chosen |= needed
+        if not chosen:
+            return repaired, identity_changes, []
+        restored = sorted(chosen)
+        repaired = copy.deepcopy(repaired)
+        for record_id in restored:
+            collection, body = before[record_id]
+            records = repaired[collection]
+            if isinstance(records, dict):
+                records[record_id] = copy.deepcopy(body)
+            elif any(item['id'] == record_id for item in records):
+                repaired[collection] = [copy.deepcopy(body) if item['id'] == record_id
+                                        else item for item in records]
+            else:
+                records.append(copy.deepcopy(body))
+        return repaired, derive_identity_changes(previous, repaired), restored
+
+    @classmethod
     def _repair_regressions(cls, previous, identity_changes,
                             findings, report):
         """Return changed records outside the requested dependency closure."""
@@ -1808,6 +2043,14 @@ class Synthesis:
             else:
                 identity_changes = self.last_identity_changes.pop(
                     threading.get_ident(), [])
+                repaired, identity_changes, restored = \
+                    self._restore_out_of_scope_revisions(
+                        candidate, repaired, identity_changes, findings, report)
+                if restored and self.recorder:
+                    self.recorder.progress('semantic',
+                        f'Repair revised {len(restored)} records no finding named; '
+                        'their previous content was kept', level='warning',
+                        details={'record_ids': restored})
                 repaired_findings = self._candidate_findings(
                     graph, repaired, validate_candidate)
                 regressions = self._repair_regressions(
@@ -2500,6 +2743,9 @@ class Synthesis:
                 self.last_identity_changes[threading.get_ident()] = \
                     identity_changes
                 validate(payload, 'CandidatePayload')
+                if projected_provider:
+                    self._inherit_aliases(request['graph'], projection,
+                                          repair['provider_ids'], payload)
             else:
                 payload = normalize_ids(payload, request['graph'])
                 validate(payload, output_type)

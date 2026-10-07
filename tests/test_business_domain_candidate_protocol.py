@@ -5,8 +5,8 @@ from itertools import product
 import pytest
 
 from lib.context.business_domain_schema import (
-    DEFINITIONS, DomainError, candidate_scope_findings, digest, limits, record,
-    required_scope_subjects, validate, validation_findings,
+    DEFINITIONS, DomainError, activity_closure, candidate_scope_findings, digest,
+    information_use_closure, limits, record, required_scope_subjects, validate, validation_findings,
     verification_report_findings,
 )
 from lib.context.business_domain_synthesis import (
@@ -1265,3 +1265,314 @@ def test_semantic_outcome_summary_exposes_verdict_and_record_counts():
             },
         },
     }
+
+
+# Deterministic closure fields and repair scope
+#
+# An activity's bindings and effects, an information use's traces, bindings
+# and effects, and the support ceiling of a rule on an unresolved trace are
+# derived from the graph. They are set before identities are allocated, so a
+# provider is never judged on them and an identity never moves because of them.
+
+def closure_graph():
+    graph = graph_scope(anchor_count=1)
+    context = graph['context']
+    context['resources']['resource:owners'] = record(
+        'Resource', id='resource:owners', kind='table', name='owners',
+        evidence_ids=['ev:fixture'], resolution='resolved')
+    context['traces']['trace:fixture'].update(
+        symbol_ids=['symbol:handler'], edge_ids=['edge:write'])
+    context['edges'] = {'edge:write': record(
+        'Edge', id='edge:write', kind='writes_data',
+        from_ref={'kind': 'symbol', 'id': 'symbol:handler'},
+        to_ref={'kind': 'resource', 'id': 'resource:owners'},
+        binding_ids=['binding:in'], evidence_ids=['ev:fixture'],
+        resolution='unresolved', reason='Commit is not established.')}
+    context['bindings'] = {
+        'binding:in': record(
+            'Binding', id='binding:in', name='owner', direction='input',
+            source={'kind': 'symbol', 'id': 'symbol:handler'},
+            target={'kind': 'resource', 'id': 'resource:owners'},
+            evidence_ids=['ev:fixture'], resolution='resolved'),
+        'binding:out': record(
+            'Binding', id='binding:out', name='saved', direction='output',
+            source={'kind': 'symbol', 'id': 'symbol:handler'},
+            target={'kind': 'symbol', 'id': 'symbol:handler'},
+            evidence_ids=['ev:fixture'], resolution='resolved')}
+    context['effects'] = {'effect:write': record(
+        'Effect', id='effect:write', kind='data_write', edge_id='edge:write',
+        origin_ref={'kind': 'symbol', 'id': 'symbol:handler'},
+        target={'kind': 'resource', 'id': 'resource:owners'},
+        trace_ids=['trace:fixture'], evidence_ids=['ev:fixture'],
+        resolution='unresolved', reason='Commit is not established.')}
+    return graph
+
+
+def closure_candidate(graph, *, bindings=(), effects=(), rule_status='conditional',
+                      use_resources=('resource:owners',)):
+    candidate = record(
+        'CandidatePayload', scope_id=graph['scope_id'],
+        input_fingerprint=graph['input_fingerprint'])
+    candidate['concepts']['concept:owner'] = record(
+        'Concept', id='concept:owner', name='Owner',
+        qualified_type_names=['fixture.Owner'], evidence_ids=['ev:fixture'])
+    candidate['rules']['rule:admin'] = record(
+        'Rule', id='rule:admin', name='Owner writes require a role',
+        predicate_or_formula='hasRole(OWNER_ADMIN)', outcome='403 otherwise',
+        evaluation_kind='predicate', category='authorization',
+        basis=['source_observed'], enforcement_status=rule_status,
+        evidence_ids=['ev:fixture'])
+    candidate['activities']['activity:register'] = record(
+        'Activity', id='activity:register', name='Register owner',
+        description='Register a pet owner.',
+        anchor_ids=graph['canonical_anchor_ids'], trace_ids=['trace:fixture'],
+        concept_ids=['concept:owner'], rule_ids=['rule:admin'],
+        input_binding_ids=list(bindings), output_binding_ids=list(bindings),
+        effect_ids=list(effects), evidence_ids=['ev:fixture'],
+        implementation_status='implementation_unresolved', support='partial')
+    candidate['information_uses']['information_use:register'] = record(
+        'InformationUse', id='information_use:register',
+        activity_id='activity:register', concept_id='concept:owner',
+        access='creates', resource_ids=list(use_resources),
+        evidence_ids=['ev:fixture'])
+    return candidate
+
+
+def test_normalization_derives_activity_closure_fields_from_the_graph():
+    graph = closure_graph()
+    normalized = normalize_ids(closure_candidate(graph), graph)
+    activity, = normalized['activities'].values()
+    assert activity['input_binding_ids'] == ['binding:in']
+    assert activity['output_binding_ids'] == ['binding:out']
+    assert activity['effect_ids'] == ['effect:write']
+    use, = normalized['information_uses'].values()
+    assert activity['information_use_ids'] == [use['id']]
+
+
+def test_activity_identity_ignores_provider_closure_lists():
+    graph = closure_graph()
+    empty = normalize_ids(closure_candidate(graph), graph)
+    copied = normalize_ids(closure_candidate(
+        graph, bindings=['binding:in'], effects=['effect:write']), graph)
+    assert sorted(empty['activities']) == sorted(copied['activities'])
+    assert empty == copied
+
+
+def test_information_use_closure_fields_are_derived_and_ungrounded_uses_are_kept():
+    graph = closure_graph()
+    use, = normalize_ids(closure_candidate(graph), graph)['information_uses'].values()
+    assert (use['trace_ids'], use['binding_ids'], use['effect_ids']) == (
+        ['trace:fixture'], ['binding:in'], ['effect:write'])
+    # A use naming a resource its activity never reaches is left as proposed,
+    # for acceptance and Verify to reject.
+    graph['context']['resources']['resource:pets'] = record(
+        'Resource', id='resource:pets', kind='table', name='pets',
+        evidence_ids=['ev:fixture'], resolution='resolved')
+    stray, = normalize_ids(closure_candidate(
+        graph, use_resources=('resource:pets',)), graph)['information_uses'].values()
+    assert (stray['trace_ids'], stray['binding_ids'], stray['effect_ids']) == ([], [], [])
+
+
+def test_rule_enforcement_on_an_unresolved_trace_is_capped_before_verification():
+    graph = closure_graph()
+    normalized = normalize_ids(closure_candidate(graph, rule_status='verified_on_trace'), graph)
+    rule, = normalized['rules'].values()
+    assert rule['enforcement_status'] == 'declared_only'
+    plain = normalize_ids(closure_candidate(graph), graph)
+    assert sorted(plain['rules']) == sorted(normalized['rules'])
+    graph['context']['traces']['trace:fixture'].update(resolution='resolved', reason=None)
+    resolved = normalize_ids(closure_candidate(graph, rule_status='verified_on_trace'), graph)
+    assert next(iter(resolved['rules'].values()))['enforcement_status'] == 'verified_on_trace'
+
+
+def test_repair_restores_unasked_same_identity_revisions():
+    graph = graph_scope(anchor_count=1)
+    previous = normalize_ids(shared_anchor_candidate(graph), graph)
+    named, unnamed = sorted(previous['activities'])
+    repaired = copy.deepcopy(previous)
+    repaired['activities'][named]['description'] = 'Requested correction.'
+    repaired['activities'][unnamed]['description'] = 'Unrequested rewording.'
+    changes = normalize_repair_payload(record(
+        'RepairPayload', parent_candidate_hash=digest(previous), candidate=repaired),
+        graph, previous, digest(previous))['identity_changes']
+    findings = [{'subject_ids': [named]}]
+
+    kept, remaining, restored = Synthesis._restore_out_of_scope_revisions(
+        previous, repaired, changes, findings, None)
+
+    assert restored == [unnamed]
+    assert kept['activities'][unnamed] == previous['activities'][unnamed]
+    assert kept['activities'][named]['description'] == 'Requested correction.'
+    assert Synthesis._repair_regressions(previous, remaining, findings, None) == []
+
+
+def test_repair_still_rejects_out_of_scope_changes_it_cannot_restore():
+    graph = graph_scope(anchor_count=1)
+    previous = normalize_ids(shared_anchor_candidate(graph), graph)
+    named, unnamed = sorted(previous['activities'])
+    replacement = copy.deepcopy(previous)
+    # Re-identifying an unnamed activity is not a same-identity revision.
+    replacement['activities'][unnamed]['anchor_ids'] = []
+    replacement = normalize_ids(replacement, graph)
+    changes = normalize_repair_payload(record(
+        'RepairPayload', parent_candidate_hash=digest(previous), candidate=replacement),
+        graph, previous, digest(previous))['identity_changes']
+    findings = [{'subject_ids': [named]}]
+
+    kept, remaining, restored = Synthesis._restore_out_of_scope_revisions(
+        previous, replacement, changes, findings, None)
+
+    assert restored == []
+    assert unnamed in Synthesis._repair_regressions(previous, remaining, findings, None)
+
+
+# Branch-scoped closure
+#
+# One UI action can route the same submit to different endpoints under
+# different conditions (PetEditor: POST for a new pet, PUT for an existing
+# one).  An activity that claims one branch's endpoint anchor owns that
+# branch's work only; the sibling branch belongs to the activity claiming it.
+
+def ref(kind, identifier):
+    return {'kind': kind, 'id': identifier}
+
+
+def forked_model(*, put_reaches_save=False, root_symbol='symbol:submit'):
+    def edge(identifier, kind, source, target, bindings=(), condition=None):
+        return {'id': identifier, 'kind': kind, 'from_ref': ref('symbol', source),
+                'to_ref': target, 'binding_ids': list(bindings), 'evidence_ids': [],
+                'condition': condition}
+    edges = [
+        edge('edge:request', 'calls', 'symbol:submit', ref('symbol', 'symbol:send')),
+        edge('edge:post', 'routes_to', 'symbol:submit', ref('symbol', 'symbol:add'),
+             condition='pet.isNew'),
+        edge('edge:put', 'routes_to', 'symbol:submit', ref('symbol', 'symbol:update'),
+             condition='!(pet.isNew)'),
+        edge('edge:save', 'calls', 'symbol:add', ref('symbol', 'symbol:save')),
+        edge('edge:write', 'writes_data', 'symbol:save', ref('resource', 'resource:pets'),
+             ['binding:pet']),
+    ]
+    if put_reaches_save:
+        edges.append(edge('edge:put-save', 'calls', 'symbol:update', ref('symbol', 'symbol:save')))
+    anchors = {
+        'anchor:submit': {'symbol_id': root_symbol, 'representations': []},
+        'anchor:post': {'symbol_id': None,
+                        'representations': [{'symbol_id': 'symbol:add'}]},
+        'anchor:put': {'symbol_id': 'symbol:update', 'representations': []},
+    }
+    bindings = {
+        bid: {'id': bid, 'direction': 'input', 'source': ref('symbol', source),
+              'evidence_ids': []}
+        for bid, source in (('binding:pet', 'symbol:save'), ('binding:form', 'symbol:send'),
+                            ('binding:contract', 'symbol:update'))}
+    effects = {
+        'effect:request': {'id': 'effect:request', 'edge_id': 'edge:request',
+                           'trace_ids': ['trace:submit'], 'evidence_ids': []},
+        'effect:write': {'id': 'effect:write', 'edge_id': 'edge:write',
+                         'trace_ids': ['trace:submit'], 'evidence_ids': []},
+    }
+    trace = {'id': 'trace:submit', 'anchor_id': 'anchor:submit',
+             'symbol_ids': ['symbol:submit', 'symbol:send', 'symbol:add',
+                            'symbol:update', 'symbol:save'],
+             'edge_ids': [item['id'] for item in edges]}
+    return {'anchors': anchors, 'traces': {'trace:submit': trace},
+            'edges': {item['id']: item for item in edges},
+            'bindings': bindings, 'effects': effects, 'information_uses': {}}
+
+
+def forked_activity(*anchor_ids):
+    return {'id': 'activity:fork', 'anchor_ids': ['anchor:submit', *anchor_ids],
+            'trace_ids': ['trace:submit'], 'concept_ids': ['concept:pet']}
+
+
+def test_activity_closure_excludes_the_sibling_branch_it_does_not_claim():
+    model = forked_model()
+    update = activity_closure(model, forked_activity('anchor:put'))
+    assert update['effect_ids'] == {'effect:request'}
+    assert update['input_binding_ids'] == {'binding:form', 'binding:contract'}
+    create = activity_closure(model, forked_activity('anchor:post'))
+    assert create['effect_ids'] == {'effect:request', 'effect:write'}
+    assert create['input_binding_ids'] == {'binding:form', 'binding:pet'}
+
+
+def test_activity_closure_keeps_the_whole_trace_without_a_branch_claim():
+    model = forked_model()
+    everything = {'effect:request', 'effect:write'}
+    assert activity_closure(model, forked_activity())['effect_ids'] == everything
+    assert activity_closure(
+        model, forked_activity('anchor:post', 'anchor:put'))['effect_ids'] == everything
+    # Models without anchor records keep the trace-wide closure.
+    assert activity_closure({**model, 'anchors': {}},
+                            forked_activity('anchor:put'))['effect_ids'] == everything
+
+
+def test_activity_closure_keeps_work_reached_through_the_claimed_branch():
+    model = forked_model(put_reaches_save=True)
+    assert activity_closure(model, forked_activity('anchor:put'))['effect_ids'] == {
+        'effect:request', 'effect:write'}
+
+
+def test_information_use_cannot_claim_a_sibling_branch_write():
+    model = forked_model()
+    use = {'activity_id': 'activity:fork', 'concept_id': 'concept:pet',
+           'access': 'creates', 'resource_ids': ['resource:pets']}
+    model['activities'] = {'activity:fork': forked_activity('anchor:post')}
+    assert information_use_closure(model, use)['effect_ids'] == {'effect:write'}
+    model['activities'] = {'activity:fork': forked_activity('anchor:put')}
+    with pytest.raises(DomainError) as error:
+        information_use_closure(model, use)
+    assert error.value.code == 'INVALID_REFERENCE'
+
+
+def test_normalization_scopes_shared_trace_effects_to_the_claimed_branch():
+    graph = closure_graph()
+    context = graph['context']
+    context['anchors']['anchor:fixture-00']['symbol_id'] = 'symbol:handler'
+    for name in ('create', 'update'):
+        context['anchors'][f'anchor:{name}'] = record(
+            'Anchor', id=f'anchor:{name}', kind='http', source_id='resource:fixture',
+            canonical_anchor_id=f'anchor:{name}', symbol_id=f'symbol:{name}',
+            resolution='unresolved', reason='Fixture endpoint')
+        context['edges'][f'edge:{name}'] = record(
+            'Edge', id=f'edge:{name}', kind='routes_to',
+            from_ref={'kind': 'symbol', 'id': 'symbol:handler'},
+            to_ref={'kind': 'symbol', 'id': f'symbol:{name}'},
+            condition='pet.isNew' if name == 'create' else '!(pet.isNew)',
+            evidence_ids=['ev:fixture'], resolution='resolved')
+    # The write moves behind the create branch.
+    context['edges']['edge:write']['from_ref'] = {'kind': 'symbol', 'id': 'symbol:create'}
+    context['traces']['trace:fixture'].update(
+        symbol_ids=['symbol:handler', 'symbol:create', 'symbol:update'],
+        edge_ids=['edge:create', 'edge:update', 'edge:write'])
+    candidate = closure_candidate(graph, use_resources=())
+    candidate['information_uses'] = {}
+    activity = candidate['activities']['activity:register']
+
+    activity['anchor_ids'] = [*graph['canonical_anchor_ids'], 'anchor:update']
+    update, = normalize_ids(candidate, graph)['activities'].values()
+    activity['anchor_ids'] = [*graph['canonical_anchor_ids'], 'anchor:create']
+    create, = normalize_ids(candidate, graph)['activities'].values()
+
+    assert update['effect_ids'] == []
+    assert create['effect_ids'] == ['effect:write']
+
+
+def test_routes_without_exclusive_conditions_are_not_sibling_branches():
+    everything = {'effect:request', 'effect:write'}
+    for post, put in (('pet.isNew', 'pet.isNew'), (None, None), ('pet.isNew', None),
+                      ('pet.isNew', 'owner.isNew')):
+        model = forked_model()
+        model['edges']['edge:post']['condition'] = post
+        model['edges']['edge:put']['condition'] = put
+        # Both requests may run in one submit, so the save stays this activity's work.
+        assert activity_closure(model, forked_activity('anchor:put'))['effect_ids'] == everything
+
+
+def test_trace_anchor_without_a_symbol_keeps_the_whole_trace():
+    model = forked_model(root_symbol=None)
+    assert activity_closure(model, forked_activity('anchor:put'))['effect_ids'] == {
+        'effect:request', 'effect:write'}
+    use = {'activity_id': 'activity:fork', 'concept_id': 'concept:pet',
+           'access': 'creates', 'resource_ids': ['resource:pets']}
+    model['activities'] = {'activity:fork': forked_activity('anchor:put')}
+    assert information_use_closure(model, use)['effect_ids'] == {'effect:write'}

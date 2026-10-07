@@ -2,7 +2,8 @@
 from __future__ import annotations
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Mapping
 
 if TYPE_CHECKING:
     from ..treesitter_extract import SymbolDef, Reference, RuleOutput
@@ -90,10 +91,35 @@ class SemanticResult:
             'reason': self.reason,
         }
 
+@dataclass(frozen=True)
+class DecodedSource:
+    text: str
+    encoding: str
+    original_byte_length: int
+
+
+@dataclass(frozen=True)
+class ConfigurationDeclaration:
+    key: str
+    value: str
+    occurrence: int
+    profile: str | None
+    environment: str
+    role: str
+    value_spans: tuple[tuple[int, int], ...]
+
+
+@dataclass(frozen=True)
+class SupportingConsumerResult:
+    consumed_source_ids: tuple[str, ...]
+    normalized_inputs: tuple[dict, ...]
+    diagnostics: tuple[dict, ...]
+
+
 @dataclass
 class Source:
     path: str
-    language: str
+    language: str | None
     text: str
     source_hash: str
     resource_id: str
@@ -110,6 +136,14 @@ class Source:
     parser_required: bool = False
     adapter_failed: bool = False
     service_scope: str = 'repository'
+    original_byte_length: int = 0
+    redaction_spans: list[tuple[int, int]] = field(default_factory=list)
+    decoder_failure: str | None = None
+    evidence_redaction_required: bool = False
+    supporting_inputs: Mapping[str, Mapping[str, dict]] = field(
+        default_factory=lambda: MappingProxyType({}))
+    resolved_module_targets: Mapping[str, dict] = field(
+        default_factory=lambda: MappingProxyType({}))
 
 @dataclass
 class Unit:
@@ -146,6 +180,7 @@ class Unit:
     required_relationships: tuple[str, ...] | None = None
     required_capabilities: tuple[str, ...] | None = None
     valid_terminal: bool | None = None
+    configuration: ConfigurationDeclaration | None = None
 
     @property
     def text(self) -> str:
@@ -172,6 +207,36 @@ def http_identity(source: Source, method: str | None, route: str | None) -> str 
         return None
     scope = source.service_scope.strip() if source.service_scope else 'repository'
     return f'http:{scope or "repository"}:{method.upper()}:{route}'
+
+
+def http_url_parts(url: str) -> tuple[str, str, int, str] | None:
+    """Scheme, host, port and path of an absolute HTTP(S) URL template.
+
+    The port is the written one or the scheme's default. A URL whose host or
+    port is itself a runtime value, or that is relative, has no fixed origin
+    and returns None.
+    """
+    found = re.fullmatch(r'([A-Za-z][A-Za-z0-9+.-]*)://([^/?#]*)(.*)', url, re.DOTALL)
+    if not found:
+        return None
+    scheme, authority, path = found.group(1).lower(), found.group(2), found.group(3)
+    if '{' in authority or '@' in authority or not authority:
+        return None
+    host, separator, written_port = authority.rpartition(':')
+    if not separator:
+        host, written_port = authority, ''
+    if written_port and not written_port.isdigit():
+        return None
+    port = int(written_port) if written_port else {'http': 80, 'https': 443}.get(scheme)
+    if port is None or not host:
+        return None
+    return scheme, host, port, path or '/'
+
+
+def http_base_path(path: str | None) -> str:
+    """A server base path as ``/segment/...`` with no trailing slash; root is ''."""
+    trimmed = (path or '').strip().strip('/')
+    return '/' + trimmed if trimmed else ''
 
 
 def http_route_key(identity_key: str | None) -> str | None:

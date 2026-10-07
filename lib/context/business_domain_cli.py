@@ -28,6 +28,63 @@ def _progress(event):
           file=sys.stderr, flush=True)
 
 
+# Why traces are not resolved, read from the obligations each trace already
+# records. This only reports; it never changes how a trace is resolved.
+BLOCKER_LABELS = {
+    'generated_implementation': 'Generated/runtime implementation',
+    'ambiguous_implementation': 'Ambiguous implementation selection',
+    'persistence': 'Persistence completion',
+    'library_call': 'Library calls',
+    'missing_call_target': 'Missing call targets',
+    'http_boundary': 'HTTP boundaries',
+    'ambiguous_call_target': 'Ambiguous call targets (overloads)',
+    'contract_only': 'Contract-only/unpinnable',
+    'navigation_depth': 'Navigation/depth',
+    'other': 'Other',
+}
+_HTTP_EDGES = {'invokes_endpoint', 'emits'}
+
+
+def _blocker(obligation, edge_kind):
+    """The blocker category of one obligation that is not satisfied."""
+    kind, status = obligation['kind'], obligation['status']
+    if kind == 'implementation_selection':
+        return {'external': 'generated_implementation',
+                'ambiguous': 'ambiguous_implementation'}.get(status, 'contract_only')
+    if kind == 'data_target':
+        return 'persistence'
+    if kind == 'external_boundary':
+        return 'http_boundary' if edge_kind in _HTTP_EDGES else 'library_call'
+    if kind == 'call_target':
+        if status != 'ambiguous':
+            return 'missing_call_target'
+        return 'navigation_depth' if edge_kind == 'navigates_to' else 'ambiguous_call_target'
+    if kind in {'depth_limit', 'symbol_limit'}:
+        return 'navigation_depth'
+    if kind == 'capability':
+        return 'contract_only'
+    return 'other'
+
+
+def trace_blockers(facts):
+    """Unique traces per blocker category; a trace counts once per category."""
+    obligations, edges = facts['trace_obligations'], facts['edges']
+    traces = {category: set() for category in BLOCKER_LABELS}
+    for trace in facts['traces'].values():
+        for obligation_id in trace['obligation_ids']:
+            obligation = obligations[obligation_id]
+            if obligation['status'] == 'satisfied':
+                continue
+            edge = edges.get(obligation.get('edge_id') or '')
+            traces[_blocker(obligation, edge['kind'] if edge else None)].add(trace['id'])
+    order = list(BLOCKER_LABELS)
+    return [{'category': category, 'label': BLOCKER_LABELS[category],
+             'traces': len(ids)}
+            for category, ids in sorted(traces.items(),
+                key=lambda item: (-len(item[1]), order.index(item[0])))
+            if ids]
+
+
 def _relative(root, path):
     return str(Path(path).relative_to(root))
 
@@ -43,6 +100,7 @@ def facts_only(root):
         atomic_write(target, facts, config['max_artifact_bytes'])
     return {'mode': 'facts', 'artifact': _relative(root, target),
             'measurements': extraction_measurements(facts),
+            'trace_blockers': trace_blockers(facts),
             'coverage': facts['coverage'], 'warnings': facts['warnings']}, 0
 
 

@@ -22,6 +22,7 @@ import ast
 import json
 import math
 import os
+import posixpath
 import re
 import subprocess
 from collections import Counter, defaultdict
@@ -309,131 +310,222 @@ def _resolve_python_imports(
     return [(s, t) for s, t in edges if s != t]
 
 
+class TypeScriptModuleResolutionError(ValueError):
+    def __init__(self, cause: str, start: int, end: int):
+        super().__init__(cause)
+        self.cause, self.start, self.end = cause, start, end
+
+
+def _ts_error(cause, text):
+    raise TypeScriptModuleResolutionError(cause, 0, len(text))
+
+
+def _pattern(value, text):
+    if not isinstance(value, str) or value.count('*') > 1:
+        _ts_error('invalid_alias_pattern', text)
+    return {'pattern': value, 'wildcard': '*' in value}
+
+
+def _strip_jsonc(text: str) -> str:
+    """JSON with comments and trailing commas blanked, offsets unchanged.
+
+    tsconfig.json is JSONC: ``tsc --init`` writes comments, and trailing
+    commas are accepted.
+    """
+    out, index, quote = list(text), 0, False
+    while index < len(text):
+        character = text[index]
+        if quote:
+            if character == '\\':
+                index += 2
+                continue
+            quote = character != '"'
+        elif character == '"':
+            quote = True
+        elif text.startswith('//', index):
+            end = text.find('\n', index)
+            end = len(text) if end < 0 else end
+            out[index:end] = ' ' * (end - index)
+            index = end
+            continue
+        elif text.startswith('/*', index):
+            end = text.find('*/', index + 2)
+            end = len(text) if end < 0 else end + 2
+            out[index:end] = [value if value in '\r\n' else ' ' for value in text[index:end]]
+            index = end
+            continue
+        elif character == ',':
+            following = re.match(r'(?:\s|//[^\n]*|/\*.*?\*/)*([}\]])', text[index + 1:], re.S)
+            if following:
+                out[index] = ' '
+        index += 1
+    return ''.join(out)
+
+
+def parse_typescript_module_resolution(text: str, document_kind: str) -> dict:
+    try:
+        data = json.loads(_strip_jsonc(text))
+    except json.JSONDecodeError as error:
+        start = min(error.pos, len(text))
+        raise TypeScriptModuleResolutionError('json_syntax_invalid', start,
+            min(start + 1, len(text))) from None
+    if not isinstance(data, dict):
+        _ts_error('top_level_must_be_object', text)
+    if document_kind == 'tsconfig':
+        compiler = data.get('compilerOptions', {})
+        if not isinstance(compiler, dict):
+            _ts_error('compiler_options_must_be_object', text)
+        paths = compiler.get('paths', {})
+        if not isinstance(paths, dict):
+            _ts_error('paths_must_be_object', text)
+        aliases = []
+        for alias, targets in paths.items():
+            parsed_alias = _pattern(alias, text)
+            if not isinstance(targets, list) or not targets:
+                _ts_error('alias_targets_must_be_nonempty_array', text)
+            parsed_targets = tuple(_pattern(target, text) for target in targets)
+            if not parsed_alias['wildcard'] and any(
+                    target['wildcard'] for target in parsed_targets):
+                _ts_error('exact_alias_cannot_capture_wildcard_target', text)
+            aliases.append({**parsed_alias, 'targets': parsed_targets})
+        return {'aliases': tuple(sorted(aliases,
+                    key=lambda item: item['pattern'])),
+                'declared_external_modules': ()}
+    if document_kind == 'typings':
+        names = set()
+        for section_name in ('dependencies', 'globalDependencies',
+                'ambientDependencies'):
+            section = data.get(section_name, {})
+            if not isinstance(section, dict) or not all(
+                    isinstance(name, str) for name in section):
+                _ts_error(f'{section_name}_must_be_object', text)
+            names.update(section)
+        return {'aliases': (), 'declared_external_modules': tuple(
+            {'name': name} for name in sorted(names))}
+    _ts_error('document_kind_invalid', text)
+
+
+def _match_alias(pattern: str, import_name: str):
+    if '*' not in pattern:
+        return '' if import_name == pattern else None
+    prefix, suffix = pattern.split('*')
+    if not import_name.startswith(prefix) or not import_name.endswith(suffix):
+        return None
+    if len(import_name) < len(prefix) + len(suffix):
+        return None
+    return import_name[len(prefix):len(import_name) - len(suffix) if suffix else None]
+
+
+def normalize_typescript_path_target(scope_dir: str, target: str,
+        capture: str) -> str:
+    substituted = target.replace('*', capture) if '*' in target else target
+    scoped = substituted if scope_dir == '.' else posixpath.join(scope_dir, substituted)
+    normalized = posixpath.normpath(scoped)
+    if normalized == '..' or normalized.startswith('../') or normalized.startswith('/'):
+        raise TypeScriptModuleResolutionError('target_escapes_repository', 0, 0)
+    return normalized
+
+
+_TYPESCRIPT_PROBES = ('', '.ts', '.tsx', '.js', '.jsx', '/index.ts', '/index.tsx',
+                      '/index.js', '/index.jsx')
+
+
+def _probe_typescript_path(candidate: str, source_paths) -> tuple[str, ...]:
+    """The file one module path resolves to: TypeScript takes the first probe."""
+    available = set(source_paths)
+    return next(((candidate + suffix,) for suffix in _TYPESCRIPT_PROBES
+                 if candidate + suffix in available), ())
+
+
+def resolve_typescript_path_alias(import_name: str, scope_dir: str,
+        aliases, source_paths) -> dict:
+    matches = []
+    for alias in aliases:
+        capture = _match_alias(alias['pattern'], import_name)
+        if capture is None:
+            continue
+        prefix, _, suffix = alias['pattern'].partition('*')
+        matches.append((len(prefix) + len(suffix), alias, capture))
+    if not matches:
+        return {'state': 'unmatched', 'candidates': ()}
+    specificity = max(item[0] for item in matches)
+    candidates = set()
+    for _, alias, capture in sorted(
+            (item for item in matches if item[0] == specificity),
+            key=lambda item: item[1]['pattern']):
+        for target in alias['targets']:
+            candidate = normalize_typescript_path_target(scope_dir,
+                target['pattern'], capture)
+            candidates.update(_probe_typescript_path(candidate, source_paths))
+    ordered = tuple(sorted(candidates))
+    return {'state': ('resolved' if len(ordered) == 1 else
+                      'ambiguous' if ordered else 'unresolved'),
+            'candidates': ordered}
+
+
 def _resolve_typescript_imports(
-    repo_path: str, ts_files: list[str],
-    path_aliases: list[tuple[str, str, str]] | None = None,
+    repo_path: str, ts_files: list[str], path_aliases=None,
 ) -> list[tuple[str, str]]:
-    """TypeScript import resolution via regex + tsconfig path aliases."""
+    path_aliases = path_aliases or []
     file_set = set(ts_files)
     edges = []
-
-    if path_aliases is None:
-        path_aliases = []
-
-    all_alias_prefixes = {prefix for _, prefix, _ in path_aliases}
-
     import_re = re.compile(
-        r"""(?:import|export)\s+(?:type\s+)?(?:\{[\s\S]*?\}\s+from|[^'";\n]+from)\s+['"]([^'"]+)['"]|"""
-        r"""(?:import|export)\s+['"]([^'"]+)['"]|"""
-        r"""require\s*\(\s*['"]([^'"]+)['"]\s*\)|"""
-        r"""import\s*\(\s*['"]([^'"]+)['"]\s*\)""",
-        re.MULTILINE,
-    )
-
-    probe_exts = [".ts", ".tsx", ".js", ".jsx", "/index.ts", "/index.tsx", "/index.js", "/index.jsx"]
-
+        r'''(?:import|export)\s+(?:type\s+)?(?:\{[\s\S]*?\}\s+from|[^'";\n]+from)\s+['"]([^'"]+)['"]|'''
+        r'''(?:import|export)\s+['"]([^'"]+)['"]|'''
+        r'''require\s*\(\s*['"]([^'"]+)['"]\s*\)|'''
+        r'''import\s*\(\s*['"]([^'"]+)['"]\s*\)''', re.MULTILINE)
     for source_file in ts_files:
-        full_path = os.path.join(repo_path, source_file)
         try:
-            with open(full_path, "r", errors="ignore") as fh:
-                content = fh.read(100_000)
+            with open(os.path.join(repo_path, source_file),
+                      encoding='utf-8', errors='ignore') as stream:
+                content = stream.read(100_000)
         except OSError:
             continue
-
         source_dir = os.path.dirname(source_file)
-
+        compatible = [(scope, aliases) for scope, aliases in path_aliases
+            if not scope or source_file.startswith(scope + '/')]
+        selected = (max(compatible, key=lambda item: len(item[0]))
+                    if compatible else ('', ()))
         for match in import_re.finditer(content):
-            raw = match.group(1) or match.group(2) or match.group(3) or match.group(4)
+            raw = next((value for value in match.groups() if value), None)
             if not raw:
                 continue
-
-            if not raw.startswith(".") and not any(raw.startswith(p) for p in all_alias_prefixes):
-                continue
-
-            resolved_raw = raw
-            is_aliased = False
-            best_scope_len = -1
-            for scope_dir, prefix, replacement in path_aliases:
-                if raw.startswith(prefix) and source_file.startswith(scope_dir + "/" if scope_dir else ""):
-                    if len(scope_dir) > best_scope_len:
-                        best_scope_len = len(scope_dir)
-                        resolved_raw = replacement + raw[len(prefix):]
-                        is_aliased = True
-
-            if is_aliased:
-                candidate_base = os.path.normpath(resolved_raw)
-            elif resolved_raw.startswith("."):
-                candidate_base = os.path.normpath(os.path.join(source_dir, resolved_raw))
+            if raw.startswith('.'):
+                base = os.path.normpath(os.path.join(source_dir, raw))
+                targets = _probe_typescript_path(base, file_set)
             else:
-                candidate_base = resolved_raw
-
-            found = None
-            if candidate_base in file_set:
-                found = candidate_base
-            else:
-                for ext in probe_exts:
-                    probe = candidate_base + ext
-                    if probe in file_set:
-                        found = probe
-                        break
-
-            if found and found != source_file:
-                edges.append((source_file, found))
-
+                resolution = resolve_typescript_path_alias(
+                    raw, selected[0] or '.', selected[1], ts_files)
+                targets = resolution['candidates']
+            if len(targets) == 1 and targets[0] != source_file:
+                edges.append((source_file, targets[0]))
     return edges
 
 
-def _find_tsconfig_paths(
-    repo_path: str, ts_files: list[str],
-) -> list[tuple[str, str, str]]:
-    """Find tsconfig.json path aliases, scoped to their directory.
-
-    Returns list of (scope_dir, alias_prefix, resolved_target).
-    """
+def _find_tsconfig_paths(repo_path: str, ts_files: list[str]):
+    candidates = {''}
+    for source_file in ts_files:
+        directory = os.path.dirname(source_file)
+        while directory:
+            candidates.add(directory)
+            directory = (directory.rsplit('/', 1)[0]
+                         if '/' in directory else '')
     result = []
-    seen_tsconfigs: set[str] = set()
-
-    seen_dirs: set[str] = set()
-    for f in ts_files:
-        d = os.path.dirname(f)
-        while d:
-            if d not in seen_dirs:
-                seen_dirs.add(d)
-                tsconfig_path = os.path.join(repo_path, d, "tsconfig.json")
-                if os.path.exists(tsconfig_path) and d not in seen_tsconfigs:
-                    seen_tsconfigs.add(d)
-                    try:
-                        with open(tsconfig_path) as fh:
-                            config = json.load(fh)
-                        paths = config.get("compilerOptions", {}).get("paths", {})
-                        for alias, targets in paths.items():
-                            prefix = alias.rstrip("*")
-                            if targets:
-                                raw_target = targets[0].rstrip("*")
-                                resolved = os.path.normpath(os.path.join(d, raw_target))
-                                result.append((d, prefix, resolved + "/"))
-                    except (json.JSONDecodeError, OSError):
-                        pass
-            if "/" in d:
-                d = d.rsplit("/", 1)[0]
-            else:
-                break
-
-    # Check root tsconfig
-    tsconfig_path = os.path.join(repo_path, "tsconfig.json")
-    if os.path.exists(tsconfig_path) and "" not in seen_tsconfigs:
+    for scope_dir in sorted(candidates):
+        path = os.path.join(repo_path, scope_dir, 'tsconfig.json')
+        if not os.path.isfile(path):
+            continue
         try:
-            with open(tsconfig_path) as fh:
-                config = json.load(fh)
-            paths = config.get("compilerOptions", {}).get("paths", {})
-            for alias, targets in paths.items():
-                prefix = alias.rstrip("*")
-                if targets:
-                    raw_target = targets[0].rstrip("*")
-                    result.append(("", prefix, raw_target))
-        except (json.JSONDecodeError, OSError):
-            pass
-
+            with open(path, encoding='utf-8') as stream:
+                parsed = parse_typescript_module_resolution(
+                    stream.read(), 'tsconfig')
+        except (OSError, UnicodeDecodeError,
+                TypeScriptModuleResolutionError):
+            continue
+        # A tsconfig without paths (typically one that extends the root)
+        # leaves the nearest enclosing aliases in force.
+        if parsed['aliases']:
+            result.append((scope_dir, parsed['aliases']))
     return result
 
 

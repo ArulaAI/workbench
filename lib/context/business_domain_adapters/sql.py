@@ -232,6 +232,10 @@ def extract(source: Source) -> list[Unit]:
         r"PACKAGE\s+(BODY\s+)?([\w$#]+(?:\.[\w$#]+)*)", code))
     units = []
     for match in re.finditer(r"(?i)\b(PROCEDURE|FUNCTION|TRIGGER)\s+([\w.$#]+)", code):
+        # PostgreSQL's `RETURNS trigger` is a return type, not a declaration.
+        if (match.group(1).casefold() == 'trigger' and
+                re.search(r"(?i)\bRETURNS\s+$", code[max(0, match.start() - 64):match.start()])):
+            continue
         tail = code[match.end():]
         intro = re.search(r"(?i)\b(IS|AS|BEGIN)\b|;", tail)
         if not intro:

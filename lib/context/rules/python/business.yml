@@ -5,6 +5,7 @@ metadata:
   anchor_kind: http
   route_var: ROUTE
   method_var: METHOD
+  receiver_var: APP
   route_pattern: '^["'']([^"'']*)["'']$'
 rule:
   kind: decorated_definition

@@ -11,7 +11,8 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
-from .business_domain_extract import Extractor, inventory
+from .business_domain_extract import (Extractor, scan_inventory,
+    source_fingerprint)
 from .business_domain_schema import (
     DomainError, account_artifact_bytes, atomic_write, copy_facts, digest,
     identifier, limits, now,
@@ -761,8 +762,8 @@ def discover(root, config=None, provider=None, lock_held=False, *,
         # edit matters even when Git HEAD did not change.
         if cancelled():
             raise DomainError('CANCELLED','Discovery cancelled before publication')
-        current,_ = inventory(root,config)
-        if digest({s.path:s.source_hash for s in current}) != facts['fingerprint']['sources']:
+        current_scan = scan_inventory(root, config)
+        if source_fingerprint(current_scan) != facts['fingerprint']['sources']:
             raise DomainError('SUPERSEDED','Sources changed during discovery')
         from .business_domain_snapshots import unchanged
         if not unchanged(root,extractor.snapshot_inputs,config['max_source_bytes']):

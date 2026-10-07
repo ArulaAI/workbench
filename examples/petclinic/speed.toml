@@ -1,0 +1,11 @@
+# Tested configuration for business-domain discovery on
+# spring-petclinic-reactjs at commit 4a6c26d.
+# Copy into the PetClinic project root before running `speed discover domains`.
+
+[agent]
+support_model = "opus"
+timeout = 2400
+
+[business_domains]
+max_build_output_tokens = 2048000
+deadline_seconds = 10800

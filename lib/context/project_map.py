@@ -36,11 +36,6 @@ from .language_registry import registry
 # Only truly universal directories that are never source code.
 HARDCODED_IGNORES = {".git", ".speed", "node_modules", "__pycache__"}
 
-# Extensions that map to a parseable language (e.g. SVG → XML) but are
-# visual assets, not config or source.  Overrides the registry category.
-_ASSET_EXTENSIONS = {".svg", ".svgz", ".ico"}
-
-
 # ── Gitignore handling ─────────────────────────────────────────
 
 
@@ -78,22 +73,16 @@ def _classify_file(
     - category is one of: source, config, asset, or an extended category
     - language is the language name or None for assets
     """
+    # Business extraction classifies paths through the same registry
+    # operation, so the two never disagree (for example on SVG).
+    classification = registry.classify_path(rel_path)
     # Check extended categories first (project-specific overrides)
     for cat_name, patterns in extended_categories.items():
         for pattern in patterns:
             if fnmatch.fnmatch(rel_path, pattern):
                 # Extended category overrides base — but still determine language
-                _cat, language = registry.classify(ext)
-                return cat_name, language
-
-    # Base classification via registry
-    category, language = registry.classify(ext)
-
-    # Visual asset override (e.g. .svg classified as XML but really an image)
-    if ext in _ASSET_EXTENSIONS:
-        category = "asset"
-
-    return category, language
+                return cat_name, classification.language
+    return classification.category, classification.language
 
 
 def _parse_extended_categories(config: dict) -> dict[str, list[str]]:

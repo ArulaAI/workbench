@@ -53,3 +53,70 @@ def test_failed_refresh_preserves_last_verified_publication(tmp_path):
     assert paths(tmp_path)['model'].read_bytes() == original
     assert status['phase'] == 'unavailable'
     assert status['error']['code'] == 'PROVIDER_UNAVAILABLE'
+
+
+# ── F1: fatal source-ownership faults and supersession keep publication ──
+
+import pytest
+
+
+def _published(tmp_path):
+    write_service(tmp_path)
+    provider = PassingProvider()
+    published, _ = discover(tmp_path, provider=provider)
+    return provider, published, paths(tmp_path)['model'].read_bytes()
+
+
+@pytest.mark.parametrize('fault, code', [('registry', 'ADAPTER_REGISTRY_INVALID'),
+                                         ('prepare', 'ADAPTER_UNAVAILABLE')])
+def test_fatal_ownership_faults_keep_publication_and_write_no_new_facts(
+        tmp_path, monkeypatch, fault, code):
+    from lib.context import business_domain_extract
+    from lib.context.business_domain_adapters import rules
+    from lib.context.language_registry import RegistryConfigurationError
+    provider, published, original = _published(tmp_path)
+    facts_before = paths(tmp_path)['facts'].read_bytes()
+    if fault == 'registry':
+        monkeypatch.setattr(business_domain_extract.registry, 'load_error',
+                            RegistryConfigurationError('registry_value_invalid'))
+    else:
+        monkeypatch.setattr(rules, 'prepare',
+                            lambda *args: (_ for _ in ()).throw(RuntimeError('detail')))
+
+    retained, status = discover(tmp_path, provider=provider)
+
+    assert retained['build_id'] == published['build_id']
+    assert paths(tmp_path)['model'].read_bytes() == original
+    assert paths(tmp_path)['facts'].read_bytes() == facts_before
+    assert status['error']['code'] == code
+    assert 'detail' not in status['error']['message']
+
+
+def test_source_change_before_publication_supersedes_the_attempt(tmp_path, monkeypatch):
+    from lib.context import business_domains
+    provider, published, original = _published(tmp_path)
+    scan = business_domains.scan_inventory
+
+    def changed_then_scanned(root, config):
+        (tmp_path / 'service.py').write_text(
+            "@app.get('/orders')\ndef list_orders():\n    return []\n")
+        return scan(root, config)
+    monkeypatch.setattr(business_domains, 'scan_inventory', changed_then_scanned)
+    (tmp_path / 'service.py').write_text(
+        "@app.post('/orders')\ndef create(order):\n    return order\n")
+
+    retained, status = discover(tmp_path, provider=provider)
+
+    assert status['phase'] == 'superseded'
+    assert status['error']['code'] == 'SUPERSEDED'
+    assert retained['build_id'] == published['build_id']
+    assert paths(tmp_path)['model'].read_bytes() == original
+
+
+def test_artifact_contract_states_the_attempt_boundary():
+    from pathlib import Path
+    contract = (Path(__file__).resolve().parents[1] /
+                'specs/tech/contracts/business-domain-artifacts.md').read_text()
+    assert ('may write its attempt FactsArtifact and StatusArtifact and may add immutable '
+            'snapshot blobs, but it cannot replace the prior validated DomainArtifact, '
+            'published build ID, baseline or history') in contract

@@ -23,7 +23,7 @@ def test_oracle_and_postgresql_fixtures_select_evidenced_trusted_descriptors():
     postgres = descriptor("invoice.sql", postgres_text)
 
     assert oracle["candidates"] == ["oracle_plsql"]
-    assert oracle["capability"]["dialects"] == ["oracle_plsql"]
+    assert list(oracle["capability"]["dialects"]) == ["oracle_plsql"]
     assert oracle["capability"]["conformance"] == "semantic"
     assert oracle["capability"]["parser"] == "sqlglot"
     assert oracle["capability"]["parser_version"] == "30.18.0"
@@ -32,7 +32,7 @@ def test_oracle_and_postgresql_fixtures_select_evidenced_trusted_descriptors():
     assert adapter_for(_source(oracle_text)).__name__.endswith(".sql")
 
     assert postgres["candidates"] == ["postgresql"]
-    assert postgres["capability"]["dialects"] == ["postgresql_plpgsql"]
+    assert list(postgres["capability"]["dialects"]) == ["postgresql_plpgsql"]
     assert postgres["capability"]["conformance"] == "semantic"
     assert postgres["capability"]["parser"] == "sqlglot"
     assert postgres["capability"]["parser_version"] == "30.18.0"
@@ -49,7 +49,7 @@ def test_unknown_sql_uses_explicit_fallback_capability_contract(tmp_path):
     assert selected["capability"]["conformance"] == "unavailable"
     assert set(selected["capability"]["capabilities"]) == SOURCE_ADAPTER_CAPABILITIES
     assert set(selected["capability"]["capabilities"].values()) == {"unsupported"}
-    assert selected["capability"]["diagnostic_codes"] == ["SQL_DIALECT_UNDETERMINED"]
+    assert list(selected["capability"]["diagnostic_codes"]) == ["SQL_DIALECT_UNDETERMINED"]
     assert selected["adapter"] == "sql_unknown"
 
     (tmp_path / "invoice.sql").write_text(text)
@@ -75,7 +75,7 @@ END;
     selected = descriptor("audit.sql", text)
 
     assert selected["candidates"] == ["unknown_sql"]
-    assert selected["capability"]["diagnostic_codes"] == ["SQL_DIALECT_UNDETERMINED"]
+    assert list(selected["capability"]["diagnostic_codes"]) == ["SQL_DIALECT_UNDETERMINED"]
 
 
 def test_repository_dialect_directories_select_plain_ddl_and_dml():
