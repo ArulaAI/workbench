@@ -311,12 +311,14 @@ _PROJECT_RULES = (
     "",
     "# The manifest is the only record of which bytes Workbench wrote, so git",
     "# carries it alongside the projections it describes. The event log is",
-    "# per-machine history that no classification reads, and the sync lock is",
-    "# a live descriptor that means nothing on another machine.",
+    "# per-machine history that no classification reads, as is the sync run",
+    "# log, and the sync lock is a live descriptor that means nothing on",
+    "# another machine.",
     f"!{PATHS.state_root.as_posix()}/",
     f"!{PATHS.manifest.as_posix()}",
     PATHS.events.as_posix(),
     PATHS.lock.as_posix(),
+    f"{PATHS.sync_log.as_posix()}*",
 )
 
 _STATE_RULES = (
@@ -331,6 +333,7 @@ _STATE_RULES = (
     f"!{_under_state_dir(PATHS.manifest)}",
     _under_state_dir(PATHS.events),
     _under_state_dir(PATHS.lock),
+    f"{_under_state_dir(PATHS.sync_log)}*",
 )
 
 

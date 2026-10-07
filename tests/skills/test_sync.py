@@ -368,8 +368,11 @@ def test_failure_on_a_later_harness_keeps_earlier_writes_recorded(
     # first, then codex raises part-way through the same sync.
     (project / ".agents" / "skills").write_text("not a directory\n")
 
-    with pytest.raises(OSError):
-        sync(project, skills_dir, "0.3.0")
+    # Continue-on-failure (WB-SYNC-REPORT, ADR-0002): codex is reported
+    # failed instead of aborting the run.
+    rows = {o.harness: o for o in sync(project, skills_dir, "0.3.0")}
+    assert rows["codex"].action == "failed"
+    assert rows["claude"].action == "installed"
 
     written = project / ".claude" / "skills" / "example-skill" / "SKILL.md"
     assert written.is_file()
@@ -452,9 +455,10 @@ def test_a_failed_write_leaves_the_previous_projection_intact(
         return real_write(self, data)
 
     monkeypatch.setattr(Path, "write_bytes", flaky)
-    with pytest.raises(OSError):
-        sync(tmp_project, skills_dir, "0.4.0")
+    [outcome] = sync(tmp_project, skills_dir, "0.4.0")
     monkeypatch.undo()
+    assert outcome.action == "failed"
+    assert outcome.error_type == "OSError"
 
     assert _tree(installed) == before
     assert [r.state for r in status(tmp_project, skills_dir, "0.4.0")] == [SkillState.STALE]

@@ -5,7 +5,8 @@ Three steps, each usable on its own:
 ``plan``   turns a read-only ``Inspection`` plus the ``--force`` choice into a
            list of ``SkillPlan`` operations. Pure: it touches nothing.
 ``apply``  performs those operations, rewrites the manifest, appends the event
-           log, and reports a ``SyncOutcome`` per skill.
+           log, and reports a ``SyncOutcome`` per skill. A skill whose
+           operation raises is reported ``failed`` and the run continues.
 ``sync``   composes inspect -> plan -> apply for the CLI.
 
 Every projection change in the system originates in ``apply``. The manifest and
@@ -17,6 +18,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import time
 import uuid
 from pathlib import Path
 
@@ -31,6 +33,7 @@ from skills.manifest import (
 )
 from skills.models import (
     CONFLICT,
+    FAILED,
     INSTALLED,
     PRESERVE,
     REMOVE,
@@ -158,6 +161,41 @@ def _persist(project_root, manifest, before, events) -> None:
     append_events(project_root, events)
 
 
+_UNSUPPORTED_REASON = "no supported harness detected in this project"
+
+
+def _fail(outcome, exc, *, prefix="") -> None:
+    """Mark one outcome failed. ``final_state`` keeps the pre-run state."""
+    outcome.action = FAILED
+    outcome.reason = prefix + (str(exc) or type(exc).__name__)
+    outcome.error_type = type(exc).__name__
+
+
+def _conflict_reason(findings) -> str:
+    codes = sorted({finding.code for finding in findings}) or ["conflicted"]
+    return (
+        f"local changes preserved ({', '.join(codes)}); "
+        "rerun with --force to overwrite"
+    )
+
+
+def _prepare_harness_roots(project_root: Path, plans) -> dict:
+    """Create each harness's skills root once, before any of its writes.
+
+    A root that cannot be created fails every write in that harness for the
+    same reason, so it is reported once per harness as a harness-level cause
+    rather than rediscovered skill by skill. Returns ``{harness_id: exc}``.
+    """
+    errors: dict = {}
+    for harness_id in dict.fromkeys(p.harness for p in plans if p.operation == WRITE):
+        root = project_root / get_harness(harness_id).skills_root
+        try:
+            root.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            errors[harness_id] = exc
+    return errors
+
+
 def apply(inspection, plans) -> list:
     """Perform ``plans``, record what happened, and report where each skill ended.
 
@@ -172,6 +210,7 @@ def apply(inspection, plans) -> list:
     _prune_unsafe_names(manifest)
 
     by_key = {(p.harness, p.skill): p for p in plans}
+    harness_errors = _prepare_harness_roots(project_root, plans)
     transaction = new_transaction()
     ts = now_iso()
     events: list = []
@@ -190,49 +229,67 @@ def apply(inspection, plans) -> list:
             outcomes.append(outcome)
             step = by_key.get((item.harness, item.skill))
             if step is None:
+                if item.state is SkillState.UNSUPPORTED:
+                    outcome.reason = _UNSUPPORTED_REASON
                 continue
 
             harness = get_harness(item.harness)
             version = step.version
-            if step.operation == REMOVE:
-                if step.dest.is_symlink() or step.dest.exists():
-                    _remove_path(step.dest)
-                record = manifest.get(HARNESSES_KEY, {}).get(harness.id)
-                if record is not None:
-                    record.setdefault("skills", {}).pop(item.skill, None)
-                outcome.action = REMOVED
-                outcome.final_state = SkillState.ABSENT
-                version = None
-                mutated = True
-            elif step.operation == WRITE:
-                _write_projection(step.dest, step.rendered)
-                record = manifest.setdefault(HARNESSES_KEY, {}).setdefault(
-                    harness.id, {"root": harness.skills_root, "skills": {}}
-                )
-                # Validation accepts a harness record carrying only `root` as
-                # "nothing installed here yet", so ensure the mapping on the
-                # first operation that actually needs to update it.
-                record.setdefault("skills", {})
-                record["skills"][item.skill] = {
-                    "files": {
-                        rel: hash_bytes(content)
-                        for rel, content in step.rendered.items()
-                    },
-                    "projected_at_version": catalog_version,
-                    "version": version,
-                }
-                outcome.action = (
-                    INSTALLED if step.state is SkillState.ABSENT else UPDATED
-                )
-                outcome.final_state = SkillState.CURRENT
-                mutated = True
-            else:
-                outcome.action = CONFLICT
-                outcome.final_state = SkillState.CONFLICTED
-                # Nothing was installed, so the catalog's version has no place
-                # in the record: a reader must not see a version bump that
-                # never happened.
-                version = None
+            started = time.monotonic()
+            harness_error = harness_errors.get(item.harness)
+            if harness_error is not None and step.operation == WRITE:
+                _fail(outcome, harness_error, prefix="harness-level: ")
+                continue
+            try:
+                if step.operation == REMOVE:
+                    if step.dest.is_symlink() or step.dest.exists():
+                        _remove_path(step.dest)
+                    record = manifest.get(HARNESSES_KEY, {}).get(harness.id)
+                    if record is not None:
+                        record.setdefault("skills", {}).pop(item.skill, None)
+                    outcome.action = REMOVED
+                    outcome.final_state = SkillState.ABSENT
+                    version = None
+                    mutated = True
+                elif step.operation == WRITE:
+                    _write_projection(step.dest, step.rendered)
+                    record = manifest.setdefault(HARNESSES_KEY, {}).setdefault(
+                        harness.id, {"root": harness.skills_root, "skills": {}}
+                    )
+                    # Validation accepts a harness record carrying only `root` as
+                    # "nothing installed here yet", so ensure the mapping on the
+                    # first operation that actually needs to update it.
+                    record.setdefault("skills", {})
+                    record["skills"][item.skill] = {
+                        "files": {
+                            rel: hash_bytes(content)
+                            for rel, content in step.rendered.items()
+                        },
+                        "projected_at_version": catalog_version,
+                        "version": version,
+                    }
+                    outcome.action = (
+                        INSTALLED if step.state is SkillState.ABSENT else UPDATED
+                    )
+                    outcome.final_state = SkillState.CURRENT
+                    mutated = True
+                else:
+                    outcome.action = CONFLICT
+                    outcome.final_state = SkillState.CONFLICTED
+                    outcome.reason = _conflict_reason(item.findings)
+                    # Nothing was installed, so the catalog's version has no place
+                    # in the record: a reader must not see a version bump that
+                    # never happened.
+                    version = None
+            except Exception as exc:
+                # One skill's failure is that skill's outcome, not the run's.
+                # The manifest record is untouched, so a failed write is never
+                # recorded as current and the next sync retries it. Nothing is
+                # appended to the event log: it records changes that happened.
+                _fail(outcome, exc)
+                continue
+            finally:
+                outcome.duration_ms = int((time.monotonic() - started) * 1000)
 
             events.append({
                 "transaction": transaction,
@@ -274,6 +331,7 @@ def sync(project_root, skills_dir, catalog_version, *, force=False, only_harness
                     previous_state=item.state,
                     action="",
                     final_state=item.state,
+                    reason=_UNSUPPORTED_REASON,
                 )
                 for item in inspection.skills
             ]

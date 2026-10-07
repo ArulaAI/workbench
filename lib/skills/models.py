@@ -196,6 +196,9 @@ INSTALLED = "installed"
 UPDATED = "updated"
 REMOVED = "removed"
 CONFLICT = "conflict"
+# The operation was attempted and raised. The projection and its manifest
+# record are left as they were, so the next sync retries it.
+FAILED = "failed"
 
 
 @dataclass
@@ -233,3 +236,8 @@ class SyncOutcome:
     previous_state: SkillState
     action: str
     final_state: SkillState
+    # Why a skill was skipped or failed; None when it converged. A failure's
+    # reason is the exception message and ``error_type`` its class name.
+    reason: str | None = None
+    error_type: str | None = None
+    duration_ms: int = 0

@@ -22,7 +22,8 @@
 # redirect the project or swap the canonical catalog.
 #
 # Exit codes follow the engine: 0 converged/current/no findings, 1 drift or
-# doctor findings, 2 conflicts remain after a sync, 3 error. Usage and
+# doctor findings (or, for sync, at least one skill failed), 2 conflicts remain
+# after a sync, 3 error. Usage and
 # configuration problems detected here are errors, so they exit 3 as well; a
 # caller must never read a mistyped flag as drift.
 
@@ -138,9 +139,11 @@ Usage: workbench skills <sync|status|doctor> [options]
 Options:
 $(printf '  %-32s  %s' "--harness <$(workbench_harness_choices)>" "Limit the command to one agent harness")
   --force                           sync only: overwrite conflicting projections
+  --report <text|json>              sync only: run report format (json prints the full report)
+  --no-log                          sync only: do not append to .speed/skills/sync-log.jsonl
   --json                            Emit machine-readable output
 
-Exit codes: 0 ok · 1 drift or findings · 2 conflicts remain after sync · 3 error
+Exit codes: 0 ok · 1 drift, findings, or a skill failed to sync · 2 conflicts remain after sync · 3 error
 
 Harness precedence: --harness · WORKBENCH_HARNESSES · [skills].harnesses · legacy manifest · detection
 USAGE
@@ -188,6 +191,33 @@ cmd_skills() {
                 user_args+=(--force)
                 shift
                 ;;
+            --report|--report=*)
+                if [[ "$sub" != "sync" ]]; then
+                    log_error "--report applies to 'skills sync' only, not 'skills ${sub}'"
+                    return 3
+                fi
+                local report_format
+                if [[ "$1" == --report=* ]]; then
+                    report_format="${1#--report=}"
+                    shift
+                else
+                    report_format="${2:-}"
+                    shift $(( $# >= 2 ? 2 : 1 ))
+                fi
+                if [[ "$report_format" != "text" && "$report_format" != "json" ]]; then
+                    log_error "--report requires one of: text, json"
+                    return 3
+                fi
+                user_args+=(--report "$report_format")
+                ;;
+            --no-log)
+                if [[ "$sub" != "sync" ]]; then
+                    log_error "--no-log applies to 'skills sync' only, not 'skills ${sub}'"
+                    return 3
+                fi
+                user_args+=(--no-log)
+                shift
+                ;;
             --harness)
                 if [[ $# -lt 2 || -z "${2:-}" || "${2}" == -* ]]; then
                     log_error "--harness requires one of: $(workbench_harness_list)"
@@ -212,7 +242,7 @@ cmd_skills() {
                 return 0
                 ;;
             *)
-                log_error "Unknown option for 'skills ${sub}': $1 (supported: --harness, --force, --json)"
+                log_error "Unknown option for 'skills ${sub}': $1 (supported: --harness, --force, --report, --no-log, --json)"
                 _skills_usage >&2
                 return 3
                 ;;

@@ -48,6 +48,9 @@ class SkillPaths:
     # replaced rather than appended to, so a lock on the manifest file itself
     # would cover the old inode and not the swap; a sibling gets its own.
     lock: Path = _STATE_ROOT / "sync.lock"
+    # One JSON line per sync run (see skills.log_writer). Rotated copies take
+    # numeric suffixes, so ignore rules match the stem with a trailing `*`.
+    sync_log: Path = _STATE_ROOT / "sync-log.jsonl"
 
 
 PATHS = SkillPaths()
