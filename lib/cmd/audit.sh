@@ -46,6 +46,18 @@ cmd_audit() {
             ;;
     esac
 
+    # Authorisation-risk specs live under tech/ but have their own template
+    # and are checked against the codebase (see speed define).
+    if [[ "$spec_type" == "rfc" ]]; then
+        local spec_basename
+        spec_basename=$(basename "$spec_file")
+        if [[ "$spec_basename" == *authorisation-risk.md || "$spec_basename" == *authorization-risk.md ]] \
+            || grep -qE '^> Spec type: authori[sz]ation-risk' "$spec_file"; then
+            spec_type="authorisation-risk"
+            template_file="${TEMPLATES_DIR}/authorisation-risk.md"
+        fi
+    fi
+
     # ── Template loading ───────────────────────────────────────
     if [[ ! -f "$template_file" ]]; then
         log_error_block \
@@ -210,6 +222,13 @@ cmd_audit() {
 
     if [[ -n "$existing_specs" ]]; then
         audit_message+="\n\n## Existing Specs\n\n${existing_specs}"
+    fi
+
+    # Authorisation-risk specs cite code; give the auditor the same file
+    # inventory define used so it can verify those citations.
+    if [[ "$spec_type" == "authorisation-risk" ]]; then
+        audit_message+="\n\n## Codebase Inventory\n\n$(_define_code_inventory)"
+        log_step "Codebase:  ${COLOR_STEP}inventory attached${RESET}"
     fi
 
     # Ensure logs directory exists

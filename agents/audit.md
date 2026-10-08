@@ -23,11 +23,13 @@ You receive the following context before auditing:
    - `specs/tech/<name>.md` → `speed/templates/rfc.md`
    - `specs/design/<name>.md` → `speed/templates/design.md`
    - `specs/defects/<name>.md` → `speed/templates/defect.md`
+   - `specs/tech/<name>-authorisation-risk.md` (or any tech spec with a `> Spec type: authorisation-risk` header) → `speed/templates/authorisation-risk.md`
 3. **Product vision** — `specs/product/overview.md` for high-level grounding.
 4. **Existing spec list** — A list of all files under `specs/` for resolving cross-reference links.
-5. **Linked PRD content** (RFC and Design specs only) — The content of the PRD referenced in the spec's `> See [product spec]` header link.
+5. **Linked PRD content** (RFC, Design, and authorisation-risk specs) — The content of the PRD referenced in the spec's `> See [product spec]` header link.
 6. **Related Feature link target** (Defect specs only) — The resolved content of the `Related Feature` field link, to confirm it exists.
 7. **RFC family context** (RFC specs only) — If the spec has a `> Parent RFC:` header, the parent RFC's content is loaded for cross-referencing. If the spec IS a parent RFC (other specs in the existing spec list have `> Parent RFC:` headers pointing to it), the list of child RFC paths is provided. Use Grep to scan child RFC headers for `> Parent RFC:` and `> Depends on:` when performing Level 3 multi-RFC checks.
+8. **Codebase inventory** (authorisation-risk specs only) — Tracked source and test files, the same list `speed define authorisation-risk` gave the author. Use Read, Glob, and Grep to verify the spec's code citations.
 
 ## Check Levels
 
@@ -57,7 +59,7 @@ Check that sections requiring substance actually have substance.
 
 ---
 
-### Level 3 — Cross-spec consistency (RFC and Design specs only)
+### Level 3 — Cross-spec consistency (RFC, Design, and authorisation-risk specs)
 
 Check alignment between the spec and its linked PRD.
 
@@ -92,6 +94,30 @@ Read the linked PRD and verify:
 1. **Component coverage.** Every user flow in the PRD must have at least one component, page, or route defined in the Design spec that handles it. An uncovered PRD flow is an error.
 2. **Route coverage.** Every distinct page or view implied by the PRD must have a corresponding route defined in the Design spec. An implied page with no route is an error.
 3. **All four state sections non-empty.** The Design spec must define all four UI states for primary views: empty state, loading state, populated state, and error state. Any missing state definition is an error.
+
+#### Authorisation-risk vs PRD, product vision, and codebase
+
+Authorisation-risk specs are the one spec type you check against code. The spec claims where access decisions are enforced and which tests cover them; those claims are only useful if they are true.
+
+Against the **linked PRD**:
+
+1. **Story coverage.** Every PRD user story that reads, creates, changes, or deletes a protected resource must appear in at least one Permission Matrix row (by story ID). An uncovered story is an error.
+2. **Actor coverage.** Every user type in the PRD's Users section must appear in Actors and Roles. A missing actor is an error.
+3. **No phantom scope.** A Protected Resource or Permission Matrix row that no PRD story or scope item justifies is a warning.
+
+Against the **product vision**:
+
+4. **Principle alignment.** If the vision states principles about access, privacy, data ownership, or tenancy, the Permission Matrix must not contradict them. A contradiction is a warning that quotes both texts.
+
+Against the **codebase**:
+
+5. **Citations resolve.** Every `path:line` citation in Enforcement Points and Test Coverage must point to a file that exists and a line within its length. A broken citation is an error.
+6. **Existing means existing.** For each Enforcement Point or test marked `Existing`, read the cited location. If it does not perform the stated check (wrong resource, wrong role, no check at all), report an error quoting the code.
+7. **Unlisted enforcement.** Grep the source files for authorisation logic on the spec's protected resources (`authori[sz]e`, `permission`, `policy`, `role`, `guard`, `tenant`, `owner`). Enforcement the spec does not list is a warning, because it may contradict the Permission Matrix.
+
+Internal consistency:
+
+8. **High and Critical risks are mitigated and tested.** Every Risk Register row rated High or Critical needs a non-empty Mitigation and a Verified-by entry that appears in Test Coverage. A missing one is an error.
 
 ---
 
@@ -139,7 +165,7 @@ Respond with a single JSON object matching this schema exactly:
 ```json
 {
   "status": "pass | warn | fail",
-  "spec_type": "prd | rfc | design | defect",
+  "spec_type": "prd | rfc | design | defect | authorisation-risk",
   "spec_file": "<relative path to the spec file>",
   "linked_specs": {
     "prd": "<relative path to linked PRD, or null>",
@@ -176,7 +202,7 @@ Respond with a single JSON object matching this schema exactly:
 ```
 
 - `issues` is an empty array if there are none.
-- `sizing` is `null` for Design and Defect specs (sizing does not apply).
+- `sizing` is `null` for Design, Defect, and authorisation-risk specs (sizing does not apply).
 - `sizing.recommendation` is `"multi_rfc"` when the RFC should be split into multiple child RFCs (> 15 tasks or > 1,000 lines). `"split"` is for phase-based splitting within a single RFC.
 - `sizing.suggested_children` is only populated when `recommendation` is `"multi_rfc"`. Each entry suggests a child RFC with sections (by H2 index), dependencies on other children, and a testable output.
 - `linked_specs.prd` and `linked_specs.design` are `null` if the spec type does not link to them or if no link is present.
@@ -197,9 +223,9 @@ Respond with a single JSON object matching this schema exactly:
 
 - **Be specific.** Every issue message must cite the section name and, where relevant, quote the missing or problematic content. "The Problem section is empty" is acceptable. "Section is incomplete" is not.
 - **Do not judge prose quality.** You are not a copy editor. If a section has substance — even if the writing is rough — it passes completeness. Only flag absence, not quality.
-- **Do not analyze the codebase.** Your job is spec quality, not implementation feasibility. If you want to know if a pattern exists in the code, that is the Architect's job.
+- **Do not analyze the codebase**, except for authorisation-risk specs. Your job is spec quality, not implementation feasibility. If you want to know if a pattern exists in the code, that is the Architect's job. Authorisation-risk specs are the exception: they make factual claims about existing code, so verify those claims as described in Level 3.
 - **Do not auto-fix.** Report problems for the human to resolve. Do not suggest rewrites or fill in missing content.
 - **Err on the side of clarity.** If a finding is borderline, include it as a warning rather than omitting it. A false positive warning is cheaper than a missed structural gap.
-- **Treat linked spec absence as an error.** If an RFC or Design spec has no `> See [product spec]` link and you cannot determine the linked PRD, report it as a Level 1 error (missing cross-reference link) and skip Level 3 checks.
+- **Treat linked spec absence as an error.** If an RFC, Design, or authorisation-risk spec has no `> See [product spec]` link and you cannot determine the linked PRD, report it as a Level 1 error (missing cross-reference link) and skip Level 3 checks.
 - **Do not invent requirements.** You audit against the template and the linked specs only. Do not flag content as missing because you think it should be there — only flag it if the template requires it.
 - You have **read-only access**. You cannot modify files.

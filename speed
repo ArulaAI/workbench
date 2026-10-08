@@ -22,6 +22,7 @@
 #   recover                 Recover from crashed/stale state
 #   guardian [spec-file]     Run Product Guardian vision check
 #   audit <spec-file>       Audit a spec for structural completeness
+#   define authorisation-risk <feature>  Generate a feature's authorisation risk spec
 #   add-language <lang>     Generate ast-grep rules for a new language
 #   test-rules [lang|--all] Verify ast-grep rules against fixtures
 #   dashboard [start|stop]  Launch SPEED dashboard
@@ -124,6 +125,7 @@ speed_help() {
     echo -e "    ${COLOR_STEP}clean${RESET}   [logs|all]            Remove logs or entire .speed/ state"
     echo -e "    ${COLOR_STEP}guardian${RESET} [spec-file]           Run Product Guardian vision check"
     echo -e "    ${COLOR_STEP}audit${RESET}   <spec-file>           Audit a spec for structural completeness"
+    echo -e "    ${COLOR_STEP}define${RESET}  authorisation-risk <feature>  Generate specs/tech/<feature>-authorisation-risk.md"
     echo -e "    ${COLOR_STEP}learn${RESET}  [options]              Extract observations and discover conventions"
     echo -e "    ${COLOR_STEP}security${RESET} [--create-defects]   Run security audit on completed task diffs"
     echo -e "    ${COLOR_STEP}new${RESET} <type> <name>           Scaffold a new spec from template"
@@ -159,6 +161,15 @@ speed_help() {
     echo -e "    --max-parallel N            Max concurrent agents (default: ${DEFAULT_MAX_PARALLEL})"
     echo -e "    --model MODEL               Developer model (default: ${MODEL_SUPPORT})"
     echo -e "    --defect NAME               Run defect pipeline instead of feature tasks"
+    echo ""
+    echo -e "${BOLD}DEFINE OPTIONS${RESET} ${COLOR_DIM}(authorisation-risk)${RESET}"
+    echo -e "    --product FILE              Product spec (default: specs/product/<feature>.md)"
+    echo -e "    --design FILE               Design spec (default: specs/design/<feature>.md)"
+    echo -e "    --architecture FILE         Architecture spec, repeatable (default: specs/architecture/)"
+    echo -e "    --threat-model FILE         Threat Model spec, repeatable (default: specs/threat-model/)"
+    echo -e "    --compliance FILE           Compliance spec, repeatable (default: specs/compliance/)"
+    echo -e "    --output FILE               Output path (default: specs/tech/<feature>-authorisation-risk.md)"
+    echo -e "    --force                     Overwrite an existing authorisation-risk spec"
     echo ""
     echo -e "${BOLD}COHERENCE OPTIONS${RESET}"
     echo -e "    --resolve                   Create a fix task from coherence recommendations"
@@ -287,6 +298,7 @@ main() {
         new)       cmd_new "$@" ;;
         guardian)   cmd_guardian "$@" ;;
         audit)     cmd_audit "$@" ;;
+        define)    cmd_define "$@" ;;
         verify-spec) cmd_verify_spec "$@" ;;
         gates)     cmd_gates "$@" ;;
         clean)     cmd_clean "$@" ;;

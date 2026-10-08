@@ -37,6 +37,36 @@ Cross-references all specification files in the target directory. The Validator 
 ### `audit <spec-file>`
 Runs a structural audit of a spec file against the official template for its type. Spec type is detected from the path: `product/` → PRD, `tech/` → RFC, `design/` → design, `defects/` → defect. The audit checks required sections, sizing (warns if the feature is too large for a single plan cycle), and cross-references linked specs and the product vision. Defect specs additionally cross-reference the related feature spec. Writes a timestamped audit JSON to the feature's logs directory.
 
+A tech spec named `*-authorisation-risk.md`, or one carrying a `> Spec type: authorisation-risk` header, is audited against `templates/authorisation-risk.md` instead of the RFC template. For this type only, the auditor also reads the codebase. It checks that every `path:line` citation resolves, that enforcement marked `Existing` really performs the stated check, and that the Permission Matrix covers every story in the linked Product spec without contradicting the product overview. Sizing does not apply.
+
+### `define authorisation-risk <feature>`
+Generates `specs/tech/<feature>-authorisation-risk.md`: who can do what to which resources, where each decision is enforced, the risks, and the tests that cover them. The agent reads these inputs and searches the existing code and tests (read-only):
+
+| Input | Default location | Required |
+|---|---|---|
+| Product spec | `specs/product/<feature>.md` | Yes |
+| Design spec | `specs/design/<feature>.md` | No |
+| Architecture spec(s) | `specs/architecture/` | No |
+| Threat Model spec(s) | `specs/threat-model/` | No |
+| Compliance spec(s) | `specs/compliance/` | No |
+| Existing tech spec | `specs/tech/<feature>.md` | No |
+| Code and tests | Tracked files from `git ls-files` | No |
+
+For the Architecture, Threat Model and Compliance folders, a file named `<feature>.md` is used on its own when present. Otherwise every `.md` file in the folder is included, since these specs are usually project-wide. Missing optional inputs are reported as "not provided", and the generated spec lists the decisions it had to infer under Open Questions.
+
+The command will not overwrite an existing spec unless you pass `--force`. When it finishes it prints the follow-up audit command:
+
+```bash
+speed define authorisation-risk invoices
+speed audit specs/tech/invoices-authorisation-risk.md
+```
+
+*   **Options**:
+    *   `--product FILE`, `--design FILE`: Use a specific Product or Design spec.
+    *   `--architecture FILE`, `--threat-model FILE`, `--compliance FILE`: Use specific files instead of folder discovery. Each flag can be repeated.
+    *   `--output FILE`: Write somewhere other than the default path.
+    *   `--force`: Regenerate an existing spec.
+
 ### `plan <spec-file>`
 Decomposes a technical specification into a directed acyclic graph (DAG) of tasks.
 *   **Layer 1 Context**: Automatically builds a codebase index before running.
