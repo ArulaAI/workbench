@@ -13,7 +13,7 @@ from pathlib import Path
 from ..language_registry import registry
 
 sqlglot = registry.load_trusted_parser("sqlglot")
-from sqlglot import Dialect, parse_one
+from sqlglot import Dialect, exp, parse_one
 from sqlglot.errors import ErrorLevel, ParseError, TokenError
 from sqlglot.tokens import TokenType
 
@@ -481,6 +481,11 @@ def extract(source: Source) -> list[Unit]:
             if skip_qualifier and word in ("IF", "LOOP", "CASE"):
                 skip_qualifier = False
                 continue
+            if word == "IF" and not _STATEMENT_START.search(
+                    code[begin_at:begin_at + token.start()]):
+                # ``IF(...)`` inside an expression is a function call, not a block.
+                skip_qualifier = False
+                continue
             if word in ("BEGIN", "IF", "LOOP", "CASE"):
                 depth += 1
             elif word == "END":
@@ -626,10 +631,12 @@ def extract(source: Source) -> list[Unit]:
 # Procedural statement keywords the tokenizer reads as plain names. Followed
 # by a parenthesis they open an expression (``RETURN (SELECT ...)``,
 # ``IF (...) THEN``), never a call. A quoted or qualified name is a call.
+_STATEMENT_KEYWORDS = frozenset({
+    "return", "if", "elsif", "elseif", "while", "perform", "raise",
+})
 _PROCEDURAL_KEYWORDS = frozenset({
-    "return", "if", "elsif", "elseif", "while", "when", "case", "then", "else",
-    "and", "or", "not", "in", "exists", "perform", "raise", "into", "using",
-    "returning", "values",
+    "when", "case", "then", "else", "and", "or", "not", "in", "exists",
+    "into", "using", "returning", "values",
 })
 # Keywords that open an expression only after ``RETURN`` (``RETURN QUERY (...)``).
 _RETURN_KEYWORDS = frozenset({"query", "next"})
@@ -640,6 +647,10 @@ def _procedural_keyword(tokens, index: int) -> bool:
     if token.token_type != TokenType.VAR or (index and tokens[index - 1].token_type == TokenType.DOT):
         return False
     word = token.text.casefold()
+    if word in _STATEMENT_KEYWORDS:
+        # ``RETURN (...)`` and ``IF (...)`` open statements; mid-expression the
+        # same word followed by a parenthesis is a call (``SUM(IF(...))``).
+        return _statement_start(tokens, index)
     return word in _PROCEDURAL_KEYWORDS or (
         word in _RETURN_KEYWORDS and index > 0
         and tokens[index - 1].text.casefold() == "return")
@@ -837,6 +848,89 @@ def _table_after(tokens, index: int):
     return ".".join(parts), cursor - 1
 
 
+_TABLE_CONSTRAINTS = frozenset({"constraint", "primary", "foreign", "unique", "check",
+                                "exclude", "like", "period"})
+
+
+def _declared_columns(text: str) -> list[str]:
+    """Column names a ``CREATE TABLE`` declares, in order; table constraints skipped."""
+    masked = mask_sql(text)
+    opening = masked.find("(")
+    if opening < 0:
+        return []
+    depth, start, columns = 0, opening + 1, []
+    for index in range(opening, len(masked)):
+        character = masked[index]
+        if character == "(":
+            depth += 1
+        elif character == ")":
+            depth -= 1
+        if (character == "," and depth == 1) or depth == 0:
+            segment = text[start:index].strip()
+            name = re.match(r'\s*("[^"]+"|[\w$#]+)', segment)
+            if name and name.group(1).casefold() not in _TABLE_CONSTRAINTS:
+                columns.append(name.group(1).strip('"'))
+            start = index + 1
+            if depth == 0:
+                break
+    return columns
+
+
+def _rowtype_record(unit: Unit, record: str, table: str, element: bool = False) -> bool:
+    """Whether *record* is declared in *unit* as ``table%ROWTYPE``.
+
+    With *element*, *record* is a collection whose element type is
+    ``table%ROWTYPE`` (``TYPE t IS TABLE OF table%ROWTYPE``).
+    """
+    code = mask_sql(unit.text)
+    rowtype = re.escape(table) + r"\s*%\s*ROWTYPE\b"
+    if not element:
+        return bool(re.search(r"(?im)^\s*" + re.escape(record) + r"\s+" + rowtype, code))
+    declared = re.search(r"(?im)^\s*" + re.escape(record) + r"\s+([\w$#]+)\s*;", code)
+    return bool(declared and re.search(
+        r"(?is)\bTYPE\s+" + re.escape(declared.group(1)) + r"\s+IS\s+(?:TABLE|VARRAY\s*\([^)]*\))\s+OF\s+"
+        + rowtype, code))
+
+
+def _merge_values(unit: Unit, tokens, start_index: int, end_index: int,
+                  target: str) -> tuple[list[str], list[dict]]:
+    """Columns and values MERGE's WHEN branches write: UPDATE SET and INSERT."""
+    columns, values = [], []
+    branches = [index for index in range(start_index, end_index + 1)
+                if tokens[index].text.casefold() == "when"
+                and _top_level_token(tokens, index, index, texts=("when",)) is not None]
+    branches = [index for index in branches
+                if _top_level_token(tokens, start_index, index, texts=("when",)) is not None]
+    bounds = list(zip(branches, branches[1:] + [end_index + 1]))
+    pairs = _paren_pairs(tokens)
+    for begin, finish in bounds:
+        last = finish - 1
+        update = _top_level_token(tokens, begin, last, kinds=(TokenType.UPDATE,))
+        insert = _top_level_token(tokens, begin, last, kinds=(TokenType.INSERT,))
+        if update is not None:
+            # ``_update_values`` stops before its end token: give it the next
+            # WHEN (or the statement end) so the last SET item is kept.
+            branch_columns, branch_values = _update_values(
+                unit, tokens, update, min(finish, end_index), target)
+            columns += branch_columns; values += branch_values
+        elif insert is not None:
+            opening = insert + 1
+            if opening <= last and tokens[opening].token_type == TokenType.L_PAREN \
+                    and opening in pairs and pairs[opening] <= last:
+                names = [part[-1].text for part in _split_tokens(tokens, opening + 1, pairs[opening])
+                         if part and _is_identifier(part[-1])]
+                values_index = _top_level_token(tokens, pairs[opening] + 1, last,
+                                                kinds=(TokenType.VALUES,))
+                if (values_index is not None and values_index + 1 <= last
+                        and tokens[values_index + 1].token_type == TokenType.L_PAREN
+                        and values_index + 1 in pairs):
+                    parts = _split_tokens(tokens, values_index + 2, pairs[values_index + 1])
+                    if len(parts) == len(names):
+                        columns += names
+                        values += [_token_expression(unit, part) for part in parts]
+    return columns, values
+
+
 def _token_expression(unit: Unit, part: list) -> dict | None:
     if not part:
         return None
@@ -1022,6 +1116,9 @@ def _control_condition(unit: Unit, tokens, position: int) -> tuple[
         elif token.token_type == TokenType.BEGIN:
             frames.append({"kind": "block", "condition": None,
                            "condition_span": None, "exception": False})
+        elif word == "if" and not _statement_start(tokens, index):
+            # ``IF(...)`` inside an expression is a function call.
+            continue
         elif word in {"if", "elsif"}:
             then = next_text(index, "then")
             if then is None and deciding(index):
@@ -1149,6 +1246,11 @@ def _parse_dml(unit: Unit, tokens, start_index: int, end_index: int) -> dict:
             last = tokens[clause[1]].end + 1 - start
             parse_text = (statement[:first] + " " * (last - first)
                           + statement[last:])
+    # ``WHERE CURRENT OF cursor`` names the row a cursor last fetched; the
+    # parser has no grammar for it. Parse with a neutral predicate of the
+    # same length; the statement predicate keeps the real text.
+    parse_text = re.sub(r"(?i)\bWHERE\s+CURRENT\s+OF\s+[\w$#]+",
+                        lambda match: "WHERE 1 = 1".ljust(len(match.group())), parse_text)
     try:
         parsed = parse_one(parse_text.rstrip().rstrip(";"), read=_parser_dialect(unit.source),
             error_level=ErrorLevel.RAISE)
@@ -1190,6 +1292,30 @@ def _parse_dml(unit: Unit, tokens, start_index: int, end_index: int) -> dict:
                     if close is not None:
                         for part in _split_tokens(tokens, values_index + 2, close):
                             column_values.append(_token_expression(unit, part))
+            record_index = table_index + 2
+            if (not column_values and table_index + 1 <= end_index
+                    and tokens[table_index + 1].token_type == TokenType.VALUES
+                    and record_index <= end_index and _is_identifier(tokens[record_index])):
+                # ``INSERT INTO t VALUES rec`` with ``rec t%ROWTYPE`` (or an
+                # element ``recs(i)`` of a collection of them) writes every
+                # declared column of t from the matching record field.
+                record = tokens[record_index]
+                after = record_index + 1
+                element = (after <= end_index and tokens[after].token_type == TokenType.L_PAREN
+                           and after in pairs)
+                closing = pairs[after] + 1 if element else after
+                declared = getattr(unit, "sql_table_columns", {}).get(
+                    write_target.casefold().rsplit(".", 1)[-1]) if write_target else None
+                if (declared and (closing > end_index
+                                  or tokens[closing].token_type == TokenType.SEMICOLON)
+                        and _rowtype_record(unit, record.text, write_target, element)):
+                    reference = unit.text[record.start:(tokens[pairs[after]].end + 1
+                                                        if element else record.end + 1)]
+                    columns = list(declared)
+                    column_values = [{"expression": f"{reference}.{column}",
+                                      "position": record.start,
+                                      "end": tokens[closing - 1].end + 1}
+                                     for column in declared]
             if not column_values:
                 select_index = _top_level_token(tokens, table_index + 1,
                     end_index, kinds=(TokenType.SELECT,))
@@ -1212,6 +1338,9 @@ def _parse_dml(unit: Unit, tokens, start_index: int, end_index: int) -> dict:
             write_target, _ = _table_after(tokens, cursor)
             if write_target:
                 tables.append(write_target)
+            if write_target:
+                columns, column_values = _merge_values(
+                    unit, tokens, operation_index, end_index, write_target)
         using = _top_level_token(tokens, operation_index + 1, end_index,
                                  kinds=(TokenType.USING,))
         if using is not None:
@@ -1277,12 +1406,166 @@ def _is_table_column_list(tokens, name_index: int) -> bool:
         and tokens[name_index - 2].token_type == TokenType.INSERT)
 
 
+# Text before a token that starts a statement: the end of the previous
+# statement, or a keyword that opens a statement list.
+_STATEMENT_START = re.compile(r"(?is)(?:;|\b(?:BEGIN|THEN|ELSE|LOOP|DECLARE)\b|^)\s*$")
+
+
+def _statement_start(tokens, index: int) -> bool:
+    """Whether ``tokens[index]`` begins a procedural statement."""
+    prior = index - 1
+    return prior < 0 or tokens[prior].token_type in {
+        TokenType.BEGIN, TokenType.SEMICOLON, TokenType.THEN, TokenType.ELSE,
+    } or tokens[prior].text.casefold() in {"loop", "declare"}
+
+
 def _statement_level(tokens, receiver_start: int) -> bool:
     prior = receiver_start - 1
     return prior < 0 or tokens[prior].token_type in {
         TokenType.BEGIN, TokenType.SEMICOLON, TokenType.THEN,
         TokenType.ELSE,
     }
+
+
+# Keywords between an assignment and its EXECUTE IMMEDIATE that make the
+# path between them conditional: the assignment might not be the one run.
+_BRANCHING = frozenset({"if", "elsif", "else", "case", "when", "loop", "end",
+                        "exception", "goto", "return", "exit", "continue"})
+_RUNTIME = "speed_runtime_"
+_DYNAMIC_KINDS = {exp.Insert: TokenType.INSERT, exp.Update: TokenType.UPDATE,
+                  exp.Delete: TokenType.DELETE, exp.Merge: TokenType.MERGE,
+                  exp.Select: TokenType.SELECT}
+
+
+def _dynamic_text(unit: Unit, tokens, execute_index: int, end_index: int):
+    """The statement text an ``EXECUTE IMMEDIATE`` runs, or None.
+
+    String literals are kept; every other concatenated piece becomes a named
+    runtime placeholder. A variable is followed to its one assignment in the
+    straight-line code before the EXECUTE; a branch, another assignment or an
+    ``INTO`` of that variable in between leaves the text unknown.
+    Returns ``(text, {placeholder: source expression}, evidence spans)``.
+    """
+    # The tokenizer reads ``EXECUTE`` as a command and hands back the rest
+    # of the statement as one string: tokenize that body on its own.
+    if execute_index + 1 > end_index:
+        return None
+    body_start = tokens[execute_index].end + 1
+    body_text = unit.text[body_start:tokens[execute_index + 1].end + 1]
+    try:
+        body = _tokenize(body_text, unit.source)
+    except (TokenError, ValueError):
+        return None
+    if not body or body[0].text.casefold() != "immediate":
+        return None
+    stop = next((index for index in range(1, len(body))
+                 if body[index].token_type in {TokenType.INTO, TokenType.USING,
+                                               TokenType.RETURNING, TokenType.SEMICOLON}
+                 or body[index].text.casefold() == "bulk"), len(body))
+    pieces = body[1:stop]
+    text_of = lambda first, last: body_text[first.start:last.end + 1]
+    spans = []
+    if len(pieces) == 1 and _is_identifier(pieces[0]):
+        name = pieces[0].text.casefold()
+        assignment = None
+        for index in range(execute_index - 1, -1, -1):
+            token = tokens[index]
+            if (token.token_type == TokenType.COLON_EQ and index
+                    and tokens[index - 1].text.casefold() == name):
+                assignment = index
+                break
+        if assignment is None:
+            return None
+        finish = _statement_end(tokens, assignment)
+        between = tokens[finish + 1:execute_index]
+        if any(token.text.casefold() in _BRANCHING for token in between) or any(
+                token.text.casefold() == name for token in between):
+            return None
+        pieces = [token for token in tokens[assignment + 1:finish + 1]
+                  if token.token_type != TokenType.SEMICOLON]
+        text_of = lambda first, last: unit.text[first.start:last.end + 1]
+        spans.append((tokens[assignment - 1].start, tokens[finish].end + 1))
+    parts, runtime, current = [], {}, []
+    for token in pieces + [None]:
+        if token is None or token.token_type == TokenType.DPIPE:
+            if not current:
+                return None
+            if len(current) == 1 and current[0].token_type == TokenType.STRING:
+                parts.append(current[0].text)
+            else:
+                placeholder = f"{_RUNTIME}{len(runtime) + 1}"
+                runtime[placeholder] = text_of(current[0], current[-1]).strip()
+                parts.append(placeholder)
+            current = []
+        else:
+            current.append(token)
+    if not runtime and not any(parts):
+        return None
+    return "".join(parts), runtime, spans
+
+
+def _dynamic_statement(unit: Unit, tokens, execute_index: int, end_index: int):
+    """A DML statement for a resolvable ``EXECUTE IMMEDIATE``, or None."""
+    evaluated = _dynamic_text(unit, tokens, execute_index, end_index)
+    if evaluated is None:
+        return None
+    text, runtime, spans = evaluated
+    # Numbered binds (``:1``) have no grammar in the parser; name them,
+    # never touching quoted literal text.
+    masked = mask_sql(text)
+    parse_text = "".join(
+        f":b{text[match.start() + 1:match.end()]}" if masked[match.start()] == ":" else match.group()
+        for match in re.finditer(r":\d+|[^:]+|:", text))
+    try:
+        parsed = parse_one(parse_text.rstrip().rstrip(";"), read=_parser_dialect(unit.source),
+                           error_level=ErrorLevel.RAISE)
+    except (ParseError, TokenError, ValueError):
+        return None
+    kind = next((value for node, value in _DYNAMIC_KINDS.items()
+                 if isinstance(parsed, node)), None)
+    if kind is None:
+        return None
+
+    def name_of(table):
+        name = ".".join(part for part in (table.db, table.name) if part)
+        if _RUNTIME not in name:
+            return name
+        source = ", ".join(expression for placeholder, expression in runtime.items()
+                           if placeholder in name)
+        return f"(runtime: {source})"
+
+    write_target = None
+    if kind != TokenType.SELECT:
+        target = parsed.this
+        target = target.this if isinstance(target, exp.Schema) else target
+        write_target = name_of(target) if isinstance(target, exp.Table) else None
+    tables = []
+    for table in parsed.find_all(exp.Table):
+        name = name_of(table)
+        if name and name.casefold() not in {item.casefold() for item in tables}:
+            tables.append(name)
+    start, end = tokens[execute_index].start, tokens[end_index].end + 1
+    columns, values = [], []
+    if isinstance(parsed, exp.Update):
+        for assignment in parsed.expressions:
+            if isinstance(assignment, exp.EQ) and isinstance(assignment.this, exp.Column):
+                columns.append(assignment.this.name)
+                values.append({"expression": assignment.expression.sql(), "position": start, "end": end})
+    elif isinstance(parsed, exp.Insert) and isinstance(parsed.this, exp.Schema):
+        names = [column.name for column in parsed.this.expressions]
+        source = parsed.expression
+        selected = (source.expressions if isinstance(source, exp.Select) else
+                    source.expressions[0].expressions if isinstance(source, exp.Values)
+                    and source.expressions else [])
+        if len(selected) == len(names):
+            columns = names
+            values = [{"expression": item.sql(), "position": start, "end": end}
+                      for item in selected]
+    return {"start": start, "end": end, "kind": kind, "ast": parsed, "diagnostic": None,
+            "tables": tables, "write_target": write_target, "columns": columns,
+            "column_values": values, "output_values": [], "predicate": None,
+            "cte_aliases": [], "dynamic": {"text": text, "runtime": runtime,
+                                           "spans": spans}}
 
 
 def _analyze_unit(unit: Unit, routines: list[Unit], declared_tables: set[str]) -> None:
@@ -1358,6 +1641,15 @@ def _analyze_unit(unit: Unit, routines: list[Unit], declared_tables: set[str]) -
                 unit.sql_material_diagnostics.append(statement["diagnostic"])
             cursor = end_index
         cursor += 1
+    dynamic_executes = set()
+    for index in range(material_index, len(tokens) - 1):
+        if (tokens[index].token_type == TokenType.EXECUTE
+                and tokens[index + 1].text.casefold().startswith("immediate")):
+            dynamic = _dynamic_statement(unit, tokens, index, _statement_end(tokens, index))
+            if dynamic is not None:
+                unit.sql_dml.append(dynamic)
+                dynamic_executes.add(tokens[index].start)
+    unit.sql_dml.sort(key=lambda statement: statement["start"])
     for statement in unit.sql_dml:
         control, complete, spans = _control_condition(
             unit, tokens, statement["start"])
@@ -1443,6 +1735,9 @@ def _analyze_unit(unit: Unit, routines: list[Unit], declared_tables: set[str]) -
         end_index = _statement_end(tokens, index)
         start, end = token.start, tokens[end_index].end + 1
         statement = unit.text[start:end].strip()
+        if token.start in dynamic_executes:
+            # Its statement text was evaluated: the EXECUTE is that statement.
+            continue
         if statement.casefold().startswith("execute immediate"):
             unit.sql_calls.append({"receiver": None, "name": "dynamic_sql",
                 "position": start, "start": start, "end": end,
@@ -1523,6 +1818,21 @@ def _select_trigger_functions(routines: list[Unit]) -> None:
                 "start": span[0], "end": span[1], "resolution": "ambiguous",
                 "outcome": "ambiguous", "diagnostic_code": code,
                 "reason": reason})
+        elif (platform := _platform_routine(registration, schema or None, name)):
+            # A routine the platform provides: the trigger runs documented
+            # platform behavior, an external implementation, never a gap.
+            registration.source.semantic_relations.append({
+                "source": registration, "target": None, "candidate_targets": [],
+                "kind": "selects_implementation", "start": span[0], "end": span[1],
+                "resolution": "unresolved", "outcome": "external",
+                "diagnostic_code": "SQL_PLATFORM_CALL",
+                "external_target_id": identifier("resource", "sql-platform-routine",
+                                                 platform["name"].casefold(),
+                                                 reference.casefold()),
+                "reason": (f"The trigger executes {reference}(), which the "
+                           f"{platform['name']} platform provides; its behavior is "
+                           "documented, not declared in the repository.")})
+            continue
         else:
             reason = (f"Trigger function {reference}() is not declared in the "
                       "analyzed SQL.")
@@ -1553,6 +1863,11 @@ def prepare(sources, units, diagnostics=None):
         and getattr(unit, "sql_declaration_kind", None) == "table"]
     declared_tables = {unit.name.casefold() for unit in tables}
     declared_tables.update(unit.name.rsplit(".", 1)[-1].casefold() for unit in tables)
+    table_columns = {}
+    for table in tables:
+        columns = _declared_columns(table.text)
+        table_columns.setdefault(table.name.casefold(), columns)
+        table_columns.setdefault(table.name.rsplit(".", 1)[-1].casefold(), columns)
     for source in sources:
         source.semantic_relations = []
         source.sql_diagnostics = []
@@ -1563,6 +1878,7 @@ def prepare(sources, units, diagnostics=None):
         source.sql_collection_types = _collection_types(
             source_tokens, len(source_tokens))
     for unit in routines:
+        unit.sql_table_columns = table_columns
         _analyze_unit(unit, routines, declared_tables)
         for item in unit.sql_material_diagnostics:
             unit.source.sql_diagnostics.append({"code": item["code"],
@@ -1687,10 +2003,13 @@ def _resource(unit: Unit, name: str) -> dict:
     resolved = (name.casefold() in known
         or name.rsplit(".", 1)[-1].casefold() in known)
     platform = None if resolved else _platform_table(unit, name)
+    runtime = name.startswith("(runtime: ")
     return {"kind": "table", "name": name, "language": unit.source.language,
         "resolution": "resolved" if resolved else "unresolved",
         "reason": None if resolved else
-            (f"Table {name} is provided by the {platform['name']} platform this repository "
+            (f"The table is chosen at runtime from {name[10:-1]}; the rest of the "
+             "dynamic statement is static text." if runtime else
+             f"Table {name} is provided by the {platform['name']} platform this repository "
              "targets; no repository declaration describes it." if platform else
              "Table identity is syntactically present; repository declaration was not found.")}
 
@@ -1809,15 +2128,21 @@ def _platform_table(unit, name):
 
 
 def _platform_routine(unit, receiver, name):
-    """The catalogued platform that provides ``receiver.name`` here, or None."""
-    if not receiver:
-        return None
-    routine = f"{receiver}.{name}".casefold()
+    """The catalogued platform that provides ``receiver.name`` here, or None.
+
+    An unqualified name matches only in a schema the platform always puts on
+    the search path (``implicit_schemas``).
+    """
     dialect = _dialect(unit.source)
-    return next((platform for platform in _platform_catalog()
-                 if dialect in platform["dialects"]
-                 and routine in {item.casefold() for item in platform["routines"]}
-                 and re.search(platform["path_pattern"], unit.source.path)), None)
+    for platform in _platform_catalog():
+        if dialect not in platform["dialects"] or not re.search(
+                platform["path_pattern"], unit.source.path):
+            continue
+        routines = {item.casefold() for item in platform["routines"]}
+        schemas = ([receiver] if receiver else platform.get("implicit_schemas", []))
+        if any(f"{schema}.{name}".casefold() in routines for schema in schemas):
+            return platform
+    return None
 
 
 def resolve_call(unit, receiver, name, candidates, position, evidence_id=None):
@@ -1985,7 +2310,8 @@ def operations(unit):
         if resource["resolution"] != "resolved":
             # A platform-provided table is a known boundary, not a missing one.
             gaps.append({"projection": "target",
-                "code": ("SQL_PLATFORM_TABLE" if _platform_table(unit, resource["name"])
+                "code": ("SQL_DYNAMIC_TABLE" if resource["name"].startswith("(runtime: ")
+                         else "SQL_PLATFORM_TABLE" if _platform_table(unit, resource["name"])
                          else "SQL_DATA_TARGET_UNRESOLVED"),
                 "reason": resource["reason"]})
         if statement["diagnostic"]:
@@ -2055,12 +2381,17 @@ def operations(unit):
             and token.text.casefold() in parameter_names})
         inline_inputs = []
         if statement["write_target"]:
+            used = set()
             for index, column in enumerate(statement["columns"]):
-                if index >= len(statement["column_values"]):
+                if index >= len(statement["column_values"]) or not statement["column_values"][index]:
                     continue
                 value = statement["column_values"][index]
-                inline_inputs.append(binding(value,
-                    f"{statement['write_target']}.{column}@{statement['start']}"))
+                name = f"{statement['write_target']}.{column}@{statement['start']}"
+                if name in used:
+                    # The same column written by another MERGE branch.
+                    name = f"{statement['write_target']}.{column}@{value['position']}"
+                used.add(name)
+                inline_inputs.append(binding(value, name))
         inline_outputs = [binding(value, value["name"])
                           for value in statement["output_values"]]
         if statement["kind"] == TokenType.SELECT:

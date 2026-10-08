@@ -6,7 +6,8 @@
     "targets that platform (path_pattern). The call is then an external",
     "platform boundary named by 'provider', which the trace-boundary catalog",
     "(trace_boundaries.json) classifies; anything else stays a gap.",
-    "'tables' lists the tables the platform provides; a read or write of one the repository does not declare is a platform boundary too, never a declared table."
+    "'tables' lists the tables the platform provides; a read or write of one the repository does not declare is a platform boundary too, never a declared table.",
+    "'implicit_schemas' are always on the search path, so an unqualified call names a routine there."
   ],
   "platforms": [
     {
@@ -44,6 +45,23 @@
       "tables": [
         "dual"
       ]
+    },
+    {
+      "name": "PostgreSQL",
+      "dialects": [
+        "postgres"
+      ],
+      "path_pattern": "",
+      "provider": "module:postgresql/pg_catalog",
+      "implicit_schemas": [
+        "pg_catalog"
+      ],
+      "routines": [
+        "pg_catalog.tsvector_update_trigger",
+        "pg_catalog.tsvector_update_trigger_column",
+        "pg_catalog.suppress_redundant_updates_trigger"
+      ],
+      "tables": []
     }
   ]
 }

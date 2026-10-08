@@ -178,12 +178,24 @@ def generated_declarations(facts):
     return sorted(generated.values(), key=lambda item: item['kind'])
 
 
+def _language_names():
+    """Display names of language ids, from the entry-point marker catalog."""
+    from .business_domain_entrypoints import load_catalog
+    return dict(load_catalog().display_names)
+
+
 def warning_counts(warnings):
-    """``[{code, count}]``, most frequent first, then by code."""
+    """``[{code, count, boundary}]``, most frequent first, then by code.
+
+    ``boundary`` marks codes the trace-boundary catalog classifies as known
+    boundaries: expected records of a stated assumption, not problems.
+    """
+    from .business_domain_extract import TRACE_BOUNDARIES
+    known = set(TRACE_BOUNDARIES['diagnostic_codes']) | set(TRACE_BOUNDARIES['library_codes'])
     counts = {}
     for warning in warnings:
         counts[warning['code']] = counts.get(warning['code'], 0) + 1
-    return [{'code': code, 'count': count}
+    return [{'code': code, 'count': count, 'boundary': code in known}
             for code, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))]
 
 
@@ -204,6 +216,7 @@ def facts_only(root):
             'measurements': extraction_measurements(facts),
             'trace_blockers': trace_blockers(facts),
             'warning_counts': warning_counts(facts['warnings']),
+            'language_names': _language_names(),
             'entry_points': entry_point_counts(facts),
             'screen_actions': screen_actions(facts),
             'generated_declarations': generated_declarations(facts),

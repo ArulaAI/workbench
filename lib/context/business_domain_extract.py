@@ -1948,6 +1948,7 @@ class Extractor:
             selection_targets: list[str] = []
             selection_reason = ''
             selection_edges: list[dict] = []
+            selection_edge_id = None
             selected_target = None
             if role == 'implementation' and start.valid_terminal and start.executable_body:
                 selection_status = 'satisfied'
@@ -1976,7 +1977,18 @@ class Extractor:
                          and units_by_symbol[target].trace_role == 'implementation'
                          and units_by_symbol[target].executable_body]
                 uncertain = any(edge['resolution'] != 'resolved' for edge in selection_edges)
-                if len(exact) == 1 and len(selection_targets) == 1 and not uncertain:
+                # Every selection names an implementation outside the analyzed
+                # source: the entry point ends at that external boundary.
+                external = [edge for edge in selection_edges
+                            if edge['kind'] == 'selects_implementation' and edge['to_ref']
+                            and edge['to_ref']['kind'] != 'symbol']
+                if external and len(external) == len(selection_edges) == 1:
+                    selection_status = 'external'
+                    selection_edge_id = external[0]['id']
+                    selection_targets = [external[0]['to_ref']['id']]
+                    selection_reason = (external[0]['reason']
+                        or 'The selected implementation is outside the analyzed source.')
+                elif len(exact) == 1 and len(selection_targets) == 1 and not uncertain:
                     selection_status = 'satisfied'
                     selected_target = exact[0]
                     selection_reason = 'One evidenced implementation relationship selects a concrete executable terminal.'
@@ -2175,9 +2187,13 @@ class Extractor:
                 'unresolved': 'IMPLEMENTATION_NOT_REACHED',
             }[selection_status]
             require('implementation_selection', anchor['symbol_id'], selection_status,
-                    reason_code, selection_reason, targets=selection_targets)
+                    reason_code, selection_reason, edge=selection_edge_id,
+                    targets=selection_targets)
             if selection_status != 'satisfied':
-                frontier.update(selection_targets or [anchor['symbol_id']])
+                # An external selection stops at its edge; its target is a
+                # resource, not a traversable symbol.
+                frontier.update([selection_edge_id] if selection_edge_id
+                                else selection_targets or [anchor['symbol_id']])
                 reasons.add('implementation_ambiguous' if selection_status == 'ambiguous'
                             else 'external_boundary' if selection_status == 'external'
                             else 'implementation_not_reached')
@@ -2611,6 +2627,36 @@ def extraction_measurements(facts: dict) -> dict:
             return 'unknown'
         return languages_by_path.get(symbol['file'], 'unknown')
 
+    # Relationships that are not resolved: where they come from, how many
+    # stop at a catalogued boundary, and how many no trace reaches at all.
+    edge_codes = {}
+    for warning in facts.get('warnings', []):
+        for subject in warning.get('subject_ids') or ():
+            edge_codes.setdefault(subject, set()).add(warning['code'])
+    traced_edges = {edge_id for trace in traces for edge_id in trace.get('edge_ids', [])}
+    open_edges = [edge for edge in facts.get('edges', {}).values()
+                  if edge['resolution'] != 'resolved']
+    open_by_language = {}
+    for edge in open_edges:
+        symbol = facts['symbols'].get(edge['from_ref']['id']) if edge['from_ref']['kind'] == 'symbol' else None
+        language = languages_by_path.get(symbol['file'], 'unknown') if symbol else 'unknown'
+        open_by_language[language] = open_by_language.get(language, 0) + 1
+    boundary_codes = set(TRACE_BOUNDARIES['diagnostic_codes'])
+
+    def at_boundary(edge):
+        if edge_codes.get(edge['id']):
+            return edge_codes[edge['id']] <= boundary_codes
+        # A call into a catalogued library or platform carries no warning;
+        # its target resource names the provider.
+        target = edge.get('to_ref') or {}
+        resource = (facts['resources'].get(target.get('id'))
+                    if target.get('kind') == 'resource' else None)
+        return bool(resource) and _known_provider(resource.get('language'),
+                                                  resource.get('provider'))
+
+    at_boundaries = sum(at_boundary(edge) for edge in open_edges)
+    untraced = sum(edge['id'] not in traced_edges for edge in open_edges)
+
     unresolved_calls = [
         obligation for obligation in obligations
         if obligation['kind'] == 'call_target'
@@ -2647,6 +2693,13 @@ def extraction_measurements(facts: dict) -> dict:
             'unresolved': sum(trace['resolution'] == 'unresolved' for trace in traces),
             **{level: sum(trace.get('completion') == level for trace in traces)
                for level in ('complete', 'bounded', 'incomplete')},
+        },
+        'relationships': {
+            'open': len(open_edges),
+            'open_by_language': dict(sorted(open_by_language.items(),
+                                            key=lambda item: (-item[1], item[0]))),
+            'open_at_boundaries': at_boundaries,
+            'open_outside_traces': untraced,
         },
         'call_targets': {
             'unresolved': len(unresolved_calls),

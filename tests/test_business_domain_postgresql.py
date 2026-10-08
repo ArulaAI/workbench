@@ -503,3 +503,248 @@ def test_oracle_dual_is_a_platform_table(tmp_path):
         "  SELECT SYSDATE INTO v_now FROM dual;\nEND tick;\n/\n")})
     assert "SQL_PLATFORM_TABLE" in _codes(facts)
     assert "SQL_DATA_TARGET_UNRESOLVED" not in _codes(facts)
+
+
+# ── IF as a statement vs IF() in an expression; platform trigger functions ─
+
+LATE_FEES = """CREATE FUNCTION public.get_customer_balance(p_customer_id integer) RETURNS numeric
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v_overfees INTEGER;
+    v_payments DECIMAL(5,2);
+BEGIN
+    SELECT COALESCE(SUM(IF(rental.return_date > rental.rental_date, 1, 0)), 0) INTO v_overfees
+    FROM rental WHERE rental.customer_id = p_customer_id;
+    SELECT COALESCE(SUM(payment.amount), 0) INTO v_payments
+    FROM payment WHERE payment.customer_id = p_customer_id;
+    IF v_payments > 0 THEN
+        DELETE FROM payment WHERE customer_id = p_customer_id;
+    END IF;
+    RETURN v_overfees - v_payments;
+END
+$$;
+"""
+
+
+def test_if_inside_an_expression_is_not_a_control_statement(tmp_path):
+    facts, units = _extract(tmp_path, {"schema.sql": LATE_FEES})
+    codes = _codes(facts)
+    assert "SQL_MATERIAL_PARSE_ERROR" not in codes
+    assert "SQL_CONTROL_FLOW_UNRESOLVED" not in codes
+    unit = next(unit for unit in units if unit.name == "get_customer_balance")
+    conditions = [(statement["kind"].name, statement["control_condition"])
+                  for statement in unit.sql_dml]
+    # Only the statement inside the real IF ... THEN is guarded.
+    assert conditions == [("SELECT", None), ("SELECT", None),
+                          ("DELETE", "(v_payments > 0)")]
+
+
+def test_if_at_statement_start_is_still_a_block_and_not_a_call(tmp_path):
+    facts, _ = _extract(tmp_path, {"schema.sql": LATE_FEES})
+    excerpts = [facts["evidence"][edge["evidence_ids"][0]]["excerpt"]
+                for edge in facts["edges"].values() if edge["kind"] == "calls"]
+    assert not [text for text in excerpts if text.casefold().startswith("if")]
+
+
+FULLTEXT = """CREATE TABLE film (film_id integer, fulltext tsvector, title text);
+CREATE FUNCTION last_updated() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    NEW.last_update = CURRENT_TIMESTAMP;
+    RETURN NEW;
+END $$;
+CREATE TRIGGER film_fulltext_trigger BEFORE INSERT OR UPDATE ON film
+    FOR EACH ROW EXECUTE FUNCTION tsvector_update_trigger('fulltext', 'pg_catalog.english', 'title');
+"""
+
+
+def test_a_trigger_running_a_platform_function_is_a_bounded_entry_point(tmp_path):
+    facts, _ = _extract(tmp_path, {"schema.sql": FULLTEXT})
+    assert "SQL_IMPLEMENTATION_UNAVAILABLE" not in _codes(facts)
+    anchor = _trigger_anchors(facts)["film_fulltext_trigger"]
+    assert anchor["resolution"] == "resolved"
+    trace = next(trace for trace in facts["traces"].values() if trace["anchor_id"] == anchor["id"])
+    assert (trace["resolution"], trace["completion"]) == ("unresolved", "bounded")
+    [assumption] = trace["assumptions"]
+    assert assumption["kind"] == "library_call"
+    assert "tsvector_update_trigger" in assumption["statement"]
+
+
+def test_an_unknown_qualified_trigger_function_is_still_unavailable(tmp_path):
+    facts, _ = _extract(tmp_path, {"schema.sql": FULLTEXT.replace(
+        "tsvector_update_trigger('fulltext'", "vendor.tsvector_update_trigger('fulltext'")})
+    assert "SQL_IMPLEMENTATION_UNAVAILABLE" in _codes(facts)
+
+
+@pytest.mark.parametrize("text", [
+    "CREATE EXTENSION IF NOT EXISTS btree_gist;\nCREATE TABLE t (id integer);\n",
+    "SELECT pg_catalog.set_config('search_path', '', false);\nCREATE TABLE t (id integer);\n",
+    "CREATE TABLE t (id integer, doc jsonb);\n",
+    "\\set ON_ERROR_STOP on\nCREATE TABLE t (id integer);\n",
+])
+def test_postgresql_only_markers_establish_the_dialect(tmp_path, text):
+    facts, _ = _extract(tmp_path, {"setup.sql": text})
+    assert "SQL_DIALECT_UNDETERMINED" not in _codes(facts)
+
+
+# ── Oracle writes: MERGE branches, record inserts, WHERE CURRENT OF ──────
+
+ORACLE_WRITES = """CREATE TABLE counters (card_id NUMBER, txn_count NUMBER, total NUMBER,
+  CONSTRAINT pk_counters PRIMARY KEY (card_id));
+CREATE TABLE lines (line_id NUMBER, amount NUMBER, line_type VARCHAR2(10));
+CREATE TABLE holds (hold_id NUMBER, amount NUMBER, reason VARCHAR2(30));
+CREATE OR REPLACE PACKAGE BODY pkg_writes IS
+  PROCEDURE roll_up(p_card_id IN NUMBER) IS
+  BEGIN
+    MERGE INTO counters c
+    USING (SELECT p_card_id AS card_id, 1 AS txn_count, 0 AS total FROM dual) s
+       ON (c.card_id = s.card_id)
+     WHEN MATCHED THEN
+       UPDATE SET c.txn_count = c.txn_count + s.txn_count,
+                  c.total     = s.total
+     WHEN NOT MATCHED THEN
+       INSERT (card_id, txn_count, total) VALUES (s.card_id, s.txn_count, s.total);
+  END roll_up;
+
+  PROCEDURE add_line(p_amount IN NUMBER) IS
+    v_line lines%ROWTYPE;
+    TYPE t_lines IS TABLE OF lines%ROWTYPE INDEX BY PLS_INTEGER;
+    v_batch t_lines;
+    v_other VARCHAR2(10);
+  BEGIN
+    v_line.amount := p_amount;
+    INSERT INTO lines VALUES v_line;
+    FORALL i IN 1 .. v_batch.COUNT
+      INSERT INTO lines VALUES v_batch(i);
+    INSERT INTO lines VALUES v_other;
+  END add_line;
+
+  PROCEDURE release_holds IS
+    CURSOR c_stale IS SELECT hold_id FROM holds FOR UPDATE;
+  BEGIN
+    FOR r IN c_stale LOOP
+      UPDATE holds SET amount = 0, reason = 'EXPIRED' WHERE CURRENT OF c_stale;
+    END LOOP;
+  END release_holds;
+END pkg_writes;
+/
+"""
+
+
+@pytest.fixture(scope="module")
+def oracle_writes(tmp_path_factory):
+    return _extract(tmp_path_factory.mktemp("oracle_writes"), {"writes.sql": ORACLE_WRITES})
+
+
+def _writes(facts, routine):
+    bindings = facts["bindings"]
+    result = []
+    for edge in facts["edges"].values():
+        if edge["kind"] != "writes_data":
+            continue
+        owner = facts["symbols"][edge["from_ref"]["id"]]["qualified_name"]
+        if f".{routine}" not in owner:
+            continue
+        written = sorted((bindings[item]["name"].split("@")[0].rsplit(".", 1)[-1],
+                          bindings[item]["expression"])
+                         for item in edge["binding_ids"]
+                         if bindings[item]["direction"] == "input" and "@" in bindings[item]["name"])
+        result.append((facts["resources"][edge["to_ref"]["id"]]["name"], edge["reason"] or "", written))
+    return result
+
+
+def test_merge_writes_the_columns_of_both_branches(oracle_writes):
+    facts, _ = oracle_writes
+    [(table, reason, written)] = _writes(facts, "roll_up")
+    assert table == "counters" and "Changed fields" not in reason
+    assert written == [
+        ("card_id", "s.card_id"),
+        ("total", "s.total"), ("total", "s.total"),
+        ("txn_count", "c.txn_count + s.txn_count"), ("txn_count", "s.txn_count")]
+
+
+def test_a_rowtype_record_insert_writes_every_declared_column(oracle_writes):
+    facts, _ = oracle_writes
+    writes = _writes(facts, "add_line")
+    columns = [("amount", "{0}.amount"), ("line_id", "{0}.line_id"), ("line_type", "{0}.line_type")]
+    expected = {"v_line": [(name, value.format("v_line")) for name, value in columns],
+                "v_batch(i)": [(name, value.format("v_batch(i)")) for name, value in columns]}
+    found = {written[0][1].rsplit(".", 1)[0]: written for _, _, written in writes if written}
+    assert found == expected
+    # A record of another type writes columns the extractor cannot name.
+    assert any(not written and "Changed fields" in reason for _, reason, written in writes)
+
+
+def test_where_current_of_parses_and_keeps_its_predicate(oracle_writes):
+    facts, units = oracle_writes
+    assert "SQL_MATERIAL_PARSE_ERROR" not in _codes(facts)
+    unit = next(unit for unit in units if unit.name == "release_holds")
+    [update] = [statement for statement in unit.sql_dml if statement["kind"].name == "UPDATE"]
+    assert update["ast"] is not None
+    assert update["predicate"] == "WHERE CURRENT OF c_stale"
+    [(table, _, written)] = _writes(facts, "release_holds")
+    assert table == "holds" and written == [("amount", "0"), ("reason", "'EXPIRED'")]
+
+
+def test_declared_columns_skip_table_constraints():
+    from lib.context.business_domain_adapters.sql import _declared_columns
+    assert _declared_columns(
+        'CREATE TABLE t (id NUMBER(12) NOT NULL, "Name" VARCHAR2(30) DEFAULT \'x,y\',\n'
+        '  amount NUMBER(18,2), CONSTRAINT pk_t PRIMARY KEY (id), UNIQUE (amount));') == [
+        "id", "Name", "amount"]
+
+
+# ── Dynamic SQL: evaluated statement text, runtime pieces stay gaps ──────
+
+def _dynamic_body(body):
+    return ("CREATE TABLE apps (id NUMBER, name VARCHAR2(30), status VARCHAR2(10));\n"
+            "CREATE OR REPLACE PACKAGE BODY pkg_dyn IS\n"
+            "  PROCEDURE run(p_table IN VARCHAR2, p_before IN DATE) IS\n"
+            "    v_sql VARCHAR2(2000);\n"
+            "  BEGIN\n" + body + "\n  END run;\nEND pkg_dyn;\n/\n")
+
+
+def _dynamic_facts(tmp_path, body):
+    facts, units = _extract(tmp_path, {"dyn.sql": _dynamic_body(body)})
+    unit = next(unit for unit in units if unit.name == "run")
+    return facts, unit
+
+
+def test_a_static_target_with_a_runtime_source_becomes_known_operations(tmp_path):
+    facts, unit = _dynamic_facts(tmp_path,
+        "    v_sql := 'INSERT INTO apps (id, name) SELECT s.id, s.name FROM ' || p_table || ' s';\n"
+        "    EXECUTE IMMEDIATE v_sql;")
+    [statement] = [item for item in unit.sql_dml if "dynamic" in item]
+    assert (statement["kind"].name, statement["write_target"]) == ("INSERT", "apps")
+    assert statement["tables"] == ["apps", "(runtime: p_table)"]
+    assert statement["columns"] == ["id", "name"]
+    assert not getattr(unit, "sql_calls", [])
+    codes = _codes(facts)
+    assert "SQL_DYNAMIC_TABLE" in codes and "SQL_DYNAMIC_CALL" not in codes
+    runtime = next(resource for resource in facts["resources"].values()
+                   if resource["name"] == "(runtime: p_table)")
+    assert "chosen at runtime from p_table" in runtime["reason"]
+
+
+@pytest.mark.parametrize("body, kind, tables", [
+    ("    EXECUTE IMMEDIATE 'DELETE FROM apps WHERE status = ''OLD''';", "DELETE", ["apps"]),
+    ("    v_sql := 'DELETE FROM ' || p_table || ' WHERE created < :1';\n"
+     "    EXECUTE IMMEDIATE v_sql USING p_before;", "DELETE", ["(runtime: p_table)"]),
+])
+def test_literal_and_numbered_bind_statements_are_evaluated(tmp_path, body, kind, tables):
+    _, unit = _dynamic_facts(tmp_path, body)
+    [statement] = [item for item in unit.sql_dml if "dynamic" in item]
+    assert (statement["kind"].name, statement["tables"]) == (kind, tables)
+
+
+@pytest.mark.parametrize("body", [
+    # A branch between the assignment and the EXECUTE: which text runs is unknown.
+    "    v_sql := 'DELETE FROM apps';\n    IF p_before IS NULL THEN\n"
+    "      v_sql := 'DELETE FROM ' || p_table;\n    END IF;\n    EXECUTE IMMEDIATE v_sql;",
+    # Text that does not parse as SQL stays dynamic.
+    "    v_sql := p_table;\n    EXECUTE IMMEDIATE v_sql;",
+])
+def test_unknowable_dynamic_text_stays_a_dynamic_call(tmp_path, body):
+    facts, unit = _dynamic_facts(tmp_path, body)
+    assert not [item for item in unit.sql_dml if "dynamic" in item]
+    assert [call["classification"] for call in unit.sql_calls] == ["dynamic"]

@@ -81,9 +81,12 @@ END;
 """})
     excerpts = [facts["evidence"][edge["evidence_ids"][0]]["excerpt"]
         for edge in _calls(facts)]
-    assert excerpts == ["EXECUTE IMMEDIATE 'SELECT 1 FROM dual' USING (1);"]
-    assert all(not excerpt.casefold().startswith(("in(", "as(", "using(", "when("))
-        for excerpt in excerpts)
+    # The literal EXECUTE IMMEDIATE is evaluated as the SELECT it runs, so it
+    # is a read, not a dynamic call; no keyword ever becomes a call target.
+    assert excerpts == []
+    reads = [facts["evidence"][edge["evidence_ids"][0]]["excerpt"]
+             for edge in facts["edges"].values() if edge["kind"] == "reads_data"]
+    assert "EXECUTE IMMEDIATE 'SELECT 1 FROM dual' USING (1);" in reads
 
 
 def test_local_and_external_calls_have_exact_evidence_and_distinct_outcomes(tmp_path):

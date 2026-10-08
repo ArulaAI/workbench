@@ -26,6 +26,8 @@ def test_measurements_group_unresolved_calls_by_normalized_language():
         'schema_version': 1,
         'traces': {'total': 1, 'resolved': 0, 'ambiguous': 0, 'unresolved': 1,
                    'complete': 0, 'bounded': 0, 'incomplete': 0},
+        'relationships': {'open': 0, 'open_by_language': {}, 'open_at_boundaries': 0,
+                          'open_outside_traces': 0},
         'call_targets': {'unresolved': 1,
                          'unresolved_by_language': {'typescript': 1},
                          'unresolved_sites': 1,
@@ -202,3 +204,59 @@ def test_terminal_renders_entry_points_screen_actions_and_generated_declarations
         '/owners/new Add Owner',
         'web/Login.cshtml Login (unresolved: Form submission action is not statically determined)']
     assert '  model: 1 type, 1 member; 1 call resolves to them' in rendered
+
+
+def test_open_relationships_are_attributed_by_language_boundary_and_trace():
+    facts = {
+        'resources': {'resource:a': {'id': 'resource:a', 'kind': 'repository_file',
+                                     'name': 'a.sql', 'language': 'sql'},
+                      'resource:b': {'id': 'resource:b', 'kind': 'repository_file',
+                                     'name': 'b.cs', 'language': 'c_sharp'}},
+        'symbols': {'symbol:a': {'id': 'symbol:a', 'file': 'a.sql'},
+                    'symbol:b': {'id': 'symbol:b', 'file': 'b.cs'}},
+        'anchors': {}, 'trace_obligations': {},
+        'traces': {'trace:t': {'id': 'trace:t', 'anchor_id': 'anchor:x', 'resolution': 'unresolved',
+                               'edge_ids': ['edge:write', 'edge:gap']}},
+        'edges': {
+            'edge:write': {'id': 'edge:write', 'resolution': 'unresolved',
+                           'from_ref': {'kind': 'symbol', 'id': 'symbol:a'}},
+            'edge:gap': {'id': 'edge:gap', 'resolution': 'unresolved',
+                         'from_ref': {'kind': 'symbol', 'id': 'symbol:a'}},
+            'edge:cs': {'id': 'edge:cs', 'resolution': 'unresolved',
+                        'from_ref': {'kind': 'symbol', 'id': 'symbol:b'}},
+            'edge:ok': {'id': 'edge:ok', 'resolution': 'resolved',
+                        'from_ref': {'kind': 'symbol', 'id': 'symbol:a'}}},
+        'warnings': [{'code': 'SQL_COMPLETION_UNRESOLVED', 'subject_ids': ['edge:write']},
+                     {'code': 'SQL_DYNAMIC_TABLE', 'subject_ids': ['edge:gap']}],
+    }
+    assert extraction_measurements(facts)['relationships'] == {
+        'open': 3, 'open_by_language': {'sql': 2, 'c_sharp': 1},
+        'open_at_boundaries': 1, 'open_outside_traces': 1}
+
+
+def test_boundary_warning_codes_are_marked():
+    from lib.context.business_domain_cli import warning_counts
+    counts = {item['code']: item['boundary'] for item in warning_counts(
+        [{'code': 'SQL_COMPLETION_UNRESOLVED'}, {'code': 'SQL_DYNAMIC_TABLE'}])}
+    assert counts == {'SQL_COMPLETION_UNRESOLVED': True, 'SQL_DYNAMIC_TABLE': False}
+
+
+def test_a_call_into_a_catalogued_platform_counts_as_a_boundary():
+    facts = {
+        'resources': {'resource:f': {'id': 'resource:f', 'kind': 'repository_file',
+                                     'name': 'a.sql', 'language': 'sql'},
+                      'resource:p': {'id': 'resource:p', 'kind': 'service', 'language': 'sql',
+                                     'provider': 'module:supabase/postgres'},
+                      'resource:u': {'id': 'resource:u', 'kind': 'service', 'language': 'sql',
+                                     'provider': 'module:unknown-vendor'}},
+        'symbols': {'symbol:a': {'id': 'symbol:a', 'file': 'a.sql'}},
+        'anchors': {}, 'trace_obligations': {}, 'traces': {}, 'warnings': [],
+        'edges': {
+            'edge:p': {'id': 'edge:p', 'resolution': 'unresolved',
+                       'from_ref': {'kind': 'symbol', 'id': 'symbol:a'},
+                       'to_ref': {'kind': 'resource', 'id': 'resource:p'}},
+            'edge:u': {'id': 'edge:u', 'resolution': 'unresolved',
+                       'from_ref': {'kind': 'symbol', 'id': 'symbol:a'},
+                       'to_ref': {'kind': 'resource', 'id': 'resource:u'}}},
+    }
+    assert extraction_measurements(facts)['relationships']['open_at_boundaries'] == 1

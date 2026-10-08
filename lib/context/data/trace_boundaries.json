@@ -30,7 +30,8 @@
     "SQL_COMPLETION_UNRESOLVED": "transaction_completion",
     "SQL_COMMIT_NOT_ESTABLISHED": "transaction_completion",
     "SQL_TRANSACTION_SCOPE_UNRESOLVED": "transaction_completion",
-    "SQL_PLATFORM_TABLE": "library_call"
+    "SQL_PLATFORM_TABLE": "library_call",
+    "SQL_PLATFORM_CALL": "library_call"
   },
   "obligation_codes": {
     "ROUTED_REQUEST": "endpoint_in_repo",
@@ -135,6 +136,7 @@
     "sql": {
       "modules": [
         "oracle",
+        "postgresql",
         "supabase"
       ]
     }

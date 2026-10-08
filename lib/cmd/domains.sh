@@ -60,9 +60,10 @@ _domains_render_facts() {
                  then "Trace gaps:",
                       (.trace_blockers[] | select(.class != "boundary") | row)
                  else empty end),
-                "",
-                "  Note: categories may overlap; a trace can have",
-                "        several boundaries and gaps.",
+                (if (.trace_blockers | length) > 1
+                 then "", "  Note: categories may overlap; a trace can have",
+                          "        several boundaries and gaps."
+                 else empty end),
                 ""
            else empty end),
           (if (.screen_actions // []) | length > 0
@@ -84,6 +85,13 @@ _domains_render_facts() {
                 ""
            else empty end),
           "Relationships:   \($c.edges_resolved) resolved, \($c.edges_unresolved) unresolved, \($c.edges_ambiguous) ambiguous",
+          ((.language_names // {}) as $names | .measurements.relationships as $r
+           | if $r != null and $r.open > 0
+             then "  not resolved:  "
+                  + ([$r.open_by_language | to_entries[]
+                      | "\(($names[.key]) // .key) \(.value)"] | join(", "))
+                  + "; \($r.open_at_boundaries) at known boundaries; \($r.open_outside_traces) outside every trace"
+             else empty end),
           (.measurements.call_targets as $calls
            | if $calls.unresolved_sites != null
              then "Unresolved calls: \($calls.unresolved_sites) call sites on traces"
@@ -99,7 +107,8 @@ _domains_render_facts() {
              end),
           "Warnings:        \(.warnings | length)",
           ((.warning_counts // [.warnings | group_by(.code)[] | {code: .[0].code, count: length}])[]
-           | "  \(.code)\(" " * ([44 - (.code | length), 1] | max))\(.count | tostring | " " * ([4 - length, 0] | max) + .)"),
+           | "  \(.code)\(" " * ([44 - (.code | length), 1] | max))\(.count | tostring | " " * ([4 - length, 0] | max) + .)"
+             + (if .boundary then "  (known boundary)" else "" end)),
           ((.coverage.entrypoint_gaps // []) as $g
            | if ($g | length) > 0
              then "",
