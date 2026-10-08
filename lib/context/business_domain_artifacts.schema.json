@@ -559,6 +559,10 @@
           "items": {
             "$ref": "#/$defs/EntryPointGap"
           }
+        },
+        "entrypoint_markers_matched": {
+          "type": "integer",
+          "minimum": 0
         }
       },
       "required": [

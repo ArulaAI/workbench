@@ -23,7 +23,7 @@ from .business_domain_adapters.base import (
 from .business_domain_identity import reconcile_anchors
 from .business_domain_entrypoints import (GAP_CODES, LANGUAGE_GAP, LIKELY_MISSED,
     NONE_DETECTED, MarkerCatalogError, covered, gap_record, load_catalog,
-    scan_markers)
+    matching_entry_point, route_key, scan_markers)
 from .language_registry import (SOURCE_ADAPTER_CAPABILITIES, PathClassification,
     RegistryConfigurationError, registry)
 from .business_domain_schema import (DEFAULTS, DomainError, account_artifact_bytes,
@@ -1703,14 +1703,33 @@ class Extractor:
         hits = scan_markers(catalog, ((path, source.text[1:] if bom[path]
             else source.text) for path, source in texts.items()),
             CATALOG['test_path_pattern'])
+        # Entry points by declared operation, so a marker whose method and
+        # route equal one already known (from a contract, say) is not missed.
+        operations = {}
+        for anchor in self.facts['anchors'].values():
+            operation = anchor.get('operation') or {}
+            if operation.get('method') and operation.get('path'):
+                key = (operation['method'].upper(), route_key(operation['path']))
+                operations.setdefault(key, []).append(anchor['id'])
+        matched = 0
         for hit in hits:
             if covered(hit, spans):
                 continue
+            # A marker declaring the same operation as a known entry point (from
+            # its contract, say) is still missed: the code implementing it was
+            # not detected. The message names the matching entry point.
+            body = (texts[hit.path].text[1:] if bom[hit.path] else texts[hit.path].text)
+            known = matching_entry_point(hit, body, operations)
+            matched += bool(known)
             source = texts[hit.path]
             offset = 1 if bom[hit.path] else 0
             message = (f'{hit.path}:{hit.start_line}: likely missed '
                        f'{hit.marker.kind} entry point ({hit.marker.framework_label}: '
                        f'{hit.marker.name})')
+            if known:
+                operation = self.facts['anchors'][known]['operation']
+                message += (f'; also declared as {operation["method"]} {operation["path"]} '
+                            'by a known entry point')
             evidence_id = self.evidence(source, hit.start + offset,
                                         hit.end + offset)
             subjects = ([source.resource_id]
@@ -1724,6 +1743,7 @@ class Extractor:
                        f'in {count} analyzed file{"" if count == 1 else "s"}')
             gaps.append((gap_record(NONE_DETECTED, message, files=count), [], []))
         self.facts['coverage']['entrypoint_gaps'] = [gap for gap, _, _ in gaps]
+        self.facts['coverage']['entrypoint_markers_matched'] = matched
         for gap, subjects, evidence_ids in gaps:
             self.diagnostics.append(record('Diagnostic', code=GAP_CODES[gap['kind']],
                 message=gap['message'], subject_ids=subjects,

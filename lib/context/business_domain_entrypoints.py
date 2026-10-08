@@ -38,6 +38,11 @@ class Marker:
     name: str
     kind: str
     pattern: re.Pattern
+    # Optional: read the HTTP method and route the marker declares
+    # (named groups ``method`` and ``path``), and the route-group prefix a
+    # file declares (named group ``prefix``).
+    operation: re.Pattern | None = None
+    prefix: re.Pattern | None = None
 
 
 @dataclass(frozen=True)
@@ -125,7 +130,8 @@ def parse_catalog(raw: Mapping) -> MarkerCatalog:
             raise MarkerCatalogError('entrypoint_catalog_markers_invalid')
         for item in raw_markers:
             if (not isinstance(item, dict)
-                    or set(item) != {'id', 'name', 'kind', 'pattern'}
+                    or not {'id', 'name', 'kind', 'pattern'} <= set(item)
+                    or set(item) - {'id', 'name', 'kind', 'pattern', 'operation', 'prefix'}
                     or not _IDENTIFIER.fullmatch(str(item['id']))
                     or not isinstance(item['name'], str) or not item['name']
                     or item['kind'] not in kinds
@@ -133,8 +139,15 @@ def parse_catalog(raw: Mapping) -> MarkerCatalog:
                 raise MarkerCatalogError('entrypoint_catalog_marker_invalid')
             pattern, = _compile([item['pattern']],
                                 'entrypoint_catalog_marker_invalid')
+            operation, prefix = (
+                (_compile([item[key]], 'entrypoint_catalog_marker_invalid')[0]
+                 if key in item else None) for key in ('operation', 'prefix'))
+            if operation is not None and not {'method', 'path'} <= set(operation.groupindex):
+                raise MarkerCatalogError('entrypoint_catalog_marker_invalid')
+            if prefix is not None and 'prefix' not in prefix.groupindex:
+                raise MarkerCatalogError('entrypoint_catalog_marker_invalid')
             markers.append(Marker(identity, entry['label'], item['id'],
-                                  item['name'], item['kind'], pattern))
+                                  item['name'], item['kind'], pattern, operation, prefix))
         frameworks.append(Framework(identity, entry['label'], paths, requires,
                                     tuple(markers)))
     return MarkerCatalog(MappingProxyType(dict(kinds)),
@@ -181,6 +194,42 @@ def scan_markers(catalog: MarkerCatalog, files: Iterable[tuple[str, str]],
                     text.count('\n', 0, start) + 1,
                     text.count('\n', 0, max(start, end - 1)) + 1))
     return hits
+
+
+def route_key(path: str) -> str:
+    """A route with parameter constraints and optional markers removed."""
+    path = re.sub(r"\{([^{}:?=]+)[^{}]*\}", r"{\1}", path.strip())
+    return "/" + "/".join(part for part in path.split("/") if part)
+
+
+def declared_operations(hit: MarkerHit, text: str) -> list[tuple[str, str]]:
+    """The ``(METHOD, route)`` pairs the marker at *hit* may declare.
+
+    Without a route-group prefix the route is as written. With exactly one
+    distinct prefix in the file it may also be prefixed; several distinct
+    prefixes leave the prefixed form unknown.
+    """
+    marker = hit.marker
+    if marker.operation is None:
+        return []
+    match = marker.operation.match(text, hit.start)
+    if not match:
+        return []
+    method, route = match.group("method").upper(), route_key(match.group("path"))
+    routes = [route]
+    if marker.prefix is not None:
+        prefixes = {route_key(item.group("prefix")) for item in marker.prefix.finditer(text)}
+        if len(prefixes) == 1:
+            routes.append(route_key(prefixes.pop() + route))
+    return [(method, item) for item in routes]
+
+
+def matching_entry_point(hit: MarkerHit, text: str,
+                         operations: Mapping[tuple[str, str], list[str]]) -> str | None:
+    """The one existing entry point whose method and route the marker declares."""
+    found = {anchor for key in declared_operations(hit, text)
+             for anchor in operations.get(key, ())}
+    return found.pop() if len(found) == 1 else None
 
 
 def covered(hit: MarkerHit, spans: Mapping[str, list[tuple[int, int]]]) -> bool:

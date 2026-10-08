@@ -81,6 +81,11 @@ name = "MapGet/MapPost/MapPut/MapDelete/MapPatch/MapMethods"
 kind = "http_route"
 # MapGroup only declares a prefix shared by the routes mapped on the group.
 pattern = '\.Map(?:Get|Post|Put|Delete|Patch|Methods)\s*(?:<[^<>\n]*>)?\s*\('
+# The method and literal route a MapGet/MapPost/... declares, and the
+# literal prefix of the MapGroup the file declares, so a route already
+# known as an entry point (from its OpenAPI contract) is not reported missed.
+operation = '\.Map(?P<method>Get|Post|Put|Delete|Patch)\s*(?:<[^<>\n]*>)?\s*\(\s*"(?P<path>[^"]*)"'
+prefix = '\.MapGroup\s*\(\s*"(?P<prefix>[^"]*)"'
 
 [frameworks.aspnetcore_mvc]
 label = "ASP.NET Core MVC"

@@ -2,10 +2,9 @@
 
 A component composed by several routed pages shows its action on each of
 those routes, so each route gets its own route-scoped action anchor, evidenced
-by the route and the composition that displays it (Decision 4). This replaces
-the earlier single component-scoped anchor (Item 7, Option C), which named no
-route. Every caller still reaches the shared component and its effects through
-the graph, and the branch each caller takes keeps its own endpoint.
+by the route and the composition that displays it. Every caller still reaches
+the shared component and its effects through the graph, and the branch each
+caller takes keeps its own endpoint.
 """
 import pytest
 

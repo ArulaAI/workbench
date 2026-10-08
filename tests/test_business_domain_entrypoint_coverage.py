@@ -501,3 +501,66 @@ def test_terminal_summary_lists_entrypoint_coverage(tmp_path):
         '    http_route: aspnetcore_minimal_api 3',
         '    page: blazor 1']
     assert rendered[-2:] == ['Facts written to:', '.speed/context/business-domain-facts.json']
+
+
+# ── A marker whose method and route equal a known entry point ────────────
+
+ORDERS_CONTRACT = """openapi: 3.0.1
+info: {title: Orders, version: '1'}
+paths:
+  /api/orders/{id}:
+    get:
+      operationId: getOrder
+      responses: {'200': {description: OK}}
+  /api/orders:
+    post:
+      operationId: createOrder
+      responses: {'201': {description: Created}}
+"""
+
+
+def test_a_route_known_from_its_contract_is_still_missed_and_says_so(tmp_path):
+    facts = extract(tmp_path, {
+        'src/Orders.API/openapi.yaml': ORDERS_CONTRACT,
+        'src/Orders.API/OrdersApi.cs': (
+            'var api = app.MapGroup("api/orders");\n'
+            'api.MapGet("/{id:int}", GetOrder);\n'      # matches GET /api/orders/{id}
+            'api.MapPost("/", CreateOrder);\n'          # matches POST /api/orders
+            'api.MapDelete("/{id:int}", DeleteOrder);\n')})  # no such entry point
+    # Every route is missed (its C# implementation is undetected); the two
+    # a contract also declares say so.
+    missed = {gap['line']: gap['message'] for gap in gaps(facts, 'likely_missed')}
+    assert sorted(missed) == [2, 3, 4]
+    assert missed[2].endswith('also declared as GET /api/orders/{id} by a known entry point')
+    assert missed[3].endswith('also declared as POST /api/orders by a known entry point')
+    assert 'also declared' not in missed[4]
+    assert facts['coverage']['entrypoint_markers_matched'] == 2
+
+
+def test_several_route_group_prefixes_leave_the_prefixed_route_unknown(tmp_path):
+    facts = extract(tmp_path, {
+        'src/Orders.API/openapi.yaml': ORDERS_CONTRACT,
+        'src/Orders.API/OrdersApi.cs': (
+            'var api = app.MapGroup("api/orders");\n'
+            'var admin = app.MapGroup("admin/orders");\n'
+            'api.MapGet("/{id:int}", GetOrder);\n')})
+    [gap] = gaps(facts, 'likely_missed')
+    assert gap['line'] == 3 and 'also declared' not in gap['message']
+    assert facts['coverage']['entrypoint_markers_matched'] == 0
+
+
+def test_route_keys_ignore_constraints_optional_markers_and_slashes():
+    from lib.context.business_domain_entrypoints import route_key
+    assert route_key('items/{id:int}/brand/{brandId?}/') == '/items/{id}/brand/{brandId}'
+    assert route_key('/by/{name:minlength(1)}') == '/by/{name}'
+
+
+def test_an_operation_pattern_must_name_its_method_and_path():
+    raw = {'version': 1, 'kinds': {'http_route': 'route'},
+           'coverage': {'categories': ['source'], 'non_entrypoint_languages': []},
+           'display_names': {},
+           'frameworks': {'custom': {'label': 'Custom', 'paths': ['.*\\.x'],
+               'markers': [{'id': 'm', 'name': 'M', 'kind': 'http_route',
+                            'pattern': 'ROUTE', 'operation': 'ROUTE (?P<path>\\S+)'}]}}}
+    with pytest.raises(MarkerCatalogError):
+        parse_catalog(raw)

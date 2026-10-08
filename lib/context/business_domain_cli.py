@@ -48,7 +48,9 @@ GAP_LABELS = {
     'missing_call_target': 'Missing call targets',
     'http_boundary': 'HTTP calls to no known endpoint',
     'ambiguous_call_target': 'Ambiguous call targets (overloads)',
-    'contract_only': 'Contract-only/unpinnable',
+    'contract_only': 'Contract with no analyzed implementation',
+    'unanalyzed_source': 'Implementation in unanalyzed source',
+    'unidentified_entry_point': 'Entry point not fully identified',
     'navigation_depth': 'Navigation/depth or symbol limit',
     'other': 'Other',
 }
@@ -74,7 +76,11 @@ def _blocker(obligation, edge_kind):
     if kind in {'depth_limit', 'symbol_limit'}:
         return 'navigation_depth'
     if kind == 'capability':
-        return 'contract_only'
+        # Which capability is missing decides what the reader should do:
+        # identify the entry point, or analyze the source behind it.
+        return {'UNRESOLVED_ANCHOR': 'unidentified_entry_point',
+                'CAPABILITY_UNAVAILABLE': 'unanalyzed_source'}.get(
+                    obligation.get('reason_code'), 'contract_only')
     return 'other'
 
 

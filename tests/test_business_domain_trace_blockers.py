@@ -185,3 +185,15 @@ def test_petclinic_blockers_cover_every_unresolved_trace():
     assert {'missing_call_target', 'navigation_depth', 'ambiguous_call_target',
             'http_boundary', 'contract_only'} <= gaps
     assert all(item['traces'] <= traces['unresolved'] + traces['ambiguous'] for item in blockers)
+
+
+@pytest.mark.parametrize('reason_code, category', [
+    ('UNRESOLVED_ANCHOR', 'unidentified_entry_point'),
+    ('CAPABILITY_UNAVAILABLE', 'unanalyzed_source'),
+    ('UNPROVEN_TERMINAL', 'contract_only'),
+])
+def test_capability_gaps_say_which_capability_is_missing(reason_code, category):
+    facts = _facts({'t': [('capability', 'unresolved', None)]})
+    next(iter(facts['trace_obligations'].values()))['reason_code'] = reason_code
+    assert _counts(facts) == {category: 1}
+    assert BLOCKER_LABELS[category]

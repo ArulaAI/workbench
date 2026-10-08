@@ -69,7 +69,9 @@ _domains_render_facts() {
           (if (.screen_actions // []) | length > 0
            then "Screen actions:",
                 (.screen_actions[]
-                 | "  \(.route)\(" " * ([44 - (.route | length), 1] | max))"
+                 | "  \(.route)"
+                   + (if (.route | length) > 42 then "\n      "
+                      else " " * (44 - (.route | length)) end)
                    + (if .state == "labeled" then .label
                       elif .state == "ambiguous" then "ambiguous: " + ([.candidates[] | "\u0027\(.)\u0027"] | join(" or "))
                       elif .state == "labeled_unresolved" then "\(.label) (unresolved: \(.reason // "identity not established"))"
@@ -121,7 +123,11 @@ _domains_render_facts() {
                           ($m | group_by(.marker_kind)[]
                            | "    \(.[0].marker_kind): "
                              + ([group_by(.framework)[] | "\(.[0].framework) \(length)"] | join(", ")))
-                     else empty end)
+                     else empty end),
+                  (if (.coverage.entrypoint_markers_matched // 0) > 0
+                   then "    of which \(.coverage.entrypoint_markers_matched) also declared by a known entry point"
+                        + " (same method and route, e.g. an OpenAPI contract)"
+                   else empty end)
              else empty end),
           "",
           "Facts written to:",

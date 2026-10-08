@@ -348,7 +348,7 @@ def test_a_directly_routed_literal_action_is_unchanged(facts):
     assert len(registration['evidence_ids']) == 1
 
 
-# Decision 4 through component state: the flag reaches the editor only along
+# A page flag passed through component state reaches the editor only along
 # Promise.resolve(literal) -> Promise.all(...).then(results => ({...})) ->
 # .then(model => this.setState(model)) -> <Editor {...this.state} />.
 MODEL_ROUTES = """import * as React from 'react';
