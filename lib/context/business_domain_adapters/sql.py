@@ -896,11 +896,17 @@ def _merge_values(unit: Unit, tokens, start_index: int, end_index: int,
                   target: str) -> tuple[list[str], list[dict]]:
     """Columns and values MERGE's WHEN branches write: UPDATE SET and INSERT."""
     columns, values = [], []
-    branches = [index for index in range(start_index, end_index + 1)
-                if tokens[index].text.casefold() == "when"
-                and _top_level_token(tokens, index, index, texts=("when",)) is not None]
-    branches = [index for index in branches
-                if _top_level_token(tokens, start_index, index, texts=("when",)) is not None]
+    # A branch opens with WHEN [NOT] MATCHED outside any parenthesis; the WHEN
+    # of a CASE expression inside a SET value never does.
+    branches, depth = [], 0
+    for index in range(start_index, end_index + 1):
+        token = tokens[index]
+        depth += token.token_type == TokenType.L_PAREN
+        depth -= token.token_type == TokenType.R_PAREN
+        following = [item.text.casefold() for item in tokens[index + 1:index + 3]]
+        if (depth == 0 and token.text.casefold() == "when"
+                and (following[:1] == ["matched"] or following == ["not", "matched"])):
+            branches.append(index)
     bounds = list(zip(branches, branches[1:] + [end_index + 1]))
     pairs = _paren_pairs(tokens)
     for begin, finish in bounds:

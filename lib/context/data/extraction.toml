@@ -920,7 +920,7 @@ owner = "speed_configuration"
 path_any = [
   '(?:.*/)?(?:tests?|__tests__)/.*\.sql',
   '(?:.*/)?seeds?/.*\.sql',
-  '(?:.*/)?(?:[^/]*[-_.])?seeds?(?:[-_.][^/]*)?\.sql',
+  '(?:.*/)?seeds?(?:[-_.][^/]*)?\.sql',
   '\.(?:github|circleci)/.*\.sql',
 ]
 language = "sql"

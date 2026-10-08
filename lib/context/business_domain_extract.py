@@ -2002,7 +2002,24 @@ class Extractor:
                 external = [edge for edge in selection_edges
                             if edge['kind'] == 'selects_implementation' and edge['to_ref']
                             and edge['to_ref']['kind'] != 'symbol']
-                if external and len(external) == len(selection_edges) == 1:
+                # Every implementation is a selection taken under its own
+                # condition (a profile, say): one conditional path each.
+                alternatives = _conditional_alternatives(
+                    [edge for edge in selection_edges if edge['kind'] == 'selects_implementation'])
+                chosen = {edge['to_ref']['id'] for edge in alternatives}
+                implementers = {edge['from_ref']['id'] for edge in selection_edges
+                                if edge['kind'] == 'implements'}
+                if alternatives and implementers <= chosen:
+                    selection_status = 'conditional'
+                    selection_targets = sorted(target for target in chosen
+                                               if target in units_by_symbol)
+                    selection_reason = (
+                        'Configuration selects which implementation runs; each alternative is '
+                        'a conditional path: ' + '; '.join(
+                            f"{self._ref_name(edge['to_ref'])} when {edge['condition']}"
+                            for edge in alternatives) + '.')
+                    queue.extend((target, 1) for target in selection_targets)
+                elif external and len(external) == len(selection_edges) == 1:
                     selection_status = 'external'
                     selection_edge_id = external[0]['id']
                     selection_targets = [external[0]['to_ref']['id']]
@@ -2202,6 +2219,7 @@ class Extractor:
                 selection_reason = 'The selected implementation was not reached within traversal limits.'
             reason_code = {
                 'satisfied': 'IMPLEMENTATION_REACHED',
+                'conditional': 'CONDITIONAL_IMPLEMENTATION',
                 'ambiguous': 'IMPLEMENTATION_AMBIGUOUS',
                 'external': 'EXTERNAL_IMPLEMENTATION_UNAVAILABLE',
                 'unresolved': 'IMPLEMENTATION_NOT_REACHED',
@@ -2213,8 +2231,10 @@ class Extractor:
                 # An external selection stops at its edge; its target is a
                 # resource, not a traversable symbol.
                 frontier.update([selection_edge_id] if selection_edge_id
+                                else [anchor['symbol_id']] if selection_status == 'conditional'
                                 else selection_targets or [anchor['symbol_id']])
                 reasons.add('implementation_ambiguous' if selection_status == 'ambiguous'
+                            else 'conditional_implementation' if selection_status == 'conditional'
                             else 'external_boundary' if selection_status == 'external'
                             else 'implementation_not_reached')
             # A leaf is judged by the relationships traversal can follow from it.

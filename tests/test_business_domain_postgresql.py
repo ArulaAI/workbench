@@ -748,3 +748,41 @@ def test_unknowable_dynamic_text_stays_a_dynamic_call(tmp_path, body):
     facts, unit = _dynamic_facts(tmp_path, body)
     assert not [item for item in unit.sql_dml if "dynamic" in item]
     assert [call["classification"] for call in unit.sql_calls] == ["dynamic"]
+
+
+def test_a_case_expression_in_a_merge_set_value_is_not_a_branch(tmp_path):
+    _, units = _extract(tmp_path, {"m.sql": (
+        "CREATE TABLE t (id NUMBER, a NUMBER, b NUMBER);\n"
+        "CREATE OR REPLACE PROCEDURE upd(p_id IN NUMBER) IS\nBEGIN\n"
+        "  MERGE INTO t USING (SELECT p_id AS id, 1 AS x, 2 AS b FROM dual) s ON (t.id = s.id)\n"
+        "  WHEN MATCHED THEN UPDATE SET t.a = CASE WHEN s.x > 0 THEN s.x ELSE 0 END, t.b = s.b\n"
+        "  WHEN NOT MATCHED THEN INSERT (id, a, b) VALUES (s.id, s.x, s.b);\n"
+        "END upd;\n/\n")})
+    [statement] = next(unit for unit in units if unit.name == "upd").sql_dml
+    assert list(zip(statement["columns"], [value["expression"] for value in statement["column_values"]])) == [
+        ("a", "CASE WHEN s.x > 0 THEN s.x ELSE 0 END"), ("b", "s.b"),
+        ("id", "s.id"), ("a", "s.x"), ("b", "s.b")]
+
+
+@pytest.mark.parametrize("path, test_evidence", [
+    ("supabase/seed.sql", True),
+    ("db/seeds/users.sql", True),
+    ("seed_data.sql", True),
+    ("db/migration/V7__create_seed_audit_trigger.sql", False),
+    ("supabase/migrations/20240301120000_seed_roles_and_policies.sql", False),
+])
+def test_only_seed_files_are_test_evidence_not_migrations_mentioning_seed(path, test_evidence):
+    import json
+    import re
+    from pathlib import Path
+    catalog = json.loads((Path(__file__).parents[1]
+                          / "lib/context/business_domain_adapters/catalog.json").read_text())
+    assert bool(re.search(catalog["test_path_pattern"], path)) is test_evidence
+
+
+def test_a_migration_mentioning_seed_keeps_its_trigger_entry_point(tmp_path):
+    facts, _ = _extract(tmp_path, {
+        "supabase/migrations/20240301120000_seed_roles_and_policies.sql":
+            AUDIT_FUNCTION + "CREATE TRIGGER order_audit AFTER INSERT ON orders "
+                             "FOR EACH ROW EXECUTE FUNCTION audit_order();\n"})
+    assert list(_trigger_anchors(facts)) == ["order_audit"]

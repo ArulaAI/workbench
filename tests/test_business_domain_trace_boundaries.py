@@ -246,3 +246,46 @@ def test_profile_alternatives_are_conditional_paths_not_an_ambiguous_choice(tmp_
     excerpts = {facts['evidence'][item]['excerpt'] for edge_id in trace['edge_ids']
                 for item in facts['edges'][edge_id]['evidence_ids']}
     assert {'@Profile("jdbc")', '@Profile("jpa")'} <= excerpts
+
+
+ENTRY_POINT_PROFILES = {
+    'src/main/java/com/example/api/OrdersApi.java': (
+        'package com.example.api;\nimport org.springframework.web.bind.annotation.*;\n'
+        'public interface OrdersApi {\n  @GetMapping("/orders")\n  String list();\n}\n'),
+    'src/main/java/com/example/web/MockOrders.java': (
+        'package com.example.web;\nimport com.example.api.OrdersApi;\n'
+        'import org.springframework.context.annotation.Profile;\n'
+        'import org.springframework.web.bind.annotation.RestController;\n'
+        '@Profile("mock")\n@RestController\npublic class MockOrders implements OrdersApi {\n'
+        '  public String list() { return "mock"; }\n}\n'),
+    'src/main/java/com/example/web/ProdOrders.java': (
+        'package com.example.web;\nimport com.example.api.OrdersApi;\n'
+        'import org.springframework.context.annotation.Profile;\n'
+        'import org.springframework.web.bind.annotation.RestController;\n'
+        '@Profile("prod")\n@RestController\npublic class ProdOrders implements OrdersApi {\n'
+        '  public String list() { return "prod"; }\n}\n'),
+}
+
+
+def test_a_profile_choice_at_the_entry_point_is_conditional_not_ambiguous(tmp_path):
+    for name, text in ENTRY_POINT_PROFILES.items():
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+    facts, _ = Extractor(tmp_path, DEFAULTS).extract()
+    validate_references(facts)
+    # The interface's registration is the entry point that must choose.
+    anchor = next(anchor for anchor in facts['anchors'].values()
+                  if anchor['operation'].get('path') == '/orders'
+                  and any(item['role'] == 'registration' for item in anchor['representations']))
+    trace = next(trace for trace in facts['traces'].values() if trace['anchor_id'] == anchor['id'])
+    obligations = [facts['trace_obligations'][oid] for oid in trace['obligation_ids']]
+    assert not [item for item in obligations if item['kind'] == 'implementation_selection'
+                and item['status'] == 'ambiguous']
+    [choice] = [item for item in obligations if item['reason_code'] == 'CONDITIONAL_IMPLEMENTATION']
+    assert choice['status'] == 'conditional' and choice['boundary'] == 'config_selected'
+    assert '@Profile("mock") on MockOrders' in choice['reason']
+    assert '@Profile("prod") on ProdOrders' in choice['reason']
+    # Both alternatives are followed.
+    names = {facts['symbols'][sid]['qualified_name'].split('::')[-1] for sid in trace['symbol_ids']}
+    assert {'MockOrders.list()', 'ProdOrders.list()'} <= names
