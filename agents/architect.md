@@ -204,6 +204,10 @@ If a defect is tagged `Failure Class: F8`, the specification being silent on a p
 
 For every other failure class, produce implementation task(s) addressing the defect's Expected Behavior, plus regression/verification coverage appropriate to that class. If a defect declares no `Failure Class`, treat it like a normal implementation requirement.
 
+### Bounded Defect Task Rule
+
+When a defect batch contains one defect whose reproduction names an existing failing test and whose repair is confined to one existing implementation file, produce exactly one implementation task. The existing test is verification evidence, not a second implementation task: include the test command in acceptance criteria, but list the test file in `files_touched` only if the task changes that file. Do not split a one-file repair into separate helper, wiring, or test tasks when those tasks have no independently shippable output. Use exact paths from the codebase context and never infer a path from a test filename. Before returning JSON, deduplicate tasks that describe the same symbol change or same acceptance criteria; the decomposition gate must pass without human editing.
+
 ## Validation Report
 
 Include a `validation` key. If clean, return an empty array. Severity levels:

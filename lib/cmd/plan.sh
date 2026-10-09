@@ -103,6 +103,33 @@ _plan_cache_read() {
     cat "$(_plan_cache_dir)/${1}.dat"
 }
 
+# Correct a unique source-file path when an Architect inferred a conventional
+# path (for example src/service.ts) but the indexed repository stores the file
+# in a nested directory (for example src/payments/service.ts). Ambiguous or
+# missing matches are left untouched so planning still surfaces the problem.
+_normalize_task_file_paths() {
+    local tasks_json="$1"
+    local path_map='{}'
+    local declared_path base candidates candidate_count
+
+    while IFS= read -r declared_path; do
+        [[ -n "$declared_path" ]] || continue
+        [[ -f "${PROJECT_ROOT}/${declared_path}" ]] && continue
+        base="${declared_path##*/}"
+        candidates=$(git -C "$PROJECT_ROOT" ls-files | awk -F/ -v b="$base" '$NF == b {print}')
+        candidate_count=$(printf '%s\n' "$candidates" | sed '/^$/d' | wc -l | tr -d ' ')
+        if [[ "$candidate_count" -eq 1 ]]; then
+            candidate=$(printf '%s\n' "$candidates" | sed -n '1p')
+            path_map=$(jq --arg from "$declared_path" --arg to "$candidate" '. + {($from): $to}' <<<"$path_map")
+            log_warn "Corrected task path ${declared_path} → ${candidate}" >&2
+        fi
+    done < <(jq -r '.[].files_touched[]? // empty' <<<"$tasks_json")
+
+    jq --argjson path_map "$path_map" \
+        'map(.files_touched = ((.files_touched // []) | map($path_map[.] // .)))' \
+        <<<"$tasks_json"
+}
+
 # Architect failure diagnostic (G2: failure is informative)
 # Parses the JSONL event log and classifies the failure mode.
 _diagnose_architect_failure() {
@@ -990,6 +1017,7 @@ cmd_plan() {
 
         if [[ "$defects_mode" == "true" ]]; then
             base_message+="\n\n## Defects\n\nSee \"Defect-Driven Planning\" in your role instructions for the F1-F8 taxonomy and the F8 escalation-only rule. Each defect below states its own \`Failure Class\` and \`Evidence\` line when the source defect file declares them — use those values, do not re-derive or guess a class.\n\nEvery task produced from a defect MUST include a \`spec_references\` entry whose \`spec\` field is the exact defect file path shown in that defect's heading below (e.g. \`${defect_files[0]}\`) — not a generic label like \"defect\". This deviates from the product/tech/design spec-type convention used elsewhere; it is required so the plan traces back to its specific source defect."
+            base_message+="\n\n### Defect plan boundary\nIf this batch contains one defect with an existing failing test and one implementation file, produce exactly one implementation task. Treat the existing test as verification evidence: include its command in acceptance criteria, but do not list the test file in files_touched unless you will edit it. Do not create duplicate helper, wiring, or test tasks for the same symbol change. Resolve paths from Codebase Context; do not infer them from test paths."
             local di
             for di in "${!defect_files[@]}"; do
                 local _defect_header="### Defect: ${defect_files[$di]}"
@@ -1309,6 +1337,7 @@ cmd_plan() {
 
     if echo "$parsed_architect" | jq -e '.tasks | type == "array"' &>/dev/null; then
         tasks_json=$(echo "$parsed_architect" | jq '.tasks')
+        tasks_json=$(_normalize_task_file_paths "$tasks_json")
         contract_json=$(echo "$parsed_architect" | jq '.contract // empty')
         cross_cutting_json=$(echo "$parsed_architect" | jq -c '.cross_cutting_concerns // []')
     else
