@@ -46,7 +46,7 @@ context_build_layer1() {
 
     local py_cmd="
 import sys, json
-sys.path.insert(0, '$(cygpath -m "${SPEED_DIR}" 2>/dev/null || printf '%s' "${SPEED_DIR}")')
+sys.path.insert(0, '${SPEED_DIR_PY:-$(cygpath -m "${SPEED_DIR}" 2>/dev/null || printf '%s' "${SPEED_DIR}")}')
 from lib.context.layer1 import build_layer1
 
 spec_files = None
@@ -57,7 +57,7 @@ if spec_json.strip():
     except: pass
 
 result = build_layer1(
-    '${PROJECT_ROOT}',
+    '${PROJECT_ROOT_PY:-$(cygpath -m "${PROJECT_ROOT}" 2>/dev/null || printf '%s' "${PROJECT_ROOT}")}',
     fresh=${py_fresh},
     spec_files=spec_files,
 )
@@ -77,14 +77,14 @@ context_build_layer2_task() {
 
     $(_context_python) - "$task_json_path" "$all_tasks_dir" "$completed_json" "$stage" <<'PYTHON_EOF'
 import sys, os, json
-sys.path.insert(0, os.environ.get("SPEED_DIR", "."))
+sys.path.insert(0, os.environ.get("SPEED_DIR_PY") or os.environ.get("SPEED_DIR", "."))
 
 task_json_path = sys.argv[1]
 all_tasks_dir = sys.argv[2]
 completed_json = sys.argv[3] if len(sys.argv) > 3 else ""
 stage = sys.argv[4] if len(sys.argv) > 4 else "developer"
 
-project_root = os.environ.get("PROJECT_ROOT", ".")
+project_root = os.environ.get("PROJECT_ROOT_PY") or os.environ.get("PROJECT_ROOT", ".")
 context_dir = os.path.join(project_root, ".speed", "context")
 
 # Load task
@@ -162,12 +162,12 @@ context_build_cross_task() {
 
     $(_context_python) - "$all_tasks_dir" "$feature_name" <<'PYTHON_EOF'
 import sys, os, json
-sys.path.insert(0, os.environ.get("SPEED_DIR", "."))
+sys.path.insert(0, os.environ.get("SPEED_DIR_PY") or os.environ.get("SPEED_DIR", "."))
 
 all_tasks_dir = sys.argv[1]
 feature_name = sys.argv[2] if len(sys.argv) > 2 else "default"
 
-project_root = os.environ.get("PROJECT_ROOT", ".")
+project_root = os.environ.get("PROJECT_ROOT_PY") or os.environ.get("PROJECT_ROOT", ".")
 context_dir = os.path.join(project_root, ".speed", "context")
 
 # Load all tasks
@@ -200,9 +200,9 @@ context_assemble_architect() {
     [[ "${MP_ENABLED:-}" == "true" ]] && _memory_dir="$(mp_knowledge_dir)"
     SPEED_MEMORY_DIR="$_memory_dir" $(_context_python) - <<'PYTHON_EOF'
 import sys, os, json
-sys.path.insert(0, os.environ.get("SPEED_DIR", "."))
+sys.path.insert(0, os.environ.get("SPEED_DIR_PY") or os.environ.get("SPEED_DIR", "."))
 
-project_root = os.environ.get("PROJECT_ROOT", ".")
+project_root = os.environ.get("PROJECT_ROOT_PY") or os.environ.get("PROJECT_ROOT", ".")
 context_dir = os.path.join(project_root, ".speed", "context")
 
 from lib.context.utils import read_json
@@ -247,12 +247,12 @@ context_assemble_verifier() {
 
     $(_context_python) - "$all_tasks_dir" "$contract_file" <<PYTHON_EOF
 import sys, os, json
-sys.path.insert(0, os.environ.get("SPEED_DIR", "."))
+sys.path.insert(0, os.environ.get("SPEED_DIR_PY") or os.environ.get("SPEED_DIR", "."))
 
 all_tasks_dir = sys.argv[1]
 contract_file = sys.argv[2] if len(sys.argv) > 2 else ""
 
-project_root = os.environ.get("PROJECT_ROOT", ".")
+project_root = os.environ.get("PROJECT_ROOT_PY") or os.environ.get("PROJECT_ROOT", ".")
 context_dir = os.path.join(project_root, ".speed", "context")
 
 product_spec = """${product_spec_content}"""
@@ -309,14 +309,14 @@ context_assemble_developer() {
     [[ "${MP_ENABLED:-}" == "true" ]] && _memory_dir="$(mp_knowledge_dir)"
     SPEED_MEMORY_DIR="$_memory_dir" $(_context_python) - "$task_json_path" "$branch_name" "$worktree_path" "$feature_name" <<PYTHON_EOF
 import sys, os, json
-sys.path.insert(0, os.environ.get("SPEED_DIR", "."))
+sys.path.insert(0, os.environ.get("SPEED_DIR_PY") or os.environ.get("SPEED_DIR", "."))
 
 task_json_path = sys.argv[1]
 branch_name = sys.argv[2] if len(sys.argv) > 2 else ""
 worktree_path = sys.argv[3] if len(sys.argv) > 3 else ""
 feature_name = sys.argv[4] if len(sys.argv) > 4 else ""
 
-project_root = os.environ.get("PROJECT_ROOT", ".")
+project_root = os.environ.get("PROJECT_ROOT_PY") or os.environ.get("PROJECT_ROOT", ".")
 context_dir = os.path.join(project_root, ".speed", "context")
 task_id = os.path.basename(task_json_path).replace(".json", "")
 task_context_dir = os.path.join(context_dir, "tasks", task_id, "context")
@@ -381,11 +381,11 @@ context_assemble_reviewer() {
     [[ "${MP_ENABLED:-}" == "true" ]] && _memory_dir="$(mp_knowledge_dir)"
     SPEED_MEMORY_DIR="$_memory_dir" $(_context_python) - "$task_json_path" <<PYTHON_EOF
 import sys, os, json
-sys.path.insert(0, os.environ.get("SPEED_DIR", "."))
+sys.path.insert(0, os.environ.get("SPEED_DIR_PY") or os.environ.get("SPEED_DIR", "."))
 
 task_json_path = sys.argv[1]
 
-project_root = os.environ.get("PROJECT_ROOT", ".")
+project_root = os.environ.get("PROJECT_ROOT_PY") or os.environ.get("PROJECT_ROOT", ".")
 context_dir = os.path.join(project_root, ".speed", "context")
 task_id = os.path.basename(task_json_path).replace(".json", "")
 task_context_dir = os.path.join(context_dir, "tasks", task_id, "context")
@@ -450,13 +450,13 @@ context_assemble_coherence() {
     [[ "${MP_ENABLED:-}" == "true" ]] && _memory_dir="$(mp_knowledge_dir)"
     SPEED_MEMORY_DIR="$_memory_dir" $(_context_python) - "$all_tasks_dir" "$contract_file" "$feature_name" <<PYTHON_EOF
 import sys, os, json
-sys.path.insert(0, os.environ.get("SPEED_DIR", "."))
+sys.path.insert(0, os.environ.get("SPEED_DIR_PY") or os.environ.get("SPEED_DIR", "."))
 
 all_tasks_dir = sys.argv[1]
 contract_file = sys.argv[2] if len(sys.argv) > 2 else ""
 feature_name = sys.argv[3] if len(sys.argv) > 3 else "default"
 
-project_root = os.environ.get("PROJECT_ROOT", ".")
+project_root = os.environ.get("PROJECT_ROOT_PY") or os.environ.get("PROJECT_ROOT", ".")
 context_dir = os.path.join(project_root, ".speed", "context")
 feature_context_dir = os.path.join(project_root, ".speed", "features", feature_name, "context")
 
@@ -521,11 +521,11 @@ context_assemble_debugger() {
     [[ "${MP_ENABLED:-}" == "true" ]] && _memory_dir="$(mp_knowledge_dir)"
     SPEED_MEMORY_DIR="$_memory_dir" $(_context_python) - "$task_json_path" <<PYTHON_EOF
 import sys, os, json
-sys.path.insert(0, os.environ.get("SPEED_DIR", "."))
+sys.path.insert(0, os.environ.get("SPEED_DIR_PY") or os.environ.get("SPEED_DIR", "."))
 
 task_json_path = sys.argv[1]
 
-project_root = os.environ.get("PROJECT_ROOT", ".")
+project_root = os.environ.get("PROJECT_ROOT_PY") or os.environ.get("PROJECT_ROOT", ".")
 context_dir = os.path.join(project_root, ".speed", "context")
 task_id = os.path.basename(task_json_path).replace(".json", "")
 task_context_dir = os.path.join(context_dir, "tasks", task_id, "context")
@@ -577,10 +577,10 @@ context_decomposition_gate() {
 
     $(_context_python) - "$all_tasks_dir" <<'PYTHON_EOF'
 import sys, os, json
-sys.path.insert(0, os.environ.get("SPEED_DIR", "."))
+sys.path.insert(0, os.environ.get("SPEED_DIR_PY") or os.environ.get("SPEED_DIR", "."))
 
 all_tasks_dir = sys.argv[1]
-project_root = os.environ.get("PROJECT_ROOT", ".")
+project_root = os.environ.get("PROJECT_ROOT_PY") or os.environ.get("PROJECT_ROOT", ".")
 context_dir = os.path.join(project_root, ".speed", "context")
 
 # Load tasks
@@ -615,13 +615,13 @@ context_classify_failure() {
 
     $(_context_python) - "$task_json_path" "$escalated" "$timed_out" <<PYTHON_EOF
 import sys, os, json
-sys.path.insert(0, os.environ.get("SPEED_DIR", "."))
+sys.path.insert(0, os.environ.get("SPEED_DIR_PY") or os.environ.get("SPEED_DIR", "."))
 
 task_json_path = sys.argv[1]
 escalated = sys.argv[2] == "true" if len(sys.argv) > 2 else False
 timed_out = sys.argv[3] == "true" if len(sys.argv) > 3 else False
 
-project_root = os.environ.get("PROJECT_ROOT", ".")
+project_root = os.environ.get("PROJECT_ROOT_PY") or os.environ.get("PROJECT_ROOT", ".")
 context_dir = os.path.join(project_root, ".speed", "context")
 task_id = os.path.basename(task_json_path).replace(".json", "")
 task_context_dir = os.path.join(context_dir, "tasks", task_id, "context")
@@ -658,7 +658,7 @@ context_spec_traceability() {
 
     $(_context_python) - "$all_tasks_dir" <<PYTHON_EOF
 import sys, os, json
-sys.path.insert(0, os.environ.get("SPEED_DIR", "."))
+sys.path.insert(0, os.environ.get("SPEED_DIR_PY") or os.environ.get("SPEED_DIR", "."))
 
 all_tasks_dir = sys.argv[1]
 
@@ -702,7 +702,7 @@ context_score_and_compress_specs() {
 
     $(_context_python) - "$tmp_primary" "$tmp_related" "$project_root" "$budget" "$threshold" "$candidate_cap" <<'PYTHON_EOF'
 import sys, os, json
-sys.path.insert(0, os.environ.get("SPEED_DIR", "."))
+sys.path.insert(0, os.environ.get("SPEED_DIR_PY") or os.environ.get("SPEED_DIR", "."))
 
 primary_path = sys.argv[1]
 related_path = sys.argv[2]
@@ -758,7 +758,7 @@ context_split_spec_for_phase() {
 
     $(_context_python) -c "
 import sys, os, json
-sys.path.insert(0, os.environ.get('SPEED_DIR', '.'))
+sys.path.insert(0, os.environ.get('SPEED_DIR_PY') or os.environ.get('SPEED_DIR', '.'))
 from lib.context.spec_split import split_spec_for_phase
 
 spec = sys.stdin.read()
@@ -783,7 +783,7 @@ context_verify_spec_split() {
 
     $(_context_python) -c "
 import sys, os, json
-sys.path.insert(0, os.environ.get('SPEED_DIR', '.'))
+sys.path.insert(0, os.environ.get('SPEED_DIR_PY') or os.environ.get('SPEED_DIR', '.'))
 from lib.context.spec_split import verify_spec_split
 
 tmpdir = sys.argv[1]
@@ -807,7 +807,7 @@ context_assemble_security_auditor() {
 import sys, os, json
 
 feature_name = sys.argv[1]
-project_root = os.environ.get("PROJECT_ROOT", ".")
+project_root = os.environ.get("PROJECT_ROOT_PY") or os.environ.get("PROJECT_ROOT", ".")
 
 feature_dir = os.path.join(project_root, ".speed", "features", feature_name)
 tasks_dir = os.path.join(feature_dir, "tasks")

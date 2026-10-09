@@ -270,14 +270,30 @@ cmd_verify() {
 
     local spec_file
     spec_file=$(_get_spec_path)
-    if [[ -z "$spec_file" ]] || [[ ! -f "$spec_file" ]]; then
-        log_error "Product spec not found. Run 'speed plan <spec-file>' first."
-        exit 1
+    local spec_content=""
+    if [[ -n "$spec_file" ]] && [[ -f "$spec_file" ]]; then
+        log_step "Reading product spec: ${COLOR_STEP}${spec_file}${RESET}"
+        spec_content=$(cat "$spec_file")
+    else
+        # Defect-driven plans are authorized by the filed defect reports rather
+        # than a product-spec path. Reconstruct the bounded source context from
+        # each task's exact spec_references entry.
+        local defect_ref defect_file
+        while IFS= read -r defect_ref; do
+            [[ -z "$defect_ref" ]] && continue
+            defect_file="$PROJECT_ROOT/$defect_ref"
+            [[ -f "$defect_file" ]] || continue
+            spec_content+=$'\n\n## Filed Defect\n\n'"$(cat "$defect_file")"
+        done < <(for f in "${TASKS_DIR}"/*.json; do
+            [[ -f "$f" ]] || continue
+            jq -r '.spec_references[]?.spec // empty' "$f"
+        done | sort -u)
+        if [[ -z "$spec_content" ]]; then
+            log_error "Product spec or defect authorization not found. Run 'speed plan <spec-file>' or 'speed plan --defects <defect-file>' first."
+            exit 1
+        fi
+        log_step "Reading filed defect authorization for defect-driven plan"
     fi
-
-    log_step "Reading product spec: ${COLOR_STEP}${spec_file}${RESET}"
-    local spec_content
-    spec_content=$(cat "$spec_file")
 
     # Build verification message — structured assembly with fallback
     log_step "Gathering task plan (${total} tasks)..."
@@ -469,10 +485,12 @@ ${task_files_content}
 Apply ONLY the fixes described above. Do NOT change anything else."
 
         local fix_output
-        if ! fix_output=$(provider_run \
+        if ! fix_output=$(provider_run_json \
             "$fix_system_prompt" \
             "$fix_message" \
+            "${TEMPLATES_DIR}/plan-fix-output.json" \
             "$MODEL_SUPPORT" \
+            "$DEFAULT_JSON_MAX_TURNS" \
             "$AGENT_TOOLS_WRITE" \
             "FixAgent"); then
             rm -f "$fix_system_prompt"

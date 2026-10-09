@@ -16,24 +16,23 @@ describe("TopBar", () => {
   it("shows Good morning between 5 and 11", () => {
     vi.setSystemTime(new Date("2024-01-01T09:00:00"));
     render(<TopBar {...props} />);
-    expect(screen.getByText(/Good morning, Sanjay/)).toBeTruthy();
+    expect(screen.getByText("Good morning")).toBeTruthy();
   });
 
   it("shows Good afternoon between 12 and 17", () => {
     vi.setSystemTime(new Date("2024-01-01T14:00:00"));
     render(<TopBar {...props} />);
-    expect(screen.getByText(/Good afternoon, Sanjay/)).toBeTruthy();
+    expect(screen.getByText("Good afternoon")).toBeTruthy();
   });
 
   it("shows Good evening from 18 onward and before 5", () => {
     vi.setSystemTime(new Date("2024-01-01T20:00:00"));
     render(<TopBar {...props} />);
-    expect(screen.getByText(/Good evening, Sanjay/)).toBeTruthy();
+    expect(screen.getByText("Good evening")).toBeTruthy();
   });
 
   it("renders project name and branch", () => {
     render(<TopBar {...props} />);
-    expect(screen.getByText("speed-dashboard")).toBeTruthy();
-    expect(screen.getByText("main")).toBeTruthy();
+    expect(screen.getByText(/speed-dashboard\s*·\s*main/)).toBeTruthy();
   });
 });

@@ -152,7 +152,11 @@ ${diff}
         if [[ -n "$_branch" ]] && git_branch_exists "$_branch"; then
             _diff=$(git_diff_branch "$_branch" 2>/dev/null || echo "")
         fi
-        task_diffs_json=$(jq --arg tid "$tid" --rawfile diff <(printf '%s' "$_diff") '. + {($tid): $diff}' <<< "$task_diffs_json")
+        local _diff_file
+        _diff_file=$(mktemp)
+        printf '%s' "$_diff" > "$_diff_file"
+        task_diffs_json=$(jq --arg tid "$tid" --rawfile diff "$_diff_file" '. + {($tid): $diff}' <<< "$task_diffs_json")
+        rm -f "$_diff_file"
     done <<< "$done_tasks"
 
     local coherence_message

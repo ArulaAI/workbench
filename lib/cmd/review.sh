@@ -1,6 +1,50 @@
 #!/usr/bin/env bash
 # review.sh — Code review command
 
+# Select the commit that authorized a task's implementation. A task created
+# from a feature branch must be reviewed from its recorded base commit; using
+# the repository's main branch would pull unrelated, pre-existing feature work
+# into the review diff.
+_review_base_for_task() {
+    local task_json="$1"
+    local branch="$2"
+    local execution_base_commit base_commit
+    execution_base_commit=$(echo "$task_json" | jq -r '.execution_base_commit // empty')
+    base_commit=$(echo "$task_json" | jq -r '.base_commit // empty')
+
+    if [[ -n "$execution_base_commit" ]] && _git cat-file -e "${execution_base_commit}^{commit}" 2>/dev/null; then
+        echo "$execution_base_commit"
+        return 0
+    fi
+
+    # Backward-compatible recovery for tasks completed before
+    # execution_base_commit was recorded.
+    local task_base_branch recovered_base
+    task_base_branch=$(git_task_base_branch 2>/dev/null || true)
+    # Seeded course tasks live directly on the feature branch and predate
+    # execution provenance. Comparing that branch with itself produces an
+    # empty review. In that case the authored change is main...feature.
+    if [[ -z "$execution_base_commit" ]] && [[ -z "$base_commit" ]] \
+        && [[ -n "$task_base_branch" ]] && [[ "$branch" == "$task_base_branch" ]]; then
+        _git merge-base "$(git_main_branch)" "$branch" 2>/dev/null || git_main_branch
+        return 0
+    fi
+    if [[ -n "$task_base_branch" ]] && git_branch_exists "$task_base_branch"; then
+        recovered_base=$(_git merge-base "$task_base_branch" "$branch" 2>/dev/null || true)
+        if [[ -n "$recovered_base" ]]; then
+            echo "$recovered_base"
+            return 0
+        fi
+    fi
+
+    if [[ -n "$base_commit" ]] && _git cat-file -e "${base_commit}^{commit}" 2>/dev/null; then
+        echo "$base_commit"
+        return 0
+    fi
+
+    _git merge-base "$(git_main_branch)" "$branch" 2>/dev/null || git_main_branch
+}
+
 _load_relevant_specs() {
     local diff_text="$1"
     local primary_spec="$2"
@@ -116,13 +160,14 @@ _cmd_review_task() {
         exit "$EXIT_CONFIG_ERROR"
     fi
 
-    local main_branch diff inspected_commit diff_hash
+    local main_branch review_base diff inspected_commit diff_hash
     main_branch=$(git_main_branch)
     if ! git_branch_exists "$main_branch"; then
         log_error "Base branch ${main_branch} not found"
         exit "$EXIT_CONFIG_ERROR"
     fi
-    diff=$(_git diff "${main_branch}...${branch}")
+    review_base=$(_review_base_for_task "$task_json" "$branch")
+    diff=$(_git diff "${review_base}..${branch}")
     inspected_commit=$(_git rev-parse "$branch" 2>/dev/null || true)
     diff_hash=$(printf '%s' "$diff" | shasum -a 256 | awk '{print $1}')
 
@@ -132,7 +177,7 @@ Recorded author model: ${author_model}
 Declared file lists:
 ${declared_files}
 
-Diff (${main_branch}...${branch}):
+Diff (${review_base}..${branch}):
 \`\`\`diff
 ${diff}
 \`\`\`
@@ -187,7 +232,7 @@ EOF
     log_header "Review"
     printf '%s\n' "$review_output"
     echo ""
-    echo "${main_branch}...${branch}"
+    echo "${review_base}..${branch}"
     echo "Review written to ${review_file}"
 }
 
@@ -265,7 +310,7 @@ cmd_review() {
         local diff=""
         if git_branch_exists "$branch"; then
             local fork_point
-            fork_point=$(_git merge-base "$(git_main_branch)" "$branch" 2>/dev/null) || true
+            fork_point=$(_review_base_for_task "$task_json" "$branch")
             diff=$(_git diff "${fork_point}..${branch}" 2>/dev/null || echo "No diff available")
             inspected_commit=$(_git rev-parse "$branch" 2>/dev/null || true)
             diff_hash=$(printf '%s' "$diff" | shasum -a 256 | awk '{print $1}')

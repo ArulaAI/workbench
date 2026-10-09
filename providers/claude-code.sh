@@ -399,7 +399,9 @@ provider_run() {
         --output-format stream-json --verbose \
         --model "$model" \
         --max-turns "$DEFAULT_MAX_TURNS" \
-        --allowedTools "$allowed_tools"
+        --tools "$allowed_tools" \
+        --allowedTools "$allowed_tools" \
+        --strict-mcp-config --mcp-config '{"mcpServers":{}}'
 }
 
 # Spawn a Claude agent that outputs structured JSON.
@@ -460,10 +462,16 @@ provider_run_json() {
         --max-turns "$max_turns"
     )
 
-    # --tools: passed whenever the caller provides a 6th arg.
-    # Empty string sends --tools "" which disables all tools.
+    # --tools: passed whenever the caller provides a 6th arg. Strict MCP mode
+    # is always enabled so Workbench agents cannot inherit unrelated personal
+    # or account-level connectors. The explicit tool list remains the complete
+    # capability boundary for the agent.
     if [[ $arg_count -ge 6 ]]; then
         cli_args+=(--tools "${6}")
+        cli_args+=(--strict-mcp-config --mcp-config '{"mcpServers":{}}')
+        if [[ -n "${6}" ]]; then
+            cli_args+=(--allowedTools "${6}")
+        fi
     fi
 
     local effort=$(_resolve_claude_effort "$label" "$model" "$(( ${#system_prompt} + ${#user_message} ))")
@@ -573,8 +581,10 @@ provider_spawn_bg() {
     ( cd "$agent_cwd" && "$_TIMEOUT_CMD" --kill-after="$kill_grace" "$agent_timeout" \
         "$PROVIDER_BIN" -p \
         --model "$model" \
+        --tools "$allowed_tools" \
         --allowedTools "$allowed_tools" \
         --max-turns "$DEFAULT_MAX_TURNS" \
+        --strict-mcp-config --mcp-config '{"mcpServers":{}}' \
         --system-prompt-file "$sys_prompt_file" \
         < "$user_msg_file" \
         > "$output_file" 2>&1

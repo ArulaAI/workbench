@@ -7,6 +7,12 @@ set -euo pipefail
 SPEED_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export SPEED_DIR    # Available to Python subprocesses
 PROJECT_ROOT="${SPEED_PROJECT_ROOT:-$(pwd)}"
+# MSYS converts native executable arguments but does not convert path values
+# embedded in environment variables or Python source. Keep native equivalents
+# for Python bridges when Workbench is launched from Git Bash on Windows.
+SPEED_DIR_PY="$(cygpath -m "$SPEED_DIR" 2>/dev/null || printf '%s' "$SPEED_DIR")"
+PROJECT_ROOT_PY="$(cygpath -m "$PROJECT_ROOT" 2>/dev/null || printf '%s' "$PROJECT_ROOT")"
+export SPEED_DIR_PY PROJECT_ROOT_PY
 LIB_DIR="${SPEED_DIR}/lib"
 AGENTS_DIR="${SPEED_DIR}/agents"
 TEMPLATES_DIR="${SPEED_DIR}/templates"

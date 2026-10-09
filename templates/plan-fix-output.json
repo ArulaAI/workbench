@@ -1,0 +1,39 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["fixes_applied", "needs_human"],
+  "properties": {
+    "fixes_applied": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["task_id", "file", "field", "before", "after", "reason"],
+        "properties": {
+          "task_id": {"type": "string"},
+          "file": {"type": "string"},
+          "field": {"type": "string"},
+          "before": {"type": "string"},
+          "after": {"type": "string"},
+          "reason": {"type": "string"}
+        }
+      }
+    },
+    "needs_human": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["task_id", "file", "issue", "spec_says", "plan_says", "options"],
+        "properties": {
+          "task_id": {"type": "string"},
+          "file": {"type": "string"},
+          "issue": {"type": "string"},
+          "spec_says": {"type": "string"},
+          "plan_says": {"type": "string"},
+          "options": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    }
+  }
+}

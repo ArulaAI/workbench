@@ -137,7 +137,56 @@ test_missing_branch_is_configuration_error() {
     }
 }
 
+test_review_uses_recorded_task_base_commit() {
+    local baseline feature_base selected
+    baseline=$(git -C "$TEST_DIR" rev-parse main)
+    git -C "$TEST_DIR" checkout -q -b round-0
+    echo "pre-existing feature work" > "$TEST_DIR/feature.txt"
+    git -C "$TEST_DIR" add feature.txt
+    git -C "$TEST_DIR" commit -q -m "feature baseline"
+    feature_base=$(git -C "$TEST_DIR" rev-parse HEAD)
+    git -C "$TEST_DIR" checkout -q -b repair-branch
+    echo "authorized repair" > "$TEST_DIR/repair.txt"
+    git -C "$TEST_DIR" add repair.txt
+    git -C "$TEST_DIR" commit -q -m "repair"
+
+    local task_json
+    task_json=$(jq -n --arg base "$feature_base" '{execution_base_commit: $base, base_commit: "older-planning-commit"}')
+    selected=$(_review_base_for_task "$task_json" "repair-branch")
+
+    [[ "$selected" == "$feature_base" ]] || {
+        echo "    ASSERT: expected recorded base $feature_base, got $selected (main was $baseline)" >&2
+        return 1
+    }
+    git -C "$TEST_DIR" diff --name-only "${selected}..repair-branch" | grep -qx "repair.txt"
+    ! git -C "$TEST_DIR" diff --name-only "${selected}..repair-branch" | grep -q "feature.txt"
+}
+
+test_seeded_course_task_uses_main_fork_point() {
+    local main_commit selected task_json
+    main_commit=$(git -C "$TEST_DIR" rev-parse main)
+    git -C "$TEST_DIR" checkout -q -b round-0
+    echo "seeded course change" > "$TEST_DIR/feature.txt"
+    git -C "$TEST_DIR" add feature.txt
+    git -C "$TEST_DIR" commit -q -m "seed round zero"
+
+    # Seeded course tasks predate execution provenance and point at the branch
+    # being reviewed. Their review range must begin where that branch forked
+    # from main, rather than comparing round-0 to itself.
+    git_task_base_branch() { echo "round-0"; }
+    task_json='{}'
+    selected=$(_review_base_for_task "$task_json" "round-0")
+
+    [[ "$selected" == "$main_commit" ]] || {
+        echo "    ASSERT: expected main fork point $main_commit, got $selected" >&2
+        return 1
+    }
+    git -C "$TEST_DIR" diff --name-only "${selected}..round-0" | grep -qx "feature.txt"
+}
+
 run_test test_missing_branch_is_configuration_error
+run_test test_review_uses_recorded_task_base_commit
+run_test test_seeded_course_task_uses_main_fork_point
 
 printf "\nReview tests: %d passed, %d failed\n" "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

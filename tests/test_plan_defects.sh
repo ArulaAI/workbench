@@ -447,6 +447,69 @@ test_f8_gate_warns_on_escalation_task_with_files_touched() {
     assert_eq "1" "${#_f8_warnings[@]}" "warning count"
 }
 
+# ── Tests: defect traceability ───────────────────────────────────
+
+test_defect_traceability_gate_passes_with_matching_reference() {
+    local f1="${TEST_DIR}/specs/defects/1.md"
+    make_defect "$f1"
+    defect_files=("$f1")
+    tasks_json="[{\"id\":\"1\",\"title\":\"Repair\",\"spec_references\":[{\"spec\":\"specs/defects/1.md\"}]}]"
+
+    _run_defect_traceability_gate
+    assert_eq "pass" "$_defect_trace_status" "traceability status"
+}
+
+test_defect_traceability_gate_rejects_unreferenced_task() {
+    local f1="${TEST_DIR}/specs/defects/1.md"
+    make_defect "$f1"
+    defect_files=("$f1")
+    tasks_json='[{"id":"1","title":"Repair","spec_references":[]}]'
+
+    _run_defect_traceability_gate
+    assert_eq "fail" "$_defect_trace_status" "traceability status" || return 1
+    assert_output_contains "${_defect_trace_errors[*]}" "Task 1" || return 1
+    assert_output_contains "${_defect_trace_errors[*]}" "no generated task"
+}
+
+test_defect_traceability_gate_rejects_uncovered_input() {
+    local f1="${TEST_DIR}/specs/defects/1.md" f2="${TEST_DIR}/specs/defects/2.md"
+    make_defect "$f1"; make_defect "$f2"
+    defect_files=("$f1" "$f2")
+    tasks_json='[{"id":"1","title":"Repair","spec_references":[{"spec":"specs/defects/1.md"}]}]'
+
+    _run_defect_traceability_gate
+    assert_eq "fail" "$_defect_trace_status" "traceability status" || return 1
+    assert_output_contains "${_defect_trace_errors[*]}" "specs/defects/2.md"
+}
+
+test_single_defect_provenance_binds_unreferenced_tasks() {
+    local f1="${TEST_DIR}/specs/defects/1.md"
+    make_defect "$f1"
+    defect_files=("$f1")
+    tasks_json='[{"id":"1","title":"Repair","spec_references":[]}]'
+
+    _bind_single_defect_provenance
+
+    assert_eq "specs/defects/1.md" \
+        "$(echo "$tasks_json" | jq -r '.[0].spec_references[0].spec')" \
+        "bound source" || return 1
+    _run_defect_traceability_gate
+    assert_eq "pass" "$_defect_trace_status" "traceability status"
+}
+
+test_multiple_defects_do_not_guess_missing_provenance() {
+    local f1="${TEST_DIR}/specs/defects/1.md" f2="${TEST_DIR}/specs/defects/2.md"
+    make_defect "$f1"; make_defect "$f2"
+    defect_files=("$f1" "$f2")
+    tasks_json='[{"id":"1","title":"Repair","spec_references":[]}]'
+
+    _bind_single_defect_provenance
+
+    assert_eq "0" "$(echo "$tasks_json" | jq '.[0].spec_references | length')" "reference count" || return 1
+    _run_defect_traceability_gate
+    assert_eq "fail" "$_defect_trace_status" "traceability status"
+}
+
 # ── Tests: cmd_plan CLI-level input validation (defect-driven mode) ──
 
 test_cmd_plan_defects_missing_feature_exits_config_error() {
@@ -516,6 +579,11 @@ run_test test_f8_gate_passes_with_valid_escalation_task
 run_test test_f8_gate_ignores_non_f8_defects
 run_test test_f8_gate_warns_on_escalation_task_with_files_touched
 
+run_test test_defect_traceability_gate_passes_with_matching_reference
+run_test test_defect_traceability_gate_rejects_unreferenced_task
+run_test test_defect_traceability_gate_rejects_uncovered_input
+run_test test_single_defect_provenance_binds_unreferenced_tasks
+run_test test_multiple_defects_do_not_guess_missing_provenance
 run_test test_cmd_plan_defects_missing_feature_exits_config_error
 run_test test_cmd_plan_defects_missing_file_exits_config_error
 run_test test_cmd_plan_defects_directory_exits_config_error

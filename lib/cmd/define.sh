@@ -1,6 +1,24 @@
 #!/usr/bin/env bash
 # define.sh — Read feature findings and the defect portfolio.
 
+_define_open_url() {
+    local url="$1"
+    case "$(uname -s 2>/dev/null || true)" in
+        Darwin*)
+            command -v open >/dev/null 2>&1 || return 1
+            open "$url" >/dev/null 2>&1
+            ;;
+        MINGW*|MSYS*|CYGWIN*)
+            command -v cmd.exe >/dev/null 2>&1 || return 1
+            MSYS2_ARG_CONV_EXCL='*' cmd.exe /c start "" "$url" >/dev/null 2>&1
+            ;;
+        *)
+            command -v xdg-open >/dev/null 2>&1 || return 1
+            xdg-open "$url" >/dev/null 2>&1
+            ;;
+    esac
+}
+
 cmd_define() {
     local subject="${1:-}"
     if [[ -z "$subject" ]]; then
@@ -24,8 +42,8 @@ cmd_define() {
         done
         local frontend_pid="${DASHBOARD_DIR:-${STATE_DIR}/.dashboard}/frontend.pid"
         if [[ "$no_open" == false && "$machine" == false && -f "$frontend_pid" ]] \
-            && kill -0 "$(cat "$frontend_pid")" 2>/dev/null && command -v open >/dev/null 2>&1; then
-            open "http://localhost:${DASHBOARD_FRONTEND_PORT:-3000}/define/${feature}/findings" >/dev/null 2>&1 || true
+            && kill -0 "$(cat "$frontend_pid")" 2>/dev/null; then
+            _define_open_url "http://localhost:${DASHBOARD_FRONTEND_PORT:-3000}/define/${feature}/findings" || true
         fi
     fi
 }

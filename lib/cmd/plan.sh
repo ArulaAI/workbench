@@ -60,6 +60,22 @@ _save_spec_path() {
     echo "$spec_file" > "${dir}/spec_path"
 }
 
+_save_plan_inputs() {
+    local manifest="${FEATURE_DIR}/plan-inputs.json"
+    local tmp="${manifest}.tmp"
+    local entries='[]'
+    local input
+    for input in "$@"; do
+        [[ -f "$input" ]] || continue
+        local rel="${input#${PROJECT_ROOT}/}" hash
+        hash=$(_git hash-object "$input")
+        entries=$(echo "$entries" | jq --arg path "$rel" --arg sha "$hash" \
+            '. + [{path:$path, sha256:$sha}]')
+    done
+    printf '%s\n' "$entries" | jq '.' > "$tmp"
+    mv "$tmp" "$manifest"
+}
+
 # ── Plan stage caching ─────────────────────────────────────────
 # Caches expensive stages (Guardian, Architect) keyed by a hash of
 # spec inputs. Auto-invalidates when specs change. --force bypasses.
@@ -352,7 +368,12 @@ _defect_index_for_spec_refs() {
         local _d_base
         _d_base=$(basename "$_d_abs")
         local _match
-        _match=$(echo "$spec_refs" | jq \
+        # Git Bash rewrites POSIX-looking command arguments for native
+        # Windows executables. jq.exe would otherwise receive a converted
+        # --arg abs value while the JSON still contains the original path.
+        # Excluding argv conversion keeps path comparison deterministic on
+        # Windows and is harmless on macOS/Linux.
+        _match=$(echo "$spec_refs" | MSYS2_ARG_CONV_EXCL='*' jq \
             --arg abs "$_d_abs" --arg rel "$_d_rel" --arg base "$_d_base" \
             'any(.[]?.spec; . == $abs or . == $rel or . == $base)')
         if [[ "$_match" == "true" ]]; then
@@ -441,7 +462,7 @@ _run_f8_gate() {
         defect_base=$(basename "$defect_abs")
 
         local matches match_count
-        matches=$(echo "$tasks_json" | jq -c \
+        matches=$(echo "$tasks_json" | MSYS2_ARG_CONV_EXCL='*' jq -c \
             --arg abs "$defect_abs" --arg rel "$defect_rel" --arg base "$defect_base" \
             '[.[] | select(([.spec_references[]?.spec]) | any(. == $abs or . == $rel or . == $base))]')
         match_count=$(echo "$matches" | jq 'length')
@@ -474,6 +495,65 @@ _run_f8_gate() {
             done < <(echo "$escalation_with_files" | jq -r '.[] | [.id, .title] | @tsv')
         fi
     done
+}
+
+# Every task in a defect-driven plan must be authorized by at least one input
+# defect, and every supplied defect must be represented by at least one task.
+# This gate is independent of F8: it protects ordinary repair tasks from
+# losing the evidence trail that justified the work.
+_run_defect_traceability_gate() {
+    _defect_trace_status="pass"
+    _defect_trace_errors=()
+
+    local task_count task_index
+    task_count=$(echo "$tasks_json" | jq 'length')
+    for ((task_index=0; task_index<task_count; task_index++)); do
+        local task_id spec_refs
+        task_id=$(echo "$tasks_json" | jq -r ".[$task_index].id // \"?\"")
+        spec_refs=$(echo "$tasks_json" | jq -c ".[$task_index].spec_references // []")
+        if ! _defect_index_for_spec_refs "$spec_refs" >/dev/null; then
+            _defect_trace_status="fail"
+            _defect_trace_errors+=("Task ${task_id}: no spec_references entry matches a supplied defect")
+        fi
+    done
+
+    local defect_index
+    for defect_index in "${!defect_files[@]}"; do
+        local defect_abs="${defect_files[$defect_index]}"
+        local defect_rel="${defect_abs#${PROJECT_ROOT}/}"
+        local defect_base
+        defect_base=$(basename "$defect_abs")
+        local match_count
+        match_count=$(echo "$tasks_json" | MSYS2_ARG_CONV_EXCL='*' jq \
+            --arg abs "$defect_abs" --arg rel "$defect_rel" --arg base "$defect_base" \
+            '[.[] | select(([.spec_references[]?.spec]) | any(. == $abs or . == $rel or . == $base))] | length')
+        if [[ "$match_count" -eq 0 ]]; then
+            _defect_trace_status="fail"
+            _defect_trace_errors+=("Defect ${defect_rel}: no generated task traces back to this input")
+        fi
+    done
+}
+
+# When exactly one defect authorized the entire plan, provenance is
+# deterministic even if the Architect omitted spec_references. Attach that
+# sole source without changing task scope or acceptance criteria. With more
+# than one defect, an omitted reference is ambiguous and the hard gate below
+# must reject it.
+_bind_single_defect_provenance() {
+    [[ ${#defect_files[@]} -eq 1 ]] || return 0
+    local defect_abs="${defect_files[0]}"
+    local defect_rel="${defect_abs#${PROJECT_ROOT}/}"
+    local changed_count
+    changed_count=$(echo "$tasks_json" | jq \
+        '[.[] | select((.spec_references // [] | length) == 0)] | length')
+    [[ "$changed_count" -gt 0 ]] || return 0
+
+    tasks_json=$(echo "$tasks_json" | MSYS2_ARG_CONV_EXCL='*' jq -c \
+        --arg defect "$defect_rel" \
+        'map(if (.spec_references // [] | length) == 0 then
+            .spec_references = [{spec:$defect, section:"Defect report", requirement:"Resolve the documented defect within its stated repair scope"}]
+         else . end)')
+    log_step "Attached sole defect source to ${changed_count} unreferenced task(s)"
 }
 
 cmd_plan() {
@@ -582,8 +662,8 @@ cmd_plan() {
     feature_set_active "$feature_name"
     log_info "Feature: ${COLOR_STEP}${feature_name}${RESET}"
 
-    # Save spec path for verify and review commands (not applicable — no
-    # single spec file — in defect-driven mode)
+    # Preserve the existing spec-path behavior for specification-driven plans.
+    # Defect-driven plans have no single product-spec path.
     [[ "$defects_mode" != "true" ]] && _save_spec_path "$spec_file"
 
     # Ratification gate: in MP mode, spec must be ratified before planning
@@ -1237,6 +1317,28 @@ cmd_plan() {
         exit 1
     fi
 
+    # ── Defect source traceability gate ───────────────────────────
+    # Runs before tasks are written. Every repair task must retain the
+    # defect evidence that authorized it, regardless of failure class.
+    if [[ "$defects_mode" == "true" ]]; then
+        _bind_single_defect_provenance
+        _run_defect_traceability_gate
+        if [[ "$_defect_trace_status" == "fail" ]]; then
+            log_error "Defect traceability gate FAILED"
+            local _trace_error
+            for _trace_error in "${_defect_trace_errors[@]}"; do
+                echo -e "  ${COLOR_ERROR}${SYM_CROSS} ${_trace_error}${RESET}"
+            done
+            printf '%s\n' "${_defect_trace_errors[@]}" | jq -R . | jq -s '.' \
+                > "${LOGS_DIR}/defect-traceability-gate.json"
+            log_step "Full report: ${LOGS_DIR}/defect-traceability-gate.json"
+            exit "$EXIT_GATE_FAILURE"
+        fi
+        log_success "Defect traceability gate passed"
+        _save_plan_inputs "${defect_files[@]}"
+        echo ""
+    fi
+
     # ── F8 hard gate (PLAN_CONTRACT.md §8) ──────────────────────────
     # Runs before anything is written to disk. No bypass — F8 is
     # human-reserved by design and has no SKIP_ override.
@@ -1500,6 +1602,6 @@ cmd_plan() {
     echo ""
 
     echo -e "${COLOR_DIM}Review tasks in ${TASKS_DIR}/${RESET}"
-    echo -e "${COLOR_DIM}Next: ${COLOR_STEP}speed verify${RESET} to validate the plan against the spec${RESET}"
+    echo -e "${COLOR_DIM}Next: ${COLOR_STEP}speed run --feature ${FEATURE_NAME}${RESET} to execute the approved plan${RESET}"
     echo ""
 }

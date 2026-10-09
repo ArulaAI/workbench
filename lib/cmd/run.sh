@@ -330,6 +330,20 @@ cmd_run() {
         log_warn "Could not acquire main-branch lock for baseline — proceeding (may miss uncommitted files)"
     fi
 
+    # Persist the exact commit from which this run will fork task branches.
+    # Plan's base_commit describes planning provenance; it may precede the
+    # baseline commit that captures filed defects and other authorized inputs.
+    local execution_base_commit
+    execution_base_commit=$(_git rev-parse HEAD)
+    local execution_task_file execution_task_id execution_task_status
+    for execution_task_file in "${TASKS_DIR}"/*.json; do
+        [[ -f "$execution_task_file" ]] || continue
+        execution_task_status=$(jq -r '.status // "pending"' "$execution_task_file")
+        [[ "$execution_task_status" == "pending" ]] || continue
+        execution_task_id=$(jq -r '.id' "$execution_task_file")
+        task_update "$execution_task_id" "execution_base_commit" "$execution_base_commit"
+    done
+
     # Verify tasks exist
     local total
     total=$(task_count_total)
@@ -1225,7 +1239,7 @@ ${failure_context}"
     fi
 
     if [[ "$final_done" -gt 0 ]]; then
-        echo -e "Next: ${COLOR_STEP}speed review${RESET} then ${COLOR_STEP}speed coherence${RESET} then ${COLOR_STEP}speed integrate${RESET}"
+        echo -e "Next: repeat ${COLOR_STEP}speed diagnose${RESET}, ${COLOR_STEP}speed review${RESET}, and ${COLOR_STEP}speed eval${RESET} on the new implementation diff"
     fi
     echo ""
     log_result "Completed in ${elapsed_fmt}"

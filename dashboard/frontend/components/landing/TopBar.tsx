@@ -34,7 +34,7 @@ export function TopBar({ projectName, branch, greeting: backendGreeting }: TopBa
           letterSpacing: "-0.02em",
         }}
       >
-        {greeting}, Sanjay
+        {greeting}
       </div>
 
       <div style={{ display: "flex", alignItems: "baseline", gap: 16 }}>

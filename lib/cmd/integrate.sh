@@ -80,6 +80,8 @@ cmd_integrate() {
     fi
 
     # Get branches in topological order
+    local integration_base_branch
+    integration_base_branch=$(git_task_base_branch)
     local branches=()
     local ordered_tasks
     ordered_tasks=$(task_topo_sort)
@@ -92,7 +94,7 @@ cmd_integrate() {
             branch=$(jq -r '.branch' "${TASKS_DIR}/${task_id}.json")
             if git_branch_exists "$branch"; then
                 # Skip branches already merged (idempotent)
-                if _git merge-base --is-ancestor "$branch" "$(git_main_branch)" 2>/dev/null; then
+                if _git merge-base --is-ancestor "$branch" "$integration_base_branch" 2>/dev/null; then
                     log_step "Branch ${branch} already merged — skipping"
                     continue
                 fi
@@ -115,7 +117,7 @@ cmd_integrate() {
     done
 
     local integrate_branch
-    integrate_branch=$(git_main_branch)
+    integrate_branch="$integration_base_branch"
 
     local agent_message="## Integration Task
 
@@ -277,7 +279,9 @@ PYTHON_EOF
     # ── Post-integration: observation extraction ─────────────────
     echo ""
     local run_learn="y"
-    read -r -p "Integration complete. Run observation extraction? [Y/n] " run_learn </dev/tty || run_learn="y"
+    if [[ -t 0 ]]; then
+        read -r -p "Integration complete. Run observation extraction? [Y/n] " run_learn || run_learn="y"
+    fi
     run_learn="${run_learn:-y}"
     if [[ "$run_learn" =~ ^[Yy]$ ]]; then
         cmd_learn || log_warn "Observation extraction failed (non-blocking)"

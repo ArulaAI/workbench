@@ -70,6 +70,9 @@ gates_run() {
 
         local cmds
         cmds=$(gates_get_config "$gate_type" "$subsystem")
+        if [[ -z "$cmds" ]] && [[ "$gate_type" == "test" ]]; then
+            cmds=$(_gates_default_test_command "$worktree_path")
+        fi
         if [[ -n "$cmds" ]]; then
             local all_ok=true
             while IFS= read -r cmd; do
@@ -130,6 +133,18 @@ gates_run() {
         return 0
     else
         return 1
+    fi
+}
+
+# Return the repository's conventional test command when no explicit agent
+# gate is configured. This keeps Run evidence complete for standard Node
+# projects such as the 301 payments fixture.
+_gates_default_test_command() {
+    local worktree_path="$1"
+    local package_json="${worktree_path}/package.json"
+    if [[ -f "$package_json" ]] \
+        && jq -e '.scripts.test? | type == "string" and length > 0' "$package_json" >/dev/null 2>&1; then
+        echo "npm test"
     fi
 }
 
