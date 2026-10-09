@@ -183,7 +183,7 @@ gate_syntax_check() {
     for f in $(echo "$diff_files" | grep '\.py$' || true); do
         local full_path="${worktree_path}/${f}"
         [[ -f "$full_path" ]] || continue
-        if ! python3 -c "import ast; ast.parse(open('${full_path}').read())" 2>/dev/null; then
+        if ! python3 -c 'import ast, sys, tokenize; path = sys.argv[1]; ast.parse(tokenize.open(path).read(), filename=path)' "$full_path" 2>/dev/null; then
             log_error "Syntax error in: $f"
             failed=true
         fi
