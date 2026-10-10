@@ -145,6 +145,13 @@ cmd_validate() {
     echo "$validator_output" > "${LOGS_DIR}/validation.log"
     log_success "Validation report saved to ${LOGS_DIR}/validation.log"
 
+    # The agent may wrap its JSON in a ```json fence or add prose around it.
+    # Extract the JSON the same way audit and Guardian do; fall back to the raw text.
+    local parsed_validator
+    if parsed_validator=$(parse_agent_json "$validator_output" 2>/dev/null) && [[ -n "$parsed_validator" ]]; then
+        validator_output="$parsed_validator"
+    fi
+
     # Check status
     if ! _require_json "Validator" "$validator_output"; then
         log_error "Review raw output: ${LOGS_DIR}/validation.log"
