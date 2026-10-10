@@ -191,6 +191,7 @@ _run_coverage_check() {
     [[ -n "$product_spec_content" ]] && msg+="## Product Spec\n\n${product_spec_content}\n\n"
     msg+="## Tech Spec\n\n${tech_spec_content}"
     [[ -n "$design_spec_content" ]] && msg+="\n\n## Design Spec\n\n${design_spec_content}"
+    [[ -n "${architecture_spec_content:-}" ]] && msg+="\n\n## Architecture Spec\n\n${architecture_spec_content}"
     msg+="\n\n## Planned Tasks\n\n\`\`\`json\n${task_summary}\n\`\`\`"
 
     local output rc=0
@@ -255,6 +256,7 @@ _repair_coverage_gaps() {
     [[ -n "$product_spec_content" ]] && msg+="## Product Spec\n\n${product_spec_content}\n\n"
     msg+="## Tech Spec\n\n${tech_spec_content}\n\n"
     [[ -n "$design_spec_content" ]] && msg+="## Design Spec\n\n${design_spec_content}\n\n"
+    [[ -n "${architecture_spec_content:-}" ]] && msg+="## Architecture Spec\n\n${architecture_spec_content}\n\n"
     msg+="## Coverage Gaps\n\n${gap_text}\n\n"
     msg+="## Instructions\n\nAdd task(s) for the gaps above. "
     msg+="IDs start at ${start_id}. Do not recreate existing tasks. "
@@ -324,8 +326,13 @@ _repair_coverage_gaps() {
 }
 
 cmd_plan() {
-    local spec_file="${1:-}"
-    shift || true
+    # The first argument is the spec file unless it is an option, so
+    # `speed plan --feature NAME --skip-audit` works without a file.
+    local spec_file=""
+    if [[ -n "${1:-}" && "${1}" != -* ]]; then
+        spec_file="$1"
+        shift
+    fi
     local specs_dir=""
     local force_plan=false
     local skip_audit=false
@@ -342,8 +349,55 @@ cmd_plan() {
         esac
     done
 
+    # ── Feature mode: plan every document of one feature ──────────
+    # `speed plan --feature NAME` with no file discovers all of the
+    # feature's product, architecture, design and tech documents.
+    local feature_mode=false
+    local -a feature_doc_kinds=() feature_doc_paths=()
+    local architecture_spec_content="" shared_context_content=""
+    if [[ -z "$spec_file" && -n "${GLOBAL_FEATURE:-}" ]]; then
+        feature_mode=true
+        if ! [[ "$GLOBAL_FEATURE" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]] || [[ "$GLOBAL_FEATURE" == "overview" ]]; then
+            log_error_block \
+                "Invalid feature name: ${GLOBAL_FEATURE}" \
+                "--feature takes a feature name (lowercase letters, digits and hyphens), not a path" \
+                "Use e.g. speed plan --feature adaptive-auth"
+            exit $EXIT_CONFIG_ERROR
+        fi
+        local _kind _path
+        while IFS=$'\t' read -r _kind _path; do
+            [[ -z "$_path" ]] && continue
+            feature_doc_kinds+=("$_kind")
+            feature_doc_paths+=("$_path")
+        done < <(feature_discover_specs "$GLOBAL_FEATURE")
+
+        if [[ ${#feature_doc_paths[@]} -eq 0 ]]; then
+            log_error_block \
+                "No documents found for feature '${GLOBAL_FEATURE}'" \
+                "Looked in specs/{product,architecture,design,tech}/${GLOBAL_FEATURE}/ and specs/<kind>/${GLOBAL_FEATURE}.md" \
+                "Check the feature name or create its specs"
+            exit $EXIT_CONFIG_ERROR
+        fi
+        # The entry document is the first tech spec; at least one is required.
+        local _i
+        for _i in "${!feature_doc_kinds[@]}"; do
+            if [[ "${feature_doc_kinds[$_i]}" == "tech" ]]; then
+                spec_file="${feature_doc_paths[$_i]}"
+                break
+            fi
+        done
+        if [[ -z "$spec_file" ]]; then
+            log_error_block \
+                "Feature '${GLOBAL_FEATURE}' has no tech spec" \
+                "Plan needs at least one RFC in specs/tech/${GLOBAL_FEATURE}/" \
+                "Write the tech spec (e.g. speed new rfc ${GLOBAL_FEATURE}) and re-run"
+            exit $EXIT_CONFIG_ERROR
+        fi
+    fi
+
     if [[ -z "$spec_file" ]]; then
         log_error "Usage: speed plan <tech-spec-file> [--specs-dir DIR]"
+        log_error "       speed plan --feature NAME [--specs-dir DIR]"
         exit 1
     fi
 
@@ -417,6 +471,12 @@ cmd_plan() {
         done < <(grep -E '^> See ' "$spec_file" | grep -oE '\]\([^)#]+' | sed 's/^](//' || true)
     fi
 
+    # Feature mode registers every discovered document itself
+    if [[ "$feature_mode" == "true" ]]; then
+        product_spec_file=""
+        design_spec_file=""
+    fi
+
     # ── Activate feature namespace ────────────────────────────────
     local feature_name="${GLOBAL_FEATURE:-}"
     if [[ -z "$feature_name" ]]; then
@@ -454,35 +514,61 @@ cmd_plan() {
     fi
 
     log_header "Planning Task DAG"
-    log_step "Tech spec:    ${COLOR_STEP}${spec_file}${RESET}"
-    if [[ -n "$product_spec_file" ]]; then
-        log_step "Product spec: ${COLOR_STEP}${product_spec_file}${RESET}"
+    local tech_spec_content="" product_spec_content="" design_spec_content=""
+
+    if [[ "$feature_mode" == "true" ]]; then
+        # Every document is labelled with its path, so agents can tell
+        # 1-….md from 2-….md and cite the right file.
+        local _i _rel _body
+        for _i in "${!feature_doc_paths[@]}"; do
+            _rel="${feature_doc_paths[$_i]#${PROJECT_ROOT}/}"
+            _body="### ${_rel}"$'\n\n'"$(cat "${feature_doc_paths[$_i]}")"$'\n\n'
+            case "${feature_doc_kinds[$_i]}" in
+                product)      product_spec_content+="$_body" ;;
+                architecture) architecture_spec_content+="$_body" ;;
+                design)       design_spec_content+="$_body" ;;
+                tech)         tech_spec_content+="$_body" ;;
+            esac
+            log_step "$(printf '%-13s' "${feature_doc_kinds[$_i]}:") ${COLOR_STEP}${_rel}${RESET}"
+        done
+        # Shared platform architecture: constraints, not feature scope
+        if [[ -f "${PROJECT_ROOT}/specs/architecture/overview.md" ]]; then
+            shared_context_content="### specs/architecture/overview.md"$'\n\n'"$(cat "${PROJECT_ROOT}/specs/architecture/overview.md")"
+            log_step "$(printf '%-13s' "shared:") ${COLOR_STEP}specs/architecture/overview.md${RESET} ${COLOR_DIM}(constraints)${RESET}"
+        else
+            log_warn "No shared architecture overview (specs/architecture/overview.md)"
+        fi
+        [[ -z "$product_spec_content" ]] && log_warn "Feature '${feature_name}' has no product spec"
+        [[ -z "$design_spec_content" ]] && log_warn "Feature '${feature_name}' has no design spec"
+        [[ -z "$architecture_spec_content" ]] && log_warn "Feature '${feature_name}' has no architecture spec"
     else
-        log_warn "No product spec found (expected: ${derived_product})"
-    fi
-    if [[ -n "$design_spec_file" ]]; then
-        log_step "Design spec:  ${COLOR_STEP}${design_spec_file}${RESET}"
-    else
-        log_warn "No design spec found (expected: ${derived_design})"
-    fi
+        log_step "Tech spec:    ${COLOR_STEP}${spec_file}${RESET}"
+        if [[ -n "$product_spec_file" ]]; then
+            log_step "Product spec: ${COLOR_STEP}${product_spec_file}${RESET}"
+        else
+            log_warn "No product spec found (expected: ${derived_product})"
+        fi
+        if [[ -n "$design_spec_file" ]]; then
+            log_step "Design spec:  ${COLOR_STEP}${design_spec_file}${RESET}"
+        else
+            log_warn "No design spec found (expected: ${derived_design})"
+        fi
 
-    # Read all specs
-    local tech_spec_content
-    tech_spec_content=$(cat "$spec_file")
-
-    local product_spec_content=""
-    if [[ -n "$product_spec_file" ]]; then
-        product_spec_content=$(cat "$product_spec_file")
-    fi
-
-    local design_spec_content=""
-    if [[ -n "$design_spec_file" ]]; then
-        design_spec_content=$(cat "$design_spec_file")
+        # Read all specs
+        tech_spec_content=$(cat "$spec_file")
+        if [[ -n "$product_spec_file" ]]; then
+            product_spec_content=$(cat "$product_spec_file")
+        fi
+        if [[ -n "$design_spec_file" ]]; then
+            design_spec_content=$(cat "$design_spec_file")
+        fi
     fi
 
     # ── Spec hash for stage caching ───────────────────────────────
+    # Architecture and shared context are empty outside feature mode, so
+    # single-file cache keys are unchanged.
     local spec_hash
-    spec_hash=$(printf '%s' "${tech_spec_content}${product_spec_content}${design_spec_content}" | shasum -a 256 | cut -d' ' -f1)
+    spec_hash=$(printf '%s' "${tech_spec_content}${product_spec_content}${design_spec_content}${architecture_spec_content}${shared_context_content}" | shasum -a 256 | cut -d' ' -f1)
 
     # ── Pre-Plan Guardian Gate ─────────────────────────────────────
     # Check: does this spec belong in the product?
@@ -492,8 +578,18 @@ cmd_plan() {
         log_step "Guardian: ${COLOR_DIM}cached (specs unchanged)${RESET}"
     else
         log_step "Running pre-plan vision check..."
+        local _guardian_input="$tech_spec_content"
+        if [[ "$feature_mode" == "true" ]]; then
+            _guardian_input="## Feature: ${feature_name} (all documents)"$'\n\n'
+            [[ -n "$product_spec_content" ]] && _guardian_input+="## Product Specs"$'\n\n'"${product_spec_content}"
+            [[ -n "$architecture_spec_content" ]] && _guardian_input+="## Architecture Specs"$'\n\n'"${architecture_spec_content}"
+            [[ -n "$design_spec_content" ]] && _guardian_input+="## Design Specs"$'\n\n'"${design_spec_content}"
+            _guardian_input+="## Tech Specs"$'\n\n'"${tech_spec_content}"
+            [[ -n "$shared_context_content" ]] && \
+                _guardian_input+=$'\n\n'"## Shared Platform Architecture (constraints, not feature scope)"$'\n\n'"${shared_context_content}"
+        fi
         local _guardian_out
-        _guardian_out=$(_run_guardian "pre-plan" "$tech_spec_content" "$spec_file") || guardian_rc=$?
+        _guardian_out=$(_run_guardian "pre-plan" "$_guardian_input" "$spec_file") || guardian_rc=$?
         _plan_cache_write "guardian" "$spec_hash" "$guardian_rc"
     fi
 
@@ -526,12 +622,27 @@ cmd_plan() {
     local -a plan_spec_contents=()
     local -a plan_spec_labels=()
 
-    _register_plan_spec "$spec_file" "$tech_spec_content" "Tech Spec (backend implementation)"
+    if [[ "$feature_mode" == "true" ]]; then
+        # One entry per document, labelled with kind and path
+        local _i _label
+        for _i in "${!feature_doc_paths[@]}"; do
+            case "${feature_doc_kinds[$_i]}" in
+                product)      _label="Product Spec" ;;
+                architecture) _label="Architecture Spec" ;;
+                design)       _label="Design Spec" ;;
+                tech)         _label="Tech Spec" ;;
+            esac
+            _register_plan_spec "${feature_doc_paths[$_i]}" "$(cat "${feature_doc_paths[$_i]}")" \
+                "${_label}: ${feature_doc_paths[$_i]#${PROJECT_ROOT}/}"
+        done
+    else
+        _register_plan_spec "$spec_file" "$tech_spec_content" "Tech Spec (backend implementation)"
 
-    [[ -n "$product_spec_file" ]] && \
-        _register_plan_spec "$product_spec_file" "$product_spec_content" "Product Spec (what to build)"
-    [[ -n "$design_spec_file" ]] && \
-        _register_plan_spec "$design_spec_file" "$design_spec_content" "Design Spec (frontend implementation)"
+        [[ -n "$product_spec_file" ]] && \
+            _register_plan_spec "$product_spec_file" "$product_spec_content" "Product Spec (what to build)"
+        [[ -n "$design_spec_file" ]] && \
+            _register_plan_spec "$design_spec_file" "$design_spec_content" "Design Spec (frontend implementation)"
+    fi
 
     # ── Step 2: Audit Loop ────────────────────────────────────────────
     # Each registered spec audited independently. Caller-controlled output path.
@@ -549,7 +660,14 @@ cmd_plan() {
         local spec_label="${plan_spec_labels[$spec_index]}"
         local spec_type
         spec_type=$(echo "$spec_path" | sed -n 's|.*specs/\([^/]*\)/.*|\1|p')
-        local spec_audit_file="${LOGS_DIR}/plan-audit-${spec_type:-spec${spec_index}}-$(date +%s).json"
+        # Keep the plan-audit-{type}-{number}.json shape the dashboard reads,
+        # but never reuse a name: two tech specs can be audited in one second.
+        local _audit_stamp
+        _audit_stamp=$(date +%s)
+        while [[ -e "${LOGS_DIR}/plan-audit-${spec_type:-spec${spec_index}}-${_audit_stamp}.json" ]]; do
+            _audit_stamp=$((_audit_stamp + 1))
+        done
+        local spec_audit_file="${LOGS_DIR}/plan-audit-${spec_type:-spec${spec_index}}-${_audit_stamp}.json"
 
         local audit_rc=0
         (AUDIT_OUTPUT_FILE="$spec_audit_file"; cmd_audit "$spec_path") || audit_rc=$?
@@ -613,6 +731,13 @@ cmd_plan() {
         local product_escaped
         product_escaped=$(jq -Rs '.' < "$product_spec_file")
         spec_files_for_l1=$(echo "$spec_files_for_l1" | jq --arg path "$product_spec_file" --argjson content "$product_escaped" '. + {($path): $content}')
+    fi
+    if [[ "$feature_mode" == "true" ]]; then
+        local _doc _doc_escaped
+        for _doc in "${feature_doc_paths[@]}"; do
+            _doc_escaped=$(jq -Rs '.' < "$_doc")
+            spec_files_for_l1=$(echo "$spec_files_for_l1" | jq --arg path "$_doc" --argjson content "$_doc_escaped" '. + {($path): $content}')
+        done
     fi
 
     local l1_result
@@ -700,6 +825,14 @@ cmd_plan() {
 
         if [[ -n "$design_spec_content" ]]; then
             base_message+="\n\n## Design Spec (frontend implementation)\n\n${design_spec_content}"
+        fi
+
+        # Feature mode only: empty for single-file plans
+        if [[ -n "$architecture_spec_content" ]]; then
+            base_message+="\n\n## Architecture Spec (boundaries and quality constraints)\n\n${architecture_spec_content}"
+        fi
+        if [[ -n "$shared_context_content" ]]; then
+            base_message+="\n\n## Shared Platform Architecture (constraints, not feature scope)\n\n${shared_context_content}"
         fi
 
         if [[ -n "$SPEC_CODEBASE_CONTEXT" ]]; then
@@ -792,6 +925,9 @@ cmd_plan() {
                 local content="${_phase1_content[$spec_path]:-${plan_spec_contents[$spec_index]}}"
                 phase1_message+="\n\n## ${spec_label}\n\n${content}"
             done
+            if [[ -n "$shared_context_content" ]]; then
+                phase1_message+="\n\n## Shared Platform Architecture (constraints, not feature scope)\n\n${shared_context_content}"
+            fi
             if [[ -n "$SPEC_CODEBASE_CONTEXT" ]]; then
                 phase1_message+="\n\n## Codebase Context (ground truth from automated scan)\n\n${SPEC_CODEBASE_CONTEXT}"
             fi
@@ -855,6 +991,9 @@ cmd_plan() {
                 local content="${_phase2_content[$spec_path]:-${plan_spec_contents[$spec_index]}}"
                 phase2_message+="\n\n## ${spec_label}\n\n${content}"
             done
+            if [[ -n "$shared_context_content" ]]; then
+                phase2_message+="\n\n## Shared Platform Architecture (constraints, not feature scope)\n\n${shared_context_content}"
+            fi
             if [[ -n "$SPEC_CODEBASE_CONTEXT" ]]; then
                 phase2_message+="\n\n## Codebase Context (ground truth from automated scan)\n\n${SPEC_CODEBASE_CONTEXT}"
             fi

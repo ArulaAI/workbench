@@ -8,6 +8,7 @@
 #   init                    Initialize project for SPEED development
 #   validate <specs-dir>    Cross-validate all specs for consistency
 #   plan <spec-file> [opts] Decompose a spec into a task DAG + contract
+#   plan --feature NAME     Plan every product/architecture/design/tech doc of a feature
 #   verify                  Blind-verify the plan against the product spec
 #   run [options]           Execute pending tasks with parallel agents
 #   status                  Show SPEED state and progress
@@ -111,6 +112,7 @@ speed_help() {
     echo -e "    ${COLOR_STEP}init${RESET}                        Initialize project for SPEED development"
     echo -e "    ${COLOR_STEP}validate${RESET} <specs-dir>         Cross-validate all specs for consistency"
     echo -e "    ${COLOR_STEP}plan${RESET} <spec-file> [opts]      Decompose a product spec into task DAG + contract"
+    echo -e "    ${COLOR_STEP}plan${RESET} --feature NAME [opts]   Plan all product, architecture, design and tech docs of a feature"
     echo -e "    ${COLOR_STEP}verify${RESET}                       Blind-verify plan against product spec"
     echo -e "    ${COLOR_STEP}run${RESET}  [options]               Execute pending tasks with parallel agents"
     echo -e "    ${COLOR_STEP}status${RESET} [--defects]            Show SPEED state and progress"
@@ -219,6 +221,7 @@ speed_help() {
     echo "    speed init"
     echo "    speed validate specs/"
     echo "    speed plan specs/tech/auth.md --specs-dir specs/"
+    echo "    speed plan --feature adaptive-auth"
     echo "    speed run"
     echo "    speed run --feature billing --max-parallel 3"
     echo "    speed status"

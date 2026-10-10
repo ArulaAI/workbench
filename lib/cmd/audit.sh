@@ -36,12 +36,13 @@ cmd_audit() {
         product/*)  spec_type="prd";    template_file="${TEMPLATES_DIR}/prd.md" ;;
         tech/*)     spec_type="rfc";    template_file="${TEMPLATES_DIR}/rfc.md" ;;
         design/*)   spec_type="design"; template_file="${TEMPLATES_DIR}/design.md" ;;
+        architecture/*) spec_type="architecture"; template_file="${TEMPLATES_DIR}/architecture.md" ;;
         defects/*)  spec_type="defect"; template_file="${TEMPLATES_DIR}/defect.md" ;;
         *)
             log_error_block \
                 "Unrecognized spec path: ${rel_path}" \
                 "Cannot determine spec type from file location" \
-                "Spec must be under a specs/ directory with product/, tech/, design/, or defects/ subdirs"
+                "Spec must be under a specs/ directory with product/, tech/, design/, architecture/, or defects/ subdirs"
             exit $EXIT_CONFIG_ERROR
             ;;
     esac
