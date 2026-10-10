@@ -60,6 +60,27 @@ _save_spec_path() {
     echo "$spec_file" > "${dir}/spec_path"
 }
 
+# True when task $1 depends on task $2, directly or through other tasks.
+# Reads depends_on from the task files in TASKS_DIR.
+_plan_task_depends_on() {
+    local start="$1" target="$2"
+    local -a queue=("$start")
+    local seen=" " current dep
+    while [[ ${#queue[@]} -gt 0 ]]; do
+        current="${queue[0]}"
+        queue=("${queue[@]:1}")
+        [[ "$seen" == *" ${current} "* ]] && continue
+        seen+="${current} "
+        [[ -f "${TASKS_DIR}/${current}.json" ]] || continue
+        while IFS= read -r dep; do
+            [[ -z "$dep" ]] && continue
+            [[ "$dep" == "$target" ]] && return 0
+            queue+=("$dep")
+        done < <(jq -r '.depends_on[]? | tostring' "${TASKS_DIR}/${current}.json" 2>/dev/null)
+    done
+    return 1
+}
+
 # ── Plan stage caching ─────────────────────────────────────────
 # Caches expensive stages (Guardian, Architect) keyed by a hash of
 # spec inputs. Auto-invalidates when specs change. --force bypasses.
@@ -364,6 +385,36 @@ cmd_plan() {
     fi
     if [[ "$derived_design" != "$spec_file" ]] && [[ -f "$derived_design" ]]; then
         design_spec_file="$derived_design"
+    fi
+
+    # Fallback: follow the spec's "> See [...](path)" links when the filename
+    # convention finds nothing, e.g. specs/tech/payments-v2.md linking to
+    # ../product/payments.md. Audit already resolves the PRD this way.
+    if [[ -z "$product_spec_file" ]] || [[ -z "$design_spec_file" ]]; then
+        local _see_link _see_path _spec_dir
+        _spec_dir=$(dirname "$spec_file")
+        while IFS= read -r _see_link; do
+            [[ -z "$_see_link" ]] && continue
+            _see_path=""
+            if [[ "$_see_link" == /* ]] && [[ -f "$_see_link" ]]; then
+                _see_path="$_see_link"
+            elif [[ -f "${_spec_dir}/${_see_link}" ]]; then
+                _see_path="${_spec_dir}/${_see_link}"
+            elif [[ -f "${PROJECT_ROOT}/${_see_link}" ]]; then
+                _see_path="${PROJECT_ROOT}/${_see_link}"
+            fi
+            [[ -n "$_see_path" ]] || continue
+            # Normalise ../ segments so the directory check sees the real location
+            _see_path="$(cd "$(dirname "$_see_path")" && pwd)/$(basename "$_see_path")"
+            # The product vision is Guardian input, not this feature's PRD
+            [[ "$(basename "$_see_path")" == "overview.md" ]] && continue
+            case "$_see_path" in
+                */specs/product/*)
+                    if [[ -z "$product_spec_file" ]]; then product_spec_file="$_see_path"; fi ;;
+                */specs/design/*)
+                    if [[ -z "$design_spec_file" ]]; then design_spec_file="$_see_path"; fi ;;
+            esac
+        done < <(grep -E '^> See ' "$spec_file" | grep -oE '\]\([^)#]+' | sed 's/^](//' || true)
     fi
 
     # ── Activate feature namespace ────────────────────────────────
@@ -1103,6 +1154,16 @@ cmd_plan() {
                 | length' 2>/dev/null) || non_bridge_failures=0
 
             if [[ "$patch_count" -gt 0 ]] && [[ "$non_bridge_failures" -eq 0 ]]; then
+                # One patch per edge, applied in a fixed order: edges that point to an
+                # earlier task first, so tasks sharing a file are chained by ID.
+                bridge_patches=$(echo "$bridge_patches" | jq -c '
+                    unique_by([.affected_task, .source_task])
+                    | sort_by([
+                        ((.affected_task | tonumber? // 0) < (.source_task | tonumber? // 0)),
+                        (.source_task | tonumber? // 0),
+                        (.affected_task | tonumber? // 0)
+                      ])')
+                patch_count=$(echo "$bridge_patches" | jq 'length')
                 log_warn "Auto-patching ${patch_count} missing bridge-symbol dependency edge(s)..."
 
                 echo "$bridge_patches" | jq -c '.[]' | while IFS= read -r patch; do
@@ -1110,6 +1171,14 @@ cmd_plan() {
                     affected_task=$(echo "$patch" | jq -r '.affected_task')
                     source_task=$(echo "$patch" | jq -r '.source_task')
                     local task_file="${TASKS_DIR}/${affected_task}.json"
+
+                    # Never add an edge that closes a loop: if the source already
+                    # waits on the affected task, the pair is ordered the other way.
+                    if [[ "$affected_task" == "$source_task" ]] || \
+                       _plan_task_depends_on "$source_task" "$affected_task"; then
+                        echo -e "    ${COLOR_DIM}${SYM_DOT} Task ${affected_task} → ${source_task}: skipped (already ordered the other way)${RESET}"
+                        continue
+                    fi
 
                     if [[ -f "$task_file" ]]; then
                         # Add source_task to depends_on if not already present
@@ -1169,6 +1238,14 @@ cmd_plan() {
     fi
     fi # SKIP_DECOMP
     echo ""
+
+    # A plan with a dependency loop can never run: `speed run` rejects it.
+    # Stop here with the loop named, instead of reporting a passed plan.
+    if ! task_topo_sort > /dev/null; then
+        log_error "The task plan contains a dependency cycle and cannot be executed"
+        echo -e "Edit depends_on in ${TASKS_DIR}/ to break the cycle, or re-run ${COLOR_STEP}speed plan --force${RESET}"
+        exit 1
+    fi
 
     # Display task graph
     log_header "Task Graph"

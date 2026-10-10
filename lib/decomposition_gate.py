@@ -249,7 +249,6 @@ def _check_bridge_symbols(
     # For each bridge symbol, find dependents and check if they're covered
     # by tasks that depend on this task
     missing_deps = []
-    dependent_tasks = dep_graph.get(task_id, set())  # tasks that depend on this one
 
     for bridge in bridge_symbols:
         bridge_id = bridge["id"]
@@ -274,8 +273,22 @@ def _check_bridge_symbols(
 
             other_files = set(other_task.get("files_touched", []))
             affected_files = dependent_files & other_files
+            if not affected_files:
+                continue
 
-            if affected_files and other_id not in dependent_tasks:
+            # Covered when the other task runs after this one, directly or
+            # through a chain of dependencies.
+            ordered = _is_transitive_dependent(task_id, other_id, dep_graph)
+            # When both tasks edit the file in question (the bridge's own file, or
+            # every caller file this task would affect), either order serialises
+            # those edits and the later task sees the earlier one's change.
+            # Demanding one direction from each side would require both edges
+            # and create a cycle.
+            shares_file = bridge["file"] in other_files or affected_files <= set(files_touched)
+            if not ordered and shares_file:
+                ordered = _is_transitive_dependent(other_id, task_id, dep_graph)
+
+            if not ordered:
                 missing_deps.append({
                     "bridge_symbol": bridge_id,
                     "affected_task": other_id,

@@ -373,6 +373,106 @@ class TestCheckBridgeSymbols:
         assert result["verdict"] == "fail"
         assert len(result["missing_dependencies"]) == 1
 
+    def test_bridge_transitive_dependency_passes(self):
+        csg = self._csg_with_bridge()
+        tasks = [
+            {"id": "1", "files_touched": ["lib/api.py"]},
+            {"id": "2", "files_touched": ["lib/other.py"], "depends_on": ["1"]},
+            {"id": "3", "files_touched": ["app/handler.py"], "depends_on": ["2"]},
+        ]
+        dep_graph = _build_dep_graph(tasks)
+        result = _check_bridge_symbols(tasks[0], tasks, csg, dep_graph)
+        assert result["verdict"] == "pass"
+
+    def test_caller_only_task_ordered_before_bridge_change_fails(self):
+        # The caller task does not edit the bridge file, so it must run after
+        # the change. Ordering it first is still a missing dependency.
+        csg = self._csg_with_bridge()
+        tasks = [
+            {"id": "1", "files_touched": ["lib/api.py"], "depends_on": ["2"]},
+            {"id": "2", "files_touched": ["app/handler.py"]},
+        ]
+        dep_graph = _build_dep_graph(tasks)
+        result = _check_bridge_symbols(tasks[0], tasks, csg, dep_graph)
+        assert result["verdict"] == "fail"
+
+    def test_bridge_task_that_also_edits_caller_file_may_run_later(self):
+        # Task 1 changes the bridge and edits the caller file itself, so it can
+        # run after task 2 and update the call sites it finds there.
+        csg = self._csg_with_bridge()
+        tasks = [
+            {"id": "1", "files_touched": ["lib/api.py", "app/handler.py"], "depends_on": ["2"]},
+            {"id": "2", "files_touched": ["app/handler.py"]},
+        ]
+        dep_graph = _build_dep_graph(tasks)
+        result = _check_bridge_symbols(tasks[0], tasks, csg, dep_graph)
+        assert result["verdict"] == "pass"
+
+
+class TestBridgePatchesStayAcyclic:
+    """Tasks that share the file defining a bridge symbol must not be patched into a loop."""
+
+    def _csg_shared_file(self):
+        # Both bridge symbols live in service.ts and call each other, so every
+        # task editing service.ts both modifies and depends on a bridge.
+        return {
+            "nodes": [
+                {"id": "authorise", "file": "service.ts", "impact": {"stability": "bridge"}},
+                {"id": "capture", "file": "service.ts", "impact": {"stability": "bridge"}},
+            ],
+            "edges": [
+                {"from": "authorise", "to": "capture", "type": "calls"},
+                {"from": "capture", "to": "authorise", "type": "calls"},
+            ],
+            "clusters": [],
+            "cluster_edges": [],
+        }
+
+    def _apply_patches_like_plan(self, tasks, result):
+        # Mirror lib/cmd/plan.sh: unique edges, earlier-target edges first,
+        # and skip any edge that would close a loop.
+        patches = {
+            (m["affected_task"], pt["task_id"])
+            for pt in result["per_task"]
+            for c in pt["checks"]
+            if c["check"] == "bridge_symbols" and c["verdict"] == "fail"
+            for m in c["missing_dependencies"]
+        }
+        ordered = sorted(patches, key=lambda p: (int(p[0]) < int(p[1]), int(p[1]), int(p[0])))
+        by_id = {t["id"]: t for t in tasks}
+        for affected, source in ordered:
+            if affected == source or _is_transitive_dependent(affected, source, _build_dep_graph(tasks)):
+                continue
+            deps = by_id[affected].setdefault("depends_on", [])
+            if source not in deps:
+                deps.append(source)
+
+    def test_three_tasks_sharing_bridge_file_end_acyclic_and_pass(self):
+        tasks = [
+            {"id": "5", "files_touched": ["service.ts"]},
+            {"id": "6", "files_touched": ["service.ts"]},
+            {"id": "7", "files_touched": ["service.ts"]},
+        ]
+        csg = self._csg_shared_file()
+        pm = _project_map(("service.ts", 50))
+
+        first = check_decomposition(tasks, pm, csg)
+        assert first["overall"] == "fail"
+
+        self._apply_patches_like_plan(tasks, first)
+
+        graph = _build_dep_graph(tasks)
+        for a in ("5", "6", "7"):
+            for b in ("5", "6", "7"):
+                if a != b:
+                    assert not (
+                        _is_transitive_dependent(a, b, graph)
+                        and _is_transitive_dependent(b, a, graph)
+                    ), f"tasks {a} and {b} depend on each other"
+
+        second = check_decomposition(tasks, pm, csg)
+        assert second["overall"] == "pass"
+
 
 class TestCheckDecomposition:
     def test_all_pass_no_csg(self):
