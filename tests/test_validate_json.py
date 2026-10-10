@@ -15,8 +15,9 @@ VERDICT = '{"status": "fail", "critical_gaps": [{"type": "inconsistency"}], "war
 
 
 def _parse(raw: str) -> subprocess.CompletedProcess:
+    # Load only parse_agent_json: provider.sh has top-level setup that needs a full SPEED run.
     return subprocess.run(
-        ["bash", "-c", f'source "{LIB}/colors.sh"; source "{LIB}/log.sh"; source "{LIB}/provider.sh"; '
+        ["bash", "-c", f"eval \"$(sed -n '/^parse_agent_json()/,/^}}/p' '{LIB}/provider.sh')\"; "
                        'parse_agent_json "$RAW" | jq -r ".status"'],
         capture_output=True, text=True, env={"RAW": raw, "PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin"},
     )
