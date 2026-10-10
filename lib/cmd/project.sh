@@ -79,6 +79,38 @@ EOF
     echo ""
 }
 
+# Readable validation result for the terminal: the summary, one line per
+# critical gap (file and first sentence), and the warning count. The full
+# JSON stays in validation.log; `speed validate --json` prints it instead.
+_print_validation_summary() {
+    local verdict="$1"
+    local summary gap_count warn_count
+    summary=$(echo "$verdict" | jq -r '.summary // empty')
+    gap_count=$(echo "$verdict" | jq '(.critical_gaps // []) | length')
+    warn_count=$(echo "$verdict" | jq '(.warnings // []) | length')
+
+    echo ""
+    log_header "Validation Summary"
+    [[ -n "$summary" ]] && echo "$summary" | fold -s -w 100 | sed 's/^/  /'
+
+    if [[ "$gap_count" -gt 0 ]]; then
+        echo ""
+        echo -e "  ${BOLD}Critical gaps (${gap_count})${RESET}"
+        echo "$verdict" | jq -r '.critical_gaps[] |
+            "\(.source_spec // "unknown spec")\t\((.description // "") | split(". ")[0] | .[0:180])"' |
+        while IFS=$'\t' read -r spec first_sentence; do
+            echo -e "  ${COLOR_ERROR}${SYM_CROSS}${RESET} ${COLOR_STEP}${spec}${RESET}"
+            echo "      ${first_sentence}"
+        done
+    fi
+    if [[ "$warn_count" -gt 0 ]]; then
+        echo ""
+        echo -e "  ${COLOR_WARN}${SYM_WARN}${RESET} ${warn_count} warning(s)"
+    fi
+    echo ""
+    echo -e "  ${COLOR_DIM}Full report (every gap, warning and entity map): ${LOGS_DIR}/validation.log${RESET}"
+}
+
 cmd_validate() {
     # Handle --all-active flag for cross-feature validation
     if [[ "${1:-}" == "--all-active" ]]; then
@@ -138,10 +170,7 @@ cmd_validate() {
         exit 1
     fi
 
-    echo "$validator_output"
-    echo ""
-
-    # Save validation report
+    # Save validation report (the full agent output; the terminal shows a summary)
     echo "$validator_output" > "${LOGS_DIR}/validation.log"
     log_success "Validation report saved to ${LOGS_DIR}/validation.log"
 
@@ -156,6 +185,13 @@ cmd_validate() {
     if ! _require_json "Validator" "$validator_output"; then
         log_error "Review raw output: ${LOGS_DIR}/validation.log"
         exit 1
+    fi
+
+    if [[ "${JSON_OUTPUT:-false}" == "true" ]]; then
+        # --json: the full verdict on stdout for scripts (logs already go to stderr)
+        echo "$validator_output" | jq '.'
+    else
+        _print_validation_summary "$validator_output"
     fi
 
     local status
