@@ -9,8 +9,11 @@
 
 export type Minor = number & { readonly __brand: 'minor' };
 
+export const SCHEME_FEE_BPS = 149;
+const BPS_DENOMINATOR = 10000;
+
 export const minor = (n: number): Minor => {
-  if (!Number.isInteger(n)) throw new RangeError(`money must be integer minor units, got ${n}`);
+  if (!Number.isSafeInteger(n)) throw new RangeError(`money must be integer minor units, got ${n}`);
   return n as Minor;
 };
 
@@ -28,18 +31,28 @@ export const format = (m: Minor, currency = 'GBP'): string =>
  * a and n. A naive implementation using Math.round on a/n breaks that quietly.
  */
 export const allocate = (amount: Minor, parts: number): Minor[] => {
-  if (parts < 1) throw new RangeError('parts must be at least 1');
-  const base = Math.trunc(amount / parts);
-  const remainder = amount - base * parts;
-  return Array.from({ length: parts }, (_, i) => minor(base + (i < remainder ? 1 : 0)));
+  if (!Number.isInteger(parts) || parts < 1) {
+    throw new RangeError(`parts must be an integer >= 1, got ${parts}`);
+  }
+  const sign = amount < 0 ? -1 : 1;
+  const abs = Math.abs(amount);
+  const base = (abs - (abs % parts)) / parts;
+  const remainder = abs % parts;
+  return Array.from({ length: parts }, (_, i) => minor(sign * (base + (i < remainder ? 1 : 0))));
 };
 
 /*
- * Apply a rate to an amount, for scheme fees and partial captures.
- * Rounds half up on the absolute value so that negative amounts round symmetrically.
+ * Apply a rate in basis points (1.49% is 149) to an amount, for scheme fees and partial
+ * captures. Integer arithmetic only. Rounds half up on the absolute value so that
+ * negative amounts round symmetrically: floor((abs * bps * 2 + 10000) / 20000).
  */
-export const applyRate = (amount: Minor, rate: number): Minor => {
-  const raw = amount * rate;
-  const sign = raw < 0 ? -1 : 1;
-  return minor(sign * Math.round(Math.abs(raw)));
+export const applyRate = (amount: Minor, rateBps: number): Minor => {
+  if (!Number.isSafeInteger(rateBps)) {
+    throw new RangeError(`rate must be integer basis points, got ${rateBps}`);
+  }
+  const sign = amount < 0 ? -1 : 1;
+  const numerator = Math.abs(amount) * rateBps * 2 + BPS_DENOMINATOR;
+  if (!Number.isSafeInteger(numerator)) throw new RangeError('rate calculation overflows safe integer range');
+  const fee = (numerator - (numerator % (2 * BPS_DENOMINATOR))) / (2 * BPS_DENOMINATOR);
+  return minor(sign * fee);
 };

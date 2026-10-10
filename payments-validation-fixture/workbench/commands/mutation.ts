@@ -5,7 +5,7 @@
  * proof that the test cannot distinguish correct from broken, which is the only decisive
  * evidence about test strength.
  *
- * Changed files only, per FR-16. Mutating the whole tree would blow the 90-second budget
+ * Targeted mutants only, per FR-16. Mutating the whole tree would blow the 90-second budget
  * (NFR-1), and a workflow that cannot finish is a workflow nobody runs.
  *
  * Not every survivor is a defect. An equivalent mutant changes the source without
@@ -15,29 +15,33 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { type Finding, type Result, ROOT, rel } from '../lib.ts';
+import { type Finding, type Result, ROOT } from '../lib.ts';
 
-type Mutator = { name: string; find: RegExp; replace: string };
+type Mutant = { name: string; file: string; find: string; replace: string };
 
-const MUTATORS: Mutator[] = [
-  { name: 'conditional-boundary', find: /([^<>=!])>=/g, replace: '$1>' },
-  { name: 'conditional-boundary', find: /([^<>=!])<=/g, replace: '$1<' },
-  { name: 'invert-negation', find: /!==/g, replace: '===' },
-  { name: 'arithmetic', find: /([\w)\]]) \+ /g, replace: '$1 - ' },
-  { name: 'return-true', find: /return sum % 10 === 0;/g, replace: 'return true;' },
+/*
+ * Each mutant targets one behaviour the plan names: applyRate rounding, allocate
+ * remainder distribution, the capture-over-remaining check and the refund-over-refundable
+ * check. Every one must be killed by the suite.
+ */
+const MUTANTS: Mutant[] = [
+  { name: 'applyRate rounds down instead of half up', file: 'src/domain/money.ts',
+    find: 'Math.abs(amount) * rateBps * 2 + BPS_DENOMINATOR;', replace: 'Math.abs(amount) * rateBps * 2;' },
+  { name: 'applyRate rounds up instead of half up', file: 'src/domain/money.ts',
+    find: 'Math.abs(amount) * rateBps * 2 + BPS_DENOMINATOR;', replace: 'Math.abs(amount) * rateBps * 2 + 2 * BPS_DENOMINATOR - 1;' },
+  { name: 'allocate gives the remainder to one extra part', file: 'src/domain/money.ts',
+    find: 'i < remainder ? 1 : 0', replace: 'i <= remainder ? 1 : 0' },
+  { name: 'allocate gives the remainder to the trailing parts', file: 'src/domain/money.ts',
+    find: 'i < remainder ? 1 : 0', replace: 'i >= parts - remainder ? 1 : 0' },
+  { name: 'capture rejects the full remaining amount', file: 'src/payments/service.ts',
+    find: 'if (requested > remaining) {', replace: 'if (requested >= remaining) {' },
+  { name: 'capture over-remaining check removed', file: 'src/payments/service.ts',
+    find: 'if (requested > remaining) {', replace: 'if (false) {' },
+  { name: 'refund rejects the full refundable amount', file: 'src/payments/service.ts',
+    find: 'if (requested > refundable) {', replace: 'if (requested >= refundable) {' },
+  { name: 'refund over-refundable check removed', file: 'src/payments/service.ts',
+    find: 'if (requested > refundable) {', replace: 'if (false) {' },
 ];
-
-const DEFAULT_TARGETS = ['src/domain/money.ts', 'src/domain/ledger.ts', 'src/payments/service.ts'];
-
-const changedFiles = (base: string): string[] => {
-  try {
-    return execFileSync('git', ['diff', '--name-only', `${base}...HEAD`], {
-      cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
-    }).split('\n').filter(f => f.endsWith('.ts') && f.startsWith('src/'));
-  } catch {
-    return [];
-  }
-};
 
 const suitePasses = (): boolean => {
   try {
@@ -50,7 +54,7 @@ const suitePasses = (): boolean => {
   }
 };
 
-export function run(opts: { base?: string } = {}): Result {
+export function run(): Result {
   /*
    * A mutant is "killed" when the suite fails with it applied. If the suite already
    * fails without it, every mutant looks killed and the command reports a confident
@@ -60,42 +64,33 @@ export function run(opts: { base?: string } = {}): Result {
     return { findings: [], skipped: 'suite is red before mutation, so survivors cannot be measured' };
   }
 
-  const targets = changedFiles(opts.base ?? 'main');
-  const files = targets.length > 0 ? targets : DEFAULT_TARGETS;
   const findings: Finding[] = [];
-
-  for (const relPath of files) {
-    const full = join(ROOT, relPath);
-    let original: string;
-    try {
-      original = readFileSync(full, 'utf8');
-    } catch {
+  for (const mutant of MUTANTS) {
+    const full = join(ROOT, mutant.file);
+    const original = readFileSync(full, 'utf8');
+    const index = original.indexOf(mutant.find);
+    if (index < 0 || original.indexOf(mutant.find, index + 1) >= 0) {
+      findings.push({
+        file: mutant.file,
+        line: 1,
+        summary: `mutant "${mutant.name}" does not apply: expected exactly one match for ${mutant.find}`,
+        severity: 'high',
+      });
       continue;
     }
-    const lines = original.split('\n');
-
-    for (const mutator of MUTATORS) {
-      for (let i = 0; i < lines.length; i += 1) {
-        const line = lines[i];
-        if (line.trimStart().startsWith('*') || line.trimStart().startsWith('//')) continue;
-        const mutated = line.replace(mutator.find, mutator.replace);
-        if (mutated === line) continue;
-
-        const copy = [...lines];
-        copy[i] = mutated;
-        writeFileSync(full, copy.join('\n'));
-        const survived = suitePasses();
-        writeFileSync(full, original);
-
-        if (survived) {
-          findings.push({
-            file: relPath,
-            line: i + 1,
-            summary: `surviving mutant (${mutator.name}): the suite passes with this line changed`,
-            severity: 'high',
-          });
-        }
+    const line = original.slice(0, index).split('\n').length;
+    try {
+      writeFileSync(full, original.replace(mutant.find, () => mutant.replace));
+      if (suitePasses()) {
+        findings.push({
+          file: mutant.file,
+          line,
+          summary: `surviving mutant (${mutant.name}): the suite passes with this line changed`,
+          severity: 'high',
+        });
       }
+    } finally {
+      writeFileSync(full, original);
     }
   }
   return { findings };

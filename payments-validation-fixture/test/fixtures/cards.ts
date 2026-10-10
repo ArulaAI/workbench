@@ -7,6 +7,7 @@
  */
 export const TEST_CARDS = {
   visa: '4111111111111111',
+  stripeVisa: '4242424242424242',
   visaDebit: '4000056655665556',
   mastercard: '5555555555554444',
   amex: '378282246310005',
