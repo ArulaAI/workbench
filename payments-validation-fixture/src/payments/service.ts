@@ -39,12 +39,24 @@ export type AuthoriseRequest = {
 
 const SCHEME_FEE_RATE = SCHEME_FEE_BPS;
 
+export class CaptureBlockedError extends Error {
+  readonly paymentId: string;
+
+  constructor(paymentId: string) {
+    super(`capture is blocked on ${paymentId}`);
+    this.paymentId = paymentId;
+    this.name = 'CaptureBlockedError';
+  }
+}
+
 export class PaymentsService {
   readonly ledger = new Ledger();
   readonly payments: PaymentStore = new Map();
 
   /** Results already returned for an idempotency key, keyed by `${op}:${key}`. FR-5. */
   private readonly idempotent = new Map<string, { op: 'authorise' | 'capture'; result: Payment | Capture }>();
+  /** Payments held for review: capture throws CaptureBlockedError until unblocked or voided. */
+  private readonly captureBlocked = new Set<string>();
   private counter = 0;
 
   private nextId(prefix: string): string {
@@ -107,7 +119,8 @@ export class PaymentsService {
     if (seen) return seen.result as Capture;
 
     const payment = this.require(paymentId);
-    const already = payment.captures.reduce((s, c) => s + c.amount, 0);
+    if (this.captureBlocked.has(paymentId)) throw new CaptureBlockedError(paymentId);
+    const already =payment.captures.reduce((s, c) => s + c.amount, 0);
     const remaining = sub(payment.authorised, minor(already));
     const requested = minor(amount ?? remaining);
 
@@ -203,6 +216,7 @@ export class PaymentsService {
   void(paymentId: string): Payment {
     const payment = this.require(paymentId);
     if (payment.captures.length > 0) throw new RangeError('cannot void a captured payment');
+    this.captureBlocked.delete(paymentId);
     this.ledger.post({
       debit: 'merchant_receivable',
       credit: 'cardholder',
@@ -212,6 +226,20 @@ export class PaymentsService {
     });
     payment.status = 'voided';
     return payment;
+  }
+
+  /** Mark a payment as held: capture throws CaptureBlockedError until unblocked or voided. */
+  blockCapture(paymentId: string): void {
+    this.require(paymentId);
+    this.captureBlocked.add(paymentId);
+  }
+
+  unblockCapture(paymentId: string): void {
+    this.captureBlocked.delete(paymentId);
+  }
+
+  isCaptureBlocked(paymentId: string): boolean {
+    return this.captureBlocked.has(paymentId);
   }
 
   /** Split a capture across several settlements. Uses allocate so nothing is lost. */

@@ -64,3 +64,20 @@ export const cardTestingBurst = (size = 40): LabelledRequest[] =>
       at: T0 + i * 4_000,
     },
   }));
+
+/**
+ * A genuine flash sale. n cardholders each buy one 3.00 GBP item, from eight merchants,
+ * on one BIN and with rotating exit countries, 1.5 seconds apart. It looks like card
+ * testing to a detector that only counts cards and merchants, which is the point.
+ */
+export const genuineFlashSale = (n = 30): LabelledRequest[] =>
+  Array.from({ length: n }, (_, i) => ({
+    scenario: 'flash sale',
+    label: 'genuine' as const,
+    request: {
+      pan: testingCard(1_000 + i), expiry: EXPIRY, amount: 300, currency: 'GBP',
+      merchantId: `m_flash_${String(i % 8).padStart(2, '0')}`,
+      ipCountry: ['GB', 'IE', 'FR', 'ES', 'DE'][i % 5],
+      at: T0 + i * 1_500,
+    },
+  }));

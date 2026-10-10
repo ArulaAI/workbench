@@ -1,0 +1,26 @@
+{
+  "version": "fixture-gbm-0.1",
+  "baseScore": 100,
+  "trees": [
+    { "feature": "country_mismatch", "threshold": 0.5, "left": { "leaf": 0 }, "right": { "leaf": 250 } },
+    { "feature": "amount", "threshold": 100000, "left": { "leaf": -20 }, "right": { "leaf": 150 } },
+    { "feature": "issuer_unknown", "threshold": 0.5, "left": { "leaf": 0 }, "right": { "leaf": 300 } },
+    { "feature": "hour", "threshold": 6, "left": { "leaf": 120 }, "right": { "leaf": 0 } },
+    {
+      "feature": "merchant_category=gambling", "threshold": 0.5,
+      "left": { "leaf": 0 },
+      "right": {
+        "feature": "amount", "threshold": 50000,
+        "left": { "leaf": 100 },
+        "right": { "leaf": 400 }
+      }
+    }
+  ],
+  "featureReasons": {
+    "country_mismatch": "country_mismatch",
+    "amount": "amount_unusual",
+    "issuer_unknown": "issuer_unknown",
+    "hour": "time_of_day",
+    "merchant_category=gambling": "merchant_category_risk"
+  }
+}

@@ -1,6 +1,6 @@
 import test, { beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { PaymentsService } from '../src/payments/service.ts';
+import { CaptureBlockedError, PaymentsService } from '../src/payments/service.ts';
 import { checkAll } from '../src/domain/invariants.ts';
 import { TEST_CARDS, EXPIRY } from './fixtures/cards.ts';
 
@@ -274,4 +274,36 @@ test('settlement schedule 9999 over 7 and 10000 over 3', () => {
   s.capture(b.id);
   assert.deepEqual(s.settlementSchedule(b.id, 3), [3_334, 3_333, 3_333]);
   settled(s);
+});
+
+test('capture on a blocked payment throws and posts nothing', () => {
+  const s = svc();
+  const p = auth(s, 5_000);
+  s.blockCapture(p.id);
+  assert.equal(s.isCaptureBlocked(p.id), true);
+  const before = s.ledger.entries.length;
+  assert.throws(() => s.capture(p.id, 5_000), CaptureBlockedError);
+  assert.equal(s.ledger.entries.length, before);
+  assert.equal(s.payments.get(p.id)!.captures.length, 0);
+  assert.deepEqual(checkAll(s.ledger, s.payments), []);
+});
+
+test('capture succeeds after unblockCapture', () => {
+  const s = svc();
+  const p = auth(s, 5_000);
+  s.blockCapture(p.id);
+  s.unblockCapture(p.id);
+  assert.equal(s.isCaptureBlocked(p.id), false);
+  assert.equal(s.capture(p.id, 5_000).amount, 5_000);
+  assert.deepEqual(checkAll(s.ledger, s.payments), []);
+});
+
+test('void succeeds on a blocked payment and clears the block', () => {
+  const s = svc();
+  const p = auth(s, 5_000);
+  s.blockCapture(p.id);
+  s.void(p.id);
+  assert.equal(s.payments.get(p.id)!.status, 'voided');
+  assert.equal(s.isCaptureBlocked(p.id), false);
+  assert.deepEqual(checkAll(s.ledger, s.payments), []);
 });

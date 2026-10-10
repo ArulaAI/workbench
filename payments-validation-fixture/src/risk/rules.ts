@@ -11,6 +11,9 @@
  * The thresholds were picked by the launch team and have not been revisited. Velocity is
  * counted in process memory, so each gateway replica keeps its own count and a restart
  * forgets everything.
+ *
+ * Adaptive authorisation (F2.1) puts HIGH_VALUE_CROSS_BORDER behind the rollout flag: for
+ * a merchant on the scored decision the gateway turns it off and only CARD_VELOCITY runs.
  */
 
 import { issuerCountry } from './issuers.ts';
@@ -39,14 +42,22 @@ export class RiskRules {
   /** Attempt times per card, keyed by BIN and last four. */
   private readonly attempts = new Map<string, number[]>();
 
-  evaluate(input: RiskInput): RiskDecision {
+  /**
+   * `highValueCrossBorder: false` skips HIGH_VALUE_CROSS_BORDER for a merchant the scored
+   * decision has taken over (see src/risk/rollout.ts). It defaults to true, so v1 and shadow
+   * mode behave exactly as before. The rule is removed only after full cutover.
+   */
+  evaluate(input: RiskInput, opts: { highValueCrossBorder?: boolean } = {}): RiskDecision {
     const key = `${input.bin}:${input.last4}`;
     const recent = (this.attempts.get(key) ?? []).filter(t => input.at - t < VELOCITY_WINDOW_MS);
     recent.push(input.at);
     this.attempts.set(key, recent);
 
     const issuer = issuerCountry(input.bin);
-    if (input.amount >= HIGH_VALUE_MINOR && issuer !== null && issuer !== input.ipCountry) {
+    if (
+      (opts.highValueCrossBorder ?? true) &&
+      input.amount >= HIGH_VALUE_MINOR && issuer !== null && issuer !== input.ipCountry
+    ) {
       return { outcome: 'decline', rule: 'HIGH_VALUE_CROSS_BORDER' };
     }
     if (recent.length > VELOCITY_LIMIT) {

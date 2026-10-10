@@ -1,0 +1,11 @@
+{
+  "smallAmountCeiling": 500,
+  "windowMs": 120000,
+  "minCards": 10,
+  "minMerchants": 5,
+  "blockTtlMs": 3600000,
+  "refreshIntervalMs": 1000,
+  "notifyFollowUpMs": 300000,
+  "mode": "shadow",
+  "version": "f2.2-0.2-defaults"
+}

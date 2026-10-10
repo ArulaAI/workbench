@@ -1,0 +1,6 @@
+{
+  "stepUpFrom": 300,
+  "holdFrom": 700,
+  "declineFrom": 850,
+  "version": "arch-0.7-defaults"
+}
