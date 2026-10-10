@@ -275,9 +275,23 @@ cmd_verify() {
         exit 1
     fi
 
-    log_step "Reading product spec: ${COLOR_STEP}${spec_file}${RESET}"
-    local spec_content
-    spec_content=$(cat "$spec_file")
+    local spec_content spec_documents_file
+    spec_documents_file=$(_get_spec_documents_file)
+    if [[ -n "$spec_documents_file" ]]; then
+        # Plan was made with --feature: verify against every planned document
+        local _kind _rel
+        log_step "Reading feature specs ($(grep -c . "$spec_documents_file") documents):"
+        while IFS=$'\t' read -r _kind _rel; do
+            [[ -n "$_rel" ]] && log_step "  $(printf '%-13s' "${_kind}:") ${COLOR_STEP}${_rel}${RESET}"
+        done < "$spec_documents_file"
+        if ! spec_content=$(_get_spec_documents_content "$spec_documents_file"); then
+            log_error "The plan's documents have changed. Re-run 'speed plan --feature ${FEATURE_NAME}' first."
+            exit "$EXIT_CONFIG_ERROR"
+        fi
+    else
+        log_step "Reading product spec: ${COLOR_STEP}${spec_file}${RESET}"
+        spec_content=$(cat "$spec_file")
+    fi
 
     # Build verification message — structured assembly with fallback
     log_step "Gathering task plan (${total} tasks)..."

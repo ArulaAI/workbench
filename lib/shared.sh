@@ -38,6 +38,47 @@ _get_spec_path() {
     fi
 }
 
+# ── Spec documents (feature-mode plans) ──────────────────────────
+# `speed plan --feature NAME` records every document it planned from in
+# spec_documents ("kind<TAB>project-relative path" per line). Single-file
+# plans have no such file and keep using spec_path.
+
+_get_spec_documents_file() {
+    local dir="${FEATURE_DIR:-${STATE_DIR}}"
+    [[ -f "${dir}/spec_documents" ]] && echo "${dir}/spec_documents"
+    return 0
+}
+
+# Prints every recorded document, labelled by kind and path, plus the shared
+# platform architecture as constraints. Returns 1 if a recorded document is
+# missing, because the plan no longer matches the specs on disk.
+_get_spec_documents_content() {
+    local list_file="$1"
+    local kind rel label missing=0 out=""
+    while IFS=$'\t' read -r kind rel; do
+        [[ -z "$rel" ]] && continue
+        if [[ ! -f "${PROJECT_ROOT}/${rel}" ]]; then
+            log_error "Planned document no longer exists: ${rel}"
+            missing=1
+            continue
+        fi
+        case "$kind" in
+            product)      label="Product Spec" ;;
+            architecture) label="Architecture Spec" ;;
+            design)       label="Design Spec" ;;
+            tech)         label="Tech Spec" ;;
+            *)            label="Spec" ;;
+        esac
+        out+="## ${label}: ${rel}"$'\n\n'"$(cat "${PROJECT_ROOT}/${rel}")"$'\n\n'
+    done < "$list_file"
+    if [[ -f "${PROJECT_ROOT}/specs/architecture/overview.md" ]]; then
+        out+="## Shared Platform Architecture (constraints, not feature scope): specs/architecture/overview.md"$'\n\n'
+        out+="$(cat "${PROJECT_ROOT}/specs/architecture/overview.md")"$'\n'
+    fi
+    printf '%s' "$out"
+    return "$missing"
+}
+
 # ── Product Guardian ──────────────────────────────────────────────
 # Runs the Product Guardian agent against any input (spec, diff, integration)
 # Returns: 0 = aligned, 1 = rejected, 2 = flagged (warnings), 3 = unparseable

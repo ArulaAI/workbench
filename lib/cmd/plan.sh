@@ -526,6 +526,20 @@ cmd_plan() {
     # Save spec path for verify and review commands
     _save_spec_path "$spec_file"
 
+    # Feature mode also records every planned document so verify checks the
+    # plan against the whole feature. A single-file plan removes any list left
+    # by an earlier feature-mode plan, so verify falls back to spec_path.
+    local _spec_docs_file="${FEATURE_DIR:-${STATE_DIR}}/spec_documents"
+    if [[ "$feature_mode" == "true" ]]; then
+        local _i
+        : > "$_spec_docs_file"
+        for _i in "${!feature_doc_paths[@]}"; do
+            printf '%s\t%s\n' "${feature_doc_kinds[$_i]}" "${feature_doc_paths[$_i]#${PROJECT_ROOT}/}" >> "$_spec_docs_file"
+        done
+    else
+        rm -f "$_spec_docs_file"
+    fi
+
     # Ratification gate: in MP mode, spec must be ratified before planning
     if [[ "${MP_ENABLED:-}" == "true" ]]; then
         local _events_dir

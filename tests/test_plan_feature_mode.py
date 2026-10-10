@@ -163,3 +163,53 @@ class TestPlanFeatureModeErrors:
         r = _plan(project)
         assert r.returncode == 1
         assert "speed plan --feature NAME" in r.stdout + r.stderr
+
+
+SHARED_SH = SPEED_DIR / "lib" / "shared.sh"
+
+
+def _shared(script: str, project_root: Path, feature_dir: Path) -> subprocess.CompletedProcess:
+    lib = SPEED_DIR / "lib"
+    return subprocess.run(
+        ["bash", "-c",
+         f'source "{lib}/colors.sh"; source "{lib}/log.sh"; source "{SHARED_SH}"; '
+         f'PROJECT_ROOT="{project_root}"; FEATURE_DIR="{feature_dir}"; {script}'],
+        capture_output=True, text=True,
+    )
+
+
+class TestVerifySpecDocuments:
+    """verify reads every planned document when plan recorded a feature-mode list."""
+
+    def test_no_list_means_single_file_verify(self, tmp_path):
+        feature_dir = tmp_path / ".speed/features/payments"
+        feature_dir.mkdir(parents=True)
+        r = _shared('echo "[$(_get_spec_documents_file)]"', tmp_path, feature_dir)
+        assert r.stdout.strip() == "[]"
+
+    def test_list_builds_labelled_content_with_shared_overview(self, course_layout):
+        feature_dir = course_layout / ".speed/features/adaptive-auth"
+        feature_dir.mkdir(parents=True)
+        (feature_dir / "spec_documents").write_text(
+            "product\tspecs/product/adaptive-auth/1-high-value-traveller.md\n"
+            "architecture\tspecs/architecture/adaptive-auth.md\n"
+            "tech\tspecs/tech/adaptive-auth/2-card-testing.md\n"
+        )
+        r = _shared('_get_spec_documents_content "$(_get_spec_documents_file)"', course_layout, feature_dir)
+        assert r.returncode == 0, r.stderr
+        labels = [line for line in r.stdout.splitlines() if line.startswith("## ")]
+        assert labels == [
+            "## Product Spec: specs/product/adaptive-auth/1-high-value-traveller.md",
+            "## Architecture Spec: specs/architecture/adaptive-auth.md",
+            "## Tech Spec: specs/tech/adaptive-auth/2-card-testing.md",
+            "## Shared Platform Architecture (constraints, not feature scope): specs/architecture/overview.md",
+        ]
+
+    def test_missing_planned_document_fails(self, course_layout):
+        feature_dir = course_layout / ".speed/features/adaptive-auth"
+        feature_dir.mkdir(parents=True)
+        (feature_dir / "spec_documents").write_text("tech\tspecs/tech/adaptive-auth/9-gone.md\n")
+        r = _shared('rc=0; _get_spec_documents_content "$(_get_spec_documents_file)" >/dev/null || rc=$?; echo "rc=$rc"',
+                    course_layout, feature_dir)
+        assert "rc=1" in r.stdout
+        assert "Planned document no longer exists: specs/tech/adaptive-auth/9-gone.md" in r.stderr
