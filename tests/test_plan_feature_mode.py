@@ -121,10 +121,32 @@ class TestPlanFeatureModeErrors:
         _write(tmp_path, "specs/product/onlyprd/1.md")
         return tmp_path
 
-    def test_path_given_as_feature_name(self, project):
+    def test_missing_document_path(self, project):
         r = _plan(project, "--feature", "specs/design/x/1.md")
         assert r.returncode == 3, r.stdout + r.stderr
-        assert "Invalid feature name" in r.stdout + r.stderr
+        assert "Spec file not found" in r.stdout + r.stderr
+
+    def test_document_path_resolves_to_its_feature(self, project):
+        # A design document names its folder's feature; the whole feature is
+        # then planned, which here stops because the feature has no tech spec.
+        _write(project, "specs/design/onlyprd/2-queue.md")
+        r = _plan(project, "--feature", "specs/design/onlyprd/2-queue.md")
+        out = r.stdout + r.stderr
+        assert r.returncode == 3, out
+        assert "Feature onlyprd from specs/design/onlyprd/2-queue.md" in out
+        assert "Feature 'onlyprd' has no tech spec" in out
+
+    def test_shared_overview_path_is_not_a_feature(self, project):
+        _write(project, "specs/architecture/overview.md")
+        r = _plan(project, "--feature", "specs/architecture/overview.md")
+        assert r.returncode == 3, r.stdout + r.stderr
+        assert "Invalid feature name: overview" in r.stdout + r.stderr
+
+    def test_path_outside_specs_is_rejected(self, project):
+        _write(project, "notes/plan.md")
+        r = _plan(project, "--feature", "notes/plan.md")
+        assert r.returncode == 3, r.stdout + r.stderr
+        assert "Not a feature document" in r.stdout + r.stderr
 
     def test_feature_with_no_documents(self, project):
         r = _plan(project, "--feature", "nope")

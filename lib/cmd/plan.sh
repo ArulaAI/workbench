@@ -357,10 +357,47 @@ cmd_plan() {
     local architecture_spec_content="" shared_context_content=""
     if [[ -z "$spec_file" && -n "${GLOBAL_FEATURE:-}" ]]; then
         feature_mode=true
+
+        # `--feature specs/<kind>/<feature>/<doc>.md` names the feature through
+        # one of its documents. The whole feature is planned, not just that file.
+        if [[ "$GLOBAL_FEATURE" == */* || "$GLOBAL_FEATURE" == *.md ]]; then
+            local _doc_arg="$GLOBAL_FEATURE" _doc_path=""
+            if [[ -f "$_doc_arg" ]]; then
+                _doc_path="$_doc_arg"
+            elif [[ -f "${PROJECT_ROOT}/${_doc_arg}" ]]; then
+                _doc_path="${PROJECT_ROOT}/${_doc_arg}"
+            fi
+            if [[ -z "$_doc_path" ]]; then
+                log_error_block \
+                    "Spec file not found: ${_doc_arg}" \
+                    "--feature takes a feature name or a path to one of the feature's documents" \
+                    "Check the path, or use the name, e.g. speed plan --feature adaptive-auth"
+                exit $EXIT_CONFIG_ERROR
+            fi
+            if [[ -L "$_doc_path" ]]; then
+                log_error_block \
+                    "Spec file is a symlink: ${_doc_arg}" \
+                    "Feature documents are identified by their real path" \
+                    "Pass the file the link points to"
+                exit $EXIT_CONFIG_ERROR
+            fi
+            _doc_path="$(cd "$(dirname "$_doc_path")" && pwd)/$(basename "$_doc_path")"
+            if [[ "$_doc_path" != "${PROJECT_ROOT}/specs/"* ]] || \
+               ! [[ "$_doc_path" =~ /specs/(product|design|tech|architecture)/ ]]; then
+                log_error_block \
+                    "Not a feature document: ${_doc_arg}" \
+                    "Expected a file under specs/product, specs/design, specs/tech or specs/architecture in this project" \
+                    "Use e.g. speed plan --feature specs/design/adaptive-auth/2-risk-review-queue.md"
+                exit $EXIT_CONFIG_ERROR
+            fi
+            GLOBAL_FEATURE=$(feature_name_from_spec "$_doc_path")
+            log_info "Feature ${COLOR_STEP}${GLOBAL_FEATURE}${RESET} from ${_doc_path#${PROJECT_ROOT}/} (planning the whole feature)"
+        fi
+
         if ! [[ "$GLOBAL_FEATURE" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]] || [[ "$GLOBAL_FEATURE" == "overview" ]]; then
             log_error_block \
                 "Invalid feature name: ${GLOBAL_FEATURE}" \
-                "--feature takes a feature name (lowercase letters, digits and hyphens), not a path" \
+                "Feature names use lowercase letters, digits and hyphens; 'overview' is reserved for shared documents" \
                 "Use e.g. speed plan --feature adaptive-auth"
             exit $EXIT_CONFIG_ERROR
         fi
