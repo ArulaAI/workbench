@@ -67,3 +67,13 @@ def test_architect_prompts_leave_unresolved_questions_unplanned():
     for name in ("architect.md", "architect-skeleton.md", "architect-enrich.md"):
         text = (SPEED_DIR / "agents" / name).read_text()
         assert "Unresolved Questions" in text, name
+
+
+def test_fix_agent_may_use_the_edit_tool():
+    # The Fix Agent was allowed Read, Write and Glob only. When it chose Edit, as it
+    # often does, every change was denied and verification reported no fixes.
+    config = (LIB / "config.sh").read_text()
+    tools = config.split('AGENT_TOOLS_WRITE="', 1)[1].split('"', 1)[0].split()
+    assert {"Read", "Write", "Edit"} <= set(tools)
+    assert "Bash" not in tools
+    assert "Edit or Write tool" in VERIFY.read_text()

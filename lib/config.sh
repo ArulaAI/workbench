@@ -115,7 +115,7 @@ ARCHITECT_TIMEOUT_PHASED_MIN=900     # floor for phased plans (large specs by de
 
 # ── Agent Tool Sets ──────────────────────────────────────────────
 AGENT_TOOLS_FULL="Bash Edit Read Write Glob Grep"
-AGENT_TOOLS_WRITE="Read Write Glob"
+AGENT_TOOLS_WRITE="Read Write Edit Glob"
 AGENT_TOOLS_READONLY="Read Glob Grep"
 
 # ── Orchestration Tuning ─────────────────────────────────────────
