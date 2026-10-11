@@ -4,7 +4,7 @@
 # Print the newest ad-hoc report, not a wildcard.
 _guardian_report_path() {
     local report
-    report=$(ls -t "${LOGS_DIR}"/guardian-ad-hoc-*.json 2>/dev/null | head -1)
+    report=$(ls -t "${LOGS_DIR}"/guardian-ad-hoc-*.json 2>/dev/null | head -1) || true
     [[ -n "$report" ]] && echo -e "Report saved to ${COLOR_STEP}${report}${RESET}"
     return 0
 }

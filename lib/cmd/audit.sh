@@ -195,7 +195,7 @@ cmd_audit() {
     # Heading numbers for sizing.phase_sections and suggested_children. Counted
     # here the way the phase split counts them, so the agent never counts.
     local h2_index
-    h2_index=$(printf '%s\n' "$spec_content" | grep '^## ' | awk '{ sub(/^## /, ""); printf "%d  %s\n", NR - 1, $0 }')
+    h2_index=$(printf '%s\n' "$spec_content" | awk '/^## / { sub(/^## /, ""); printf "%d  %s\n", n++, $0 }')
     if [[ -n "$h2_index" ]]; then
         audit_message+="\n\n## H2 Heading Index\n\nUse exactly these 0-based numbers for sizing.phase_sections and suggested_children sections. Do not count headings yourself.\n\n${h2_index}"
     fi

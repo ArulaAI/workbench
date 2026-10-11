@@ -41,7 +41,7 @@ _dashboard_start() {
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --port)     port="$2"; shift 2 ;;
+            --port)     _need_value "$@"; port="$2"; shift 2 ;;
             --api-only) api_only=true; shift ;;
             *) shift ;;
         esac

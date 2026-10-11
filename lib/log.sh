@@ -133,3 +133,13 @@ log_to_file() {
     shift
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$file"
 }
+
+# Stop with a clear message when an option that takes a value has none.
+# Under `set -u` a bare "$2" aborted with "unbound variable" and no hint.
+# Usage, inside an option loop: --opt) _need_value "$@"; var="$2"; shift 2 ;;
+_need_value() {
+    if [[ $# -lt 2 || -z "${2}" || "${2}" == --* ]]; then
+        log_error "Option $1 needs a value"
+        exit "${EXIT_CONFIG_ERROR:-3}"
+    fi
+}

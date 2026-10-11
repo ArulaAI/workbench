@@ -405,7 +405,7 @@ cmd_plan() {
     # Parse options
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --specs-dir) specs_dir="$2"; shift 2 ;;
+            --specs-dir) _need_value "$@"; specs_dir="$2"; shift 2 ;;
             --force) force_plan=true; shift ;;
             --skip-audit) skip_audit=true; shift ;;
             --single-pass) single_pass=true; shift ;;
@@ -708,7 +708,7 @@ cmd_plan() {
         log_step "Guardian: ${COLOR_DIM}cached (specs, vision, learnings and Guardian prompt unchanged)${RESET}"
         if [[ "$guardian_rc" != "0" ]]; then
             local _cached_report
-            _cached_report=$(ls -t "${LOGS_DIR}"/guardian-pre-plan-*.json 2>/dev/null | head -1)
+            _cached_report=$(ls -t "${LOGS_DIR}"/guardian-pre-plan-*.json 2>/dev/null | head -1) || true
             [[ -n "$_cached_report" ]] && log_step "Cached Guardian report: ${_cached_report}"
         fi
     else

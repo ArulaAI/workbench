@@ -147,7 +147,7 @@ cmd_validate() {
 
     if [[ $file_count -eq 0 ]]; then
         log_error "No .md files found in $specs_dir"
-        exit 1
+        exit $EXIT_CONFIG_ERROR
     fi
 
     log_step "Found ${file_count} spec files"

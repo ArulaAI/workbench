@@ -87,3 +87,32 @@ def test_agent_cli_failure_text_is_shown():
     out = subprocess.run(["bash", "-c", script], capture_output=True, text=True, env=ENV).stdout
     assert out.strip() == "There is an issue with the selected model (x)."
     assert "The agent said:" in (LIB / "provider.sh").read_text()
+
+
+def test_options_without_a_value_say_so(tmp_path):
+    # Under `set -u` a missing value aborted with "$2: unbound variable" and no hint.
+    repo = _project(tmp_path)
+    for args, opt in ((("plan", "--feature"), "--feature"),
+                      (("plan", "specs/tech/x.md", "--specs-dir"), "--specs-dir"),
+                      (("run", "--max-parallel"), "--max-parallel"),
+                      (("plan", "specs/tech/x.md", "--specs-dir", "--force"), "--specs-dir")):
+        r = _speed(repo, *args)
+        out = r.stdout + r.stderr
+        assert r.returncode == 3, (args, out)
+        assert f"Option {opt} needs a value" in out and "unbound variable" not in out, (args, out)
+
+
+def test_max_parallel_must_be_a_positive_whole_number(tmp_path):
+    repo = _project(tmp_path)
+    for value in ("0", "abc", "-2"):
+        r = _speed(repo, "run", "--max-parallel", value)
+        assert r.returncode == 3 and "--max-parallel must be a whole number" in (r.stdout + r.stderr), value
+
+
+def test_heading_index_survives_strict_mode_on_a_spec_without_h2():
+    # grep found no "## " line, returned 1, and `set -eo pipefail` ended audit silently.
+    source = (LIB / "cmd" / "audit.sh").read_text()
+    line = next(l for l in source.splitlines() if l.strip().startswith("h2_index=$("))
+    script = "set -euo pipefail; spec_content='# Defects\nNo sections here.'; " + line.strip() + '; echo "ok:[$h2_index]"'
+    r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, env=ENV)
+    assert r.stdout.strip() == "ok:[]", r.stdout + r.stderr

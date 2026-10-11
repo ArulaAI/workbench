@@ -248,12 +248,17 @@ cmd_run() {
     # Parse arguments before _require_feature so --defect can skip the feature requirement
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --max-parallel) max_parallel="$2"; shift 2 ;;
-            --model)        model="$2"; shift 2 ;;
-            --defect)       defect_name="$2"; shift 2 ;;
+            --max-parallel) _need_value "$@"; max_parallel="$2"; shift 2 ;;
+            --model)        _need_value "$@"; model="$2"; shift 2 ;;
+            --defect)       _need_value "$@"; defect_name="$2"; shift 2 ;;
             *) log_error "Unknown option: $1"; exit 1 ;;
         esac
     done
+
+    if ! [[ "$max_parallel" =~ ^[1-9][0-9]*$ ]]; then
+        log_error "--max-parallel must be a whole number of at least 1, got '${max_parallel}'"
+        exit "$EXIT_CONFIG_ERROR"
+    fi
 
     # ── --defect mode: run defect pipeline, skip feature requirement ──
     if [[ -n "$defect_name" ]]; then
