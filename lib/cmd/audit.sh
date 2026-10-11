@@ -357,8 +357,8 @@ cmd_audit() {
             exit $EXIT_GATE_FAILURE
             ;;
         *)
-            log_warn "Audit returned unknown status: ${status}"
-            exit $EXIT_OK
+            log_error "Audit gave no pass, warn or fail verdict (status: ${status}); the audit did not complete"
+            exit 1
             ;;
     esac
 }

@@ -429,6 +429,28 @@ task_topo_sort() {
         done <<< "$deps"
     done
 
+    # A dependency on a task that does not exist can never be satisfied. Name it
+    # instead of reporting it as a cycle.
+    local -A _known_ids=()
+    local _kid
+    for _kid in ${all_ids[@]+"${all_ids[@]}"}; do _known_ids["$_kid"]=1; done
+    local _unknown=0 _f _tid _dep
+    for _f in "${TASKS_DIR}"/*.json; do
+        [[ -f "$_f" ]] || continue
+        _tid=$(jq -r '.id' "$_f")
+        while IFS= read -r _dep; do
+            [[ -z "$_dep" ]] && continue
+            if [[ -z "${_known_ids[$_dep]:-}" ]]; then
+                log_error "Task ${_tid} depends on task ${_dep}, which does not exist"
+                _unknown=1
+            fi
+        done < <(jq -r '.depends_on[]? | tostring' "$_f")
+    done
+    if [[ $_unknown -eq 1 ]]; then
+        rm -rf "$tmpdir"
+        return 1
+    fi
+
     # Kahn's algorithm
     local queue=()
     for id in ${all_ids[@]+"${all_ids[@]}"}; do
@@ -480,7 +502,29 @@ task_topo_sort() {
                 unsorted+=("$id")
             fi
         done
-        log_error "Tasks in cycle: ${unsorted[*]}"
+        # Every unsorted task waits on another unsorted task, so following those
+        # edges from any of them must revisit a task: that loop is the cycle.
+        local -A _in_unsorted=() _seen_at=()
+        local _u _cur _next _d
+        local -a _path=()
+        for _u in "${unsorted[@]}"; do _in_unsorted["$_u"]=1; done
+        _cur="${unsorted[0]}"
+        while [[ -n "$_cur" && -z "${_seen_at[$_cur]:-}" ]]; do
+            _seen_at["$_cur"]=$(( ${#_path[@]} + 1 ))
+            _path+=("$_cur")
+            _next=""
+            while IFS= read -r _d; do
+                if [[ -n "${_in_unsorted[$_d]:-}" ]]; then _next="$_d"; break; fi
+            done < <(jq -r '.depends_on[]? | tostring' "${TASKS_DIR}/${_cur}.json" 2>/dev/null)
+            _cur="$_next"
+        done
+        if [[ -n "$_cur" ]]; then
+            local -a _cycle=("${_path[@]:$(( ${_seen_at[$_cur]} - 1 ))}" "$_cur")
+            local _chain
+            _chain=$(printf ' → %s' "${_cycle[@]}")
+            log_error "Dependency cycle (each task waits on the next): ${_chain# → }"
+        fi
+        log_error "Tasks that cannot start: ${unsorted[*]}"
         return 1
     fi
 

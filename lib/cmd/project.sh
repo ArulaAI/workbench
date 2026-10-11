@@ -196,6 +196,11 @@ cmd_validate() {
 
     local status
     status=$(echo "$validator_output" | jq -r '.status // "unknown"')
+    # A "pass" that still lists critical gaps is not a pass.
+    if [[ "$status" == "pass" ]] && [[ "$(echo "$validator_output" | jq '[.critical_gaps // [] | .[]] | length')" -gt 0 ]]; then
+        log_warn "Validator said pass but listed critical gaps; treating it as a failure"
+        status="fail"
+    fi
 
     if [[ "$status" == "fail" ]]; then
         echo ""
@@ -208,7 +213,9 @@ cmd_validate() {
         echo ""
         log_success "Validation PASSED — specs are consistent"
     else
-        log_warn "Could not parse validation status. Review the report manually."
+        log_error "Validator gave no pass or fail verdict (status: ${status}); validation did not complete"
+        log_error "Review the report and re-run speed validate"
+        exit 1
     fi
 
     echo ""

@@ -819,8 +819,10 @@ cmd_plan() {
                 exit $EXIT_CONFIG_ERROR
                 ;;
             *)
-                log_warn "Audit returned exit code $audit_rc for ${spec_label} — continuing without audit data"
-                continue
+                # S3.4-TR1: an audit that cannot complete stops Plan.
+                log_error "Audit could not complete for ${spec_label} (exit ${audit_rc}) — Plan stops"
+                log_error "Re-run speed plan, or bypass the audit explicitly with --skip-audit"
+                exit "$EXIT_GATE_FAILURE"
                 ;;
         esac
 
@@ -1558,10 +1560,17 @@ cmd_plan() {
 
     # A plan with a dependency loop can never run: `speed run` rejects it.
     # Stop here with the loop named, instead of reporting a passed plan.
+    # The unusable plan is moved aside, not left installed.
     if ! task_topo_sort > /dev/null; then
-        log_error "The task plan contains a dependency cycle and cannot be executed"
-        echo -e "Edit depends_on in ${TASKS_DIR}/ to break the cycle, or re-run ${COLOR_STEP}speed plan --force${RESET}"
-        exit 1
+        local _rejected
+        _rejected="${LOGS_DIR}/rejected-plan-$(date +%s)"
+        mkdir -p "$_rejected"
+        mv "${TASKS_DIR}"/*.json "$_rejected"/ 2>/dev/null || true
+        rm -f "${FEATURE_DIR}/base_branch"
+        log_error "The task plan cannot be executed: its dependencies do not resolve (see above)"
+        log_error "No plan was installed. The rejected tasks are in ${_rejected}"
+        echo -e "Re-run ${COLOR_STEP}speed plan --force${RESET} to plan again"
+        exit "$EXIT_GATE_FAILURE"
     fi
 
     # Display task graph

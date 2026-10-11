@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from lib.file_impact import file_impact_paths, unowned_paths  # noqa: E402
+from lib.file_impact import file_impact_paths, unowned_paths
 
 BULLETS = """## File Impact
 
@@ -61,3 +61,20 @@ def test_plan_checks_file_impact_before_creating_tasks():
     assert check < source.index("# ── Coverage verification gate")
     assert check < source.index('log_step "Creating ${task_count} tasks..."') if 'log_step "Creating ${task_count} tasks..."' in source else True
     assert "_repair_coverage_gaps" in source[check:check + 1500]
+
+
+def test_bare_name_without_a_directory_on_the_line_is_ignored():
+    # `x.ts` alone could be anywhere; guessing would invent an unowned file.
+    assert file_impact_paths("## File Impact\n\n- `helpers.ts` and `src/a.ts`\n") == ["src/a.ts"]
+
+
+def test_command_line_entry_point_used_by_plan(tmp_path):
+    import json
+    import subprocess
+    spec = tmp_path / "spec.md"
+    spec.write_text(TABLE)
+    plan = tmp_path / "plan.json"
+    plan.write_text(json.dumps({"tasks": [{"files_touched": ["src/risk/rules.ts"]}]}))
+    lib = Path(__file__).resolve().parent.parent / "lib" / "file_impact.py"
+    r = subprocess.run(["python3", str(lib), str(spec), str(plan)], check=False, capture_output=True, text=True)
+    assert r.returncode == 0 and json.loads(r.stdout) == ["src/risk/scoring.ts"]

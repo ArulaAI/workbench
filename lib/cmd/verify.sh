@@ -417,6 +417,11 @@ cmd_verify() {
     # Extract status and act on it
     local status
     status=$(echo "$verify_json" | jq -r '.status // "unknown"')
+    # A "pass" that still lists critical failures is not a pass.
+    if [[ "$status" == "pass" ]] && [[ "$(echo "$verify_json" | jq '[.critical_failures // [] | .[]] | length')" -gt 0 ]]; then
+        log_warn "Verifier said pass but listed critical failures; treating it as a failure"
+        status="fail"
+    fi
 
     if [[ "$status" == "pass" ]]; then
         log_success "Plan verification PASSED"
@@ -424,9 +429,9 @@ cmd_verify() {
         echo ""
         return
     elif [[ "$status" != "fail" ]]; then
-        log_warn "Could not parse verification status. Review the report manually."
-        echo ""
-        return
+        log_error "Verifier gave no pass or fail verdict (status: ${status}); verification did not complete"
+        log_error "Review ${LOGS_DIR}/plan-verification.log and re-run speed verify"
+        exit 1
     fi
 
     # ── Status is "fail" — attempt auto-fix loop ─────────────────
@@ -628,6 +633,9 @@ Apply ONLY the fixes described above. Do NOT change anything else."
         _print_verify_report "$verify_json"
 
         status=$(echo "$verify_json" | jq -r '.status // "unknown"')
+        if [[ "$status" == "pass" ]] && [[ "$(echo "$verify_json" | jq '[.critical_failures // [] | .[]] | length')" -gt 0 ]]; then
+            status="fail"
+        fi
 
         if [[ "$status" == "pass" ]]; then
             _print_fix_summary "$all_fixes_json" "$total_fixes"
