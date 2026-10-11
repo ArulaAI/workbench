@@ -63,3 +63,13 @@ def test_standalone_guardian_logs_under_the_files_own_feature():
     source = (LIB / "cmd" / "guardian.sh").read_text()
     assert '_file_feature=$(feature_name_from_spec "$input_file"' in source
     assert '"$input_file" == *specs/*' in source
+
+
+def test_guardian_rejects_only_verified_conflicts():
+    # The same fixed spec bundle came back FLAGGED in some runs and REJECTED in others
+    # over an interpretive question (whether a country counts as cardholder data).
+    prompt = (SPEED_DIR / "agents" / "product-guardian.md").read_text()
+    section = prompt[prompt.index("### Critical versus warning"):]
+    assert "critical** only when the conflict is verified" in section
+    assert "If you are unsure whether a conflict is verified, it is a warning." in section
+    assert "`rejected` needs at least one `critical` flag" in prompt
