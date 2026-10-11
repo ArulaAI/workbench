@@ -93,3 +93,12 @@ def test_fix_agent_may_use_the_edit_tool():
     assert {"Read", "Write", "Edit"} <= set(tools)
     assert "Bash" not in tools
     assert "Edit or Write tool" in VERIFY.read_text()
+
+
+def test_fix_agent_is_given_the_specification():
+    # Without it the agent answered "I can't see the spec" and escalated fixes
+    # that the spec settles.
+    source = VERIFY.read_text()
+    message = source[source.index('local fix_message="## Verification Issues to Fix'):][:400]
+    assert "${spec_content}" in message
+    assert "never add a requirement it does not state" in source
