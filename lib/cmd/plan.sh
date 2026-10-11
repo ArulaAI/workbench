@@ -236,6 +236,19 @@ _run_coverage_check() {
     log_step "Coverage report: ${LOGS_DIR}/coverage-report.json"
 }
 
+# File Impact paths in $tech_spec_content that no task in $parsed_architect owns,
+# as a JSON array. Prints [] when the check cannot run.
+_plan_unowned_file_impact() {
+    local spec_tmp tasks_tmp out
+    spec_tmp=$(mktemp); tasks_tmp=$(mktemp)
+    printf '%s' "$tech_spec_content" > "$spec_tmp"
+    printf '%s' "$parsed_architect" > "$tasks_tmp"
+    out=$("$(_context_python)" "${SPEED_DIR}/lib/file_impact.py" "$spec_tmp" "$tasks_tmp" 2>/dev/null) || out="[]"
+    rm -f "$spec_tmp" "$tasks_tmp"
+    echo "$out" | jq -e 'type == "array"' >/dev/null 2>&1 || out="[]"
+    echo "$out"
+}
+
 # Add tasks for critical coverage gaps. Modifies $parsed_architect in caller scope.
 # Reads: $parsed_architect, $_cov_gaps, $_cov_critical, $tech_spec_content,
 #         $product_spec_content, $design_spec_content (from cmd_plan scope)
@@ -913,16 +926,19 @@ cmd_plan() {
                 [[ "$phase1_sections" == "[]" && "$phase2_sections" == "[]" ]] && continue
 
                 local phase1_split phase2_split
-                phase1_split=$(context_split_spec_for_phase "$spec_content" "$phase2_sections") || {
-                    log_error "Spec split failed for $(basename "$spec_path") Phase 1: context_split_spec_for_phase returned $?"
+                local _split_rc=0
+                phase1_split=$(context_split_spec_for_phase "$spec_content" "$phase2_sections" 2>&1) || _split_rc=$?
+                if [[ $_split_rc -ne 0 ]]; then
+                    log_error "Spec split failed for $(basename "$spec_path") Phase 1 (exit ${_split_rc}): $(printf '%s' "$phase1_split" | tail -1)"
                     _split_failed=true
                     continue
-                }
-                phase2_split=$(context_split_spec_for_phase "$spec_content" "$phase1_sections") || {
-                    log_error "Spec split failed for $(basename "$spec_path") Phase 2: context_split_spec_for_phase returned $?"
+                fi
+                phase2_split=$(context_split_spec_for_phase "$spec_content" "$phase1_sections" 2>&1) || _split_rc=$?
+                if [[ $_split_rc -ne 0 ]]; then
+                    log_error "Spec split failed for $(basename "$spec_path") Phase 2 (exit ${_split_rc}): $(printf '%s' "$phase2_split" | tail -1)"
                     _split_failed=true
                     continue
-                }
+                fi
 
                 local split_verify
                 split_verify=$(context_verify_spec_split "$spec_content" "$phase1_split" "$phase2_split" "$phase1_sections" "$phase2_sections") \
@@ -946,11 +962,11 @@ cmd_plan() {
             # Hard stop: audit said split, but split failed
             if [[ "$_split_failed" == "true" ]]; then
                 if [[ "${FORCE_NO_SPLIT:-}" == "true" ]] || [[ "${skip_split:-}" == "true" ]]; then
-                    log_warn "Spec split failed but --skip-split is set — proceeding with full specs"
+                    log_warn "Spec split failed but FORCE_NO_SPLIT=true — proceeding with full specs"
                 else
                     log_error "Audit recommended phased planning but spec split failed."
                     log_error "The unsplit spec will likely timeout the architect (this is what caused the previous failure)."
-                    log_error "Fix the audit's phase_sections, or re-run with --skip-split to force full spec."
+                    log_error "Re-run the plan (the audit assigns sections again), or plan in one pass with --single-pass."
                     exit $EXIT_GATE_FAILURE
                 fi
             fi
@@ -1115,6 +1131,27 @@ cmd_plan() {
         _plan_cache_write "architect" "$architect_cache_hash" "$parsed_architect"
     fi
 
+    # ── File Impact ownership (deterministic) ──────────────────────
+    # Every file the tech spec's File Impact section names must be owned by a
+    # task. Unowned files become coverage gaps and get task(s) added once.
+    local _unowned
+    _unowned=$(_plan_unowned_file_impact)
+    if [[ "$_unowned" != "[]" ]]; then
+        log_warn "File Impact lists $(echo "$_unowned" | jq 'length') file(s) no task owns: $(echo "$_unowned" | jq -r 'join(", ")')"
+        _cov_gaps=$(echo "$_unowned" | jq -c '[.[] | {severity: "critical", spec: "tech", section: "File Impact",
+            requirement: ("File Impact lists " + . + ", but no task has it in files_touched"),
+            explanation: "Add it to the task that changes or verifies it, or add a task that owns it."}]')
+        _cov_critical=$(echo "$_unowned" | jq 'length')
+        _repair_coverage_gaps
+        _plan_cache_write "architect" "$architect_cache_hash" "$parsed_architect"
+        _unowned=$(_plan_unowned_file_impact)
+        if [[ "$_unowned" != "[]" ]]; then
+            log_warn "Still unowned after repair: $(echo "$_unowned" | jq -r 'join(", ")') — speed verify will report it"
+        else
+            log_success "File Impact: every listed file is owned by a task"
+        fi
+    fi
+
     # ── Coverage verification gate (G1: never silently wrong) ──────
     # Independent agent checks the merged task DAG against full specs.
     # Gated to phased planning for v1.
@@ -1236,6 +1273,8 @@ cmd_plan() {
 
     # Clear existing tasks
     rm -f "${TASKS_DIR}"/*.json
+    # A new plan starts a new run, which records its own base branch.
+    rm -f "${FEATURE_DIR}/base_branch"
 
     # Parse and create task files
     local task_count

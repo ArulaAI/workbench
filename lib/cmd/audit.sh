@@ -192,6 +192,13 @@ cmd_audit() {
     # ── Agent context assembly ─────────────────────────────────
     local audit_message=""
     audit_message+="## Spec Under Audit\n\n${spec_content}"
+    # Heading numbers for sizing.phase_sections and suggested_children. Counted
+    # here the way the phase split counts them, so the agent never counts.
+    local h2_index
+    h2_index=$(printf '%s\n' "$spec_content" | grep '^## ' | awk '{ sub(/^## /, ""); printf "%d  %s\n", NR - 1, $0 }')
+    if [[ -n "$h2_index" ]]; then
+        audit_message+="\n\n## H2 Heading Index\n\nUse exactly these 0-based numbers for sizing.phase_sections and suggested_children sections. Do not count headings yourself.\n\n${h2_index}"
+    fi
     audit_message+="\n\n## Template (structural contract)\n\n${template_content}"
     audit_message+="\n\n## Product Vision\n\n${vision_content}"
 
