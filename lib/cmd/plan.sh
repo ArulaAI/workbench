@@ -104,6 +104,20 @@ _plan_cache_write() {
     echo "$data" > "${cache_dir}/${stage}.dat"
 }
 
+# Cache key for the pre-plan Guardian: everything its verdict depends on, not
+# just the specs (S3.5-TR2): product vision, injected learnings, the Guardian
+# prompt and the model. A changed prompt reused a stale rejection.
+_plan_guardian_cache_key() {
+    local spec_hash="$1" mem="${STATE_DIR}/memory"
+    [[ "${MP_ENABLED:-}" == "true" ]] && mem="$(mp_knowledge_dir 2>/dev/null || echo "$mem")"
+    {
+        printf 'spec:%s\nmodel:%s\n' "$spec_hash" "${MODEL_SUPPORT:-}"
+        cat "${PROJECT_ROOT}/${VISION_FILE}" 2>/dev/null
+        cat "${mem}/learnings/guardian-learnings.json" 2>/dev/null
+        cat "${AGENTS_DIR}/product-guardian.md" 2>/dev/null
+    } | shasum -a 256 | cut -d' ' -f1
+}
+
 _plan_cache_read() {
     cat "$(_plan_cache_dir)/${1}.dat"
 }
@@ -652,10 +666,16 @@ cmd_plan() {
 
     # ── Pre-Plan Guardian Gate ─────────────────────────────────────
     # Check: does this spec belong in the product?
-    local guardian_rc=0
-    if [[ "$force_plan" != "true" ]] && _plan_cache_valid "guardian" "$spec_hash"; then
+    local guardian_rc=0 guardian_key
+    guardian_key=$(_plan_guardian_cache_key "$spec_hash")
+    if [[ "$force_plan" != "true" ]] && _plan_cache_valid "guardian" "$guardian_key"; then
         guardian_rc=$(_plan_cache_read "guardian")
-        log_step "Guardian: ${COLOR_DIM}cached (specs unchanged)${RESET}"
+        log_step "Guardian: ${COLOR_DIM}cached (specs, vision, learnings and Guardian prompt unchanged)${RESET}"
+        if [[ "$guardian_rc" != "0" ]]; then
+            local _cached_report
+            _cached_report=$(ls -t "${LOGS_DIR}"/guardian-pre-plan-*.json 2>/dev/null | head -1)
+            [[ -n "$_cached_report" ]] && log_step "Cached Guardian report: ${_cached_report}"
+        fi
     else
         log_step "Running pre-plan vision check..."
         local _guardian_input="$tech_spec_content"
@@ -670,7 +690,8 @@ cmd_plan() {
         fi
         local _guardian_out
         _guardian_out=$(_run_guardian "pre-plan" "$_guardian_input" "$spec_file") || guardian_rc=$?
-        _plan_cache_write "guardian" "$spec_hash" "$guardian_rc"
+        # An unparseable verdict (3) is not a decision; never reuse it.
+        [[ "$guardian_rc" != "3" ]] && _plan_cache_write "guardian" "$guardian_key" "$guardian_rc"
     fi
 
     if [[ $guardian_rc -eq 1 ]]; then
@@ -887,7 +908,12 @@ cmd_plan() {
     local phase_count=1
     [[ "$audit_sizing_rec" == "split" ]] && phase_count=2
     local architect_cache_hash
-    architect_cache_hash=$(printf '%s:%s' "$spec_hash" "$phase_count" | shasum -a 256 | cut -d' ' -f1)
+    # Key on everything the plan depends on: specs, phase count, Architect prompts
+    # and model. Prompt changes must not reuse a plan made with the old prompts.
+    architect_cache_hash=$({
+        printf '%s:%s:%s:%s\n' "$spec_hash" "$phase_count" "${MODEL_PLANNING:-}" "${MODEL_SUPPORT:-}"
+        cat "${AGENTS_DIR}/architect.md" "${AGENTS_DIR}/architect-skeleton.md" "${AGENTS_DIR}/architect-enrich.md" 2>/dev/null
+    } | shasum -a 256 | cut -d' ' -f1)
 
     if [[ "$force_plan" != "true" ]] && _plan_cache_valid "architect" "$architect_cache_hash"; then
         parsed_architect=$(_plan_cache_read "architect")
