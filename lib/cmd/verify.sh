@@ -256,6 +256,29 @@ ${contract_section}
 Verify this plan against the product specification. Read the spec FIRST, form your own understanding, THEN check the plan."
 }
 
+# Files the Fix Agent may edit: every task JSON, then the plan's contract.
+_verify_fix_files_content() {
+    local f
+    for f in "${TASKS_DIR}"/*.json; do
+        [[ -f "$f" ]] || continue
+        printf -- '--- FILE: %s ---\n%s\n\n' "$f" "$(cat "$f")"
+    done
+    if [[ -n "${CONTRACT_FILE:-}" && -f "$CONTRACT_FILE" ]]; then
+        printf -- '--- FILE: %s (contract) ---\n%s\n\n' "$CONTRACT_FILE" "$(cat "$CONTRACT_FILE")"
+    fi
+}
+
+# Put the contract back if the Fix Agent left it unreadable.
+_verify_restore_invalid_contract() {
+    local backup="$1"
+    [[ -n "$backup" && -f "$backup" ]] || return 0
+    if ! jq empty "$CONTRACT_FILE" 2>/dev/null; then
+        cp "$backup" "$CONTRACT_FILE"
+        log_warn "Fix Agent left the contract invalid; restored the previous version"
+    fi
+    rm -f "$backup"
+}
+
 cmd_verify() {
     _require_feature "$GLOBAL_FEATURE"
     log_header "Verifying Plan Against Spec"
@@ -395,11 +418,8 @@ cmd_verify() {
     fi
 
     # Gather task file contents for the Fix Agent
-    local task_files_content=""
-    for f in "${TASKS_DIR}"/*.json; do
-        [[ -f "$f" ]] || continue
-        task_files_content+="--- FILE: ${f} ---"$'\n'"$(cat "$f")"$'\n\n'
-    done
+    local task_files_content
+    task_files_content=$(_verify_fix_files_content)
 
     # Build the issues payload (critical_failures + recommendations)
     local issues_json
@@ -442,6 +462,7 @@ You are a mechanical fix agent. You receive a verification report listing issues
 - Determine if it can be fixed by editing a task JSON file (e.g., adjusting a threshold, adding missing detail, fixing a field value)
 - If an issue requires human judgment (ambiguous spec interpretation, architectural decisions, trade-offs between approaches), do NOT fix it — add it to `needs_human`
 - Apply fixes by editing the task JSON files directly using Write tool
+- The plan's contract file is listed with the task files. When a fix changes what a task builds, update the matching contract entry in the same pass, so task files and contract never disagree. Fix an issue about the contract alone by editing the contract file. Keep it valid JSON with the same structure
 - Report exactly what you changed
 
 ## Output Format
@@ -482,6 +503,12 @@ ${task_files_content}
 
 Apply ONLY the fixes described above. Do NOT change anything else."
 
+        local contract_backup=""
+        if [[ -n "${CONTRACT_FILE:-}" && -f "$CONTRACT_FILE" ]]; then
+            contract_backup=$(mktemp)
+            cp "$CONTRACT_FILE" "$contract_backup"
+        fi
+
         local fix_output
         if ! fix_output=$(provider_run \
             "$fix_system_prompt" \
@@ -490,10 +517,12 @@ Apply ONLY the fixes described above. Do NOT change anything else."
             "$AGENT_TOOLS_WRITE" \
             "FixAgent"); then
             rm -f "$fix_system_prompt"
+            _verify_restore_invalid_contract "$contract_backup"
             log_error "Fix Agent failed — skipping auto-fix"
             break
         fi
         rm -f "$fix_system_prompt"
+        _verify_restore_invalid_contract "$contract_backup"
 
         if [[ -z "$fix_output" ]]; then
             log_error "Fix Agent returned empty output — skipping"
@@ -604,11 +633,7 @@ Apply ONLY the fixes described above. Do NOT change anything else."
         }' 2>/dev/null)
 
         # Re-gather task files (they may have been edited)
-        task_files_content=""
-        for f in "${TASKS_DIR}"/*.json; do
-            [[ -f "$f" ]] || continue
-            task_files_content+="--- FILE: ${f} ---"$'\n'"$(cat "$f")"$'\n\n'
-        done
+        task_files_content=$(_verify_fix_files_content)
     done
 
     # Loop exhausted or broke — print final summary

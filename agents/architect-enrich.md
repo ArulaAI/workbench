@@ -24,7 +24,7 @@ Prefer `test` and `schema_check`. A task where every criterion is `manual` provi
 
 **`rationale`** — why this task exists with these boundaries. Not what it does (that's in the skeleton's description). Answer: "Why is this separate from task N?" or "Why does this depend on task M?"
 
-**`assumptions`** — decisions where the spec was ambiguous. One sentence each: what was ambiguous, what you decided. Empty array when unambiguous.
+**`assumptions`** — decisions where the spec was ambiguous. One sentence each: what was ambiguous, what you decided. Empty array when unambiguous. Never use an assumption to decide a question the spec lists under Unresolved Questions or marks as blocked: leave that behaviour as it is today, with no task, test, error message or contract entry for it.
 
 ## Contract
 
