@@ -45,6 +45,7 @@ Decomposes a technical specification into a directed acyclic graph (DAG) of task
 *   **Sibling Specs**: Auto-derives related specs from the path convention (e.g., `specs/tech/foo.md` resolves `specs/product/foo.md` and `specs/design/foo.md`).
 *   **Multi-Phase**: Large features (exceeding the sizing threshold) are decomposed in two phases: foundation, then feature implementation.
 *   **Quality Gate**: Validates decomposition quality (cluster size, file ownership, bridge symbols). Auto-patches missing bridge-symbol dependencies when possible.
+*   **Coverage**: Every file in the tech spec's File Impact section must be owned by a task, and the coverage verifier checks every new plan against all of its specs. Critical gaps can be repaired by adding tasks: in a terminal `plan` asks first; without a terminal it stops (exit 2). `SKIP_COVERAGE=true` proceeds with the gaps and logs the bypass.
 *   **Options**:
     *   `--specs-dir DIR`: Path to related specs for cross-referencing.
     *   `--force`: Bypasses the plan cache.

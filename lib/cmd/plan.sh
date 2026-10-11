@@ -278,6 +278,27 @@ _plan_task_details() {
         "\n"'
 }
 
+# Decide whether to repair critical coverage gaps (S3.4-TR2): in a terminal,
+# ask; with SKIP_COVERAGE=true, proceed without repair and log the bypass;
+# otherwise stop. Returns 0 to repair, 1 to proceed without repair.
+_plan_confirm_repair() {
+    local question="$1" _reply
+    if [[ "${SKIP_COVERAGE:-}" == "true" ]]; then
+        log_warn "SKIP_COVERAGE=true — proceeding with ${_cov_critical} coverage gap(s)"
+        _log_gate_skip "coverage" "plan"
+        return 1
+    fi
+    if [[ -t 0 ]]; then
+        read -rp "${question} [y/N] " _reply
+        [[ "$_reply" =~ ^[Yy] ]] && return 0
+        log_warn "Proceeding without adding tasks"
+        return 1
+    fi
+    log_error "Plan has ${_cov_critical} critical coverage gap(s) and no terminal to confirm adding tasks"
+    log_error "Run speed plan in a terminal and answer y to add them, or set SKIP_COVERAGE=true to proceed with the gaps"
+    exit "$EXIT_GATE_FAILURE"
+}
+
 # Add tasks for critical coverage gaps. Modifies $parsed_architect in caller scope.
 # Reads: $parsed_architect, $_cov_gaps, $_cov_critical, $tech_spec_content,
 #         $product_spec_content, $design_spec_content (from cmd_plan scope)
@@ -1188,46 +1209,31 @@ cmd_plan() {
             requirement: ("File Impact lists " + . + ", but no task has it in files_touched"),
             explanation: "Add it to the task that changes or verifies it, or add a task that owns it."}]')
         _cov_critical=$(echo "$_unowned" | jq 'length')
-        _repair_coverage_gaps
-        _plan_cache_write "architect" "$architect_cache_hash" "$parsed_architect"
-        _unowned=$(_plan_unowned_file_impact)
-        if [[ "$_unowned" != "[]" ]]; then
-            log_warn "Still unowned after repair: $(echo "$_unowned" | jq -r 'join(", ")') — speed verify will report it"
-        else
-            log_success "File Impact: every listed file is owned by a task"
+        if _plan_confirm_repair "Add task(s) for the unowned File Impact file(s)?"; then
+            _repair_coverage_gaps
+            _plan_cache_write "architect" "$architect_cache_hash" "$parsed_architect"
+            _unowned=$(_plan_unowned_file_impact)
+            if [[ "$_unowned" != "[]" ]]; then
+                log_warn "Still unowned after repair: $(echo "$_unowned" | jq -r 'join(", ")') — speed verify will report it"
+            else
+                log_success "File Impact: every listed file is owned by a task"
+            fi
         fi
     fi
 
     # ── Coverage verification gate (G1: never silently wrong) ──────
-    # Independent agent checks the merged task DAG against full specs.
-    # Gated to phased planning for v1.
-    if [[ "$audit_sizing_rec" == "split" ]] || [[ "${FORCE_COVERAGE:-}" == "true" ]]; then
+    # Independent agent checks the merged task DAG against full specs, on every
+    # new plan, single-pass or phased (S3.4-TR2). Single-pass plans used to skip
+    # it, so requirement gaps surfaced only in speed verify.
+    if [[ "${SKIP_COVERAGE:-}" != "true" ]]; then
     _run_coverage_check
     if [[ $_cov_critical -gt 0 ]]; then
         log_error "Coverage: ${_cov_critical} critical gap(s)"
-        if [[ "${SKIP_COVERAGE:-}" == "true" ]]; then
-            log_warn "SKIP_COVERAGE=true — proceeding"
-            _log_gate_skip "coverage" "plan"
-        elif [[ -t 0 ]]; then
-            read -rp "Add missing task(s)? [y/N] " _reply
-            if [[ "$_reply" =~ ^[Yy] ]]; then
-                _repair_coverage_gaps
-                _plan_cache_write "architect" \
-                    "$architect_cache_hash" "$parsed_architect"
-                _run_coverage_check
-            fi
-        else
-            # No terminal to ask: add tasks for the gaps once, as the File Impact
-            # check does, then re-check. Stop only if a critical gap remains.
-            log_step "No terminal to confirm — adding task(s) for the gap(s) once"
+        if _plan_confirm_repair "Add missing task(s)?"; then
             _repair_coverage_gaps
-            _plan_cache_write "architect" "$architect_cache_hash" "$parsed_architect"
+            _plan_cache_write "architect" \
+                "$architect_cache_hash" "$parsed_architect"
             _run_coverage_check
-            if [[ $_cov_critical -gt 0 ]]; then
-                log_error "Coverage: ${_cov_critical} critical gap(s) remain after adding tasks"
-                log_error "Re-run speed plan, or set SKIP_COVERAGE=true to proceed with the gaps"
-                exit 1
-            fi
         fi
         [[ $_cov_critical -gt 0 ]] && \
             log_warn "Proceeding with ${_cov_critical} unresolved gap(s)"
@@ -1236,7 +1242,10 @@ cmd_plan() {
     elif [[ -n "$_cov_parsed" ]]; then
         log_success "Coverage: $(echo "$_cov_parsed" | jq -r '.summary // "All requirements covered"')"
     fi
-    fi  # end coverage gate (audit_sizing_rec == "split")
+    else
+        log_warn "SKIP_COVERAGE=true — coverage verifier skipped"
+        _log_gate_skip "coverage" "plan"
+    fi  # end coverage gate
     echo ""
 
     # ── Validation gate ────────────────────────────────────────────

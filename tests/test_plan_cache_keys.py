@@ -42,13 +42,53 @@ def test_unparseable_guardian_verdicts_are_not_cached_and_architect_key_includes
     assert "architect.md" in key and "MODEL_PLANNING" in key
 
 
-def test_coverage_gaps_are_repaired_without_a_terminal():
-    # Without a TTY the coverage gate used to exit with "Override: SKIP_COVERAGE=true"
-    # even though a repair step exists; in a terminal it asks first.
+def _confirm(env_extra: dict, stdin: str | None) -> subprocess.CompletedProcess:
+    script = (f'source "{LIB}/colors.sh"; source "{LIB}/log.sh"; EXIT_GATE_FAILURE=2; '
+              "_log_gate_skip() { echo SKIPLOG \"$@\" >&2; }; _cov_critical=2; "
+              f"eval \"$(sed -n '/^_plan_confirm_repair()/,/^}}/p' '{PLAN}')\"; "
+              '_plan_confirm_repair "Add?"; echo "rc=$?"')
+    env = {"PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin", "NO_COLOR": "1", **env_extra}
+    return subprocess.run(["bash", "-c", script], input=stdin, capture_output=True, text=True, env=env)
+
+
+def test_coverage_gaps_stop_without_a_terminal():
+    # S3.4-TR2: interactive repair needs confirmation; noninteractive critical gaps stop.
+    r = _confirm({}, stdin="")
+    assert r.returncode == 2 and "rc=" not in r.stdout
+    assert "SKIP_COVERAGE=true" in r.stderr and "in a terminal" in r.stderr
+
+
+def test_skip_coverage_proceeds_without_repair_and_logs_the_bypass():
+    r = _confirm({"SKIP_COVERAGE": "true"}, stdin="")
+    assert "rc=1" in r.stdout and "SKIPLOG coverage plan" in r.stderr
+
+
+def test_terminal_answer_yes_repairs():
+    # Drive the helper through a real pseudo-terminal on stdin.
+    import os
+    import pty
+    master, slave = pty.openpty()
+    script = (f'source "{LIB}/colors.sh"; source "{LIB}/log.sh"; EXIT_GATE_FAILURE=2; _cov_critical=1; '
+              f"eval \"$(sed -n '/^_plan_confirm_repair()/,/^}}/p' '{PLAN}')\"; "
+              '_plan_confirm_repair "Add?"; echo "rc=$?"')
+    os.write(master, b"y\n")
+    r = subprocess.run(["bash", "-c", script], stdin=slave, capture_output=True, text=True,
+                       env={"PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin", "NO_COLOR": "1"}, timeout=30)
+    os.close(slave)
+    os.close(master)
+    assert "rc=0" in r.stdout, r.stdout + r.stderr
+
+
+def test_both_repairs_use_the_same_confirmation():
+    source = PLAN.read_text()
+    assert source.count("_plan_confirm_repair \"") == 2
+    assert "No terminal to confirm" not in source
+
+
+def test_coverage_verifier_runs_on_every_plan():
+    # S3.4-TR2: single-pass or phased. It used to run only for phased plans.
     source = PLAN.read_text()
     gate = source[source.index("# ── Coverage verification gate"):]
     gate = gate[:gate.index("# ── Validation gate")]
-    assert 'read -rp "Add missing task(s)? [y/N] "' in gate
-    no_tty = gate[gate.index("No terminal to confirm"):]
-    assert no_tty.index("_repair_coverage_gaps") < no_tty.index("_run_coverage_check") < no_tty.index("exit 1")
-    assert 'log_error "Override: SKIP_COVERAGE=true"' not in gate
+    assert 'audit_sizing_rec" == "split" ]] || [[ "${FORCE_COVERAGE' not in gate
+    assert 'if [[ "${SKIP_COVERAGE:-}" != "true" ]]; then\n    _run_coverage_check' in gate
