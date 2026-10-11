@@ -287,6 +287,9 @@ cmd_run() {
         log_warn "Could not acquire main-branch lock for baseline — proceeding (may miss uncommitted files)"
     fi
 
+    git_record_feature_base_branch
+    log_info "Base branch: $(git_main_branch) (task branches are compared with and merged into it)"
+
     # Verify tasks exist
     local total
     total=$(task_count_total)

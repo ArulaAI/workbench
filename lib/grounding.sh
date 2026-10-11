@@ -1594,7 +1594,7 @@ grounding_check_secrets() {
             "['\"]sk-[a-zA-Z0-9]{20,}['\"]"
             '-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----'
             "['\"][A-Za-z0-9+/=]{40,}['\"]"
-            '[a-z]+://[^:]+:[^@]+@[^/]+'
+            "[a-z][a-z0-9+.-]*://[^/:@[:space:]'\"?#]+:[^/@[:space:]'\"?#]+@[^/[:space:]'\"]+"
         )
     fi
 

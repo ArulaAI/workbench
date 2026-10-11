@@ -8,11 +8,18 @@ _git() {
     git -C "$PROJECT_ROOT" "$@"
 }
 
-# Detect the repo's default branch (main, master, etc.)
-# Tries: MAIN_BRANCH env var → origin HEAD → verify main → verify master → fallback "main"
+# The branch task branches are compared with and merged into.
+# Tries: MAIN_BRANCH env var → the feature's recorded base branch (written by
+# `speed run`) → origin HEAD → verify main → verify master → fallback "main"
 git_main_branch() {
     if [[ -n "${MAIN_BRANCH:-}" ]]; then
         echo "$MAIN_BRANCH"
+        return
+    fi
+    local recorded
+    recorded=$(git_feature_base_branch)
+    if [[ -n "$recorded" ]]; then
+        echo "$recorded"
         return
     fi
     local default
@@ -28,6 +35,42 @@ git_main_branch() {
     else
         echo "main"
     fi
+}
+
+# The base branch recorded for the current feature, if it still exists.
+git_feature_base_branch() {
+    local file="${FEATURE_DIR:-}/base_branch"
+    [[ -n "${FEATURE_DIR:-}" && -f "$file" ]] || return 0
+    local branch
+    branch=$(tr -d '[:space:]' < "$file")
+    if [[ -n "$branch" ]] && _git rev-parse --verify --quiet "refs/heads/${branch}" >/dev/null; then
+        echo "$branch"
+    fi
+}
+
+# Record the branch a run starts from as the feature's base branch. Task
+# branches are created from the current branch, so gates must diff against it
+# and completed work must merge back into it, not into the repository default.
+# MAIN_BRANCH still wins when set. An existing record is kept so a resumed run
+# uses the same base.
+git_record_feature_base_branch() {
+    [[ -n "${FEATURE_DIR:-}" ]] || return 0
+    [[ -n "${MAIN_BRANCH:-}" ]] && return 0
+    local recorded current
+    recorded=$(git_feature_base_branch)
+    current=$(git_current_branch 2>/dev/null)
+    if [[ -n "$recorded" ]]; then
+        if [[ "$recorded" != "$current" ]]; then
+            log_warn "Using recorded base branch '${recorded}' (current branch is '${current}')"
+        fi
+        return 0
+    fi
+    if [[ -z "$current" || "$current" == "HEAD" ]]; then
+        log_warn "Detached HEAD: base branch falls back to $(git_main_branch)"
+        return 0
+    fi
+    mkdir -p "$FEATURE_DIR"
+    echo "$current" > "${FEATURE_DIR}/base_branch"
 }
 
 git_ensure_repo() {

@@ -141,22 +141,23 @@ gate_syntax_check() {
     local worktree_path="${2:-$PROJECT_ROOT}"
     local failed=false
 
-    # Determine diff base: use task branch if available, fallback to HEAD~1
-    local diff_cmd="git -C ${PROJECT_ROOT} diff --name-only HEAD~1 HEAD"
+    # Determine diff range: the task branch against the run's base branch
+    # (git_main_branch), falling back to the last commit.
+    local -a diff_range=("HEAD~1" "HEAD")
     if [[ -n "$task_id" ]]; then
         local task_file="${TASKS_DIR}/${task_id}.json"
         if [[ -f "$task_file" ]]; then
             local branch
             branch=$(jq -r '.branch // empty' "$task_file")
             if [[ -n "$branch" ]] && [[ "$branch" != "null" ]]; then
-                diff_cmd="git -C ${PROJECT_ROOT} diff --name-only main...${branch}"
+                diff_range=("$(git_main_branch)...${branch}")
             fi
         fi
     fi
 
     # Get the diff file list once, with error reporting
     local diff_files=""
-    diff_files=$(eval "$diff_cmd" 2>&1) || {
+    diff_files=$(git -C "$PROJECT_ROOT" diff --name-only "${diff_range[@]}" 2>&1) || {
         local diff_err=$?
         if [[ $diff_err -ne 0 ]]; then
             log_warn "Syntax check: git diff command failed (exit ${diff_err}): ${diff_files}"
