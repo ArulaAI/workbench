@@ -37,6 +37,12 @@ from .utils import estimate_tokens_from_text, get_context_budgets
 # ── Truncation helper ─────────────────────────────────────────
 
 
+def _task_order(task: dict) -> tuple:
+    """Numeric task IDs in numeric order (2 before 10), others after by name."""
+    tid = str(task.get("id", ""))
+    return (0, int(tid), "") if tid.isdigit() else (1, 0, tid)
+
+
 def _truncate(text: str, max_tokens: int, label: str = "") -> str:
     """Truncate text to fit within a token budget."""
     estimated = estimate_tokens_from_text(text)
@@ -505,7 +511,7 @@ def assemble_verifier(
 
     # ── Task Plan ─────────────────────────────────────────
     sections.append("## Task Plan\n")
-    for task in tasks:
+    for task in sorted(tasks, key=_task_order):
         tid = task.get("id", "?")
         title = task.get("title", task.get("description", ""))
         sections.append(f"### Task {tid}: {title}\n")
@@ -552,13 +558,6 @@ def assemble_verifier(
 
         sections.append("")
 
-    # ── Cross-Cutting Concerns ────────────────────────────
-    if cross_cutting_concerns:
-        sections.append("## Cross-Cutting Concerns\n")
-        for concern in cross_cutting_concerns:
-            sections.append(f"- {concern}")
-        sections.append("")
-
     # ── Data Model Contract ───────────────────────────────
     if contract:
         sections.append("## Data Model Contract\n")
@@ -566,6 +565,19 @@ def assemble_verifier(
         import json
         sections.append(json.dumps(contract, indent=2))
         sections.append("```\n")
+
+    # The spec, the task plan and its contract are what the verifier judges. They are never cut:
+    # a truncated plan makes the verifier report the missing tasks' work as gaps.
+    # Only the sections below are trimmed to fit what is left of the budget.
+    required = "\n".join(sections)
+    sections = []
+
+    # ── Cross-Cutting Concerns ────────────────────────────
+    if cross_cutting_concerns:
+        sections.append("## Cross-Cutting Concerns\n")
+        for concern in cross_cutting_concerns:
+            sections.append(f"- {concern}")
+        sections.append("")
 
     # ── Codebase Reality Check ────────────────────────────
     if spec_alignment:
@@ -643,8 +655,13 @@ def assemble_verifier(
                 sections.append(f"- WARN: {c.get('check', '?')} — {c.get('message', '')}")
             sections.append("")
 
-    result = "\n".join(sections)
-    return _truncate(result, total_budget, "verifier context")
+    optional = "\n".join(sections)
+    if not optional:
+        return required
+    remaining = total_budget - estimate_tokens_from_text(required)
+    if remaining <= 0:
+        return required
+    return required + "\n" + _truncate(optional, remaining, "verifier context")
 
 
 # ══════════════════════════════════════════════════════════════
