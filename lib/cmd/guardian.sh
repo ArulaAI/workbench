@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 # guardian.sh — Product Guardian vision check command
 
+# Print the newest ad-hoc report, not a wildcard.
+_guardian_report_path() {
+    local report
+    report=$(ls -t "${LOGS_DIR}"/guardian-ad-hoc-*.json 2>/dev/null | head -1)
+    [[ -n "$report" ]] && echo -e "Report saved to ${COLOR_STEP}${report}${RESET}"
+    return 0
+}
+
 cmd_guardian() {
     local input_file="${1:-}"
 
@@ -17,18 +25,26 @@ cmd_guardian() {
             fi
         fi
 
-        # Use feature context for log output if available, else default LOGS_DIR
+        # Log under the feature the file belongs to when that feature exists,
+        # otherwise under the active feature, else the default LOGS_DIR.
+        if [[ -z "${GLOBAL_FEATURE:-}" && "$input_file" == *specs/* ]]; then
+            local _file_feature
+            _file_feature=$(feature_name_from_spec "$input_file" 2>/dev/null || true)
+            if [[ -n "$_file_feature" && -d "${FEATURES_DIR}/${_file_feature}" ]]; then
+                GLOBAL_FEATURE="$_file_feature"
+            fi
+        fi
         feature_resolve "$GLOBAL_FEATURE" &>/dev/null && _require_feature "$GLOBAL_FEATURE" || mkdir -p "$LOGS_DIR"
 
         log_step "Evaluating: ${COLOR_STEP}${input_file}${RESET}"
         local content
         content=$(cat "$input_file")
 
-        _run_guardian "ad-hoc" "$content" "$input_file"
-        local rc=$?
+        local rc=0
+        _run_guardian "ad-hoc" "$content" "$input_file" || rc=$?
 
         echo ""
-        echo -e "Report saved to ${COLOR_STEP}${LOGS_DIR}/guardian-ad-hoc-*.json${RESET}"
+        _guardian_report_path
         echo ""
         return $rc
     fi
@@ -63,11 +79,11 @@ cmd_guardian() {
         done
     fi
 
-    _run_guardian "ad-hoc" "$content" "$spec_file"
-    local rc=$?
+    local rc=0
+    _run_guardian "ad-hoc" "$content" "$spec_file" || rc=$?
 
     echo ""
-    echo -e "Report saved to ${COLOR_STEP}${LOGS_DIR}/guardian-ad-hoc-*.json${RESET}"
+    _guardian_report_path
     echo ""
     return $rc
 }
