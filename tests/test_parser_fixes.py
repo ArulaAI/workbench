@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from lib.context import treesitter_extract as te
+from lib.context.csg import build_csg
 from lib.context.treesitter_extract import Extractor
 
 pytestmark = pytest.mark.skipif(shutil.which("sg") is None and shutil.which("ast-grep") is None,
@@ -89,3 +90,14 @@ JAVA = {
     "src/BaseEntity.java": "@MappedSuperclass\npublic class BaseEntity { }\n",
     "src/Owner.java": "public class Owner extends BaseEntity { }\n",
 }
+
+
+def test_java_qualified_calls_and_injected_types_become_edges(tmp_path):
+    res = _extract(tmp_path, JAVA, "java")
+    refs = {(r.kind, r.name) for r in res["src/OwnerService.java"].references}
+    assert ("call", "findById") in refs and ("call", "helper") in refs
+    assert ("type_ref", "OwnerRepository") in refs
+    graph = build_csg(str(tmp_path), res)
+    edges = {(e["type"], e["from"].split("::")[-1], e["to"].split("::")[-1]) for e in graph["edges"]}
+    assert ("calls", "load", "findById") in edges
+    assert ("references_type", "OwnerService", "OwnerRepository") in edges
