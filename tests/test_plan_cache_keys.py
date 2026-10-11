@@ -40,3 +40,15 @@ def test_unparseable_guardian_verdicts_are_not_cached_and_architect_key_includes
     assert '[[ "$guardian_rc" != "3" ]] && _plan_cache_write "guardian" "$guardian_key"' in source
     key = source[source.index("architect_cache_hash=$({"):][:600]
     assert "architect.md" in key and "MODEL_PLANNING" in key
+
+
+def test_coverage_gaps_are_repaired_without_a_terminal():
+    # Without a TTY the coverage gate used to exit with "Override: SKIP_COVERAGE=true"
+    # even though a repair step exists; in a terminal it asks first.
+    source = PLAN.read_text()
+    gate = source[source.index("# ── Coverage verification gate"):]
+    gate = gate[:gate.index("# ── Validation gate")]
+    assert 'read -rp "Add missing task(s)? [y/N] "' in gate
+    no_tty = gate[gate.index("No terminal to confirm"):]
+    assert no_tty.index("_repair_coverage_gaps") < no_tty.index("_run_coverage_check") < no_tty.index("exit 1")
+    assert 'log_error "Override: SKIP_COVERAGE=true"' not in gate

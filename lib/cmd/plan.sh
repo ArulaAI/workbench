@@ -1203,8 +1203,17 @@ cmd_plan() {
                 _run_coverage_check
             fi
         else
-            log_error "Override: SKIP_COVERAGE=true"
-            exit 1
+            # No terminal to ask: add tasks for the gaps once, as the File Impact
+            # check does, then re-check. Stop only if a critical gap remains.
+            log_step "No terminal to confirm — adding task(s) for the gap(s) once"
+            _repair_coverage_gaps
+            _plan_cache_write "architect" "$architect_cache_hash" "$parsed_architect"
+            _run_coverage_check
+            if [[ $_cov_critical -gt 0 ]]; then
+                log_error "Coverage: ${_cov_critical} critical gap(s) remain after adding tasks"
+                log_error "Re-run speed plan, or set SKIP_COVERAGE=true to proceed with the gaps"
+                exit 1
+            fi
         fi
         [[ $_cov_critical -gt 0 ]] && \
             log_warn "Proceeding with ${_cov_critical} unresolved gap(s)"
