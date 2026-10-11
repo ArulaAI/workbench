@@ -101,3 +101,9 @@ def test_java_qualified_calls_and_injected_types_become_edges(tmp_path):
     edges = {(e["type"], e["from"].split("::")[-1], e["to"].split("::")[-1]) for e in graph["edges"]}
     assert ("calls", "load", "findById") in edges
     assert ("references_type", "OwnerService", "OwnerRepository") in edges
+
+
+def test_annotated_java_class_is_named_after_the_class_keyword(tmp_path):
+    res = _extract(tmp_path, JAVA, "java")
+    classes = {d.name for r in res.values() for d in r.definitions if d.kind == "class"}
+    assert "BaseEntity" in classes and "public" not in classes
