@@ -60,3 +60,32 @@ def test_custom_grammar_check_only_covers_custom_languages():
     assert te._custom_grammar_available("java") is False
     lib = ROOT / "lib/context/data/grammars" / f"zig.{'dylib' if sys.platform == 'darwin' else 'so'}"
     assert te._custom_grammar_available("zig") is lib.is_file()
+
+
+def test_typescript_methods_are_named_by_their_name_not_modifier(tmp_path):
+    res = _extract(tmp_path, {"src/service.ts": SERVICE_TS}, "typescript")
+    methods = {d.name for d in res["src/service.ts"].definitions if d.kind == "method"}
+    assert {"authorise", "nextId", "require", "create"} <= methods
+    assert "private" not in methods and "static" not in methods
+
+
+def test_javascript_methods_are_named_by_their_name_not_modifier(tmp_path):
+    js = "class Q {\n  static make() { return new Q(); }\n  async load() { return 1; }\n  get size() { return 0; }\n}\n"
+    res = _extract(tmp_path, {"src/q.js": js}, "javascript")
+    methods = {d.name for d in res["src/q.js"].definitions if d.kind == "method"}
+    assert {"make", "load", "size"} <= methods
+    assert not methods & {"static", "async", "get"}
+
+
+JAVA = {
+    "src/OwnerRepository.java": "public class OwnerRepository { public Owner findById(int id) { return null; } }\n",
+    "src/OwnerService.java": (
+        "public class OwnerService {\n"
+        "  private final OwnerRepository repository;\n"
+        "  public OwnerService(OwnerRepository repository) { this.repository = repository; }\n"
+        "  public Owner load(int id) { return repository.findById(id); }\n"
+        "  public void audit() { this.helper(); }\n"
+        "  private void helper() {}\n}\n"),
+    "src/BaseEntity.java": "@MappedSuperclass\npublic class BaseEntity { }\n",
+    "src/Owner.java": "public class Owner extends BaseEntity { }\n",
+}

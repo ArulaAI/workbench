@@ -83,6 +83,11 @@ rule:
   inside:
     kind: class_body
     stopBy: neighbor
+  # Name the method by its name field: modifiers such as private, static,
+  # async or get precede it in the matched text.
+  has:
+    field: name
+    pattern: $NAME
 
 ---
 id: ts-export-function
