@@ -249,6 +249,21 @@ _plan_unowned_file_impact() {
     echo "$out"
 }
 
+# Planned tasks as markdown with full descriptions and acceptance criteria, so a
+# later Architect call (Phase 2, coverage repair) builds on the same interfaces.
+# A one-line summary hid them and the two halves of a phased plan disagreed.
+_plan_task_details() {
+    echo "$1" | jq -r '.[] |
+        "#### Task \(.id): \(.title)\n" +
+        "Depends on: [\((.depends_on // []) | map(tostring) | join(", "))] | Files: \((.files_touched // []) | join(", "))\n\n" +
+        "\(.description // "")\n\n" +
+        "Acceptance criteria:\n" +
+        ((.acceptance_criteria // [])
+            | if type == "string" then .
+              else map("- " + (if type == "object" then (.criterion // "") else tostring end)) | join("\n") end) +
+        "\n"'
+}
+
 # Add tasks for critical coverage gaps. Modifies $parsed_architect in caller scope.
 # Reads: $parsed_architect, $_cov_gaps, $_cov_critical, $tech_spec_content,
 #         $product_spec_content, $design_spec_content (from cmd_plan scope)
@@ -259,13 +274,13 @@ _repair_coverage_gaps() {
     start_id=$((max_id + 1))
 
     local task_summary
-    task_summary=$(echo "$parsed_architect" | jq -c '[.tasks[] | {id, title, files_touched, depends_on}]')
+    task_summary=$(_plan_task_details "$(echo "$parsed_architect" | jq -c '.tasks // []')")
 
     local gap_text
     gap_text=$(echo "$_cov_gaps" | jq -r '.[] | "- [\(.severity)] \(.spec): \(.section) — \(.requirement)\n  Explanation: \(.explanation)"')
 
     local msg=""
-    msg+="## Existing Plan\n\n\`\`\`json\n${task_summary}\n\`\`\`\n\n"
+    msg+="## Existing Plan\n\n${task_summary}\n\n"
     [[ -n "$product_spec_content" ]] && msg+="## Product Spec\n\n${product_spec_content}\n\n"
     msg+="## Tech Spec\n\n${tech_spec_content}\n\n"
     [[ -n "$design_spec_content" ]] && msg+="## Design Spec\n\n${design_spec_content}\n\n"
@@ -273,7 +288,8 @@ _repair_coverage_gaps() {
     msg+="## Coverage Gaps\n\n${gap_text}\n\n"
     msg+="## Instructions\n\nAdd task(s) for the gaps above. "
     msg+="IDs start at ${start_id}. Do not recreate existing tasks. "
-    msg+="Set depends_on where needed. Only output NEW tasks.\n"
+    msg+="Set depends_on where needed. Only output NEW tasks. "
+    msg+="Use the functions, types, fields and error names the existing tasks define.\n"
 
     log_step "Generating task(s) for ${_cov_critical} gap(s)..."
     echo ""
@@ -1032,20 +1048,9 @@ cmd_plan() {
             local phase1_start_id=1
             local phase2_start_id=$((phase1_max_id + 1))
 
-            local phase1_summary=""
-            local p1_len
+            local p1_len phase1_summary
             p1_len=$(echo "$phase1_tasks" | jq 'length')
-            local p1_i=0
-            while [[ $p1_i -lt $p1_len ]]; do
-                local p1_id p1_title p1_files p1_deps p1_desc
-                p1_id=$(echo "$phase1_tasks" | jq -r ".[$p1_i].id")
-                p1_title=$(echo "$phase1_tasks" | jq -r ".[$p1_i].title")
-                p1_deps=$(echo "$phase1_tasks" | jq -r ".[$p1_i].depends_on | join(\",\")")
-                p1_files=$(echo "$phase1_tasks" | jq -r ".[$p1_i].files_touched | join(\", \")")
-                p1_desc=$(echo "$phase1_tasks" | jq -r ".[$p1_i].description | split(\"\n\")[0]" | cut -c1-120)
-                phase1_summary+="- Task ${p1_id}: ${p1_title} — depends on: [${p1_deps}] — files: ${p1_files}\n  ${p1_desc}\n"
-                ((p1_i++)) || true
-            done
+            phase1_summary=$(_plan_task_details "$phase1_tasks")
 
             log_success "Phase 1: ${p1_len} tasks (IDs ${phase1_start_id}-${phase1_max_id})"
             echo ""
@@ -1074,6 +1079,7 @@ cmd_plan() {
             phase2_message+="### Phase 1 Tasks (already planned)\n\n${phase1_summary}\n"
             phase2_message+="**Starting task ID: ${phase2_start_id}**. All your task IDs must be >= ${phase2_start_id}.\n\n"
             phase2_message+="Set \`depends_on\` edges to Phase 1 tasks where your work needs their output.\n\n"
+            phase2_message+="Build on the functions, types, fields and error names exactly as the Phase 1 tasks above define them. Where a Phase 1 task differs from the spec, follow the Phase 1 task and record the difference in \`assumptions\`.\n\n"
             phase2_message+="Focus on: API endpoints, higher-level services, frontend components, integration, tests."
 
             local parsed_phase2
