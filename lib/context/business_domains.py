@@ -706,6 +706,16 @@ def discover(root, config=None, provider=None, lock_held=False, *,
         account_artifact_bytes(facts)
         io_write('artifact.facts.write',locations['facts'],facts,config['max_artifact_bytes'])
         status['coverage'] = facts['coverage']; status['limits'] = facts['limits']
+        # Activities start from entry points with an established identity.
+        # Without one, synthesis can only return an empty model, so stop here
+        # rather than pay for model calls and publish nothing of use.
+        if not any(anchor['resolution'] == 'resolved'
+                   for anchor in facts['anchors'].values()):
+            raise DomainError('NO_ENTRY_POINTS', (
+                f"Extraction found {len(facts['anchors'])} entry point(s) and none "
+                'with an established identity, so no activity can be traced; '
+                'no model call was made and nothing was published. Run '
+                '`speed discover domains --facts-only` to see entry-point coverage.'))
         synthesis = Synthesis(root,config,provider,status['limits'],cancelled,
                               heartbeat,recorder=recorder)
         # Provider/model caps resolve after deterministic extraction. Persist

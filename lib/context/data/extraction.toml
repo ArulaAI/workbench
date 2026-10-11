@@ -222,7 +222,7 @@ diagnostic_codes = ["SEMANTIC_RESOLUTION_UNAVAILABLE", "RULES_AMBIENT_CALL"]
 # or entry-point registrations. Every other language it parses has no
 # entry-point detection, so G2 reports it as a language gap.
 [source_adapters.rules.capability_languages]
-entrypoint_detection = ["java", "jsx", "python", "tsx"]
+entrypoint_detection = ["java", "jsx", "python", "tsx", "typescript"]
 [source_adapters.rules.capabilities]
 parsing = "supported"
 declaration_extraction = "supported"

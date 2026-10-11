@@ -38,6 +38,10 @@ from .layer1_domain_clustering import _classify_language
 from .treesitter_extract import ExtractionResult, SymbolDef, Reference
 from .utils import git_head_hash, now_iso, write_json, read_json
 
+# Extensions a relative JavaScript/TypeScript import may spell for the module
+# it names; resolution compares module stems, so they are dropped.
+_SCRIPT_IMPORT_EXTENSIONS = frozenset({
+    ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"})
 
 # ── Symbol ID construction ───────────────────────────────────
 
@@ -232,6 +236,12 @@ def _resolve_reference(
         if source_module.startswith("."):
             module_path = os.path.normpath(os.path.join(
                 os.path.dirname(ref_file), source_module))
+            # A relative script specifier may spell the file's extension:
+            # `./money.ts` (allowImportingTsExtensions) or `./money.js` (ESM
+            # output naming) both import the module whose stem is ./money.
+            stem, extension = os.path.splitext(module_path)
+            if extension.lower() in _SCRIPT_IMPORT_EXTENSIONS:
+                module_path = stem
         module_path = module_path.lstrip("./")
         module_symbols = [sid for sid, node in index["by_id"].items()
             if os.path.splitext(node["file"])[0].endswith(module_path)

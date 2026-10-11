@@ -8,7 +8,7 @@ import re
 from .base import (SemanticResult, Unit, declare_anchor_registration,
                    declare_anchor_representation,
                    declare_operation_observation, declare_trace_contract,
-                   http_identity, resolve_anchor_identity)
+                   http_identity, library_identity, resolve_anchor_identity)
 from . import CATALOG
 from ..csg import resolve_source_reference
 from ..language_registry import registry
@@ -279,16 +279,24 @@ def extract(source):
             if unit.anchor_kind == 'http' and unit.method and unit.route:
                 unit.anchor_resolution = 'resolved'
                 unit.anchor_reason = None
+            # The catalog rule itself establishes a library anchor: it matches
+            # only a public method of a class its module exports.
+            if unit.anchor_kind == 'library':
+                unit.anchor_resolution = 'resolved'
+                unit.anchor_reason = None
             identity_key = (http_identity(source, unit.method, unit.route)
-                            if unit.anchor_kind == 'http' else None)
+                            if unit.anchor_kind == 'http' else
+                            library_identity(source, unit.qualified)
+                            if unit.anchor_kind == 'library' else None)
             declare_anchor_representation(unit,
                 'registration' if unit.anchor_kind != 'ui' else 'exposure',
                 identity_key,
                 'eligible' if identity_key else 'unresolved',
-                'external' if unit.anchor_kind in {'http', 'ui'} else 'internal')
+                'external' if unit.anchor_kind in {'http', 'ui', 'library'} else 'internal')
             if unit.anchor_role in {'registration', 'exposure'}:
                 declare_anchor_registration(unit,
-                    'http_route' if unit.anchor_kind == 'http' else 'invocation',
+                    'http_route' if unit.anchor_kind == 'http' else
+                    'library_export' if unit.anchor_kind == 'library' else 'invocation',
                     event=unit.method,
                     target=unit.name, scope=source.service_scope,
                     resolution=unit.anchor_resolution, reason=unit.anchor_reason)
@@ -765,10 +773,14 @@ def lexical_candidates(unit, receiver, name, available):
             metadata = match.attributes
             if match.output_type != 'receiver_binding':
                 continue
-            if capture(match,metadata.get('receiver_var')) != receiver:
+            # A class member is written through its receiver (`this.ledger`),
+            # while its declaration names only the member (`ledger`).
+            bound = capture(match,metadata.get('receiver_var'))
+            if not bound or metadata.get('receiver_prefix','')+bound != receiver:
                 continue
             start,end = span(unit.source,match)
-            enclosing = sorted((u for u in unit.source.units if u.start <= start and end <= u.end),
+            enclosing = sorted((u for u in unit.source.units if u.start <= start and end <= u.end
+                                and u.kind in metadata.get('scope_kinds', [u.kind])),
                                key=lambda u:u.end-u.start)
             # A binding belongs to its nearest declaration. A sibling method's
             # parameter is not visible merely because both share an outer class.

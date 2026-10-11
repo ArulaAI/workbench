@@ -237,8 +237,13 @@ def run(root):
         model, status = discover(root, load_speed_toml(str(root)),
                                  recorder=recorder, run_id=recorder.run_id)
         outcome = status['phase']
-        result = {'mode': 'run', 'status': status, 'published': model is not None,
-                  'published_build_id': status['published_build_id'],
+        # A failed attempt leaves the previous model in place. It is still the
+        # published model, but this attempt did not publish it.
+        published = (model is not None and outcome in {'complete', 'partial'}
+                     and status['published_build_id'] == status['attempt_build_id'])
+        result = {'mode': 'run', 'status': status, 'published': published,
+                  'published_build_id': status['published_build_id'] if published else None,
+                  'preserved_build_id': None if published else status['published_build_id'],
                   'artifact': _relative(root, paths(root)['model']) if model else None,
                   'log': recorder.relative_path}
         return result, EXIT_BY_PHASE.get(outcome, 1)

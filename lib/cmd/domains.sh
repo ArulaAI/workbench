@@ -142,10 +142,12 @@ _domains_render_status() {
           .status as $s
           | "Started:     \($s.started_at // "-")",
             "Completed:   \($s.completed_at // "-")",
+            "Outcome:     \($s.phase) (attempt \($s.attempt_build_id))",
             "Published:   \(if .published then "yes (build \(.published_build_id))" else "no" end)",
+            (if .preserved_build_id then "Preserved:   build \(.preserved_build_id) is still the published model; this attempt did not replace it" else empty end),
             (if $s.coverage then "Anchors:     \($s.coverage.anchors_processed)/\($s.coverage.anchors_total) processed" else empty end),
             "Warnings:    \($s.warnings | length)",
-            (if $s.error then "Error:       \($s.error.message // $s.error.code // $s.error)" else empty end)
+            (if $s.error then "Error:       \($s.error.code // "-"): \($s.error.message // $s.error)" else empty end)
         end
     ' "$1"
 }

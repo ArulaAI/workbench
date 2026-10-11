@@ -216,6 +216,19 @@ def http_identity(source: Source, method: str | None, route: str | None) -> str 
     return f'http:{scope or "repository"}:{method.upper()}:{route}'
 
 
+def library_identity(source: Source, qualified: str | None) -> str | None:
+    """Return the exact identity of an exported library operation.
+
+    A public method of an exported class is invoked by importing its module
+    and calling it, so its declaring module and qualified name are its whole
+    identity; nothing has to be resolved at runtime.
+    """
+    if not qualified:
+        return None
+    scope = source.service_scope.strip() if source.service_scope else 'repository'
+    return f'library:{scope or "repository"}:{qualified}'
+
+
 def http_url_parts(url: str) -> tuple[str, str, int, str] | None:
     """Scheme, host, port and path of an absolute HTTP(S) URL template.
 

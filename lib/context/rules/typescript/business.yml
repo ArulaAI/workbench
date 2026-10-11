@@ -45,3 +45,137 @@ metadata:
   target_pattern: '^["'']([^"'']*)["'']$'
 rule:
   pattern: fetch($URL)
+---
+id: ts-library-api-entrypoint
+language: typescript
+metadata:
+  produces: business_anchor
+  anchor_kind: library
+rule:
+  kind: method_definition
+  inside:
+    kind: class_body
+    stopBy: neighbor
+    inside:
+      kind: class_declaration
+      stopBy: neighbor
+      inside:
+        kind: export_statement
+        stopBy: neighbor
+  not:
+    any:
+      - has:
+          kind: accessibility_modifier
+          regex: '^(private|protected)$'
+      - has:
+          field: name
+          kind: private_property_identifier
+      - has:
+          field: name
+          regex: '^(constructor|_)'
+---
+# Class members a method reaches through `this`. A member's declared type, or
+# the class it is constructed from, binds the receiver for every method of the
+# class; anything else (an interface, a union, a factory call) binds nothing.
+id: ts-class-field-type-receiver-binding
+language: typescript
+metadata:
+  produces: receiver_binding
+  receiver_var: NAME
+  receiver_prefix: 'this.'
+  type_var: TYPE
+  scope_kinds: [class]
+rule:
+  kind: public_field_definition
+  all:
+    - has:
+        field: name
+        pattern: $NAME
+    - has:
+        field: type
+        has:
+          kind: type_identifier
+          pattern: $TYPE
+---
+id: ts-class-field-construction-receiver-binding
+language: typescript
+metadata:
+  produces: receiver_binding
+  receiver_var: NAME
+  receiver_prefix: 'this.'
+  type_var: TYPE
+  scope_kinds: [class]
+rule:
+  kind: public_field_definition
+  not:
+    has:
+      field: type
+      kind: type_annotation
+  all:
+    - has:
+        field: name
+        pattern: $NAME
+    - has:
+        field: value
+        kind: new_expression
+        has:
+          field: constructor
+          kind: identifier
+          pattern: $TYPE
+---
+id: ts-parameter-property-receiver-binding
+language: typescript
+metadata:
+  produces: receiver_binding
+  receiver_var: NAME
+  receiver_prefix: 'this.'
+  type_var: TYPE
+  scope_kinds: [class]
+rule:
+  kind: required_parameter
+  inside:
+    kind: formal_parameters
+    inside:
+      kind: method_definition
+      has:
+        field: name
+        regex: '^constructor$'
+  all:
+    - has:
+        kind: accessibility_modifier
+    - has:
+        field: pattern
+        pattern: $NAME
+    - has:
+        field: type
+        has:
+          kind: type_identifier
+          pattern: $TYPE
+---
+# A guard in server or library code. Conditions inside an Angular component
+# are UI behaviour and are left to the UI adapters.
+id: ts-conditional-observation
+language: typescript
+metadata:
+  produces: rule_observation
+  source_location_kind: api
+  expression_var: CONDITION
+rule:
+  kind: if_statement
+  has:
+    field: condition
+    pattern: $CONDITION
+  not:
+    inside:
+      stopBy: end
+      # The decorator belongs to the export statement when it precedes
+      # `export class`, and to the class otherwise.
+      any:
+        - kind: class_declaration
+          has:
+            kind: decorator
+            regex: '^@Component\b'
+        - kind: export_statement
+          has:
+            kind: decorator
+            regex: '^@Component\b'
