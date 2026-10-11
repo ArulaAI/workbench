@@ -1318,8 +1318,11 @@ cmd_plan() {
         # ── Bridge symbol auto-patch ──────────────────────────────
         # If the gate failed, check whether the failures are exclusively
         # bridge-symbol missing-dependency edges. If so, patch depends_on
-        # in the task JSON files and re-run the gate.
-        if [[ "$decomp_overall" == "fail" ]]; then
+        # in the task JSON files and re-run the gate. Widening a bridge task can
+        # expose new edges, so repeat for a few rounds until the plan settles.
+        local patch_round=0
+        while [[ "$decomp_overall" == "fail" ]] && (( patch_round < 3 )); do
+            ((patch_round++)) || true
             # Collect all missing bridge deps: affected_task needs depends_on → source_task
             # Source task = the task that modifies the bridge symbol (from per_task[].task_id)
             local bridge_patches
@@ -1329,7 +1332,8 @@ cmd_plan() {
                  .checks[]? |
                  select(.check == "bridge_symbols" and .verdict == "fail") |
                  .missing_dependencies[]? |
-                 {affected_task: .affected_task, source_task: $pt.task_id}
+                 {affected_task: .affected_task, source_task: $pt.task_id,
+                  affected_files: (.affected_files // [])}
                 ] // []' 2>/dev/null) || bridge_patches="[]"
 
             local patch_count
@@ -1347,7 +1351,8 @@ cmd_plan() {
                 # One patch per edge, applied in a fixed order: edges that point to an
                 # earlier task first, so tasks sharing a file are chained by ID.
                 bridge_patches=$(echo "$bridge_patches" | jq -c '
-                    unique_by([.affected_task, .source_task])
+                    group_by([.affected_task, .source_task])
+                    | map(.[0] + {affected_files: (map(.affected_files[]) | unique)})
                     | sort_by([
                         ((.affected_task | tonumber? // 0) < (.source_task | tonumber? // 0)),
                         (.source_task | tonumber? // 0),
@@ -1364,9 +1369,24 @@ cmd_plan() {
 
                     # Never add an edge that closes a loop: if the source already
                     # waits on the affected task, the pair is ordered the other way.
+                    # The bridge change then runs last, so it may edit the caller
+                    # files to update the call sites the earlier task wrote.
                     if [[ "$affected_task" == "$source_task" ]] || \
                        _plan_task_depends_on "$source_task" "$affected_task"; then
-                        echo -e "    ${COLOR_DIM}${SYM_DOT} Task ${affected_task} → ${source_task}: skipped (already ordered the other way)${RESET}"
+                        local source_file="${TASKS_DIR}/${source_task}.json"
+                        local caller_files
+                        caller_files=$(echo "$patch" | jq -c '.affected_files')
+                        if [[ "$affected_task" != "$source_task" ]] && [[ -f "$source_file" ]] && \
+                           [[ "$caller_files" != "[]" ]]; then
+                            local widened
+                            widened=$(jq --argjson add "$caller_files" '
+                                .files_touched = ((.files_touched // []) + ($add - (.files_touched // [])))
+                            ' "$source_file")
+                            echo "$widened" > "$source_file"
+                            echo -e "    ${COLOR_STEP}${SYM_DOT} Task ${source_task}: already runs after ${affected_task}; may now update callers in $(echo "$caller_files" | jq -r 'join(", ")')${RESET}"
+                        else
+                            echo -e "    ${COLOR_DIM}${SYM_DOT} Task ${affected_task} → ${source_task}: skipped (already ordered the other way)${RESET}"
+                        fi
                         continue
                     fi
 
@@ -1386,9 +1406,13 @@ cmd_plan() {
                 decomp_result=$(context_decomposition_gate "${TASKS_DIR}" 2>/dev/null) || decomp_result=""
                 if [[ -n "$decomp_result" ]]; then
                     decomp_overall=$(echo "$decomp_result" | jq -r '.overall // "pass"' 2>/dev/null)
+                else
+                    break
                 fi
+            else
+                break
             fi
-        fi
+        done
 
         # Show per-task warnings
         local decomp_warnings

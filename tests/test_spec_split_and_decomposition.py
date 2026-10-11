@@ -3,7 +3,8 @@
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+SPEED_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(SPEED_ROOT))
 
 from lib.context.spec_split import (
     _extract_h2,
@@ -431,17 +432,22 @@ class TestBridgePatchesStayAcyclic:
     def _apply_patches_like_plan(self, tasks, result):
         # Mirror lib/cmd/plan.sh: unique edges, earlier-target edges first,
         # and skip any edge that would close a loop.
-        patches = {
-            (m["affected_task"], pt["task_id"])
-            for pt in result["per_task"]
-            for c in pt["checks"]
-            if c["check"] == "bridge_symbols" and c["verdict"] == "fail"
-            for m in c["missing_dependencies"]
-        }
+        # When the pair is already ordered the other way, widen the bridge task to
+        # the caller files instead, so it can update the call sites.
+        patches: dict[tuple[str, str], set[str]] = {}
+        for pt in result["per_task"]:
+            for c in pt["checks"]:
+                if c["check"] == "bridge_symbols" and c["verdict"] == "fail":
+                    for m in c["missing_dependencies"]:
+                        patches.setdefault((m["affected_task"], pt["task_id"]), set()).update(m["affected_files"])
         ordered = sorted(patches, key=lambda p: (int(p[0]) < int(p[1]), int(p[1]), int(p[0])))
         by_id = {t["id"]: t for t in tasks}
         for affected, source in ordered:
-            if affected == source or _is_transitive_dependent(affected, source, _build_dep_graph(tasks)):
+            if affected == source:
+                continue
+            if _is_transitive_dependent(affected, source, _build_dep_graph(tasks)):
+                files = by_id[source].setdefault("files_touched", [])
+                files.extend(sorted(patches[(affected, source)] - set(files)))
                 continue
             deps = by_id[affected].setdefault("depends_on", [])
             if source not in deps:
@@ -472,6 +478,53 @@ class TestBridgePatchesStayAcyclic:
 
         second = check_decomposition(tasks, pm, csg)
         assert second["overall"] == "pass"
+
+
+    def test_bridge_change_after_its_callers_is_widened_not_looped(self):
+        # paymentslatest: tasks 4 and 5 edit service.ts, which calls span; task 6
+        # changes obs.ts, where span lives, and already runs after both.
+        csg = {
+            "nodes": [
+                {"id": "span", "file": "obs.ts", "impact": {"stability": "bridge"}},
+                {"id": "capture", "file": "service.ts", "impact": {"stability": "bridge"}},
+                {"id": "property", "file": "property.ts"},
+            ],
+            "edges": [
+                {"from": "capture", "to": "span", "type": "calls"},
+                {"from": "property", "to": "capture", "type": "calls"},
+            ],
+            "clusters": [],
+            "cluster_edges": [],
+        }
+        tasks = [
+            {"id": "4", "files_touched": ["service.ts"]},
+            {"id": "5", "files_touched": ["service.ts"], "depends_on": ["4"]},
+            {"id": "6", "files_touched": ["obs.ts"], "depends_on": ["5"]},
+            {"id": "7", "files_touched": ["property.ts"], "depends_on": ["5"]},
+        ]
+        pm = _project_map(("service.ts", 50), ("obs.ts", 20), ("property.ts", 10))
+
+        first = check_decomposition(tasks, pm, csg)
+        assert first["overall"] == "fail"
+
+        result = first
+        for _ in range(3):  # plan.sh repeats until the gate settles
+            if result["overall"] != "fail":
+                break
+            self._apply_patches_like_plan(tasks, result)
+            result = check_decomposition(tasks, pm, csg)
+
+        assert tasks[2]["files_touched"] == ["obs.ts", "service.ts"]
+        assert tasks[2]["depends_on"] == ["5"] and "depends_on" not in tasks[0]
+        # Task 7 calls capture in service.ts, which task 6 now edits, so it waits on 6.
+        assert "6" in tasks[3]["depends_on"]
+        assert result["overall"] == "pass"
+
+    def test_plan_widens_bridge_task_when_edge_would_loop(self):
+        source = (SPEED_ROOT / "lib" / "cmd" / "plan.sh").read_text()
+        skip = source.index("_plan_task_depends_on \"$source_task\" \"$affected_task\"")
+        widen = source.index(".files_touched = ((.files_touched // []) + ($add - (.files_touched // [])))")
+        assert skip < widen
 
 
 class TestCheckDecomposition:
