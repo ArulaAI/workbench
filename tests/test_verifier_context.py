@@ -10,7 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from lib.context.assembly import assemble_verifier  # noqa: E402
+from lib.context.assembly import assemble_verifier
 
 
 def _tasks(n: int) -> list[dict]:

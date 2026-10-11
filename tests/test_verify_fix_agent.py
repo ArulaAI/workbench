@@ -18,7 +18,7 @@ ENV = {"PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin", "NO_COLOR": "1"
 def _run(fn: str, script: str, **env) -> subprocess.CompletedProcess:
     load = (f'source "{LIB}/colors.sh"; source "{LIB}/log.sh"; '
             f"eval \"$(sed -n '/^{fn}()/,/^}}/p' '{VERIFY}')\"; ")
-    return subprocess.run(["bash", "-c", load + script], capture_output=True, text=True,
+    return subprocess.run(["bash", "-c", load + script], check=False, capture_output=True, text=True,
                           env=dict(ENV, **env))
 
 
@@ -55,7 +55,7 @@ def _restore(tmp_path, edits: dict) -> subprocess.CompletedProcess:
             f"eval \"$(sed -n '/^_verify_snapshot_plan_files()/,/^}}/p' '{VERIFY}')\"; "
             f"eval \"$(sed -n '/^_verify_restore_invalid_files()/,/^}}/p' '{VERIFY}')\"; ")
     script = load + 'snap=$(_verify_snapshot_plan_files); ' + edits_sh + '; _verify_restore_invalid_files "$snap"'
-    return subprocess.run(["bash", "-c", script], capture_output=True, text=True,
+    return subprocess.run(["bash", "-c", script], check=False, capture_output=True, text=True,
                           env=dict(ENV, TASKS_DIR=str(tasks), CONTRACT_FILE=str(contract)))
 
 

@@ -17,7 +17,7 @@ PLAN = LIB / "cmd" / "plan.sh"
 def _details(tasks: list[dict]) -> str:
     script = (f"eval \"$(sed -n '/^_plan_task_details()/,/^}}/p' '{PLAN}')\"; "
               '_plan_task_details "$TASKS"')
-    return subprocess.run(["bash", "-c", script], capture_output=True, text=True,
+    return subprocess.run(["bash", "-c", script], check=False, capture_output=True, text=True,
                           env={"PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin",
                                "TASKS": json.dumps(tasks)}).stdout
 

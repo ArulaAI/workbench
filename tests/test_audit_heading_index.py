@@ -13,7 +13,7 @@ from pathlib import Path
 SPEED_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SPEED_DIR))
 
-from lib.context.spec_split import _extract_h2  # noqa: E402
+from lib.context.spec_split import _extract_h2
 
 SPEC = """# RFC
 
@@ -29,7 +29,7 @@ def _index(spec: str) -> list[tuple[int, str]]:
     source = (SPEED_DIR / "lib" / "cmd" / "audit.sh").read_text()
     pipeline = re.search(r"h2_index=\$\((printf .*?)\)\n", source).group(1)
     out = subprocess.run(["bash", "-c", pipeline.replace('"$spec_content"', '"$SPEC"')],
-                         capture_output=True, text=True, env={"SPEC": spec, "PATH": "/usr/bin:/bin"}).stdout
+                         check=False, capture_output=True, text=True, env={"SPEC": spec, "PATH": "/usr/bin:/bin"}).stdout
     return [(int(n), h) for n, h in (line.split("  ", 1) for line in out.splitlines())]
 
 

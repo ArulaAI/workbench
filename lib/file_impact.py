@@ -64,8 +64,10 @@ def unowned_paths(spec_text: str, tasks: list[dict]) -> list[str]:
 
 
 def main(argv: list[str]) -> int:
-    spec_text = open(argv[1], encoding="utf-8").read()
-    data = json.load(open(argv[2], encoding="utf-8"))
+    with open(argv[1], encoding="utf-8") as f:
+        spec_text = f.read()
+    with open(argv[2], encoding="utf-8") as f:
+        data = json.load(f)
     tasks = data.get("tasks", data) if isinstance(data, dict) else data
     print(json.dumps(unowned_paths(spec_text, tasks)))
     return 0

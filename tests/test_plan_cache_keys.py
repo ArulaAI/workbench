@@ -21,7 +21,7 @@ def _key(tmp_path: Path, prompt: str, vision: str = "vision", model: str = "m1")
               "_plan_guardian_cache_key spec123")
     env = {"PATH": "/usr/bin:/bin", "PROJECT_ROOT": str(tmp_path), "VISION_FILE": "overview.md",
            "STATE_DIR": str(tmp_path / "state"), "AGENTS_DIR": str(agents), "MODEL_SUPPORT": model}
-    return subprocess.run(["bash", "-c", script], capture_output=True, text=True, env=env).stdout.strip()
+    return subprocess.run(["bash", "-c", script], check=False, capture_output=True, text=True, env=env).stdout.strip()
 
 
 def test_guardian_key_is_stable_for_the_same_inputs(tmp_path):
@@ -48,7 +48,7 @@ def _confirm(env_extra: dict, stdin: str | None) -> subprocess.CompletedProcess:
               f"eval \"$(sed -n '/^_plan_confirm_repair()/,/^}}/p' '{PLAN}')\"; "
               '_plan_confirm_repair "Add?"; echo "rc=$?"')
     env = {"PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin", "NO_COLOR": "1", **env_extra}
-    return subprocess.run(["bash", "-c", script], input=stdin, capture_output=True, text=True, env=env)
+    return subprocess.run(["bash", "-c", script], check=False, input=stdin, capture_output=True, text=True, env=env)
 
 
 def test_coverage_gaps_stop_without_a_terminal():
@@ -72,7 +72,7 @@ def test_terminal_answer_yes_repairs():
               f"eval \"$(sed -n '/^_plan_confirm_repair()/,/^}}/p' '{PLAN}')\"; "
               '_plan_confirm_repair "Add?"; echo "rc=$?"')
     os.write(master, b"y\n")
-    r = subprocess.run(["bash", "-c", script], stdin=slave, capture_output=True, text=True,
+    r = subprocess.run(["bash", "-c", script], check=False, stdin=slave, capture_output=True, text=True,
                        env={"PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin", "NO_COLOR": "1"}, timeout=30)
     os.close(slave)
     os.close(master)

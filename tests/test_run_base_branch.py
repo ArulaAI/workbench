@@ -6,7 +6,6 @@ changed counted as the task's own change: scope checks failed and the secrets sc
 flagged files the task never touched. Merges also went to main.
 """
 
-import re
 import subprocess
 from pathlib import Path
 
@@ -32,7 +31,7 @@ def _sh(repo: Path, script: str, main_branch: str = "") -> str:
         env["MAIN_BRANCH"] = main_branch
     r = subprocess.run(
         ["bash", "-c", f'source "{LIB}/colors.sh"; source "{LIB}/log.sh"; source "{LIB}/git.sh"; {script}'],
-        capture_output=True, text=True, env=env)
+        check=False, capture_output=True, text=True, env=env)
     return (r.stdout + r.stderr).strip()
 
 
@@ -79,11 +78,11 @@ def _db_url_pattern() -> str:
     start = source.index('"Database URL"\n        )\n        pattern_regexes=(')
     block = source[start:source.index("\n        )", start + 20)]
     last = block.strip().splitlines()[-1].strip()
-    return subprocess.run(["bash", "-c", f"printf '%s' {last}"], capture_output=True, text=True).stdout
+    return subprocess.run(["bash", "-c", f"printf '%s' {last}"], check=False, capture_output=True, text=True).stdout
 
 
 def _matches(text: str) -> bool:
-    r = subprocess.run(["grep", "-qE", "-e", _db_url_pattern()], input=text, text=True)
+    r = subprocess.run(["grep", "-qE", "-e", _db_url_pattern()], check=False, input=text, text=True)
     return r.returncode == 0
 
 
@@ -121,10 +120,10 @@ def test_syntax_check_diffs_against_the_run_base_not_main(tmp_path):
     (feature / "base_branch").write_text("trunk\n")
     env = dict(ENV, PROJECT_ROOT=str(repo), FEATURE_DIR=str(feature), TASKS_DIR=str(feature / "tasks"))
     r = subprocess.run(
-        ["bash", "-c", f'source "{LIB}/colors.sh"; source "{LIB}/log.sh"; source "{LIB}/git.sh"; '
+        ["bash", "-c", (f'source "{LIB}/colors.sh"; source "{LIB}/log.sh"; source "{LIB}/git.sh"; '
                        f"eval \"$(sed -n '/^gate_syntax_check()/,/^}}/p' '{LIB}/gates.sh')\"; "
-                       f'gate_syntax_check 1 "{repo}"; echo "rc=$?"'],
-        capture_output=True, text=True, env=env)
+                       f'gate_syntax_check 1 "{repo}"; echo "rc=$?"')],
+        check=False, capture_output=True, text=True, env=env)
     out = r.stdout + r.stderr
     assert "JSON syntax error in: bad.json" in out, out
     assert "unknown revision" not in out

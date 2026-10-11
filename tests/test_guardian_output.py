@@ -20,7 +20,7 @@ def _guardian(tmp_path: Path, json_output: bool) -> subprocess.CompletedProcess:
     (tmp_path / "specs/product").mkdir(parents=True)
     (tmp_path / "specs/product/overview.md").write_text("# Vision\n")
     (tmp_path / "logs").mkdir()
-    fn = lambda name, f: f"eval \"$(sed -n '/^{name}()/,/^}}/p' '{f}')\"; "  # noqa: E731
+    fn = lambda name, f: f"eval \"$(sed -n '/^{name}()/,/^}}/p' '{f}')\"; "
     script = (
         f'source "{LIB}/colors.sh"; source "{LIB}/log.sh"; '
         + fn("parse_agent_json", LIB / "provider.sh") + fn("_require_json", LIB / "provider.sh")
@@ -34,7 +34,7 @@ def _guardian(tmp_path: Path, json_output: bool) -> subprocess.CompletedProcess:
            "STATE_DIR": str(tmp_path / "state"), "LOGS_DIR": str(tmp_path / "logs"),
            "AGENTS_DIR": str(tmp_path), "VERDICT": json.dumps(VERDICT),
            "JSON_OUTPUT": "true" if json_output else "false"}
-    return subprocess.run(["bash", "-c", script], capture_output=True, text=True, env=env)
+    return subprocess.run(["bash", "-c", script], check=False, capture_output=True, text=True, env=env)
 
 
 def test_flags_reach_the_terminal_when_stdout_is_captured(tmp_path):

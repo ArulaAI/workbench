@@ -31,7 +31,7 @@ def _project(tmp_path: Path) -> Path:
 
 
 def _speed(repo: Path, *args: str) -> subprocess.CompletedProcess:
-    return subprocess.run([str(SPEED), *args], cwd=repo, capture_output=True, text=True, env=ENV, timeout=120)
+    return subprocess.run([str(SPEED), *args], check=False, cwd=repo, capture_output=True, text=True, env=ENV, timeout=120)
 
 
 def test_plan_refuses_a_product_spec_without_calling_an_agent(tmp_path):
@@ -84,7 +84,7 @@ def test_status_warns_about_a_cycle_and_run_refuses_it(tmp_path):
 def test_agent_cli_failure_text_is_shown():
     script = (f"eval \"$(sed -n '/^agent_output_first_line()/,/^}}/p' '{LIB}/provider.sh')\"; "
               'agent_output_first_line "$(printf "\\n\\nThere is an issue with the selected model (x).\\nmore")"')
-    out = subprocess.run(["bash", "-c", script], capture_output=True, text=True, env=ENV).stdout
+    out = subprocess.run(["bash", "-c", script], check=False, capture_output=True, text=True, env=ENV).stdout
     assert out.strip() == "There is an issue with the selected model (x)."
     assert "The agent said:" in (LIB / "provider.sh").read_text()
 
@@ -114,5 +114,5 @@ def test_heading_index_survives_strict_mode_on_a_spec_without_h2():
     source = (LIB / "cmd" / "audit.sh").read_text()
     line = next(l for l in source.splitlines() if l.strip().startswith("h2_index=$("))
     script = "set -euo pipefail; spec_content='# Defects\nNo sections here.'; " + line.strip() + '; echo "ok:[$h2_index]"'
-    r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, env=ENV)
+    r = subprocess.run(["bash", "-c", script], check=False, capture_output=True, text=True, env=ENV)
     assert r.stdout.strip() == "ok:[]", r.stdout + r.stderr
