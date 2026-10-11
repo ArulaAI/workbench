@@ -268,15 +268,40 @@ _verify_fix_files_content() {
     fi
 }
 
-# Put the contract back if the Fix Agent left it unreadable.
-_verify_restore_invalid_contract() {
-    local backup="$1"
-    [[ -n "$backup" && -f "$backup" ]] || return 0
-    if ! jq empty "$CONTRACT_FILE" 2>/dev/null; then
-        cp "$backup" "$CONTRACT_FILE"
+# Snapshot the files the Fix Agent may edit: task JSONs and the contract.
+# Prints the snapshot directory.
+_verify_snapshot_plan_files() {
+    local snap
+    snap=$(mktemp -d)
+    mkdir -p "${snap}/tasks"
+    cp "${TASKS_DIR}"/*.json "${snap}/tasks/" 2>/dev/null || true
+    [[ -n "${CONTRACT_FILE:-}" && -f "$CONTRACT_FILE" ]] && cp "$CONTRACT_FILE" "${snap}/contract.json"
+    echo "$snap"
+}
+
+# Put back any task file or contract the Fix Agent left unreadable, keeping its
+# valid edits. An invalid task file made the next jq call end verify with jq's
+# own exit code.
+_verify_restore_invalid_files() {
+    local snap="$1" f name
+    [[ -n "$snap" && -d "$snap" ]] || return 0
+    for f in "${TASKS_DIR}"/*.json; do
+        [[ -f "$f" ]] || continue
+        jq -e 'type == "object"' "$f" >/dev/null 2>&1 && continue
+        name=$(basename "$f")
+        if [[ -f "${snap}/tasks/${name}" ]]; then
+            cp "${snap}/tasks/${name}" "$f"
+            log_warn "Fix Agent left ${name} invalid; restored the previous version"
+        else
+            rm -f "$f"
+            log_warn "Fix Agent created an invalid ${name}; removed it"
+        fi
+    done
+    if [[ -n "${CONTRACT_FILE:-}" && -f "${snap}/contract.json" ]] && ! jq empty "$CONTRACT_FILE" 2>/dev/null; then
+        cp "${snap}/contract.json" "$CONTRACT_FILE"
         log_warn "Fix Agent left the contract invalid; restored the previous version"
     fi
-    rm -f "$backup"
+    rm -rf "$snap"
 }
 
 cmd_verify() {
@@ -504,11 +529,8 @@ ${task_files_content}
 
 Apply ONLY the fixes described above. Do NOT change anything else."
 
-        local contract_backup=""
-        if [[ -n "${CONTRACT_FILE:-}" && -f "$CONTRACT_FILE" ]]; then
-            contract_backup=$(mktemp)
-            cp "$CONTRACT_FILE" "$contract_backup"
-        fi
+        local plan_snapshot
+        plan_snapshot=$(_verify_snapshot_plan_files)
 
         local fix_output
         if ! fix_output=$(provider_run \
@@ -518,12 +540,12 @@ Apply ONLY the fixes described above. Do NOT change anything else."
             "$AGENT_TOOLS_WRITE" \
             "FixAgent"); then
             rm -f "$fix_system_prompt"
-            _verify_restore_invalid_contract "$contract_backup"
+            _verify_restore_invalid_files "$plan_snapshot"
             log_error "Fix Agent failed — skipping auto-fix"
             break
         fi
         rm -f "$fix_system_prompt"
-        _verify_restore_invalid_contract "$contract_backup"
+        _verify_restore_invalid_files "$plan_snapshot"
 
         if [[ -z "$fix_output" ]]; then
             log_error "Fix Agent returned empty output — skipping"

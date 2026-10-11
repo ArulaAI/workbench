@@ -41,26 +41,42 @@ def test_fix_agent_is_told_to_update_the_contract_with_the_tasks():
     assert source.count("task_files_content=$(_verify_fix_files_content)") == 2
 
 
-def test_invalid_contract_left_by_fix_agent_is_restored(tmp_path):
+def _restore(tmp_path, edits: dict) -> subprocess.CompletedProcess:
+    """Snapshot task files and contract, apply the Fix Agent's edits, restore."""
+    tasks = tmp_path / "tasks"
+    tasks.mkdir()
+    (tasks / "1.json").write_text('{"id": "1", "title": "old"}')
+    (tasks / "2.json").write_text('{"id": "2"}')
     contract = tmp_path / "contract.json"
-    backup = tmp_path / "backup.json"
-    backup.write_text('{"ok": true}')
-    contract.write_text("{not json")
-    r = _run("_verify_restore_invalid_contract", f'_verify_restore_invalid_contract "{backup}"',
-             CONTRACT_FILE=str(contract))
-    assert json.loads(contract.read_text()) == {"ok": True}
+    contract.write_text('{"ok": true}')
+    edits_sh = "; ".join(f"printf %s {json.dumps(v)} > '{tasks if k != 'contract' else tmp_path}/{k if k != 'contract' else 'contract'}.json'"
+                         for k, v in edits.items())
+    load = (f'source "{LIB}/colors.sh"; source "{LIB}/log.sh"; '
+            f"eval \"$(sed -n '/^_verify_snapshot_plan_files()/,/^}}/p' '{VERIFY}')\"; "
+            f"eval \"$(sed -n '/^_verify_restore_invalid_files()/,/^}}/p' '{VERIFY}')\"; ")
+    script = load + 'snap=$(_verify_snapshot_plan_files); ' + edits_sh + '; _verify_restore_invalid_files "$snap"'
+    return subprocess.run(["bash", "-c", script], capture_output=True, text=True,
+                          env=dict(ENV, TASKS_DIR=str(tasks), CONTRACT_FILE=str(contract)))
+
+
+def test_invalid_task_file_left_by_fix_agent_is_restored(tmp_path):
+    # The Fix Agent wrote a task file with a raw control character; the next jq call
+    # ended verify with jq's exit code 5, which reads as "halted".
+    r = _restore(tmp_path, {"1": '{"id": "1", "title": "new"}', "2": '{"id": "2", "d": "a\u0001b'})
+    assert json.loads((tmp_path / "tasks/1.json").read_text())["title"] == "new"  # valid edit kept
+    assert json.loads((tmp_path / "tasks/2.json").read_text()) == {"id": "2"}       # invalid one restored
+    assert "Fix Agent left 2.json invalid" in r.stderr
+
+
+def test_invalid_contract_left_by_fix_agent_is_restored(tmp_path):
+    r = _restore(tmp_path, {"contract": "{not json"})
+    assert json.loads((tmp_path / "contract.json").read_text()) == {"ok": True}
     assert "restored the previous version" in r.stderr
-    assert not backup.exists()
 
 
 def test_valid_contract_edit_is_kept(tmp_path):
-    contract = tmp_path / "contract.json"
-    backup = tmp_path / "backup.json"
-    backup.write_text('{"old": true}')
-    contract.write_text('{"new": true}')
-    _run("_verify_restore_invalid_contract", f'_verify_restore_invalid_contract "{backup}"',
-         CONTRACT_FILE=str(contract))
-    assert json.loads(contract.read_text()) == {"new": True}
+    _restore(tmp_path, {"contract": '{"new": true}'})
+    assert json.loads((tmp_path / "contract.json").read_text()) == {"new": True}
 
 
 def test_architect_prompts_leave_unresolved_questions_unplanned():
