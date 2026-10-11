@@ -22,6 +22,8 @@ import os
 import re
 import shutil
 import subprocess
+import sys
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -99,6 +101,17 @@ _SG_CONFIG = _SPEED_ROOT / "sgconfig.yml"
 # Cache sg availability check
 _SG_PATH: str | None = None
 _SG_CHECKED = False
+# Custom-grammar languages in sgconfig.yml. Their native libraries are optional
+# builds (scripts/build-grammars.sh) and are git-ignored.
+_CUSTOM_LANGUAGES = {"prisma", "graphql", "protobuf", "zig"}
+
+
+def _custom_grammar_available(language: str) -> bool:
+    """Return whether the configured custom grammar exists for this platform."""
+    if language not in _CUSTOM_LANGUAGES:
+        return False
+    extension = "dll" if os.name == "nt" else "dylib" if sys.platform == "darwin" else "so"
+    return (_SPEED_ROOT / "lib" / "context" / "data" / "grammars" / f"{language}.{extension}").is_file()
 
 
 def _find_sg() -> str | None:
@@ -163,6 +176,12 @@ def _run_ast_grep(file_path: str, language: str) -> list[dict]:
         return []
 
     try:
+        # sgconfig.yml loads every custom grammar library, and one missing
+        # library makes ast-grep fail for all languages. Only custom languages
+        # need it; ordinary languages run their rule files directly.
+        if not _custom_grammar_available(language):
+            return _run_ast_grep_rule_files(sg, file_path, lang_rules_dir)
+
         result = subprocess.run(
             [sg, "scan", "--json", "--include-metadata",
              "--config", str(_SG_CONFIG), file_path],
@@ -175,6 +194,27 @@ def _run_ast_grep(file_path: str, language: str) -> list[dict]:
         return json.loads(result.stdout)
     except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError):
         return []
+
+
+def _run_ast_grep_rule_files(sg: str, file_path: str, lang_rules_dir: Path) -> list[dict]:
+    """Apply a language's rule files without loading sgconfig.yml.
+
+    Runs from a neutral directory so no sgconfig.yml in the working directory
+    (this repository's or the scanned project's) is picked up.
+    """
+    all_matches: list[dict] = []
+    for rule_file in sorted(lang_rules_dir.glob("*.yml")):
+        try:
+            result = subprocess.run(
+                [sg, "scan", "--json", "--include-metadata", "--rule", str(rule_file), file_path],
+                capture_output=True, text=True, timeout=30, cwd=tempfile.gettempdir(),
+            )
+            if result.returncode != 0 or not result.stdout.strip():
+                continue
+            all_matches.extend(json.loads(result.stdout))
+        except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError):
+            continue
+    return all_matches
 
 
 def _run_ast_grep_stdin(sg: str, file_path: str, lang_rules_dir: Path) -> list[dict]:
