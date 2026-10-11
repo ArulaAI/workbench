@@ -50,6 +50,11 @@ Decomposes a technical specification into a directed acyclic graph (DAG) of task
     *   `--force`: Bypasses the plan cache.
     *   `--skip-audit`: Skips the structural audit of the spec file.
 
+### `plan --feature NAME`
+Plans a whole feature from all of its documents, with no spec file argument. Documents are discovered under `specs/{product,architecture,design,tech}/NAME/` (plus a flat `specs/<kind>/NAME.md`), and the shared `specs/architecture/overview.md` is read as context. The feature needs at least one tech spec. The planned documents are recorded so `speed verify` checks the plan against all of them.
+*   `NAME` is a feature name (lowercase letters, digits and hyphens; `overview` is reserved), or a path to one of the feature's documents, such as `speed plan --feature specs/design/adaptive-auth/2-risk-review-queue.md`. A path names its feature; the whole feature is planned, not just that file. The path must exist inside the project under one of the four spec folders and must not be a symlink.
+*   With a spec file (`speed plan specs/tech/x.md --feature NAME`), `--feature` only chooses the feature's working area, as for every other command.
+
 ### `verify`
 Performs an adversarial audit. An independent verifier reads the product spec without seeing the Architect's reasoning and checks whether the proposed task plan actually delivers the requirements. Reads cross-cutting concerns and spec traceability data as additional input.
 
@@ -62,6 +67,7 @@ Executes pending tasks in parallel using isolated git worktrees.
 *   **Timeout Escalation**: Tasks that time out are retried with an upgraded model tier (sonnet to opus).
 *   **Halt Threshold**: Stops the run when the failure rate exceeds 30% to prevent cascading failures.
 *   **Pattern Detection**: The Supervisor analyzes failures across the log to identify systemic issues.
+*   **Base branch**: Task branches are created from the branch the run starts on. The first run records that branch for the feature; gates compare task branches with it, completed work merges into it, and later `run`, `retry` and `integrate` reuse it. Set `MAIN_BRANCH` to choose a different base.
 *   **Defect mode**: `speed run --defect <name>` runs the defect pipeline (triage → reproduce → fix) instead of the standard task pipeline. Trivial defects skip the reproduce stage.
 *   **Options**:
     *   `--max-parallel N`: Maximum concurrent agents (default: 3).
