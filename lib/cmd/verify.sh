@@ -281,6 +281,7 @@ _verify_restore_invalid_contract() {
 
 cmd_verify() {
     _require_feature "$GLOBAL_FEATURE"
+    _require_readable_tasks
     log_header "Verifying Plan Against Spec"
 
     # Check prerequisites

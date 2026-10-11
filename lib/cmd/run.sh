@@ -272,10 +272,12 @@ cmd_run() {
     log_header "Running SPEED"
     log_info "Max parallel: ${max_parallel} | Model: ${model}"
 
+    _require_readable_tasks
+
     # Check for circular dependencies before starting
     if ! task_topo_sort > /dev/null; then
         log_error "Cannot run: circular dependencies in task graph. Fix depends_on fields."
-        exit 1
+        exit "$EXIT_CONFIG_ERROR"
     fi
 
     # Ensure working tree is committed so task branches see all files

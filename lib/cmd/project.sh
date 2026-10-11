@@ -130,7 +130,7 @@ cmd_validate() {
             specs_dir="${PROJECT_ROOT}/${specs_dir}"
         else
             log_error "Specs directory not found: $specs_dir"
-            exit 1
+            exit $EXIT_CONFIG_ERROR
         fi
     fi
 

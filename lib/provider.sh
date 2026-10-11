@@ -123,6 +123,13 @@ sys.exit(1)
 # Validate that a string is valid JSON. Logs an error with the agent
 # name and a preview of the raw output if not.
 # Usage: _require_json "Guardian" "$output" || return 1
+# First non-empty line of an agent's output, for error messages. When the agent
+# CLI fails (unknown model, no access, network) it prints its reason instead of
+# JSON; showing that line tells a setup problem apart from a bad answer.
+agent_output_first_line() {
+    printf '%s\n' "$1" | sed 's/\x1b\[[0-9;]*m//g' | awk 'NF { print; exit }' | cut -c1-200
+}
+
 _require_json() {
     local label="$1" json="$2"
     if [[ -z "$json" ]]; then
@@ -130,7 +137,7 @@ _require_json() {
         return 1
     fi
     if ! echo "$json" | jq empty 2>/dev/null; then
-        log_error "${label} returned invalid JSON"
+        log_error "${label} returned invalid JSON. The agent said: $(agent_output_first_line "$json")"
         log_verbose "  First 300 chars: ${json:0:300}"
         return 1
     fi

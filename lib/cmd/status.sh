@@ -67,7 +67,7 @@ cmd_status() {
             [[ -f "$f" ]] || continue
             ((feat_total++)) || true
             local s
-            s=$(jq -r '.status // "unknown"' "$f")
+            s=$(jq -r '.status // "unknown"' "$f" 2>/dev/null) || s="unreadable"
             case "$s" in
                 done) ((feat_done++)) || true ;;
                 running) ((feat_running++)) || true ;;
@@ -124,11 +124,17 @@ cmd_status() {
         return
     fi
 
+    _require_readable_tasks
+
     # Task graph
     task_print_graph
     echo ""
     task_print_summary
     echo ""
+    if ! task_topo_sort >/dev/null 2>&1; then
+        log_warn "The task graph has a dependency cycle: speed run will refuse it. Fix depends_on or re-plan."
+        echo ""
+    fi
 
     # State info
     if [[ -f "$STATE_FILE" ]]; then

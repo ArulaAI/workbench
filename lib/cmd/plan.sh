@@ -494,6 +494,20 @@ cmd_plan() {
         fi
     fi
 
+    # plan decomposes a tech spec. A product, design or architecture document
+    # was planned as if it were the RFC, with nonsense sibling lookups.
+    if [[ "$feature_mode" != "true" ]] && [[ "$spec_file" =~ (^|/)specs/(product|design|architecture)/ ]]; then
+        local _kind="${BASH_REMATCH[2]}" _rfc
+        _rfc=$(echo "$spec_file" | sed -E "s#(^|/)specs/${_kind}/#\1specs/tech/#")
+        log_error_block \
+            "Not a tech spec: ${spec_file#${PROJECT_ROOT}/}" \
+            "speed plan takes a tech spec (specs/tech/...); this is a ${_kind} document" \
+            "$( if [[ "$(basename "$spec_file")" == "overview.md" ]]; then echo "This is a shared overview, not a feature document: plan a feature's tech spec, or speed plan --feature NAME"
+                elif [[ -f "$_rfc" ]]; then echo "Plan the RFC: speed plan ${_rfc#${PROJECT_ROOT}/}, or the whole feature: speed plan --feature ${spec_file#${PROJECT_ROOT}/}"
+                else echo "Plan the whole feature: speed plan --feature ${spec_file#${PROJECT_ROOT}/}"; fi )"
+        exit $EXIT_CONFIG_ERROR
+    fi
+
     # Resolve specs_dir
     if [[ -n "$specs_dir" ]] && [[ ! -d "$specs_dir" ]]; then
         if [[ -d "${PROJECT_ROOT}/${specs_dir}" ]]; then

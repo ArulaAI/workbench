@@ -21,7 +21,7 @@ cmd_guardian() {
                 input_file="${PROJECT_ROOT}/${input_file}"
             else
                 log_error "File not found: $input_file"
-                exit 1
+                exit $EXIT_CONFIG_ERROR  # 1 means REJECTED
             fi
         fi
 

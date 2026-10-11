@@ -258,7 +258,7 @@ Removes the SPEED installation (`~/.speed/`) and cleans PATH entries from shell 
 | 0 | Success |
 | 1 | Task failure (one or more agents failed) |
 | 2 | Gate failure (lint, test, or contract check failed) |
-| 3 | Config error (missing binary or invalid setup) |
+| 3 | Config or input error (missing binary, missing or wrong input file, invalid setup) |
 | 4 | Merge conflict during integration |
 | 5 | Halted (failure rate exceeded 30%) |
 | 130 | User abort (Ctrl+C) |

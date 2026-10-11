@@ -255,7 +255,7 @@ cmd_audit() {
     # ── Response parsing ───────────────────────────────────────
     local audit_output
     audit_output=$(parse_agent_json "$raw_audit_output") || {
-        log_error "Could not extract valid JSON from audit output"
+        log_error "Could not extract valid JSON from audit output. The agent said: $(agent_output_first_line "$raw_audit_output")"
         log_error "Raw output saved to ${log_file}"
         exit 1
     }

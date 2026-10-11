@@ -538,3 +538,24 @@ _kill_orphan_agents() {
 
     echo "$killed"
 }
+
+# ── Task file integrity ───────────────────────────────────────────
+# Task JSON that jq cannot read surfaced as raw "jq: parse error" lines and odd
+# exit codes. Name the files instead, and stop before acting on a broken plan.
+_unreadable_task_files() {
+    local dir="${1:-$TASKS_DIR}" f
+    for f in "${dir}"/*.json; do
+        [[ -f "$f" ]] || continue
+        jq -e 'type == "object"' "$f" >/dev/null 2>&1 || echo "$f"
+    done
+}
+
+_require_readable_tasks() {
+    local bad
+    bad=$(_unreadable_task_files "$TASKS_DIR")
+    [[ -z "$bad" ]] && return 0
+    log_error "Task file(s) are not valid JSON:"
+    echo "$bad" | while IFS= read -r f; do echo "  - ${f}" >&2; done
+    log_error "Fix or restore them, or re-plan with 'speed plan'."
+    exit "$EXIT_CONFIG_ERROR"
+}
