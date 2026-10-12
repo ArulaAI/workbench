@@ -431,6 +431,9 @@ except Exception as e:
     sys.exit(1)
 
 errors = []
+# Custom grammars (prisma, graphql, protobuf, zig) are optional builds: a
+# missing library disables only that language, so it is a warning.
+warnings = []
 
 # Check ruleDirs
 for rd in config.get('ruleDirs', []):
@@ -451,14 +454,16 @@ for lang, spec in config.get('customLanguages', {}).items():
             if full.is_file():
                 found = True
             else:
-                errors.append(f'{lang}: grammar library missing: {lib_path}')
+                warnings.append(f'{lang}: grammar library missing: {lib_path}')
             break
-    if not found and not errors:
-        errors.append(f'{lang}: no grammar library for .{platform_ext} platform')
+    if not found and not any(w.startswith(f'{lang}:') for w in warnings):
+        warnings.append(f'{lang}: no grammar library for .{platform_ext} platform')
 
 if errors:
     print('; '.join(errors))
     sys.exit(1)
+if warnings:
+    print('WARNING: ' + '; '.join(warnings))
 " 2>&1) || {
         log_error_block \
             "sgconfig.yml validation failed" \
@@ -466,6 +471,10 @@ if errors:
             "Check sgconfig.yml and rebuild grammars: ./scripts/build-grammars.sh --clean"
         return 1
     }
+    if [[ "$check_result" == WARNING:* ]]; then
+        log_warn "Optional grammars not built (those languages are skipped): ${check_result#WARNING: }"
+        log_warn "Build them with ./scripts/build-grammars.sh if this project uses them"
+    fi
 }
 
 _check_ast_grep_rules() {
@@ -492,12 +501,21 @@ _check_ast_grep_rules() {
 
         local rule_file
         local config="${SPEED_DIR}/sgconfig.yml"
+        # Custom languages need sgconfig.yml for their grammar library; skip one
+        # whose optional library is not built (_check_sgconfig warns about it).
+        # Ordinary languages are probed without sgconfig.yml, as extraction runs
+        # them, so a missing custom grammar cannot mark them broken.
+        local custom=false
+        case "$lang" in
+            graphql|prisma|protobuf|zig)
+                custom=true
+                [[ -f "${SPEED_DIR}/lib/context/data/grammars/${lang}.$(_platform_ext)" ]] || continue
+                ;;
+        esac
         for rule_file in "$lang_dir"*.yml; do
             [[ -f "$rule_file" ]] || continue
             local probe_output
-            # --config needed so ast-grep can resolve custom language grammars
-            # (prisma, graphql, protobuf, zig) regardless of working directory
-            if [[ -f "$config" ]]; then
+            if $custom && [[ -f "$config" ]]; then
                 probe_output=$("$sg" scan --config "$config" --rule "$rule_file" --json /dev/null 2>&1)
             else
                 probe_output=$("$sg" scan --rule "$rule_file" --json /dev/null 2>&1)
@@ -517,7 +535,7 @@ _check_ast_grep_rules() {
         details=$(printf '  %s\n' "${broken[@]}")
         log_error_block \
             "${#broken[@]} language(s) have broken ast-grep rules" \
-            "ast-grep cannot load these rules. Extraction for ALL languages fails when any rule is broken:
+            "ast-grep cannot load these rules, so extraction for these languages fails:
 ${details}" \
             "Fix the rule YAML files in ${rules_dir}/ or remove the broken language directories"
         return 1
