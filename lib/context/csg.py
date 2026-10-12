@@ -34,6 +34,7 @@ try:
 except ImportError:
     HAS_LOUVAIN = False
 
+from .layer1_domain_clustering import _classify_language
 from .treesitter_extract import ExtractionResult, SymbolDef, Reference
 from .utils import git_head_hash, now_iso, write_json, read_json
 
@@ -181,23 +182,84 @@ def _build_symbol_index(nodes: list[dict]) -> dict:
     by_name: dict[str, list[str]] = defaultdict(list)
     by_file: dict[str, list[str]] = defaultdict(list)
 
+    # (module path, name) → symbol IDs, where the module path is every trailing
+    # run of the file's path segments without extension (src/a/money.ts gives
+    # money, a/money and src/a/money), plus the package path for index files.
+    # Import resolution then looks a module up directly instead of scanning
+    # every symbol for each reference.
+    by_module_name: dict[tuple[str, str], list[str]] = defaultdict(list)
+
     for node in nodes:
         by_id[node["id"]] = node
         by_name[node["name"]].append(node["id"])
         by_file[node["file"]].append(node["id"])
+        for module in _module_suffixes(node["file"]):
+            by_module_name[(module, node["name"])].append(node["id"])
 
     return {
         "by_id": by_id,
         "by_name": by_name,
         "by_file": by_file,
+        "by_module_name": by_module_name,
     }
+
+
+# Extensions a relative JavaScript/TypeScript import may spell for the module
+# it names (`./money.ts` with allowImportingTsExtensions, `./money.js` in ESM).
+_SCRIPT_IMPORT_EXTENSIONS = frozenset({
+    ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"})
+
+
+def _module_suffixes(file_path: str) -> list[str]:
+    """Module paths a file can be imported by: each trailing run of segments."""
+    stem = os.path.splitext(file_path.replace(os.sep, "/"))[0]
+    paths = [stem]
+    if stem.endswith("/index") or stem.endswith("/__init__"):
+        paths.append(stem.rsplit("/", 1)[0])
+    suffixes = []
+    for path in paths:
+        parts = path.split("/")
+        suffixes.extend("/".join(parts[i:]) for i in range(len(parts)))
+    return suffixes
+
+
+def _import_module_path(source_module: str, ref_file: str) -> tuple[str, bool] | None:
+    """Normalise an import's module to a path; True when it is repo-exact.
+
+    Relative imports (`./money.ts`, `../risk/rules`, Python `.utils`) resolve
+    against the importing file to an exact repository path. Bare modules
+    (`lib.context.utils`, `pkg/sub`) become a path suffix.
+    """
+    module = source_module.strip().strip("'\"`")
+    if not module:
+        return None
+    if module.startswith("."):
+        if module.startswith(("./", "../")) or module in (".", ".."):
+            path = os.path.normpath(os.path.join(os.path.dirname(ref_file), module))
+        else:  # Python relative import: one leading dot is the current package
+            dots = len(module) - len(module.lstrip("."))
+            base = os.path.dirname(ref_file)
+            for _ in range(dots - 1):
+                base = os.path.dirname(base)
+            rest = module.lstrip(".").replace(".", "/")
+            path = os.path.normpath(os.path.join(base, rest)) if rest else base
+        stem, extension = os.path.splitext(path)
+        if extension.lower() in _SCRIPT_IMPORT_EXTENSIONS:
+            path = stem
+        return path.replace(os.sep, "/"), True
+    stem, extension = os.path.splitext(module)
+    if extension.lower() in _SCRIPT_IMPORT_EXTENSIONS:
+        module = stem
+    if "/" not in module:
+        module = module.replace(".", "/")
+    return module, False
 
 
 def _resolve_reference(
     ref_name: str,
     ref_file: str,
     index: dict,
-    import_map: dict[str, dict[str, str]],
+    import_map: dict[str, dict[str, tuple[str, str]]],
 ) -> str | None:
     """Resolve a reference name to a symbol ID.
 
@@ -222,38 +284,85 @@ def _resolve_reference(
         if node["name"] == clean_name:
             return sid
 
-    # 2. Imported symbols
+    # 2. Imported symbols: the module the name is imported from. A name may be
+    # an alias (`import { minor as m }`), so look up the exported name.
     file_imports = import_map.get(ref_file, {})
     if clean_name in file_imports:
-        source_module = file_imports[clean_name]
-        # Try to find the symbol in the source module's file
-        candidates = index["by_name"].get(clean_name, [])
-        for sid in candidates:
-            node = index["by_id"][sid]
-            if source_module in node["file"]:
-                return sid
+        source_module, exported = file_imports[clean_name]
+        module = _import_module_path(source_module, ref_file)
+        if module:
+            path, exact = module
+            ids = index["by_module_name"].get((path, exported), [])
+            if exact:
+                ids = [sid for sid in ids
+                       if _file_stem(index["by_id"][sid]["file"]) in (path, path + "/index")]
+            if len(ids) == 1:
+                return ids[0]
 
-    # 3. Global name match (only if unambiguous)
-    candidates = index["by_name"].get(clean_name, [])
+    # 3. Global name match, only if unambiguous within the same language. A
+    # same-named symbol in another language can never be this reference's
+    # target (no import or call crosses that boundary), so it must not turn an
+    # unresolved name into a spurious cross-language edge. Same-package Java
+    # references legitimately land here: Java imports no sibling classes.
+    ref_lang = _classify_language(ref_file)
+    candidates = [sid for sid in index["by_name"].get(clean_name, [])
+                  if _same_language(ref_lang, ref_file, index["by_id"][sid]["file"])]
     if len(candidates) == 1:
         return candidates[0]
 
     return None
 
 
+def _file_stem(file_path: str) -> str:
+    return os.path.splitext(file_path.replace(os.sep, "/"))[0]
+
+
+# C-family languages split declarations and definitions across extensions
+# (foo.h and foo.c), so those extensions count as one language.
+_C_FAMILY_EXTENSIONS = frozenset({
+    ".c", ".h", ".cpp", ".cc", ".cxx", ".hpp", ".hh", ".hxx", ".m", ".mm"})
+
+
+def _same_language(ref_lang: str, ref_file: str, candidate_file: str) -> bool:
+    """True if candidate_file is plausibly the same language as ref_file.
+
+    _classify_language groups everything it does not name as "other"; within
+    that bucket compare extensions, treating the C family as one language.
+    """
+    if _classify_language(candidate_file) != ref_lang:
+        return False
+    if ref_lang != "other":
+        return True
+    ref_ext = os.path.splitext(ref_file)[1].lower()
+    candidate_ext = os.path.splitext(candidate_file)[1].lower()
+    if ref_ext in _C_FAMILY_EXTENSIONS and candidate_ext in _C_FAMILY_EXTENSIONS:
+        return True
+    return ref_ext == candidate_ext
+
+
 def _build_import_map(
     extractions: dict[str, ExtractionResult],
-) -> dict[str, dict[str, str]]:
-    """Build a map of file → {imported_name: source_module} for reference resolution."""
-    import_map: dict[str, dict[str, str]] = defaultdict(dict)
+) -> dict[str, dict[str, tuple[str, str]]]:
+    """Map file → {local name: (source module, exported name)}.
+
+    TypeScript symbols arrive as written: `type Payment` and `minor as m`
+    name the local binding Payment and m, exported as Payment and minor.
+    """
+    import_map: dict[str, dict[str, tuple[str, str]]] = defaultdict(dict)
 
     for rel_path, result in extractions.items():
         for ref in result.references:
             if ref.kind != "import":
                 continue
-            module = ref.module or ""
+            module = (ref.module or "").strip().strip("'\"`")
             for sym_name in ref.symbols:
-                import_map[rel_path][sym_name] = module
+                name = sym_name.strip()
+                if name.startswith("type "):
+                    name = name[5:].strip()
+                exported, _, local = name.partition(" as ")
+                exported, local = exported.strip(), (local.strip() or exported.strip())
+                if exported:
+                    import_map[rel_path][local] = (module, exported)
 
     return dict(import_map)
 
