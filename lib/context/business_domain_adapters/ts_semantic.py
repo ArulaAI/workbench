@@ -12,8 +12,8 @@ from dataclasses import dataclass
 
 from types import MappingProxyType
 
-from . import CATALOG, rules
-from .base import SemanticResult
+from . import CATALOG, rules, ts_types
+from .base import SemanticResult, declare_operation_observation
 from ..layer1_domain_clustering import resolve_typescript_path_alias
 from ..business_domain_schema import identifier, record
 
@@ -95,6 +95,7 @@ def prepare(sources, units, diagnostics=None):
             })
         source.resolved_module_targets = MappingProxyType(resolved)
     rules.prepare(sources, units, diagnostics)
+    ts_types.prepare(sources)
     _prepare_prop_callbacks(sources)
     definitions = _build_definitions(sources)
     for source in sources:
@@ -104,7 +105,8 @@ def prepare(sources, units, diagnostics=None):
 
 
 def calls(unit):
-    """Avoid a duplicate call edge for a call already modeled as an effect."""
+    """Avoid a duplicate call edge for a call already modeled as an effect or
+    as a read or write of in-process state."""
     effects = set()
     for match in unit.source.rule_outputs:
         if match.output_type != 'semantic_effect':
@@ -113,7 +115,62 @@ def calls(unit):
         if rules.owns(unit, start, end):
             effects.add((start - unit.start, end - unit.start))
     return [call for call in rules.calls(unit)
-            if (call['position'], call['end']) not in effects]
+            if (call['position'], call['end']) not in effects
+            and not _store_access(unit, call)]
+
+
+# In-process state. A Map, Set or array held by a class member or a module is
+# where this code keeps its records; reading or changing it is data access, not
+# a library call. Each access is a data operation on a `memory_store` resource
+# named by where the collection is declared, so every activity that touches the
+# same state cites the same resource. A write completes when the call returns
+# and is lost when the process exits; that is the boundary a trace states.
+STORE_RESOURCE_KIND = 'memory_store'
+IN_PROCESS_STATE_CODE = 'TS_IN_PROCESS_STATE'
+IN_PROCESS_STATE_REASON = ('The write changes in-process memory: it completes when the call '
+                           'returns and does not survive the process.')
+
+
+def _store_access(unit, call):
+    if not call['receiver'] or unit.source.language not in ts_types.TYPED_LANGUAGES:
+        return None
+    return ts_types.store_access(unit, call['receiver'], call['name'],
+                                 unit.start + call['position'])
+
+
+def _store_operations(unit, occupied):
+    if unit.source.language not in ts_types.TYPED_LANGUAGES:
+        return []
+    result = []
+    for call in rules.calls(unit):
+        span = (call['position'], call['end'])
+        access = _store_access(unit, call)
+        if access is None or span in occupied:
+            continue
+        resource = {'kind': STORE_RESOURCE_KIND, 'name': access.store,
+                    'language': unit.source.language, 'resolution': 'resolved', 'reason': None}
+        gaps = ([{'projection': 'completion', 'code': IN_PROCESS_STATE_CODE,
+                  'reason': IN_PROCESS_STATE_REASON}] if access.kind == 'data_write' else [])
+        result.append(declare_operation_observation(unit,
+            position=span[0], end=span[1], kind=access.kind,
+            outcome=unit.text[span[0]:span[1]], resource=resource,
+            target_identity_key=access.store, projection_gaps=gaps,
+            resolution='unresolved' if gaps else 'resolved',
+            reason=IN_PROCESS_STATE_REASON if gaps else None))
+        occupied.add(span)
+    for start, end, access in ts_types.truncations(unit):
+        if (start, end) in occupied or not ts_types.store_written(unit, access.store):
+            continue
+        result.append(declare_operation_observation(unit,
+            position=start, end=end, kind='data_write', outcome=unit.text[start:end],
+            resource={'kind': STORE_RESOURCE_KIND, 'name': access.store,
+                      'language': unit.source.language, 'resolution': 'resolved', 'reason': None},
+            target_identity_key=access.store,
+            projection_gaps=[{'projection': 'completion', 'code': IN_PROCESS_STATE_CODE,
+                              'reason': IN_PROCESS_STATE_REASON}],
+            resolution='unresolved', reason=IN_PROCESS_STATE_REASON))
+        occupied.add((start, end))
+    return result
 
 
 # Callback props. A function component that destructures a prop such as
@@ -285,10 +342,24 @@ def _prop_callback(unit, receiver, name):
     return list(component.prop_callback_targets[name])
 
 
+def _declared_class_candidates(unit, receiver, available, position):
+    """Methods of the repository class the source declares *receiver* as."""
+    if not receiver or position is None:
+        return []
+    found = ts_types.receiver_type(unit, receiver, unit.start + position)
+    if found is None or ts_types.platform(unit, found) or found.name in {'{}', '{=}', '&', 'this'}:
+        return []
+    return [candidate for candidate in available
+            if candidate.owner == found.name and candidate.source.path == found.path]
+
+
 def candidates(unit, receiver, name, available, position=None):
     lexical = rules.lexical_candidates(unit, receiver, name, available)
     if lexical:
         return lexical
+    declared = _declared_class_candidates(unit, receiver, available, position)
+    if declared:
+        return declared
     bindings = rules._import_bindings(unit.source)
     bound = receiver.split('.', 1)[0] if receiver else name
     module = bindings.get(bound)
@@ -323,7 +394,32 @@ def resolve_call(unit, receiver, name, candidates, position, evidence_id=None):
             target_id=identifier('resource', 'javascript-external-call', owner, name),
             evidence_ids=evidence, diagnostic_code=code, reason=reason,
             provider=provider[0] if provider else f'module:{owner}')
-    return rules.resolve_call(unit, receiver, name, candidates, position, evidence_id)
+    result = rules.resolve_call(unit, receiver, name, candidates, position, evidence_id)
+    if result.outcome != 'unresolved' or candidates or not receiver:
+        return result
+    return _declared_platform_call(unit, receiver, name, position, evidence) or result
+
+
+def _declared_platform_call(unit, receiver, name, position, evidence):
+    """A call on a receiver whose declared type, read through annotations,
+    aliases, members and return types, is one the language provides."""
+    found = ts_types.receiver_type(unit, receiver, unit.start + position)
+    provided = ts_types.platform(unit, found)
+    if not provided:
+        return None
+    written = re.sub(r'\s+', ' ', re.sub(r'\s*\n\s*(\??\.)', r'\1', receiver.strip()))
+    if len(written) > 60:
+        written = written[:59].rstrip() + '…'
+    derivation = '; '.join(found.steps)
+    verb = 'narrowed to' if any(' narrowed by ' in step for step in found.steps) else 'declared as'
+    return SemanticResult(capability='callable_resolution', outcome='external',
+        subject_id=unit.symbol_id,
+        target_id=identifier('resource', 'ambient-call', unit.source.language, provided, name),
+        evidence_ids=evidence, diagnostic_code='RULES_AMBIENT_CALL',
+        reason=(f'{written} is {verb} {provided}, a type '
+                f'{unit.source.language} provides; {name} is its method.'
+                + (f' Declared by: {derivation}.' if derivation else '')),
+        provider=f'global:{provided}')
 
 
 def _enriched_interaction(unit, evidence, facts, result):
@@ -382,6 +478,7 @@ def observations(unit):
 def operations(unit):
     result = rules.operations(unit)
     occupied = {(item['position'], item['end']) for item in result}
+    result.extend(_store_operations(unit, occupied))
     for match in getattr(unit.source, 'framework_operations', []):
         start, end = rules.span(unit.source, match)
         relative = (start-unit.start, end-unit.start)

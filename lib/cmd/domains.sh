@@ -36,81 +36,205 @@ _domains_render_progress() {
     done
 }
 
+# The --facts-only summary. It leads with the answer a reader wants first
+# (was every entry point followed to an end this tool can name?), then shows
+# where each call on a trace went, the evidence gathered, and anything not
+# analyzed. Every number comes from the result's report; nothing here counts.
 _domains_render_facts() {
-    jq -r '
-        .measurements.traces as $t
-        | .coverage as $c
-        | def row: "  \(.label)\(" " * ([44 - (.label | length), 1] | max))\(.traces | tostring | " " * ([3 - length, 0] | max) + .) trace\(if .traces == 1 then "" else "s" end)";
-          "Traces:          \($t.resolved)/\($t.total) resolved (\($t.ambiguous) ambiguous, \($t.unresolved) unresolved)",
-          (if $t.complete != null
-           then "Completion:      \($t.complete) complete, \($t.bounded) bounded, \($t.incomplete) incomplete"
+    local ok="" warn="" dim="" bold="" accent="" reset=""
+    if [[ -n "${RESET:-}" ]]; then
+        ok=$(printf '%b' "${COLOR_SUCCESS:-}"); warn=$(printf '%b' "${COLOR_WARN:-}")
+        dim=$(printf '%b' "${COLOR_DIM:-}"); bold=$(printf '%b' "${BOLD:-}")
+        accent=$(printf '%b' "${COLOR_ACCENT:-}"); reset=$(printf '%b' "${RESET:-}")
+    fi
+    jq -r --arg ok "$ok" --arg warn "$warn" --arg dim "$dim" --arg bold "$bold" \
+          --arg accent "$accent" --arg reset "$reset" '
+        def plural($n; $word): "\($n) \($word)\(if $n == 1 then "" else "s" end)";
+        def lpad($n): tostring | (" " * ([$n - length, 0] | max)) + .;
+        def rpad($n): tostring | . + (" " * ([$n - length, 1] | max));
+        def heading($text): "  " + ($text | rpad(18));
+        def title($text): "  " + $text;
+        def row($name; $count; $note): "    " + ($name | rpad(14)) + ($count | lpad(4))
+            + (if $note != "" then "   " + $dim + $note + $reset else "" end);
+        def short: if test("^[\\w$]+(\\.[\\w$]+)+$") then split(".") | last else . end;
+        def listed($items; $limit):
+            ($items[:$limit] | map("\(.name | short) \(.sites)") | join(" · "))
+            + (if ($items | length) > $limit then " · +\(($items | length) - $limit) more" else "" end);
+        def seconds: if . == null then empty
+            elif . < 1000 then "\(.) ms" else "\((. / 100 | round) / 10) s" end;
+
+        .report as $r
+        | .measurements.traces as $mt
+        | ($r.traces // {total: $mt.total, complete: ($mt.complete // $mt.resolved),
+                         bounded: ($mt.bounded // 0),
+                         incomplete: ($mt.incomplete // ($mt.total - $mt.resolved))}) as $t
+        | ([(.entry_points // [])[].total] | add // 0) as $entries
+        | ($t.complete + $t.bounded) as $ended
+        | ($r.calls // {}) as $calls
+        | (.trace_blockers // []) as $blockers
+
+        # ── Headline ────────────────────────────────────────────────────
+        | (if $r.repository then "  " + $bold + $r.repository + $reset else empty end),
+          (if $r then "  " + $dim
+                + ([($r.files // [])[:5][] | "\(.files) \(.language)"] | join(" · "))
+                + (if ($r.files // [] | length) > 5 then " · +\(($r.files | length) - 5) more" else "" end)
+                + " files · \($r.symbols) symbols"
+                + ($r.elapsed_ms | seconds | " · " + .) + $reset
            else empty end),
-          (if (.entry_points // []) | length > 0
-           then "Entry points:    \([.entry_points[].total] | add) ("
-                + ([.entry_points[] | "\(.kind) \(.resolved)/\(.total)"] | join(", "))
-                + " resolved)"
+          "",
+          (if $t.total == 0 and $entries == 0 then "  " + $warn + "No entry points found" + $reset
+           elif $t.total == 0 then "  " + $warn + "▲ " + plural($entries; "entry point")
+                + " found, none traced" + $reset
+           elif $ended == $t.total
+           then "  " + $ok + "✓ " + (if $t.total == 1 then "The entry point was"
+                                   else "All \($t.total) entry points were" end)
+                + " traced to a known end" + $reset
+           else "  " + $warn + "▲ \($ended) of \(plural($t.total; "entry point")) traced to a known end · "
+                + "\($t.incomplete) stop\(if $t.incomplete == 1 then "s" else "" end) at an open call"
+                + $reset end),
+          "",
+
+        # ── Traces ──────────────────────────────────────────────────────
+          (if $entries > 0
+           then heading("Entry points") + ($entries | tostring) + "   " + $dim
+                + ([.entry_points[] | "\(.kind) \(.resolved)/\(.total)"] | join(" · "))
+                + " identified" + $reset
            else empty end),
-          (if (.trace_blockers // []) | length > 0
+          heading("Traces") + ($t.total | tostring),
+          row("complete"; $t.complete; "every call resolves inside this repository"),
+          row("bounded"; $t.bounded; "ends only at boundaries the facts name"),
+          row("open"; $t.incomplete; if $t.incomplete > 0 then "stops at a call with no known target" else "" end),
+
+        # ── Where traces stop: shown when a reader has something to act on ─
+          (if ($t.incomplete > 0 and ($blockers | length) > 0)
+              or ([$blockers[] | select(.class == "boundary")] | length) > 1
            then "",
-                (if ([.trace_blockers[] | select(.class == "boundary")] | length) > 0
-                 then "Trace boundaries (known; the trace lists each assumption):",
-                      (.trace_blockers[] | select(.class == "boundary") | row)
-                 else empty end),
-                (if ([.trace_blockers[] | select(.class != "boundary")] | length) > 0
-                 then "Trace gaps:",
-                      (.trace_blockers[] | select(.class != "boundary") | row)
-                 else empty end),
-                (if (.trace_blockers | length) > 1
-                 then "", "  Note: categories may overlap; a trace can have",
-                          "        several boundaries and gaps."
-                 else empty end),
-                ""
+                title("Where traces end"),
+                ($blockers[] | select(.class == "boundary")
+                 | "    " + (.label | rpad(46)) + (.traces | lpad(4))
+                   + "   " + $dim + "boundary" + $reset),
+                ($blockers[] | select(.class != "boundary")
+                 | "    " + $warn + (.label | rpad(46)) + $reset
+                   + (.traces | lpad(4)) + "   " + $dim + "gap" + $reset),
+                (if ($blockers | length) > 1
+                 then "    " + $dim + "A trace can appear in several rows." + $reset else empty end)
            else empty end),
+
+        # ── Calls on traces ─────────────────────────────────────────────
+          (if $calls.sites != null
+           then "",
+                heading("Calls on traces") + plural($calls.sites; "site"),
+                row("repository"; $calls.repository; "resolved to a declaration in this repository"),
+                row("platform"; $calls.platform; listed($r.platforms // []; 5)),
+                (if $calls.library > 0 then row("library"; $calls.library; listed($r.libraries // []; 4)) else empty end),
+                (if $calls.ambiguous > 0 then row("ambiguous"; $calls.ambiguous; "several declarations match") else empty end),
+                "    " + (if $calls.open > 0 then $warn else "" end) + ("unresolved" | rpad(14))
+                  + ($calls.open | lpad(4)) + $reset
+                  + "   " + $dim + (if $calls.open == 0 then "every call on a trace has a known target"
+                                  else "calls with no known target" end) + $reset,
+                (if ($r.open_sites // []) | length > 0
+                 then ($r.open_sites[]
+                       | "      " + $dim + ("\(.path):\(.line)" | rpad(48)) + $reset
+                         + (.excerpt | if length > 44 then .[:43] + "…" else . end)),
+                      (if $r.open_sites_more > 0 then "      " + $dim + "+\($r.open_sites_more) more" + $reset else empty end)
+                 else empty end)
+           else
+             # A result without a report (an older producer): the trace counts.
+             (.measurements.call_targets as $c
+              | if $c.unresolved_sites != null
+                then "",
+                     heading("Calls on traces") + "\($c.unresolved_sites) unresolved call sites"
+                     + (if ($c.unresolved_sites_by_language | length) > 0
+                        then " (" + ([$c.unresolved_sites_by_language | to_entries[] | "\(.key) \(.value)"]
+                                     | join(", ")) + ")"
+                        else "" end)
+                     + (if $c.unresolved != $c.unresolved_sites
+                        then "; \($c.unresolved) counted once per trace" else "" end)
+                else empty end)
+           end),
+
+        # ── Data on traces ──────────────────────────────────────────────
+          (($r.data // {stores: 0}) as $d
+           | if $d.stores > 0
+             then "",
+                  heading("Data on traces") + plural($d.stores; "store") + " · "
+                    + plural($d.reads; "read") + " · " + plural($d.writes; "write")
+                    + (if $d.in_memory then "   " + $dim + "in-process memory" + $reset else "" end),
+                  ($d.top[]
+                   | "    " + (.name | rpad(34))
+                     + $dim + ([(if .reads > 0 then plural(.reads; "read") else empty end),
+                                (if .writes > 0 then plural(.writes; "write") else empty end)]
+                               | join(" · ")) + $reset),
+                  (if $d.more > 0 then "    " + $dim + "+\($d.more) more" + $reset else empty end)
+             else empty end),
+
+        # ── Evidence ────────────────────────────────────────────────────
+          (if $r.evidence
+           then "",
+                heading("Evidence") + ([
+                    (if $r.evidence.tests > 0 then plural($r.evidence.tests; "test link") else empty end),
+                    (if $r.evidence.documentation > 0 then plural($r.evidence.documentation; "doc section") else empty end),
+                    (if $r.evidence.inputs > 0 then plural($r.evidence.inputs; "input") else empty end),
+                    (if $r.evidence.rule_observations > 0 then plural($r.evidence.rule_observations; "rule observation") else empty end)
+                  ] | if length == 0 then "none" else join(" · ") end)
+           else empty end),
+
+        # ── Screen actions and generated declarations (when present) ────
           (if (.screen_actions // []) | length > 0
-           then "Screen actions:",
+           then "",
+                title("Screen actions"),
                 (.screen_actions[]
-                 | "  \(.route)"
-                   + (if (.route | length) > 42 then "\n      "
-                      else " " * (44 - (.route | length)) end)
+                 | "    \(.route)"
+                   + (if (.route | length) > 40 then "\n      " else " " * (42 - (.route | length)) end)
                    + (if .state == "labeled" then .label
                       elif .state == "ambiguous" then "ambiguous: " + ([.candidates[] | "\u0027\(.)\u0027"] | join(" or "))
                       elif .state == "labeled_unresolved" then "\(.label) (unresolved: \(.reason // "identity not established"))"
-                      else "unlabeled: \(.reason // "label not statically determined")" end)),
-                ""
+                      else "unlabeled: \(.reason // "label not statically determined")" end))
            else empty end),
           (if (.generated_declarations // []) | length > 0
-           then "Generated declarations (modelled from build-time generators):",
+           then "",
+                heading("Generated") + $dim + "declarations modelled from build-time generators" + $reset,
                 (.generated_declarations[]
-                 | "  \(.kind): \(.types) type\(if .types == 1 then "" else "s" end)"
-                   + (if .members > 0 then ", \(.members) member\(if .members == 1 then "" else "s" end)" else "" end)
-                   + (if .calls > 0 then "; \(.calls) call\(if .calls == 1 then " resolves" else "s resolve" end) to them" else "" end)),
-                ""
+                 | "    \(.kind): " + plural(.types; "type")
+                   + (if .members > 0 then ", " + plural(.members; "member") else "" end)
+                   + (if .calls > 0 then "; \(.calls) call\(if .calls == 1 then " resolves" else "s resolve" end) to them" else "" end))
            else empty end),
-          "Relationships:   \($c.edges_resolved) resolved, \($c.edges_unresolved) unresolved, \($c.edges_ambiguous) ambiguous",
-          ((.language_names // {}) as $names | .measurements.relationships as $r
-           | if $r != null and $r.open > 0
-             then "  not resolved:  "
-                  + ([$r.open_by_language | to_entries[]
-                      | "\(($names[.key]) // .key) \(.value)"] | join(", "))
-                  + "; \($r.open_at_boundaries) at known boundaries; \($r.open_outside_traces) outside every trace"
+
+        # ── Relationships ───────────────────────────────────────────────
+          "",
+          ($r.relationships // {resolved: .coverage.edges_resolved, open: .coverage.edges_unresolved}) as $rel
+          | heading("Relationships") + "\($rel.resolved) resolved · \($rel.open) unresolved",
+          (if $rel.outside_traces != null and $rel.open > 0
+             then ((if $rel.outside_traces > 0 then [$rel.outside_traces, "outside every trace"] else empty end),
+                   (if $rel.on_traces_at_boundaries > 0 then [$rel.on_traces_at_boundaries, "on traces, ending at boundaries the facts name"] else empty end),
+                   (if $rel.on_traces_open > 0 then [$rel.on_traces_open, "on traces, with no known target"] else empty end))
+                  | "    " + ("" | rpad(14)) + (.[0] | lpad(4)) + "   " + $dim + .[1] + $reset
              else empty end),
-          (.measurements.call_targets as $calls
-           | if $calls.unresolved_sites != null
-             then "Unresolved calls: \($calls.unresolved_sites) call sites on traces"
-                  + (if ($calls.unresolved_sites_by_language | length) > 0
-                     then " (" + ([$calls.unresolved_sites_by_language | to_entries[] | "\(.key) \(.value)"] | join(", ")) + ")"
-                     else "" end)
-                  + (if $calls.unresolved != $calls.unresolved_sites
-                     then "; \($calls.unresolved) counted once per trace" else "" end)
-             else "Unresolved calls: \($calls.unresolved)"
-                  + (if ($calls.unresolved_by_language | length) > 0
-                     then " (" + ([$calls.unresolved_by_language | to_entries[] | "\(.key) \(.value)"] | join(", ")) + ")"
-                     else "" end)
-             end),
-          "Warnings:        \(.warnings | length)",
+
+        # ── Not analysed ────────────────────────────────────────────────
+          ($r.unanalyzed // {files: 0}) as $u
+          | (if $u.files > 0
+             then "",
+                  heading("Not analysed") + plural($u.files; "file")
+                    + " (" + ($u.languages | join(", ")) + ")"
+                    + (if ($u.causes | index("owner_not_installed")) then ": no analyser installed" else "" end)
+                    + " · " + (if $u.facts_lost == 0 then $ok + "no facts lost" + $reset
+                               else $warn + "facts lost in \($u.facts_lost)" + $reset end),
+                  ([range(0; ($u.paths | length); 2) as $i | $u.paths[$i:$i + 2] | join(", ")]) as $lines
+                  | range(0; $lines | length) as $k
+                  | "                    " + $dim + $lines[$k]
+                    + (if $k == ($lines | length) - 1 and $u.more > 0 then ", +\($u.more) more" else "" end)
+                    + $reset
+             else empty end),
+
+        # ── Warnings and entry-point coverage ───────────────────────────
+          "",
+          heading("Warnings") + (.warnings | length | tostring),
           ((.warning_counts // [.warnings | group_by(.code)[] | {code: .[0].code, count: length}])[]
-           | "  \(.code)\(" " * ([44 - (.code | length), 1] | max))\(.count | tostring | " " * ([4 - length, 0] | max) + .)"
-             + (if .boundary then "  (known boundary)" else "" end)),
+           | "    \(.code | rpad(42))\(.count | lpad(4))"
+             + (if .boundary then "  " + $dim + "known boundary" + $reset
+                elif .code == "SOURCE_CAPABILITY_UNAVAILABLE" then "  " + $dim + "see Not analysed" + $reset
+                else "" end)),
           ((.coverage.entrypoint_gaps // []) as $g
            | if ($g | length) > 0
              then "",
@@ -199,7 +323,7 @@ _discover_domains() {
     fi
 
     case "$mode_flag" in
-        --facts-only) _domains_render_facts "$tmp_result" ;;
+        --facts-only) echo; _domains_render_facts "$tmp_result" ;;
         --status)     _domains_render_status "$tmp_result" ;;
         --cancel)     log_success "Cancellation requested for build $(jq -r '.build_id' "$tmp_result")." ;;
         "")

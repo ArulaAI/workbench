@@ -94,8 +94,33 @@ rule:
     - has:
         field: type
         has:
-          kind: type_identifier
-          pattern: $TYPE
+          any:
+            - kind: type_identifier
+              pattern: $TYPE
+            - kind: generic_type
+              has:
+                field: name
+                kind: type_identifier
+                pattern: $TYPE
+---
+id: ts-class-array-field-receiver-binding
+language: typescript
+metadata:
+  produces: receiver_binding
+  receiver_var: NAME
+  receiver_prefix: 'this.'
+  type: Array
+  scope_kinds: [class]
+rule:
+  kind: public_field_definition
+  all:
+    - has:
+        field: name
+        pattern: $NAME
+    - has:
+        field: type
+        has:
+          kind: array_type
 ---
 id: ts-class-field-construction-receiver-binding
 language: typescript
@@ -106,11 +131,9 @@ metadata:
   type_var: TYPE
   scope_kinds: [class]
 rule:
+  # The constructed class is the member's runtime type, whatever its
+  # annotation says, so this binds alongside the annotated type.
   kind: public_field_definition
-  not:
-    has:
-      field: type
-      kind: type_annotation
   all:
     - has:
         field: name
@@ -122,6 +145,173 @@ rule:
           field: constructor
           kind: identifier
           pattern: $TYPE
+---
+# Every parameter and local name. A module-level binding of the same name is
+# not visible inside the function that declares it.
+id: ts-local-name-declaration
+language: typescript
+metadata:
+  produces: receiver_binding
+  binds: shadow
+  receiver_var: NAME
+rule:
+  any:
+    - kind: required_parameter
+      has:
+        field: pattern
+        kind: identifier
+        pattern: $NAME
+    - kind: optional_parameter
+      has:
+        field: pattern
+        kind: identifier
+        pattern: $NAME
+    - kind: variable_declarator
+      inside:
+        kind: statement_block
+        stopBy: end
+      has:
+        field: name
+        kind: identifier
+        pattern: $NAME
+---
+# A module-level constant constructed from a class, such as
+# `const store = new Map()`, is visible to every function in the file.
+id: ts-module-construction-receiver-binding
+language: typescript
+metadata:
+  produces: receiver_binding
+  receiver_var: NAME
+  type_var: TYPE
+  scope: module
+rule:
+  kind: variable_declarator
+  inside:
+    kind: lexical_declaration
+    inside:
+      any:
+        - kind: program
+        - kind: export_statement
+  all:
+    - has:
+        field: name
+        kind: identifier
+        pattern: $NAME
+    - has:
+        field: value
+        kind: new_expression
+        has:
+          field: constructor
+          kind: identifier
+          pattern: $TYPE
+---
+# A local constructed from a class: `const ledger = new Ledger()`.
+id: ts-local-construction-receiver-binding
+language: typescript
+metadata:
+  produces: receiver_binding
+  receiver_var: NAME
+  type_var: TYPE
+rule:
+  kind: variable_declarator
+  inside:
+    kind: statement_block
+    stopBy: end
+  all:
+    - has:
+        field: name
+        kind: identifier
+        pattern: $NAME
+    - has:
+        field: value
+        kind: new_expression
+        has:
+          field: constructor
+          kind: identifier
+          pattern: $TYPE
+---
+# A parameter declared with a class type: `(service: PaymentsService) => ...`.
+id: ts-typed-parameter-receiver-binding
+language: typescript
+metadata:
+  produces: receiver_binding
+  receiver_var: NAME
+  type_var: TYPE
+rule:
+  kind: required_parameter
+  not:
+    has:
+      kind: accessibility_modifier
+  all:
+    - has:
+        field: pattern
+        kind: identifier
+        pattern: $NAME
+    - has:
+        field: type
+        has:
+          kind: type_identifier
+          pattern: $TYPE
+---
+# A top-level factory whose body constructs a class:
+# `const svc = () => new PaymentsService()`. It types what its callers
+# receive (see ts-local-factory-receiver-binding), never the factory itself.
+id: ts-constructing-factory
+language: typescript
+metadata:
+  produces: receiver_binding
+  binds: factory
+  receiver_var: NAME
+  type_var: TYPE
+rule:
+  kind: variable_declarator
+  inside:
+    kind: lexical_declaration
+    inside:
+      any:
+        - kind: program
+        - kind: export_statement
+  all:
+    - has:
+        field: name
+        kind: identifier
+        pattern: $NAME
+    - has:
+        field: value
+        kind: arrow_function
+        has:
+          field: body
+          kind: new_expression
+          has:
+            field: constructor
+            kind: identifier
+            pattern: $TYPE
+---
+# A local holding what a same-file constructing factory returns:
+# `const s = svc()`.
+id: ts-local-factory-receiver-binding
+language: typescript
+metadata:
+  produces: receiver_binding
+  receiver_var: NAME
+  factory_var: FACTORY
+rule:
+  kind: variable_declarator
+  inside:
+    kind: statement_block
+    stopBy: end
+  all:
+    - has:
+        field: name
+        kind: identifier
+        pattern: $NAME
+    - has:
+        field: value
+        kind: call_expression
+        has:
+          field: function
+          kind: identifier
+          pattern: $FACTORY
 ---
 id: ts-parameter-property-receiver-binding
 language: typescript
@@ -179,3 +369,70 @@ rule:
           has:
             kind: decorator
             regex: '^@Component\b'
+---
+# Inputs of a declared callable: a method, a function declaration, or an arrow
+# assigned to a name or an object key. Parameters of inline callbacks such as
+# `c => c.amount` belong to no declaration and are not its inputs.
+id: ts-input-binding
+language: typescript
+metadata:
+  produces: binding
+  direction: input
+  name_var: NAME
+  type_var: TYPE
+  expression_var: NAME
+rule:
+  any:
+    - kind: required_parameter
+    - kind: optional_parameter
+  inside:
+    kind: formal_parameters
+    inside:
+      any:
+        - kind: method_definition
+        - kind: function_declaration
+        - kind: arrow_function
+          inside:
+            any:
+              - kind: variable_declarator
+              - kind: pair
+  all:
+    - has:
+        field: pattern
+        kind: identifier
+        pattern: $NAME
+    - has:
+        field: type
+        has:
+          pattern: $TYPE
+---
+id: ts-untyped-input-binding
+language: typescript
+metadata:
+  produces: binding
+  direction: input
+  name_var: NAME
+  expression_var: NAME
+rule:
+  any:
+    - kind: required_parameter
+    - kind: optional_parameter
+  inside:
+    kind: formal_parameters
+    inside:
+      any:
+        - kind: method_definition
+        - kind: function_declaration
+        - kind: arrow_function
+          inside:
+            any:
+              - kind: variable_declarator
+              - kind: pair
+  has:
+    field: pattern
+    kind: identifier
+    pattern: $NAME
+  not:
+    has:
+      field: type
+      kind: type_annotation

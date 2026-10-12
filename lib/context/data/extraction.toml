@@ -248,7 +248,7 @@ contract_version = 1
 normalized_output_version = 1
 conformance = "semantic"
 languages = ["javascript", "jsx", "typescript", "tsx"]
-diagnostic_codes = ["JS_EXTERNAL_CALL", "JS_CALL_UNRESOLVED", "JS_CALL_AMBIGUOUS", "JS_MODULE_UNRESOLVED", "UI_ACTION_LABEL_RUNTIME", "UI_ACTION_LABEL_AMBIGUOUS"]
+diagnostic_codes = ["JS_EXTERNAL_CALL", "JS_CALL_UNRESOLVED", "JS_CALL_AMBIGUOUS", "JS_MODULE_UNRESOLVED", "UI_ACTION_LABEL_RUNTIME", "UI_ACTION_LABEL_AMBIGUOUS", "TS_IN_PROCESS_STATE"]
 [source_adapters.ts_semantic.capabilities]
 parsing = "supported"
 declaration_extraction = "supported"
@@ -260,7 +260,7 @@ type_resolution = "unsupported"
 relationship_resolution = "partial"
 framework_enrichment = "unsupported"
 bindings = "partial"
-data_access = "unsupported"
+data_access = "partial"
 rules = "partial"
 control_flow = "partial"
 outputs = "partial"

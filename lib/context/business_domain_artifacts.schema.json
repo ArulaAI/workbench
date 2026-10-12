@@ -1076,7 +1076,8 @@
             "literal",
             "external_policy",
             "workflow",
-            "review"
+            "review",
+            "memory_store"
           ]
         },
         "name": {
@@ -2836,6 +2837,7 @@
                   "generated_implementation",
                   "config_selected",
                   "transaction_completion",
+                  "in_process_state",
                   "library_call",
                   "endpoint_in_repo"
                 ]
@@ -6513,6 +6515,7 @@
                 "generated_implementation",
                 "config_selected",
                 "transaction_completion",
+                "in_process_state",
                 "library_call",
                 "endpoint_in_repo"
               ]

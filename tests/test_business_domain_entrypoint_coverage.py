@@ -490,11 +490,11 @@ def test_terminal_summary_lists_entrypoint_coverage(tmp_path):
         cwd=SPEED_ROOT, capture_output=True, text=True, check=True).stdout.splitlines()
     start = rendered.index('Entry-point coverage:')
     # The warnings block (a total, then one row per code) ends just before it.
-    header = next(index for index, line in enumerate(rendered) if line.startswith('Warnings:'))
-    assert rendered[header] == f"Warnings:        {len(facts['warnings'])}"
+    header = next(index for index, line in enumerate(rendered) if line.startswith('  Warnings'))
+    assert rendered[header] == f"  Warnings          {len(facts['warnings'])}"
     rows = rendered[header + 1:start - 1]
     assert rows and all(line.startswith('  ') for line in rows)
-    assert sum(int(line.split()[-1]) for line in rows) == len(facts['warnings'])
+    assert sum(int(line.split()[1]) for line in rows) == len(facts['warnings'])
     assert rendered[start + 1:start + 5] == [
         '  C#: 1 file, entry-point detection unavailable',
         '  Likely missed entry points: 4 (3 http_route, 1 page)',

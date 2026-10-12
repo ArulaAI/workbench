@@ -75,7 +75,7 @@ def test_terminal_reports_call_sites_first_and_the_per_trace_count_beside_them(t
     rendered = _render(tmp_path, {'measurements': {
         'traces': {'total': 0, 'resolved': 0, 'ambiguous': 0, 'unresolved': 0},
         'call_targets': calls}, 'warnings': []})
-    assert ('Unresolved calls: 182 call sites on traces (java 115, tsx 59); '
+    assert ('  Calls on traces   182 unresolved call sites (java 115, tsx 59); '
             '342 counted once per trace') in rendered
 
 
@@ -87,7 +87,7 @@ def test_terminal_lists_one_warning_code_per_line_most_frequent_first(tmp_path):
         'call_targets': {'unresolved': 0, 'unresolved_by_language': {},
                          'unresolved_sites': 0, 'unresolved_sites_by_language': {}}},
         'warnings': warnings, 'warning_counts': warning_counts(warnings)})
-    start = rendered.index('Warnings:        9')
+    start = rendered.index('  Warnings          9')
     assert [line.split() for line in rendered[start + 1:start + 4]] == [
         ['C', '5'], ['A', '2'], ['B', '2']]
 
@@ -194,16 +194,16 @@ def test_terminal_renders_entry_points_screen_actions_and_generated_declarations
         'warnings': [], 'entry_points': entry_point_counts(SUMMARY_FACTS),
         'screen_actions': screen_actions(SUMMARY_FACTS),
         'generated_declarations': generated_declarations(SUMMARY_FACTS)})
-    assert ('Entry points:    7 (action 1/4, database_trigger 0/1, http 1/1, '
-            'http_route 1/1 resolved)') in rendered
-    start = rendered.index('Screen actions:')
+    assert ('  Entry points      7   action 1/4 · database_trigger 0/1 · http 1/1 · '
+            'http_route 1/1 identified') in rendered
+    start = rendered.index('  Screen actions')
     rows = [' '.join(line.split()) for line in rendered[start + 1:start + 5]]
     assert rows == [
         "/e ambiguous: 'Add Owner' or 'Update Owner'",
         '/notes unlabeled: The label is a runtime value',
         '/owners/new Add Owner',
         'web/Login.cshtml Login (unresolved: Form submission action is not statically determined)']
-    assert '  model: 1 type, 1 member; 1 call resolves to them' in rendered
+    assert '    model: 1 type, 1 member; 1 call resolves to them' in rendered
 
 
 def test_open_relationships_are_attributed_by_language_boundary_and_trace():

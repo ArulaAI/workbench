@@ -128,26 +128,31 @@ def test_terminal_output_lists_blockers_with_the_overlap_note(petclinic_shaped, 
         ['bash', '-c', f'source lib/cmd/domains.sh; _domains_render_facts "{payload}"'],
         cwd=SPEED_ROOT, capture_output=True, text=True, check=True).stdout.splitlines()
     traces = result['measurements']['traces']
-    assert rendered[0] == (f"Traces:          {traces['resolved']}/{traces['total']} resolved "
-                           f"({traces['ambiguous']} ambiguous, {traces['unresolved']} unresolved)")
-    assert rendered[1] == (f"Completion:      {traces['complete']} complete, "
-                           f"{traces['bounded']} bounded, {traces['incomplete']} incomplete")
+    ended = traces['complete'] + traces['bounded']
+    # The headline answers first: how many entry points reached a known end.
+    assert any(line.startswith(f"  ▲ {ended} of {traces['total']} entry points traced")
+               for line in rendered)
+    rows = {line.split()[0]: line.split()[1] for line in rendered
+            if line.startswith('    ') and line.split()[0] in {'complete', 'bounded', 'open'}}
+    assert rows == {'complete': str(traces['complete']), 'bounded': str(traces['bounded']),
+                    'open': str(traces['incomplete'])}
     boundaries = [item for item in result['trace_blockers'] if item['class'] == 'boundary']
     gaps = [item for item in result['trace_blockers'] if item['class'] == 'gap']
-    sections = {line: index for index, line in enumerate(rendered)}
-    if boundaries:
-        assert 'Trace boundaries (known; the trace lists each assumption):' in sections
-    assert 'Trace gaps:' in sections
+    heading = rendered.index('  Where traces end')
+    # Each blocker is one row, tagged boundary or gap; boundaries come first.
+    tagged = {}
+    for index, line in enumerate(rendered[heading + 1:], heading + 1):
+        if not line:
+            break
+        words = line.split()
+        if words and words[-1] in {'boundary', 'gap'}:
+            tagged[line[4:50].strip()] = (int(words[-2]), words[-1], index)
     for item in boundaries + gaps:
-        suffix = 'trace' if item['traces'] == 1 else 'traces'
-        assert any(line.startswith('  ' + item['label']) and
-                   line.endswith(f"{item['traces']} {suffix}") for line in rendered)
-    # Every gap row follows the gap heading; every boundary row precedes it.
-    gap_heading = sections['Trace gaps:']
-    for item in gaps:
-        assert any(index > gap_heading and line.startswith('  ' + item['label'])
-                   for index, line in enumerate(rendered))
-    assert '  Note: categories may overlap; a trace can have' in rendered
+        assert tagged[item['label']][:2] == (item['traces'], item['class'])
+    if boundaries and gaps:
+        assert (max(tagged[item['label']][2] for item in boundaries)
+                < min(tagged[item['label']][2] for item in gaps))
+    assert '    A trace can appear in several rows.' in rendered
     assert rendered[-2:] == ['Facts written to:', result['artifact']]
 
 
@@ -162,8 +167,8 @@ def test_terminal_output_omits_the_section_when_nothing_blocks(tmp_path):
     rendered = subprocess.run(
         ['bash', '-c', f'source lib/cmd/domains.sh; _domains_render_facts "{payload}"'],
         cwd=SPEED_ROOT, capture_output=True, text=True, check=True).stdout
-    assert 'Trace resolution blockers' not in rendered
-    assert rendered.startswith('Traces:          1/1 resolved')
+    assert 'Where traces end' not in rendered
+    assert rendered.startswith('\n  ✓ The entry point was traced to a known end')
 
 
 PETCLINIC = Path(os.environ.get('SPEED_PETCLINIC_FACTS', Path.home() /

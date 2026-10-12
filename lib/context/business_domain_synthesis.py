@@ -29,6 +29,19 @@ from .business_domain_work import whole_graph_scope
 AGENTS = Path(__file__).resolve().parents[2]/'agents'
 POLICY = json.loads(Path(__file__).with_name('business_domain_policies.json').read_text())
 TERMINAL_PROVIDER_CODES = frozenset({'PROVIDER_UNAVAILABLE', 'PROVIDER_CAPABILITY_UNAVAILABLE'})
+
+
+DEADLINE_EXCEEDED = ('Discovery deadline exceeded. Raise deadline_seconds under '
+                     '[business_domains] in the project speed.toml and run again.')
+
+def _budget_error(kind, reserved, needed, maximum):
+    """A BUILD_BUDGET error that says which budget ran out and how to raise it."""
+    setting = f'max_build_{kind}_tokens'
+    return DomainError('BUILD_BUDGET', (
+        f'Discovery {kind}-token budget exhausted: the next request needs '
+        f'{needed:,} {kind} tokens but {reserved:,} of {setting} = {maximum:,} are '
+        f'already reserved. Raise {setting} under [business_domains] in the '
+        'project speed.toml and run again.'))
 PROVIDER_FAILURE_CODES = {
     'authentication_required':'PROVIDER_UNAVAILABLE',
     'authorization_denied':'PROVIDER_UNAVAILABLE',
@@ -1258,6 +1271,17 @@ def _model_ready_context(model: dict, subject_ids: list[str]) -> dict:
             edge_id for trace in context['traces'].values()
             for edge_id in trace['edge_ids']}
         context['edges'] = {k:v for k,v in model['edges'].items() if k in edge_ids}
+        # Tests that exercise traced behavior and documentation describing a
+        # selected anchor are evidence about it (trace step 4). Tracing never
+        # follows those edges, so the traces alone would omit them.
+        traced = {s for t in context['traces'].values() for s in t['symbol_ids']}
+        attached = {k: v for k, v in model['edges'].items() if v['to_ref'] and (
+            (v['kind'] == 'tests_behavior' and v['to_ref']['id'] in traced)
+            or (v['kind'] == 'documents_behavior' and v['to_ref']['kind'] == 'anchor'
+                and v['to_ref']['id'] in anchor_ids))}
+        context['edges'].update(attached)
+        test_symbols = {v['from_ref']['id'] for v in attached.values()
+                        if v['kind'] == 'tests_behavior'}
         symbols = {s for t in context['traces'].values() for s in t['symbol_ids']}
         symbols.update(representation['symbol_id'] for anchor in context['anchors'].values()
             for representation in anchor.get('representations', [])
@@ -1283,6 +1307,9 @@ def _model_ready_context(model: dict, subject_ids: list[str]) -> dict:
             for correspondence in anchor.get('correspondences', [])
             for eid in correspondence['evidence_ids'])
         evidence.update(eid for edge in context['edges'].values() for eid in edge['evidence_ids'])
+        # A test's own span holds its assertions; the edge cites only the call.
+        evidence.update(eid for symbol_id in test_symbols
+                        for eid in model['symbols'][symbol_id]['evidence_ids'])
         evidence.update(eid for obligation in context['trace_obligations'].values() for eid in obligation['evidence_ids'])
         # Include observations nested in the traced source spans, with exact
         # excerpt evidence even when it differs from the enclosing symbol span.
@@ -1577,7 +1604,7 @@ class Synthesis:
 
     def _run_agent(self, request, schema, timeout, role):
         if timeout <= 0:
-            raise DomainError('BUILD_TIMEOUT', 'Discovery deadline exceeded')
+            raise DomainError('BUILD_TIMEOUT', DEADLINE_EXCEEDED)
         attempt_timeout = min(
             max(1, math.ceil(timeout)), self.agent_config['agent_timeout'])
         watchdog_timeout = min(
@@ -2122,9 +2149,7 @@ class Synthesis:
                         else self.output_reserved)
                 maximum = self.config[f'max_build_{kind}_tokens']
                 if used + reservation[kind] > maximum:
-                    raise DomainError(
-                        'BUILD_BUDGET',
-                        'Complete semantic repair sequence exceeds the remaining build budget')
+                    raise _budget_error(kind, used, reservation[kind], maximum)
                 blocked |= (used + self.completion_protected[kind]
                             + reservation[kind] > maximum)
             if not blocked:
@@ -2167,10 +2192,10 @@ class Synthesis:
                 remaining = self.deadline - time.monotonic()
                 if remaining <= 0:
                     if self.provider_recovery_cause is not None:
-                        timeout = DomainError('BUILD_TIMEOUT', 'Discovery deadline exceeded')
+                        timeout = DomainError('BUILD_TIMEOUT', DEADLINE_EXCEEDED)
                         self._latch_provider_failure(self.provider_recovery_cause, timeout)
                         raise self.provider_failure
-                    raise DomainError('BUILD_TIMEOUT', 'Discovery deadline exceeded')
+                    raise DomainError('BUILD_TIMEOUT', DEADLINE_EXCEEDED)
                 if self.provider_healthy:
                     return
                 if self.provider_probe_owner in (None, owner):
@@ -2420,10 +2445,20 @@ class Synthesis:
                 finding['severity'] == 'blocking'
                 for finding in payload['findings'])
             verdict = payload['verdict']
+            # Categories, severities and subject IDs are schema-constrained
+            # values; a finding's free-text message is provider output and is
+            # never logged.
+            categories = Counter(
+                finding['category'] for finding in payload['findings']
+                if finding['severity'] == 'blocking')
+            blocking = ', '.join(
+                f'{category} x{count}' if count > 1 else category
+                for category, count in sorted(categories.items()))
             return {
                 'summary': (
                     f'verdict {verdict}, {finding_count} finding(s), '
-                    f'{blocking_count} blocking'),
+                    f'{blocking_count} blocking'
+                    + (f' ({blocking})' if blocking else '')),
                 'level': (
                     'warning'
                     if verdict != 'pass' or blocking_count else 'step'),
@@ -2431,6 +2466,11 @@ class Synthesis:
                     'verdict': verdict,
                     'finding_count': finding_count,
                     'blocking_finding_count': blocking_count,
+                    'findings': [
+                        {'category': finding['category'],
+                         'severity': finding['severity'],
+                         'subject_ids': sorted(finding['subject_ids'])}
+                        for finding in payload['findings']],
                 },
             }
 
@@ -2500,7 +2540,7 @@ class Synthesis:
                         remaining = self.deadline - time.monotonic()
                         if remaining <= 0:
                             blocked = DomainError(
-                                'BUILD_TIMEOUT', 'Discovery deadline exceeded')
+                                'BUILD_TIMEOUT', DEADLINE_EXCEEDED)
                             self._latch_provider_failure(exc, blocked)
                             raise self.provider_failure from exc
                         selection = self._speed_call(
@@ -2568,7 +2608,7 @@ class Synthesis:
         if self.is_cancelled():
             raise DomainError('CANCELLED', 'Discovery cancelled')
         if time.monotonic() >= self.deadline:
-            raise DomainError('BUILD_TIMEOUT', 'Discovery deadline exceeded')
+            raise DomainError('BUILD_TIMEOUT', DEADLINE_EXCEEDED)
         validate(request, 'SemanticRequest')
         operation = request['operation']
         request_input_limit, request_output_limit = self._request_limits(
@@ -2639,8 +2679,9 @@ class Synthesis:
                 if (used + self.completion_protected[kind]
                         + reservations[kind]
                         > self.config[f'max_build_{kind}_tokens']):
-                    raise DomainError(
-                        'BUILD_BUDGET', 'Discovery token budget exhausted')
+                    raise _budget_error(kind, used + self.completion_protected[kind],
+                                        reservations[kind],
+                                        self.config[f'max_build_{kind}_tokens'])
             self.counters['input_tokens_reserved'] += reservations['input']
             self.output_reserved += reservations['output']
             self.counters['requests'] += 1
@@ -2648,7 +2689,7 @@ class Synthesis:
 
         remaining = self.deadline-time.monotonic()
         if remaining <= 0:
-            raise DomainError('BUILD_TIMEOUT', 'Discovery deadline exceeded')
+            raise DomainError('BUILD_TIMEOUT', DEADLINE_EXCEEDED)
         provider_boundary = (self.recorder.boundary(
             'provider.generate',dispatch_request,
             metadata={'operation':operation,'model':request['model'],

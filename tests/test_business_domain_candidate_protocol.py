@@ -1246,14 +1246,18 @@ def test_semantic_outcome_summary_exposes_verdict_and_record_counts():
     synthesis = Synthesis._outcome_summary('synthesize', candidate)
 
     assert verification == {
-        'summary': 'verdict fail, 1 finding(s), 1 blocking',
+        'summary': 'verdict fail, 1 finding(s), 1 blocking (missing_activity)',
         'level': 'warning',
         'details': {
             'verdict': 'fail',
             'finding_count': 1,
             'blocking_finding_count': 1,
+            'findings': [{'category': 'missing_activity', 'severity': 'blocking',
+                          'subject_ids': sorted(graph['canonical_anchor_ids'])}],
         },
     }
+    # The finding's free text is provider output and never reaches the log.
+    assert 'A required activity is missing.' not in repr(verification)
     assert synthesis == {
         'summary': '1 activities, 0 rules, 0 domains',
         'level': 'step',

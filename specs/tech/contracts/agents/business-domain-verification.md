@@ -42,7 +42,9 @@ Assess at least these failure classes:
 - incomplete traces or capability gaps presented as resolved;
 - certainty or completeness overstated relative to the evidence.
 
-Evaluate claims at their stated scope. A cited excerpt must support the actual assertion, not merely mention the same noun. Reads do not establish ownership; declarations do not prove execution or deployment; UI validation does not prove server enforcement; directory proximity and generic helper reuse do not establish domains. A coherent proposal need not be explicitly named in source, but its business purpose and membership must be evidenced.
+Evaluate claims at their stated scope. A cited excerpt must support the actual assertion, not merely mention the same noun. A rule whose basis includes `test_expected` must cite a test whose assertions check that rule's condition or outcome; one that includes `documented` must cite a section stating the same condition or outcome. A test that only calls the code, or a section that only names the operation, makes that basis an unsupported claim. Reads do not establish ownership; declarations do not prove execution or deployment; UI validation does not prove server enforcement; directory proximity and generic helper reuse do not establish domains. A coherent proposal need not be explicitly named in source, but its business purpose and membership must be evidenced.
+
+An information use is valid only when a `reads_data` or `writes_data` edge in its activity's selected traces reaches each resource it cites. A `memory_store` resource is in-process state: an information use or ownership may rest on it, but a claim that its data is persisted or durable is unsupported.
 
 ## Verdict rules
 

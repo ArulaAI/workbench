@@ -380,6 +380,10 @@ def _parse_ast_grep_matches(
             name = _extract_name_from_match(match, kind)
             if metadata.get('name_from') == 'path':
                 name = Path(rel_path).stem + '.default'
+            elif metadata.get('name_from') == 'literal' and name:
+                # A string literal names the symbol: a test case's title.
+                quoted = re.fullmatch(r'''(["'`])(.*)\1''', name, re.DOTALL)
+                name = quoted.group(2).strip() if quoted else None
             if not name:
                 continue
 

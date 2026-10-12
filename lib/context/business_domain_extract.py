@@ -40,6 +40,28 @@ NON_TRAVERSAL_EDGES = frozenset({'implements', 'inherits', 'has_field',
 # Which unsatisfied obligations are known boundaries rather than gaps.
 TRACE_BOUNDARIES = MappingProxyType(json.loads(
     (Path(__file__).parent / 'data' / 'trace_boundaries.json').read_text()))
+# Sections cited per documentation link; enough to show where an operation is
+# described without copying a whole specification into the graph.
+MAX_DOCUMENT_SECTIONS = 3
+_MARKDOWN_HEADING = re.compile(r'^(#{1,6})[ \t]+\S', re.MULTILINE)
+
+
+def _markdown_sections(text):
+    """``[(start, end)]`` for each heading's own text, up to the next heading.
+
+    Text before the first heading is its own section. A citation therefore
+    covers the passage that mentions something, never a whole chapter of
+    subsections.
+    """
+    starts = [found.start() for found in _MARKDOWN_HEADING.finditer(text)]
+    bounds = ([0] if not starts or starts[0] > 0 else []) + starts + [len(text)]
+    return [(start, end) for start, end in zip(bounds, bounds[1:]) if start < end]
+
+
+def _section_at(sections, position, length):
+    """The section containing *position*, or the whole text."""
+    return next(((start, end) for start, end in sections if start <= position < end),
+                (0, length))
 
 
 def _known_provider(language, provider):
@@ -1757,28 +1779,38 @@ class Extractor:
         for source in self.sources:
             if source.language != 'markdown' or not source.text.strip():
                 continue
-            targets = set()
-            lowered = source.text.casefold()
+            # An operation is documented where its name or route appears as a
+            # whole word: `net` in "network" or `void` in "avoid" mentions
+            # nothing. Each link cites the sections that mention it.
+            targets = {}
+            sections = _markdown_sections(source.text)
             for anchor in self.facts['anchors'].values():
                 operation = anchor.get('operation') or {}
-                tokens = [operation.get('path'), operation.get('name')]
-                if any(token and len(token) > 2 and token.casefold() in lowered
-                       for token in tokens):
-                    targets.add(('anchor', anchor['id']))
+                spans = []
+                for token in (operation.get('path'), operation.get('name')):
+                    if not token or len(token) <= 2:
+                        continue
+                    for found in re.finditer(
+                            r'(?<![\w$/])' + re.escape(token) + r'(?![\w$])',
+                            source.text, re.IGNORECASE):
+                        section = _section_at(sections, found.start(), len(source.text))
+                        if section not in spans:
+                            spans.append(section)
+                if spans:
+                    targets[('anchor', anchor['id'])] = spans[:MAX_DOCUMENT_SECTIONS]
             service_id = service_by_scope.get(source.service_scope)
             if not targets and service_id:
-                targets.add(('resource', service_id))
-            if not targets:
-                continue
-            evidence_id = self.evidence(source, 0, len(source.text))
-            for kind, target_id in sorted(targets):
+                targets[('resource', service_id)] = [(0, len(source.text))]
+            for (kind, target_id), spans in sorted(targets.items()):
                 edge_id = identifier('edge', source.resource_id,
                                      'documents_behavior', target_id)
                 self.facts['edges'][edge_id] = record(
                     'Edge', id=edge_id,
                     from_ref={'kind':'resource', 'id':source.resource_id},
                     to_ref={'kind':kind, 'id':target_id},
-                    kind='documents_behavior', evidence_ids=[evidence_id],
+                    kind='documents_behavior',
+                    evidence_ids=sorted({self.evidence(source, start, end)
+                                         for start, end in spans}),
                     resolution='resolved', reason=None)
                 self.facts['coverage']['edges_resolved'] += 1
 

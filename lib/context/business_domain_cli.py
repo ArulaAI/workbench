@@ -10,6 +10,7 @@ import argparse
 import json
 import re
 import sys
+import time
 from pathlib import Path
 
 from .business_domain_extract import Extractor, extraction_measurements
@@ -37,6 +38,7 @@ BOUNDARY_LABELS = {
     'generated_implementation': 'Generated/runtime implementation',
     'config_selected': 'Profile/config-selected implementation',
     'transaction_completion': 'Caller/container transaction completion',
+    'in_process_state': 'Writes to in-process memory',
     'library_call': 'Known library/platform calls',
     'endpoint_in_repo': 'HTTP calls to endpoints in this repository',
 }
@@ -209,16 +211,204 @@ def _relative(root, path):
     return str(Path(path).relative_to(root))
 
 
+# ── The --facts-only report ──────────────────────────────────────────────
+#
+# What a reader asks first is whether each entry point was followed to an end
+# this tool can name, and if not, exactly where it stopped. The report answers
+# that from the facts alone: it counts, never reclassifies. A call site on a
+# trace is in this repository, at a platform or library boundary the facts
+# name, or open; an open site is listed with its source line.
+
+# Languages the entry-point catalog does not name: data and documentation.
+_DATA_LANGUAGE_NAMES = {'json': 'JSON', 'yaml': 'YAML', 'markdown': 'Markdown',
+                        'toml': 'TOML', 'xml': 'XML', 'properties': 'Properties',
+                        'css': 'CSS', 'scss': 'SCSS', 'csv': 'CSV'}
+MAX_OPEN_SITES = 8
+MAX_UNANALYZED_PATHS = 4
+_UNANALYZED = re.compile(r'^(?P<path>[^:]+): language=(?P<language>[^;]+);.*?'
+                         r'cause=(?P<cause>[^;]+);.*?lost_facts=(?P<lost>\[[^\]]*\])')
+
+
+def _call_site(facts, edge):
+    """Where the call *edge* records its site: (path, line, excerpt)."""
+    for evidence_id in edge.get('evidence_ids') or ():
+        evidence = facts['evidence'].get(evidence_id) or {}
+        locator = evidence.get('locator') or {}
+        if locator.get('path'):
+            excerpt = ' '.join((evidence.get('excerpt') or '').split())
+            return locator['path'], locator.get('start_line'), excerpt
+    return None, None, ''
+
+
+def _call_class(facts, edge):
+    """repository, platform, library, ambiguous or open."""
+    if edge['resolution'] == 'resolved':
+        return 'repository'
+    if edge['resolution'] == 'ambiguous':
+        return 'ambiguous'
+    target = edge.get('to_ref') or {}
+    resource = facts['resources'].get(target.get('id')) if target.get('kind') == 'resource' else None
+    if not resource:
+        return 'open'
+    return 'platform' if (resource.get('provider') or '').startswith('global:') else 'library'
+
+
+def _calls_on_traces(facts):
+    """Each distinct call site any trace reaches, classified once."""
+    edges = facts['edges']
+    seen = {}
+    for trace in facts['traces'].values():
+        for edge_id in trace.get('edge_ids', ()):
+            edge = edges.get(edge_id)
+            if edge and edge['kind'] == 'calls' and edge_id not in seen:
+                seen[edge_id] = edge
+    counts = {'sites': len(seen), 'repository': 0, 'platform': 0, 'library': 0,
+              'ambiguous': 0, 'open': 0}
+    platforms, libraries, open_sites = {}, {}, []
+    for edge in seen.values():
+        kind = _call_class(facts, edge)
+        counts[kind] += 1
+        if kind in {'platform', 'library'}:
+            resource = facts['resources'][edge['to_ref']['id']]
+            provider = (resource.get('provider') or resource.get('name') or '?')
+            provider = provider.split(':', 1)[-1]
+            bucket = platforms if kind == 'platform' else libraries
+            bucket[provider] = bucket.get(provider, 0) + 1
+        elif kind in {'open', 'ambiguous'}:
+            path, line, excerpt = _call_site(facts, edge)
+            open_sites.append({'path': path, 'line': line, 'excerpt': excerpt,
+                               'state': kind, 'reason': edge.get('reason')})
+    ranked = lambda bucket: [{'name': name, 'sites': count} for name, count in
+                             sorted(bucket.items(), key=lambda item: (-item[1], item[0]))]
+    open_sites.sort(key=lambda item: (item['path'] or '', item['line'] or 0))
+    return counts, ranked(platforms), ranked(libraries), open_sites
+
+
+MAX_STORES = 6
+
+
+def _data_on_traces(facts):
+    """Reads and writes any trace reaches, per data resource, each site once."""
+    edges = facts['edges']
+    seen = {}
+    for trace in facts['traces'].values():
+        for edge_id in trace.get('edge_ids', ()):
+            edge = edges.get(edge_id)
+            if edge and edge['kind'] in {'reads_data', 'writes_data'} and edge['to_ref']:
+                seen[edge_id] = edge
+    stores = {}
+    for edge in seen.values():
+        resource = facts['resources'].get(edge['to_ref']['id']) or {}
+        name = resource.get('name') or edge['to_ref']['id']
+        entry = stores.setdefault(name, {'name': name.split('::', 1)[-1],
+                                         'kind': resource.get('kind'), 'reads': 0, 'writes': 0})
+        entry['reads' if edge['kind'] == 'reads_data' else 'writes'] += 1
+    ranked = sorted(stores.values(), key=lambda item: (-(item['reads'] + item['writes']),
+                                                       item['name']))
+    return {'reads': sum(item['reads'] for item in ranked),
+            'writes': sum(item['writes'] for item in ranked),
+            'stores': len(ranked),
+            'in_memory': all(item['kind'] == 'memory_store' for item in ranked),
+            'top': ranked[:MAX_STORES], 'more': max(len(ranked) - MAX_STORES, 0)}
+
+
+def _unanalyzed_sources(warnings):
+    """Files discovery found but could not analyze, and what that cost."""
+    files = []
+    for warning in warnings:
+        if warning.get('code') != 'SOURCE_CAPABILITY_UNAVAILABLE':
+            continue
+        match = _UNANALYZED.match(warning.get('message') or '')
+        if match:
+            files.append({'path': match['path'], 'language': match['language'],
+                          'cause': match['cause'], 'facts_lost': match['lost'] != '[]'})
+    return sorted(files, key=lambda item: item['path'])
+
+
+def _relationships(facts, measured):
+    """Resolved and unresolved relationships, and where the unresolved lie.
+
+    An unresolved relationship on a trace either ends at a resource the facts
+    name (a platform or library) or is open; one no trace reaches is counted
+    apart, since no business flow depends on it.
+    """
+    traced = {edge_id for trace in facts['traces'].values() for edge_id in trace.get('edge_ids', ())}
+    on_traces = [edge for edge in facts['edges'].values()
+                 if edge['resolution'] != 'resolved' and edge['id'] in traced]
+    named = sum((edge.get('to_ref') or {}).get('kind') == 'resource' for edge in on_traces)
+    # Distinct edges, so the parts add up: the coverage counters count each
+    # call occurrence, and two occurrences can record one edge.
+    return {'resolved': sum(edge['resolution'] == 'resolved' for edge in facts['edges'].values()),
+            'open': measured['open'],
+            'outside_traces': measured['open_outside_traces'],
+            'on_traces_at_boundaries': named,
+            'on_traces_open': len(on_traces) - named}
+
+
+def facts_report(facts, root=None, elapsed_ms=None):
+    """The data the terminal summary shows, computed from *facts* alone."""
+    code_names = _language_names()
+    names = {**_DATA_LANGUAGE_NAMES, **code_names}
+    measured = extraction_measurements(facts)
+    files, code = {}, set(code_names.values())
+    for resource in facts['resources'].values():
+        if resource.get('kind') == 'repository_file' and resource.get('language'):
+            label = names.get(resource['language'], resource['language'])
+            files[label] = files.get(label, 0) + 1
+    calls, platforms, libraries, open_sites = _calls_on_traces(facts)
+    traces = measured['traces']
+    edges = facts['edges'].values()
+    unanalyzed = _unanalyzed_sources(facts.get('warnings', []))
+    relationships = measured['relationships']
+    return {
+        'repository': Path(root).name if root else None,
+        'elapsed_ms': elapsed_ms,
+        # Source code first, then documentation and data, each most files first.
+        'files': [{'language': language, 'files': count, 'code': language in code}
+                  for language, count in sorted(files.items(), key=lambda item: (
+                      item[0] not in code, -item[1], item[0]))],
+        'symbols': len(facts['symbols']),
+        'traces': {'total': traces['total'], 'complete': traces.get('complete', 0),
+                   'bounded': traces.get('bounded', 0),
+                   'incomplete': traces.get('incomplete', 0)},
+        'calls': calls,
+        'data': _data_on_traces(facts),
+        'effects': len(facts.get('effects', {})),
+        'platforms': platforms,
+        'libraries': libraries,
+        'open_sites': open_sites[:MAX_OPEN_SITES],
+        'open_sites_more': max(len(open_sites) - MAX_OPEN_SITES, 0),
+        'evidence': {
+            'tests': sum(edge['kind'] == 'tests_behavior' for edge in edges),
+            'documentation': sum(edge['kind'] == 'documents_behavior' for edge in edges),
+            'inputs': sum(binding.get('direction') == 'input'
+                          for binding in facts.get('bindings', {}).values()),
+            'rule_observations': len(facts.get('rule_observations', {})),
+        },
+        'relationships': _relationships(facts, relationships),
+        'unanalyzed': {'files': len(unanalyzed),
+                       'facts_lost': sum(item['facts_lost'] for item in unanalyzed),
+                       'languages': sorted({names.get(item['language'], item['language'])
+                                            for item in unanalyzed}),
+                       'causes': sorted({item['cause'] for item in unanalyzed}),
+                       'paths': [item['path'] for item in unanalyzed[:MAX_UNANALYZED_PATHS]],
+                       'more': max(len(unanalyzed) - MAX_UNANALYZED_PATHS, 0)},
+    }
+
+
 def facts_only(root):
     """Deterministic extraction only; never invokes a provider."""
     config = settings(load_speed_toml(str(root)))
     target = paths(root)['facts']
     _progress({'stage': 'domain.extract', 'level': 'step',
                'message': 'Extracting business-domain facts (no model calls)'})
+    started = time.monotonic()
     with build_lock(root):
         facts, _ = Extractor(root, config).extract()
         atomic_write(target, facts, config['max_artifact_bytes'])
+    elapsed_ms = round((time.monotonic() - started) * 1000)
     return {'mode': 'facts', 'artifact': _relative(root, target),
+            'report': facts_report(facts, root, elapsed_ms),
             'measurements': extraction_measurements(facts),
             'trace_blockers': trace_blockers(facts),
             'warning_counts': warning_counts(facts['warnings']),

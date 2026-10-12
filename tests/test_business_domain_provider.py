@@ -8,6 +8,8 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
+import re
+
 import pytest
 
 from lib.context.business_domain_schema import DEFAULTS, DomainError, limits, validate
@@ -550,13 +552,15 @@ def test_semantic_progress_reports_payload_counts_and_failed_verdict(
     assert synthesis['details']['record_counts'] == {
         'activities': 1, 'rules': 0, 'domains': 0}
     assert failed_verification['level'] == 'warning'
-    assert failed_verification['message'].endswith(
-        'verdict fail, 1 finding(s), 1 blocking')
-    assert failed_verification['details'] == {
-        'verdict': 'fail',
-        'finding_count': 1,
-        'blocking_finding_count': 1,
-    }
+    assert re.search(r'verdict fail, 1 finding\(s\), 1 blocking \([a-z_]+\)$',
+                     failed_verification['message'])
+    details = failed_verification['details']
+    assert {key: details[key] for key in
+            ('verdict', 'finding_count', 'blocking_finding_count')} == {
+        'verdict': 'fail', 'finding_count': 1, 'blocking_finding_count': 1}
+    assert [set(item) for item in details['findings']] == [
+        {'category', 'severity', 'subject_ids'}]
+    assert details['findings'][0]['severity'] == 'blocking'
     assert repair['message'].startswith(
         'Repair round 1, provider attempt 1 accepted')
 

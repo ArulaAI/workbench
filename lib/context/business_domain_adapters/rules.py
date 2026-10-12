@@ -571,6 +571,11 @@ def prepare(sources, units, diagnostics=None):
     # index only supplies the evidenced target selected by that resolver.
     for source in sources:
         source.resolved_call_targets = {}
+        # `log.info(...)` calls a member of the object `log` names. The object
+        # resolves like any other name; its member is the unit it owns. This
+        # index is kept apart from resolved_call_targets, whose name-only
+        # matches never apply to a call made through a receiver.
+        source.resolved_member_targets = {}
         for reference in source.references:
             if reference.kind != 'call' or not reference.callee_name:
                 continue
@@ -580,6 +585,15 @@ def prepare(sources, units, diagnostics=None):
             target = by_id.get(target_id)
             if target:
                 source.resolved_call_targets[(start, reference.callee_name)] = target
+            receiver = (reference.receiver or '').strip()
+            if re.fullmatch(r'[A-Za-z_$][\w$]*', receiver) and receiver != 'this':
+                owner = by_id.get(resolve_source_reference(
+                    receiver, source.path, nodes, extractions))
+                members = [unit for unit in resolvable if owner is not None
+                           and unit.source is owner.source and unit.owner == owner.name
+                           and unit.name == reference.callee_name]
+                if len(members) == 1:
+                    source.resolved_member_targets[(start, reference.callee_name)] = members[0]
         # The same canonical resolver answers the complementary question: a root
         # it cannot place, that the file never imports, and that the language
         # binds ambiently, ends the path rather than breaking it.
@@ -763,22 +777,37 @@ def calls(unit):
     return result
 
 
-def lexical_candidates(unit, receiver, name, available):
-    """Candidates proven by lexical scope or a declared receiver type."""
-    # Only lexical calls are proven here. Receiver/type/import binding is a
-    # separate capability; a globally unique name does not prove a call target.
-    if receiver:
-        declared_types = set()
-        for match in unit.source.rule_outputs:
-            metadata = match.attributes
-            if match.output_type != 'receiver_binding':
+_SCOPING_KINDS = frozenset({'function', 'method', 'class'})
+
+
+def receiver_types(unit, receiver):
+    """Types the rule catalog declares for *receiver* where *unit* calls it."""
+    declared_types = set()
+    # A chain split across lines keeps its line breaks in the receiver text:
+    # `this.entries\n      .filter(...)` is called on `this.entries`.
+    receiver = re.sub(r'\s*\.\s*', '.', (receiver or '').strip())
+    # A call made on what a factory returns: `gw().authorise(...)`.
+    called = re.fullmatch(r'([A-Za-z_$][\w$]*)\(\s*\)', receiver)
+    if called:
+        return _factory_types(unit.source, called.group(1))
+    for match in unit.source.rule_outputs:
+        metadata = match.attributes
+        if match.output_type != 'receiver_binding' or metadata.get('binds') in {
+                'factory', 'shadow'}:
+            continue
+        # A class member is written through its receiver (`this.ledger`),
+        # while its declaration names only the member (`ledger`).
+        bound = capture(match,metadata.get('receiver_var'))
+        if not bound or metadata.get('receiver_prefix','')+bound != receiver:
+            continue
+        start,end = span(unit.source,match)
+        if metadata.get('scope') == 'module':
+            # A top-level declaration is visible in the whole file unless the
+            # calling unit declares a parameter or local of the same name.
+            if any(u.start <= start and end <= u.end and u.kind in _SCOPING_KINDS
+                   for u in unit.source.units) or _declares(unit, bound):
                 continue
-            # A class member is written through its receiver (`this.ledger`),
-            # while its declaration names only the member (`ledger`).
-            bound = capture(match,metadata.get('receiver_var'))
-            if not bound or metadata.get('receiver_prefix','')+bound != receiver:
-                continue
-            start,end = span(unit.source,match)
+        else:
             enclosing = sorted((u for u in unit.source.units if u.start <= start and end <= u.end
                                 and u.kind in metadata.get('scope_kinds', [u.kind])),
                                key=lambda u:u.end-u.start)
@@ -786,9 +815,41 @@ def lexical_candidates(unit, receiver, name, available):
             # parameter is not visible merely because both share an outer class.
             if not enclosing or not (enclosing[0].start <= unit.start and unit.end <= enclosing[0].end):
                 continue
-            declared = capture(match,metadata.get('type_var'))
-            if declared:
-                declared_types.add(declared)
+        if metadata.get('factory_var'):
+            declared_types |= _factory_types(
+                unit.source, capture(match, metadata['factory_var']))
+            continue
+        declared = metadata.get('type') or capture(match,metadata.get('type_var'))
+        if declared:
+            declared_types.add(declared)
+    return declared_types
+
+
+def _declares(unit, name):
+    """True when *unit* declares a parameter or local called *name*."""
+    return any(match.output_type == 'receiver_binding'
+               and match.attributes.get('binds') == 'shadow'
+               and capture(match, match.attributes.get('receiver_var')) == name
+               and unit.start <= span(unit.source, match)[0] < unit.end
+               for match in unit.source.rule_outputs)
+
+
+def _factory_types(source, factory):
+    """Classes a top-level factory in *source* constructs, by its name."""
+    return {capture(match, match.attributes.get('type_var'))
+            for match in source.rule_outputs
+            if match.output_type == 'receiver_binding'
+            and match.attributes.get('binds') == 'factory'
+            and factory and capture(match, match.attributes.get('receiver_var')) == factory
+            } - {None}
+
+
+def lexical_candidates(unit, receiver, name, available):
+    """Candidates proven by lexical scope or a declared receiver type."""
+    # Only lexical calls are proven here. Receiver/type/import binding is a
+    # separate capability; a globally unique name does not prove a call target.
+    if receiver:
+        declared_types = receiver_types(unit, receiver)
         return [c for c in available if c.owner in declared_types]
     scopes = [unit.name,unit.owner]
     enclosing = sorted([u for u in unit.source.units if u.start < unit.start and unit.end <= u.end],
@@ -803,8 +864,12 @@ def lexical_candidates(unit, receiver, name, available):
 
 def candidates(unit, receiver, name, available, position=None):
     lexical = lexical_candidates(unit, receiver, name, available)
-    if lexical or receiver:
+    if lexical:
         return lexical
+    if receiver:
+        member = getattr(unit.source, 'resolved_member_targets', {}).get(
+            (unit.start + position, name)) if position is not None else None
+        return [member] if member else []
     imported = getattr(unit.source, 'resolved_call_targets', {}).get(
         (unit.start + position, name)) if position is not None else None
     if imported:
@@ -840,6 +905,21 @@ def resolve_call(unit, receiver, name, candidates, position, evidence_id=None):
                                  unit.source.language, root, name),
             evidence_ids=evidence, diagnostic_code='RULES_AMBIENT_CALL',
             reason=reason, provider=f'global:{root}')
+    # A receiver declared as a type the language provides (`new Map()`, an
+    # `Entry[]` field) calls a platform method, not missing repository code.
+    # Only declared types count: an untyped receiver stays unresolved.
+    platform = sorted(receiver_types(unit, receiver) & set(
+        registry.ambient_globals(unit.source.language))) if receiver else []
+    if platform:
+        receiver = re.sub(r'\s*\.\s*', '.', receiver.strip())
+        return SemanticResult(capability='callable_resolution', outcome='external',
+            subject_id=unit.symbol_id,
+            target_id=identifier('resource', 'ambient-call',
+                                 unit.source.language, platform[0], name),
+            evidence_ids=evidence, diagnostic_code='RULES_AMBIENT_CALL',
+            reason=(f'{receiver} is declared as {platform[0]}, a type '
+                    f'{unit.source.language} provides; {name} is its method.'),
+            provider=f'global:{platform[0]}')
     return SemanticResult(capability='callable_resolution', outcome='unresolved',
         subject_id=unit.symbol_id, evidence_ids=evidence,
         diagnostic_code='CALL_TARGET_UNRESOLVED',
