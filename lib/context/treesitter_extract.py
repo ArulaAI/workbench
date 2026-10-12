@@ -203,10 +203,13 @@ def _run_ast_grep_rule_files(sg: str, file_path: str, lang_rules_dir: Path) -> l
     (this repository's or the scanned project's) is picked up.
     """
     all_matches: list[dict] = []
+    # ast-grep runs from a neutral directory, so a relative path (a project
+    # root of ".") must be made absolute or it resolves to nothing.
+    target = os.path.abspath(file_path)
     for rule_file in sorted(lang_rules_dir.glob("*.yml")):
         try:
             result = subprocess.run(
-                [sg, "scan", "--json", "--include-metadata", "--rule", str(rule_file), file_path],
+                [sg, "scan", "--json", "--include-metadata", "--rule", str(rule_file), target],
                 capture_output=True, text=True, timeout=30, cwd=tempfile.gettempdir(),
             )
             if result.returncode != 0 or not result.stdout.strip():

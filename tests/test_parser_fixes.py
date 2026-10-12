@@ -107,3 +107,13 @@ def test_annotated_java_class_is_named_after_the_class_keyword(tmp_path):
     res = _extract(tmp_path, JAVA, "java")
     classes = {d.name for r in res.values() for d in r.definitions if d.kind == "class"}
     assert "BaseEntity" in classes and "public" not in classes
+
+
+def test_relative_project_root_still_extracts(tmp_path, monkeypatch):
+    # Rule files run from a neutral directory; a relative path must not resolve
+    # against it (build_layer1(".") extracted 7 definitions from 750 files).
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src/service.ts").write_text(SERVICE_TS)
+    monkeypatch.chdir(tmp_path)
+    res = Extractor().extract_batch([{"path": "src/service.ts", "language": "typescript"}], ".")
+    assert len(next(iter(res.values())).definitions) > 0
