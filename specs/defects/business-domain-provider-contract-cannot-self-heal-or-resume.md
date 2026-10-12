@@ -185,6 +185,8 @@ excerpt and assigns that same citation to every child coverage claim, regardless
 of which child supplied it. Hash references cannot substitute for the typed
 cut-edge and evidence closure required for verification.
 
+Status: resolved. Each child's coverage manifest cites that child's own evidence, never a citation chosen globally, and lists its represented, excluded and unresolved anchors. An execution segment carries every cut as a typed `execution_segment` obligation and as a structured `cross_scope_edge_ids` entry, and reconciliation scopes carry the union of their children's cross-scope edges.
+
 ### 13. Failure lacks durable per-unit repair state
 
 Validated child payloads are cached, but validation findings, rejected
@@ -192,11 +194,15 @@ candidates, attempt state and the exact next operation are not durably linked to
 the semantic unit. A failed child ends hierarchical reconciliation rather than
 remaining a resumable repair task.
 
+Status: resolved. A validated response is cached under its exact request, and scope identity depends only on scope content, so a refresh reuses every validated unit. After each rejected verification the repair chain checkpoints its candidate, findings, verifier report, repairs used and attempted signatures as a `PendingRepairArtifact` under `.speed/context/business-domain-pending/`. An interrupted chain resumes there with its remaining repairs; a chain that succeeds, stalls or exhausts its repairs leaves no checkpoint, and one from another request, projection, provider or prompt set is discarded.
+
 ### 14. Operator progress is misleading
 
 Hierarchical child completion increments semantic-unit counters but does not
 increment processed-anchor coverage until root reconciliation. The CLI prints
 only anchor coverage, so completed and cached work appears as zero progress.
+
+Status: resolved for hierarchical runs. Progress reports each slice as it starts and validates, `semantic_units_validated` counts validated slices before root reconciliation, and `speed discover domains --status` shows the mode with validated and total units.
 
 ### 15. Invalid prior artifacts repeatedly poison diagnostics
 

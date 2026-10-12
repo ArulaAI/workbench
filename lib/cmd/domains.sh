@@ -267,6 +267,10 @@ _domains_render_status() {
           | "Started:     \($s.started_at // "-")",
             "Completed:   \($s.completed_at // "-")",
             "Outcome:     \($s.phase) (attempt \($s.attempt_build_id))",
+            (if $s.execution_mode == "hierarchical"
+             then "Mode:        hierarchical: \($s.limits.semantic_units_total - 1) entry-point bundles, then root reconciliation (\($s.limits.semantic_units_validated)/\($s.limits.semantic_units_total) validated\(if $s.root_reconciled then "" else ", root not reconciled" end))"
+             elif $s.execution_mode == "whole_graph" then "Mode:        whole graph (one scope)"
+             else empty end),
             "Published:   \(if .published then "yes (build \(.published_build_id))" else "no" end)",
             (if .preserved_build_id then "Preserved:   build \(.preserved_build_id) is still the published model; this attempt did not replace it" else empty end),
             (if $s.coverage then "Anchors:     \($s.coverage.anchors_processed)/\($s.coverage.anchors_total) processed" else empty end),

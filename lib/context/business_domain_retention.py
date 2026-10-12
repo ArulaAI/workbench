@@ -34,6 +34,11 @@ def cleanup(root, config, timestamp=None):
     for name in ('business-domain-history','business-domain-baselines'):
         references.extend(files(directory/name))
     candidates = []
+    for path in files(directory/'business-domain-pending'):
+        if path.is_symlink():
+            raise DomainError('CLEANUP_UNSAFE','Disposable object is a symbolic link')
+        if path.stat().st_mtime < cutoff:
+            candidates.append(path)
     for path in files(directory/'business-domain-cache'):
         if path.is_symlink():
             raise DomainError('CLEANUP_UNSAFE','Disposable object is a symbolic link')

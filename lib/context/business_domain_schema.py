@@ -254,10 +254,18 @@ def candidate_scope_findings(graph: dict, candidate: dict) -> list[dict]:
 
     activity_ids = set(candidate['activities'])
     memberships = {}
+    scope_anchors = set(graph['canonical_anchor_ids'])
+    if graph['scope_kind'] == 'reconciliation':
+        # A reconciliation scope names no anchors of its own; its children
+        # supplied theirs with the records that represent them.
+        scope_anchors = {record_id for record_id, reference in
+                         graph['context']['record_refs'].items()
+                         if reference['collection'] == 'anchors'}
+        scope_anchors.update(graph['context']['anchors'])
     for activity in candidate['activities'].values():
         for anchor_id in activity['anchor_ids']:
             memberships.setdefault(anchor_id, set()).add(activity['id'])
-        outside = set(activity['anchor_ids'])-set(graph['canonical_anchor_ids'])
+        outside = set(activity['anchor_ids'])-scope_anchors
         if outside:
             findings.append(validation_finding(
                 'INVALID_COVERAGE',

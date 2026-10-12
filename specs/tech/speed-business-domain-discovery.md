@@ -8,7 +8,7 @@
 Status: Proposed; undergoing section-by-section review. This rewrite does not imply approval of unreviewed sections.
 Date: 2026-09-06
 
-Identity remediation and hierarchical orchestration are pending. Release requires the complete hermetic business-domain suite to collect and pass.
+Identity remediation is pending. Hierarchical orchestration runs entry-point bundles and execution segments, reconciles segments into their anchor and all units to a root in as many levels as needed, and resumes interrupted work from validated responses and repair checkpoints; application-boundary slicing is pending. Release requires the complete hermetic business-domain suite to collect and pass.
 
 ## Basic Example
 

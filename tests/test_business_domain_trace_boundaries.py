@@ -10,7 +10,7 @@ import pytest
 from lib.context.business_domain_cli import trace_blockers
 from lib.context.business_domain_extract import Extractor, trace_boundary
 from lib.context.business_domain_schema import DEFAULTS, DomainError, validate_references
-from lib.context.business_domain_work import _segment_packet, graph_context
+from lib.context.business_domain_work import graph_context, segment_view
 
 
 def _obligation(kind, status, code='UNRESOLVED_TARGET'):
@@ -186,8 +186,7 @@ def test_synthesis_context_carries_the_assumptions(facts):
 def test_a_segment_packet_keeps_only_the_assumptions_it_carries(facts):
     trace = _trace(facts, '/names/empty')
     anchor = facts['anchors'][trace['anchor_id']]
-    packet, _ = _segment_packet(facts, anchor['id'], [anchor['symbol_id']],
-                                lambda sliced, anchors: sliced)
+    packet, _ = segment_view(facts, anchor['id'], [anchor['symbol_id']])
     sliced = packet['traces'][trace['id']]
     carried = set(sliced['obligation_ids'])
     assert all(item['obligation_id'] in carried for item in sliced['assumptions'])

@@ -1,0 +1,249 @@
+"""Hierarchical business-domain synthesis: slices, then reconciliation to a root.
+
+Selected when the complete graph's synthesis, verification, repair and
+reverification sequence does not fit one request (tech spec, "Large-repository
+hierarchical mode"). The plan is fixed before anything is dispatched:
+
+    1. Pack canonical anchors into entry-point bundles; cut any anchor whose
+       closure alone is too large into execution segments.
+    2. Reserve the build budget for every slice and the root.
+    3. Synthesize, verify and repair every slice, `provider_concurrency` at a
+       time, under the same contracts as a whole graph.
+    4. Reconcile each cut anchor's segments into that anchor, then all units
+       into one root, in as many levels as one request's size requires.
+
+Every validated response is cached under its exact request and every scope's
+identity derives from its own content, so a refresh after an interruption
+reuses all completed work. Nothing here publishes.
+"""
+from __future__ import annotations
+
+import threading
+from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
+
+from .business_domain_schema import DomainError, digest, identifier
+from .business_domain_synthesis import _model_ready_context
+from .business_domain_work import (
+    ROOT_SCOPE_ID, anchor_scope_id, plan_reconciliation, plan_slices,
+    reconciled_unit, reconciliation_findings, reconciliation_scope, slice_scope,
+    slice_unit,
+)
+
+
+def plan(baseline: dict, synthesis) -> list[dict]:
+    """Sized slices covering every canonical anchor."""
+    def bundle(anchor_ids, cross_scope_edge_ids):
+        selected = _model_ready_context(baseline, anchor_ids)
+        return synthesis._size_graph(slice_scope(
+            baseline, anchor_ids, selected, 'entrypoint_bundle',
+            cross_scope_edge_ids=cross_scope_edge_ids))
+
+    def segment(view, anchor_id, cut_edge_ids):
+        selected = _model_ready_context(view, [anchor_id])
+        return synthesis._size_graph(slice_scope(
+            view, [anchor_id], selected, 'execution_segment',
+            cross_scope_edge_ids=cut_edge_ids, parent_scope_id=anchor_scope_id(anchor_id)))
+
+    return plan_slices(baseline, bundle, segment, synthesis.sequence_fits,
+                       synthesis.sequence_limit)
+
+
+def reserve(slices: list[dict], synthesis) -> None:
+    """Fail before dispatch unless every slice and the root fit the build budget.
+
+    Every unit is charged its complete synthesis, verification, repair and
+    reverification, each request at its full output allowance: a provider
+    that reports no usage is charged exactly that, so a smaller estimate lets
+    a run start that the budget cannot finish. The root is charged at the
+    largest size one request admits; its exact size is known only once the
+    slices return.
+    """
+    output = synthesis.effective_request_output_tokens
+    root = synthesis.effective_request_input_tokens - 2 * output
+    sizes = [scope['estimated_input_tokens'] for scope in slices] + [root]
+    needed = {'input': sum(4 * size + 4 * output for size in sizes),
+              'output': 4 * output * len(sizes)}
+    for kind, amount in needed.items():
+        setting = f'max_build_{kind}_tokens'
+        if amount > synthesis.config[setting]:
+            raise DomainError('BUILD_BUDGET', (
+                f'Hierarchical discovery needs {amount:,} {kind} tokens for '
+                f'{len(slices)} slices and their root reconciliation, more than '
+                f'{setting} = {synthesis.config[setting]:,}; nothing was dispatched. '
+                f'Raise {setting} under [business_domains] in the project speed.toml '
+                'and run again.'))
+
+
+class _Run:
+    """One hierarchical attempt: dispatch, progress and unit accounting."""
+
+    def __init__(self, baseline, synthesis, accept, status, heartbeat, recorder):
+        self.baseline = baseline
+        self.synthesis = synthesis
+        self.accept = accept
+        self.status = status
+        self.heartbeat = heartbeat
+        self.recorder = recorder
+        self.lock = threading.Lock()
+
+    def progress(self, message, level='step'):
+        if self.recorder:
+            self.recorder.progress('semantic', message, level=level)
+
+    def beat(self, scope_id=None):
+        with self.lock:
+            self.status['current_scope_id'] = scope_id
+            self.heartbeat()
+
+    def add_units(self, count):
+        with self.lock:
+            limits = self.status['limits']
+            limits['semantic_units_total'] += count
+            limits['semantic_units_pending'] = (limits['semantic_units_total']
+                                                - limits['semantic_units_validated'])
+
+    def dispatch(self, jobs, label):
+        """Run `(scope, validate)` jobs concurrently; payloads in job order.
+
+        On the first failure no further job starts; running jobs finish so
+        their validated responses are cached, then the earliest failure in
+        job order is raised.
+        """
+        results = {}
+
+        def one(index, scope, validate):
+            self.progress(f'{label} {index + 1}/{len(jobs)} started')
+            self.beat(scope['scope_id'])
+            payload = self.synthesis.run(scope, validate)
+            with self.lock:
+                results[index] = payload
+                done = len(results)
+            self.progress(f'{label} {index + 1}/{len(jobs)} validated '
+                          f'({done}/{len(jobs)} done)', level='success')
+            self.beat()
+            return payload
+
+        workers = max(1, min(self.synthesis.config['provider_concurrency'], len(jobs)))
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix='domain-scope') as pool:
+            futures = [pool.submit(one, index, scope, validate)
+                       for index, (scope, validate) in enumerate(jobs)]
+            _, unfinished = wait(futures, return_when=FIRST_EXCEPTION)
+            failed = [future for future in futures
+                      if future.done() and not future.cancelled() and future.exception()]
+            if failed:
+                for future in unfinished:
+                    future.cancel()
+                wait(futures)
+                raise failed[0].exception()
+        return [results[index] for index in range(len(jobs))]
+
+    def validator(self, scope, children=None):
+        if children is None:
+            return lambda candidate: self.accept(scope, candidate)
+
+        def validate(candidate):
+            self.accept(scope, candidate)
+            return reconciliation_findings(children, candidate)
+        return validate
+
+    def sized_reconciliation(self, units, scope_id, parent_scope_id=None):
+        return self.synthesis._size_graph(reconciliation_scope(
+            self.baseline, units, scope_id=scope_id, parent_scope_id=parent_scope_id))
+
+    def reconcile(self, groups, label):
+        """Reconcile each `(scope_id, parent_id, units)` group; one unit each."""
+        scopes = [self.sized_reconciliation(units, scope_id, parent_id)
+                  for scope_id, parent_id, units in groups]
+        for scope in scopes:
+            if not self.synthesis.sequence_fits(scope):
+                raise DomainError(
+                    'PACKET_LIMIT',
+                    f'Reconciling {len(scope["child_scope_ids"])} validated units needs '
+                    f'{scope["estimated_input_tokens"]:,} input tokens, more than one '
+                    'request allows', scope['scope_id'])
+        payloads = self.dispatch(
+            [(scope, self.validator(scope, units))
+             for scope, (_, _, units) in zip(scopes, groups)], label)
+        return [reconciled_unit(scope, payload, units)
+                for scope, payload, (_, _, units) in zip(scopes, payloads, groups)]
+
+    def to_root(self, units):
+        """Reconcile `units` level by level until one root covers them all."""
+        level = 1
+        while True:
+            if len(units) == 1 and units[0].scope['scope_kind'] == 'reconciliation':
+                return units[0]
+            root = self.sized_reconciliation(units, ROOT_SCOPE_ID)
+            if self.synthesis.sequence_fits(root):
+                self.add_units(1)
+                self.progress(f'Root reconciliation over {len(units)} units')
+                [unit] = self.reconcile([(ROOT_SCOPE_ID, None, units)], 'Root')
+                return unit
+            groups = plan_reconciliation(
+                units,
+                lambda group: self.sized_reconciliation(group, _group_id(group), ROOT_SCOPE_ID),
+                self.synthesis.sequence_fits)
+            merged = [group for group in groups if len(group) > 1]
+            if not merged:
+                raise DomainError(
+                    'PACKET_LIMIT',
+                    f'No two of {len(units)} validated units can be reconciled in one '
+                    'request; raise max_request_input_tokens under [business_domains] '
+                    'in the project speed.toml', ROOT_SCOPE_ID)
+            self.add_units(len(merged))
+            self.progress(f'Reconciliation level {level}: {len(units)} units into '
+                          f'{len(groups)}')
+            reconciled = iter(self.reconcile(
+                [(_group_id(group), ROOT_SCOPE_ID, group) for group in merged],
+                f'Level {level} group'))
+            units = [next(reconciled) if len(group) > 1 else group[0] for group in groups]
+            level += 1
+
+
+def _group_id(units) -> str:
+    return identifier('scope', 'reconciliation',
+                      digest(sorted(unit.scope['scope_id'] for unit in units)))
+
+
+def run(baseline: dict, synthesis, accept, *, status, heartbeat, recorder=None):
+    """Synthesize every slice and reconcile them to a root.
+
+    `accept(scope, candidate)` validates one candidate against its scope and
+    raises a `DomainError` with findings when it is invalid; the repair chain
+    receives them exactly as it does for a whole graph. Returns the root scope,
+    its payload and the root unit, whose coverage disposes of every anchor.
+    """
+    slices = plan(baseline, synthesis)
+    reserve(slices, synthesis)
+    segmented = sorted({scope['parent_scope_id'] for scope in slices
+                        if scope['partition_strategy'] == 'execution_segment'})
+    status['execution_mode'] = 'hierarchical'
+    status['root_reconciled'] = False
+    status['limits'].update(semantic_units_total=0, semantic_units_validated=0,
+                            semantic_units_pending=0)
+    attempt = _Run(baseline, synthesis, accept, status, heartbeat, recorder)
+    attempt.add_units(len(slices) + len(segmented))
+    bundles = sum(scope['partition_strategy'] == 'entrypoint_bundle' for scope in slices)
+    attempt.progress(
+        f'Hierarchical mode: {bundles} entry-point bundles'
+        + (f', {len(slices) - bundles} execution segments of {len(segmented)} '
+           'oversized entry points' if segmented else '')
+        + ' (the complete graph does not fit one request)')
+    attempt.beat()
+
+    payloads = attempt.dispatch([(scope, attempt.validator(scope)) for scope in slices], 'Slice')
+    units = [slice_unit(scope, payload) for scope, payload in zip(slices, payloads)]
+    if segmented:
+        segments = {parent: [unit for unit in units if unit.scope['parent_scope_id'] == parent
+                             and unit.scope['partition_strategy'] == 'execution_segment']
+                    for parent in segmented}
+        anchors = iter(attempt.reconcile(
+            [(parent, ROOT_SCOPE_ID, segments[parent]) for parent in segmented],
+            'Segmented entry point'))
+        reunited = {parent: next(anchors) for parent in segmented}
+        units = [unit for unit in units if unit.scope['partition_strategy'] != 'execution_segment']
+        units += [reunited[parent] for parent in segmented]
+    root = attempt.to_root(units)
+    attempt.progress('Root reconciliation validated', level='success')
+    attempt.beat()
+    return root.scope, root.payload, root

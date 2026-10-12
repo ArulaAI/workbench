@@ -24,6 +24,7 @@ from .business_domain_synthesis import (
     POLICY, Synthesis, TERMINAL_PROVIDER_CODES, allowed_evidence_ids,
     prompt_fingerprint,
 )
+from .business_domain_work import ROOT_SCOPE_ID, unassigned_anchors
 from .utils import load_speed_toml
 
 INCOMPLETE_WORK_CODES = frozenset({
@@ -404,8 +405,17 @@ def accept_candidate(model, graph, payload, *, verified=False):
                 *conflicts)
         candidate[collection].update(copy.deepcopy(payload[collection]))
 
-    traces = graph['context']['traces']
+    traces = dict(graph['context']['traces'])
     observations = set(graph['context']['rule_observations'])
+    if graph['scope_kind'] == 'reconciliation':
+        # A reconciliation scope supplies validated child records with their
+        # traces and observations by identity; each child checked them
+        # against full content.
+        for record_id, reference in graph['context']['record_refs'].items():
+            if reference['collection'] == 'traces' and record_id in model['traces']:
+                traces[record_id] = model['traces'][record_id]
+            elif reference['collection'] == 'rule_observations':
+                observations.add(record_id)
     for activity_id in sorted(payload['activities']):
         activity = payload['activities'][activity_id]
         trace_ids = set(activity['trace_ids'])
@@ -731,25 +741,41 @@ def discover(root, config=None, provider=None, lock_held=False, *,
         pending_scope = [graph['scope_id']]
         status['limits']['model_ready_graph_tokens'] = \
             graph['estimated_input_tokens']
-        status['limits']['semantic_units_total'] = 1
-        status['limits']['semantic_units_validated'] = 0
-        status['limits']['semantic_units_pending'] = 1
-        status['execution_mode'] = 'whole_graph'
         status['root_reconciled'] = False
         status['phase'] = 'synthesizing'
-        status['current_scope_id'] = graph['scope_id']
-        heartbeat()
 
-        def validate_candidate(payload):
+        def accept_scope(scope, payload):
             accept_candidate(
-                copy.deepcopy(baseline), graph, payload, verified=False)
+                copy.deepcopy(baseline), scope, payload, verified=False)
 
-        if recorder:
-            recorder.progress('semantic','Synthesizing and verifying business domains')
-        payload = synthesis.run(graph, validate_candidate)
+        if synthesis.sequence_fits(graph):
+            status['limits']['semantic_units_total'] = 1
+            status['limits']['semantic_units_validated'] = 0
+            status['limits']['semantic_units_pending'] = 1
+            status['execution_mode'] = 'whole_graph'
+            status['current_scope_id'] = graph['scope_id']
+            heartbeat()
+            if recorder:
+                recorder.progress('semantic','Synthesizing and verifying business domains')
+            payload = synthesis.run(
+                graph, lambda candidate: accept_scope(graph, candidate))
+            root_unit = None
+        else:
+            # The complete sequence does not fit one request: partition the
+            # semantic work and reconcile it to a root (tech spec,
+            # "Large-repository hierarchical mode").
+            from .business_domain_hierarchy import run as run_hierarchical
+            pending_scope = [ROOT_SCOPE_ID]
+            graph, payload, root_unit = run_hierarchical(
+                baseline, synthesis, accept_scope, status=status,
+                heartbeat=heartbeat, recorder=recorder)
         if cancelled():
             raise DomainError('CANCELLED', 'Discovery cancelled')
         accept_candidate(model, graph, payload, verified=True)
+        if root_unit is not None:
+            # The root disposes of child scopes; each anchor no root activity
+            # holds keeps the disposition the unit beneath it gave.
+            model['unassigned'] = unassigned_anchors(root_unit)
         pending_scope = []
         status['current_scope_id'] = None
         status['root_reconciled'] = True
@@ -758,10 +784,8 @@ def discover(root, config=None, provider=None, lock_held=False, *,
             for activity in model['activities'].values()
             for anchor_id in activity['anchor_ids']}
         excluded = {
-            disposition['subject_id']
-            for disposition in payload['dispositions']
-            if (disposition['subject_kind'] == 'anchor'
-                and disposition['status'] == 'excluded')}
+            item['subject_id'] for item in model['unassigned']
+            if item['status'] == 'excluded' and item['subject_id'] in model['anchors']}
         model['coverage']['anchors_processed'] = len(represented)
         model['coverage']['anchors_excluded'] = len(excluded)
         model['coverage']['anchors_pending'] = (

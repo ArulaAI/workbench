@@ -16,16 +16,27 @@ GRAPH_CONTEXT_COLLECTIONS = (
 )
 
 
-def graph_context(model: dict, selected: dict | None = None) -> dict:
-    """Project the complete canonical model into the existing GraphContext."""
+def graph_context(model: dict, selected: dict | None = None, *,
+                  keep_references: bool = False) -> dict:
+    """Project the canonical model, or a selection of it, into a GraphContext.
+
+    Omitted evidence a selection cites is copied in, so every citation stays
+    usable. A whole-graph scope omits nothing else. A slice may name records
+    that belong to other scopes (`keep_references`): those stay identity-only
+    `record_refs`, which never stand in for content the slice was not given.
+    """
     context = record('GraphContext')
     context['capabilities'] = copy.deepcopy(model.get('capabilities', []))
     for collection in GRAPH_CONTEXT_COLLECTIONS:
         source = selected if selected is not None else model
         context[collection] = copy.deepcopy(source.get(collection, {}))
     if selected is not None:
+        kept = {}
         for reference in selected.get('record_refs', {}).values():
             if reference['collection'] != 'evidence':
+                if keep_references:
+                    kept[reference['id']] = copy.deepcopy(reference)
+                    continue
                 raise DomainError(
                     'INVALID_REFERENCE',
                     'Whole-graph scope cannot retain an omitted record reference',
@@ -36,7 +47,7 @@ def graph_context(model: dict, selected: dict | None = None) -> dict:
             if snapshot_id:
                 context['source_snapshots'][snapshot_id] = copy.deepcopy(
                     model['source_snapshots'][snapshot_id])
-        context['record_refs'] = {}
+        context['record_refs'] = kept
     selected_anchors = context['anchors'].values()
     context['anchor_representations'] = {
         representation['id']: copy.deepcopy(representation)
@@ -74,97 +85,170 @@ def whole_graph_scope(model: dict, selected: dict | None = None) -> dict:
     return scope
 
 
-@dataclass(frozen=True)
-class ActivityScope:
-    """One immutable provider work unit; scope identity derives from its content."""
+# ── Hierarchical work ──────────────────────────────────────────────────
+#
+# When the complete graph does not fit one request's synthesis, verification,
+# repair and reverification, the semantic work is partitioned (tech spec,
+# "Large-repository hierarchical mode"). The graph stays whole in canonical
+# storage; only requests are divided:
+#
+#   entry-point bundle   the complete trace closures of several anchors
+#   execution segment    part of one anchor's closure too large for a request,
+#                        cut at typed execution edges
+#   reconciliation       validated units rolled up; segments into their anchor,
+#                        then groups of units, until one root covers them all
+#
+# A unit is publishable only through the root, which must keep every anchor a
+# unit beneath it represented.
 
-    id: str
-    strategy: str
-    packet: dict
-    cut_edge_ids: tuple[str, ...] = ()
+# Scope identities derive from content, never from the hierarchy above them, so
+# an unchanged slice keeps its cache entry when other slices change.
+ROOT_SCOPE_ID = identifier('scope', 'reconciliation', 'root')
+SEMANTIC_COLLECTIONS = (
+    'activities', 'rules', 'concepts', 'information_uses', 'ownerships',
+    'rule_relationships', 'claims', 'domains', 'relationships')
+COVERAGE_MANIFEST = 'coverage_manifest'
+# Citations per coverage manifest: enough to locate a child's evidence without
+# re-sending every excerpt it already had verified.
+MANIFEST_EVIDENCE = 8
 
 
-@dataclass(frozen=True)
-class ValidatedActivityChild:
-    """A validated leaf or roll-up plus its stable reconciliation coverage."""
-
-    scope_id: str
-    strategy: str
-    cut_edge_ids: tuple[str, ...]
-    payload: dict
+def anchor_scope_id(anchor_id: str) -> str:
+    """The reconciliation scope that reunites one anchor's execution segments."""
+    return identifier('scope', 'reconciliation', 'anchor', anchor_id)
 
 
-def _scope(strategy: str, packet: dict, cut_edge_ids=()) -> ActivityScope:
-    return ActivityScope(
-        identifier('scope', strategy, digest(packet), sorted(cut_edge_ids)),
-        strategy, packet, tuple(sorted(set(cut_edge_ids))))
-
-
-def plan_activity_scopes(model: dict, anchor_ids, packet_builder, fits) -> list[ActivityScope]:
-    """Prefer the complete graph, then stable anchor bundles, then edge segments."""
+def slice_scope(model: dict, anchor_ids, selected: dict, strategy: str, *,
+                cross_scope_edge_ids=(), parent_scope_id: str = ROOT_SCOPE_ID) -> dict:
+    """An unsized slice scope over `selected`, the closure of `anchor_ids`."""
+    context = graph_context(model, selected, keep_references=True)
     anchors = sorted(set(anchor_ids))
-    if not anchors:
-        return []
-    whole = packet_builder(model, anchors)
-    if fits(whole):
-        return [_scope('whole_graph', whole)]
+    representations = sorted(context['anchor_representations'])
+    cross = sorted(set(cross_scope_edge_ids))
+    fingerprint = digest({
+        'context': context, 'canonical_anchor_ids': anchors,
+        'source_representation_ids': representations,
+        'partition_strategy': strategy, 'cross_scope_edge_ids': cross,
+    })
+    scope = record(
+        'GraphScope', scope_id=identifier('scope', strategy, fingerprint),
+        scope_kind='slice', partition_strategy=strategy, estimated_input_tokens=0,
+        parent_scope_id=parent_scope_id, input_fingerprint=fingerprint,
+        context=context, source_representation_ids=representations,
+        canonical_anchor_ids=anchors, child_scope_ids=[],
+        cross_scope_edge_ids=cross)
+    validate(scope, 'GraphScope')
+    return scope
 
-    scopes: list[ActivityScope] = []
-    bundle: list[str] = []
-    for anchor_id in anchors:
-        # Stable prefix packing leaves no omitted or duplicated work. It keeps each
-        # canonical anchor's entire trace closure together until it proves too
-        # large on its own.
-        candidate = packet_builder(model, bundle + [anchor_id])
-        if bundle and not fits(candidate):
-            packet = packet_builder(model, bundle)
-            scopes.append(_scope('entrypoint_bundle', packet))
-            bundle = []
-            candidate = packet_builder(model, [anchor_id])
-        if fits(candidate):
-            bundle.append(anchor_id)
+
+def _pack(items, build, fits):
+    """Stable prefix packing: grow a group until the next item would not fit.
+
+    Yields `(group, built)` pairs, where `built` is `build(group)`; a group the
+    next item would overflow is closed and that item starts a new one. A
+    single item that does not fit is yielded alone for the caller to handle.
+    """
+    group, built = [], None
+    for item in items:
+        if group:
+            candidate = build(group + [item])
+            if fits(candidate):
+                group, built = group + [item], candidate
+                continue
+            yield group, built
+        group, built = [item], build([item])
+    if group:
+        yield group, built
+
+
+def _edge_users(model: dict) -> dict:
+    """Edge ID -> the canonical anchors whose traces include it."""
+    users = {}
+    for trace in model['traces'].values():
+        for edge_id in trace['edge_ids']:
+            users.setdefault(edge_id, set()).add(trace['anchor_id'])
+    return users
+
+
+def plan_slices(model: dict, build_bundle, build_segment, fits, limit) -> list[dict]:
+    """Sized slices covering every canonical anchor, in a deterministic order.
+
+    Anchors are packed into entry-point bundles in canonical-ID order. Shared
+    implementation appears in every bundle that reaches it, and its edges are
+    declared cross-scope so reconciliation recognises the shared records. An
+    anchor whose closure alone exceeds one request is cut into execution
+    segments instead; one that exceeds the build budget cannot run at all.
+
+    `build_bundle(anchor_ids, cross_scope_edge_ids)` and
+    `build_segment(view, anchor_id, cut_edge_ids)` return sized scopes;
+    `fits(scope)` decides whether a scope's complete sequence can run and
+    `limit(scope)` names the setting it exceeds when it cannot.
+    """
+    users = _edge_users(model)
+    owned = {}
+    for edge_id, anchors in users.items():
+        for anchor_id in anchors:
+            owned.setdefault(anchor_id, set()).add(edge_id)
+
+    def bundle(anchor_ids):
+        members = set(anchor_ids)
+        edges = set().union(*(owned.get(anchor_id, set()) for anchor_id in anchor_ids))
+        return build_bundle(anchor_ids, sorted(e for e in edges if users[e] - members))
+
+    slices = []
+    for anchor_ids, scope in _pack(sorted(model['anchors']), bundle, fits):
+        if fits(scope):
+            slices.append(scope)
             continue
-        scopes.extend(_segment_anchor(model, anchor_id, packet_builder, fits))
-    if bundle:
-        scopes.append(_scope('entrypoint_bundle',
-                             packet_builder(model, bundle)))
-    return scopes
+        [anchor_id] = anchor_ids
+        exceeded = limit(scope)
+        if exceeded != 'max_request_input_tokens':
+            raise DomainError(
+                'BUILD_BUDGET',
+                f'Entry point {anchor_id} needs {scope["estimated_input_tokens"]:,} '
+                'input tokens per request, and its synthesis, verification and '
+                f'repair sequence exceeds {exceeded}; nothing was dispatched. '
+                f'Raise {exceeded} under [business_domains] in the project '
+                'speed.toml and run again.', anchor_id)
+        slices.extend(plan_execution_segments(model, anchor_id, build_segment, fits))
+    return slices
 
 
-def _segment_anchor(model: dict, anchor_id: str, packet_builder, fits) -> list[ActivityScope]:
-    traces = sorted((trace for trace in model['traces'].values()
-                     if trace['anchor_id'] == anchor_id), key=lambda value: value['id'])
-    symbols = {symbol for trace in traces for symbol in trace['symbol_ids']}
-    if not traces or not symbols:
+def plan_execution_segments(model: dict, anchor_id: str, build, fits) -> list[dict]:
+    """Cut one anchor's oversized trace closure into segments that each fit.
+
+    Symbols are taken in stable breadth-first order from the anchor along its
+    typed execution edges, and a segment grows until the next symbol would not
+    fit. A segment keeps every edge touching its symbols; an edge into another
+    segment is a cut, carried as an `execution_segment` obligation and declared
+    cross-scope. Only the anchor's reconciliation disposes of the anchor.
+    """
+    traces = [trace for trace in model['traces'].values() if trace['anchor_id'] == anchor_id]
+    symbols = {symbol_id for trace in traces for symbol_id in trace['symbol_ids']}
+    if not symbols:
         raise DomainError('OVERSIZED_ATOMIC_RECORD',
-                          f'Canonical anchor {anchor_id} has no splittable typed trace closure',
-                          anchor_id)
-    execution_edges = {edge_id: model['edges'][edge_id]
-                       for trace in traces for edge_id in trace['edge_ids']
-                       if model['edges'][edge_id]['from_ref']['kind'] == 'symbol'
-                       and model['edges'][edge_id].get('to_ref')
-                       and model['edges'][edge_id]['to_ref']['kind'] == 'symbol'}
-    order = _stable_breadth_first(model['anchors'][anchor_id]['symbol_id'], symbols,
-                                  execution_edges)
-    scopes: list[ActivityScope] = []
-    selected: list[str] = []
-    for symbol_id in order:
-        candidate, cuts = _segment_packet(
-            model, anchor_id, selected + [symbol_id], packet_builder)
-        if selected and not fits(candidate):
-            packet, cut_ids = _segment_packet(model, anchor_id, selected, packet_builder)
-            scopes.append(_scope('execution_segment', packet, cut_ids))
-            selected = []
-            candidate, cuts = _segment_packet(model, anchor_id, [symbol_id], packet_builder)
-        if not fits(candidate):
-            raise DomainError('OVERSIZED_ATOMIC_RECORD',
-                              f'Atomic graph record {symbol_id} plus mandatory evidence exceeds the request allowance',
-                              symbol_id)
-        selected.append(symbol_id)
-    if selected:
-        packet, cuts = _segment_packet(model, anchor_id, selected, packet_builder)
-        scopes.append(_scope('execution_segment', packet, cuts))
-    return scopes
+                          f'Entry point {anchor_id} exceeds one request and has no '
+                          'trace to cut into execution segments', anchor_id)
+    edges = {edge_id: model['edges'][edge_id] for trace in traces
+             for edge_id in trace['edge_ids']
+             if model['edges'][edge_id]['from_ref']['kind'] == 'symbol'
+             and (model['edges'][edge_id].get('to_ref') or {}).get('kind') == 'symbol'}
+    order = _stable_breadth_first(model['anchors'][anchor_id]['symbol_id'], symbols, edges)
+
+    def segment(symbol_ids):
+        view, cuts = segment_view(model, anchor_id, symbol_ids)
+        return build(view, anchor_id, cuts)
+
+    segments = []
+    for symbol_ids, scope in _pack(order, segment, fits):
+        if not fits(scope):
+            raise DomainError(
+                'OVERSIZED_ATOMIC_RECORD',
+                f'Symbol {symbol_ids[0]} of entry point {anchor_id} needs '
+                f'{scope["estimated_input_tokens"]:,} input tokens with its mandatory '
+                'evidence, more than one request allows', symbol_ids[0])
+        segments.append(scope)
+    return segments
 
 
 def _stable_breadth_first(start: str, symbols: set[str], edges: dict) -> list[str]:
@@ -178,24 +262,29 @@ def _stable_breadth_first(start: str, symbols: set[str], edges: dict) -> list[st
         symbol = queue.pop(0)
         if symbol in seen:
             continue
-        seen.add(symbol); ordered.append(symbol)
+        seen.add(symbol)
+        ordered.append(symbol)
         queue.extend(target for _, target in sorted(outgoing.get(symbol, []))
                      if target in symbols and target not in seen)
     ordered.extend(sorted(symbols - seen))
     return ordered
 
 
-def _segment_packet(model: dict, anchor_id: str, primary_symbols,
-                    packet_builder) -> tuple[dict, tuple[str, ...]]:
-    """Build one closed trace subgraph and retain every typed cut explicitly."""
+def segment_view(model: dict, anchor_id: str, primary_symbols) -> tuple[dict, tuple[str, ...]]:
+    """A view of `model` holding one segment of `anchor_id`'s traces.
+
+    The view shares every record it does not change. Each trace keeps the
+    edges touching the segment's symbols; an edge with one end outside the
+    segment is a cut, recorded as an `execution_segment` obligation, and a
+    trace that loses edges this way is no longer traversal-complete.
+    Returns the view and the cut edge IDs.
+    """
     primary = set(primary_symbols)
-    sliced = copy.deepcopy(model)
-    selected_edges, cut_edges, selected_obligations = set(), set(), set()
-    sliced_traces, obligations_by_trace = {}, {}
+    selected_edges, cut_edges, kept_obligations = set(), set(), set()
+    traces, obligations_by_trace = {}, {}
     for trace in sorted(model['traces'].values(), key=lambda value: value['id']):
-        if trace['anchor_id'] != anchor_id or not primary.intersection(trace['symbol_ids']):
+        if trace['anchor_id'] != anchor_id or not primary & set(trace['symbol_ids']):
             continue
-        trace_symbols = set(trace['symbol_ids'])
         trace_edges = {edge_id: model['edges'][edge_id] for edge_id in trace['edge_ids']}
         for edge_id, edge in trace_edges.items():
             source = edge['from_ref']['id']
@@ -208,59 +297,50 @@ def _segment_packet(model: dict, anchor_id: str, primary_symbols,
                         cut_edges.add(edge_id)
             elif source in primary:
                 selected_edges.add(edge_id)
-        trace_obligations = set()
-        for obligation_id in trace.get('obligation_ids', []):
-            obligation = model['trace_obligations'][obligation_id]
-            if (obligation['origin_ref']['id'] in primary
-                    or obligation.get('edge_id') in selected_edges):
-                selected_obligations.add(obligation_id)
-                trace_obligations.add(obligation_id)
-        visible_symbols = primary & trace_symbols
+        carried = {obligation_id for obligation_id in trace.get('obligation_ids', [])
+                   if model['trace_obligations'][obligation_id]['origin_ref']['id'] in primary
+                   or model['trace_obligations'][obligation_id].get('edge_id') in selected_edges}
+        kept_obligations |= carried
+        visible = primary & set(trace['symbol_ids'])
         for edge_id in selected_edges & set(trace_edges):
             edge = trace_edges[edge_id]
-            visible_symbols.add(edge['from_ref']['id'])
+            visible.add(edge['from_ref']['id'])
             if edge.get('to_ref') and edge['to_ref']['kind'] == 'symbol':
-                visible_symbols.add(edge['to_ref']['id'])
-        sliced_trace = copy.deepcopy(trace)
-        sliced_trace['symbol_ids'] = sorted(visible_symbols)
-        sliced_trace['edge_ids'] = sorted(selected_edges & set(trace_edges))
-        sliced_trace['frontier_ids'] = sorted(
-            set(trace['frontier_ids']) & (visible_symbols | selected_edges))
-        sliced_trace['traversal_complete'] = not bool(cut_edges & set(trace_edges))
-        if not sliced_trace['traversal_complete']:
-            sliced_trace['resolution'] = 'unresolved'
-            sliced_trace['reason'] = 'Typed execution edges continue in sibling segments.'
-        sliced_traces[trace['id']] = sliced_trace
-        obligations_by_trace[trace['id']] = trace_obligations
+                visible.add(edge['to_ref']['id'])
+        sliced = copy.deepcopy(trace)
+        sliced['symbol_ids'] = sorted(visible)
+        sliced['edge_ids'] = sorted(selected_edges & set(trace_edges))
+        sliced['frontier_ids'] = sorted(set(trace['frontier_ids']) & (visible | selected_edges))
+        sliced['traversal_complete'] = not cut_edges & set(trace_edges)
+        if not sliced['traversal_complete']:
+            sliced['resolution'] = 'unresolved'
+            sliced['reason'] = 'Typed execution edges continue in sibling segments.'
+        traces[trace['id']] = sliced
+        obligations_by_trace[trace['id']] = carried
 
-    sliced['traces'] = sliced_traces
-    sliced['effects'] = {effect_id: effect for effect_id, effect in sliced['effects'].items()
-                         if effect.get('edge_id') in selected_edges}
-    for trace in sliced_traces.values():
-        trace_obligations = obligations_by_trace[trace['id']]
+    obligations = {key: model['trace_obligations'][key] for key in kept_obligations}
+    for trace in traces.values():
+        carried = obligations_by_trace[trace['id']]
         for edge_id in sorted(cut_edges & set(trace['edge_ids'])):
             edge = model['edges'][edge_id]
             obligation_id = identifier('trace_obligation', trace['id'],
                                        'execution_segment', edge_id)
-            sliced['trace_obligations'][obligation_id] = record(
+            obligations[obligation_id] = record(
                 'TraceObligation', id=obligation_id, trace_id=trace['id'],
                 kind='execution_segment', origin_ref=edge['from_ref'], edge_id=edge_id,
-                candidate_target_ids=([edge['to_ref']['id']]
-                                      if edge.get('to_ref') else []),
+                candidate_target_ids=[edge['to_ref']['id']] if edge.get('to_ref') else [],
                 status='limit_reached', reason_code='EXECUTION_SEGMENT_CUT',
                 reason='The typed execution edge crosses a deterministic segment boundary.',
                 evidence_ids=sorted(edge['evidence_ids']))
-            selected_obligations.add(obligation_id)
-            trace_obligations.add(obligation_id)
-        trace['obligation_ids'] = sorted(trace_obligations)
+            carried.add(obligation_id)
+        trace['obligation_ids'] = sorted(carried)
         if 'completion' in trace:
-            # A slice keeps the assumptions of the boundaries it carries; a
-            # segment cut is a gap of the slice, never a boundary.
-            blocking = [sliced['trace_obligations'][obligation_id]
-                        for obligation_id in trace['obligation_ids']
-                        if sliced['trace_obligations'][obligation_id]['status'] != 'satisfied']
+            # A segment keeps the assumptions of the boundaries it carries; a
+            # cut is a gap of the segment, never a boundary.
+            blocking = [obligations[key] for key in trace['obligation_ids']
+                        if obligations[key]['status'] != 'satisfied']
             trace['assumptions'] = [item for item in trace.get('assumptions', [])
-                                    if item['obligation_id'] in trace_obligations]
+                                    if item['obligation_id'] in carried]
             trace['completion'] = ('complete' if not blocking else
                                    'bounded' if all(item.get('boundary') for item in blocking)
                                    else 'incomplete')
@@ -268,144 +348,204 @@ def _segment_packet(model: dict, anchor_id: str, primary_symbols,
                     for eid in model['symbols'][symbol_id]['evidence_ids']}
         evidence.update(eid for edge_id in trace['edge_ids']
                         for eid in model['edges'][edge_id]['evidence_ids'])
-        evidence.update(eid for obligation_id in trace['obligation_ids']
-                        for eid in sliced['trace_obligations'][obligation_id]['evidence_ids'])
+        evidence.update(eid for key in trace['obligation_ids']
+                        for eid in obligations[key]['evidence_ids'])
         trace['evidence_ids'] = sorted(evidence)
-    sliced['trace_obligations'] = {
-        key: value for key, value in sliced['trace_obligations'].items()
-        if key in selected_obligations}
-    packet = packet_builder(sliced, [anchor_id])
-    return packet, tuple(sorted(cut_edges))
+
+    view = dict(model)
+    view['traces'] = traces
+    view['trace_obligations'] = obligations
+    view['effects'] = {key: effect for key, effect in model['effects'].items()
+                       if effect.get('edge_id') in selected_edges}
+    return view, tuple(sorted(cut_edges))
 
 
-def reconciliation_packet(model: dict, child_payloads: list[dict], packet_builder,
-                          manifest_builder) -> dict:
-    """Create a compact root request from validated child semantic summaries."""
-    children = normalized_children(child_payloads)
-    anchors = sorted({anchor for child in children for payload in [child.payload]
-                      for activity in payload['activities'].values()
-                      for anchor in activity['anchor_ids']}
-                     | {anchor for child in children for payload in [child.payload]
-                        for anchor in payload['excluded_anchor_ids'] + payload['pending_anchor_ids']})
-    packet = packet_builder(model, 'activity', anchors)
-    context = record('PacketContext')
-    context['capabilities'] = copy.deepcopy(model.get('capabilities', []))
-    context['anchors'] = {key: copy.deepcopy(model['anchors'][key]) for key in anchors}
+# ── Units and reconciliation ───────────────────────────────────────────
+
+@dataclass(frozen=True)
+class Unit:
+    """A validated scope and what it established about each anchor.
+
+    `coverage` maps each anchor the unit accounts for to its status
+    (`represented`, `excluded` or `unresolved`), the unit's activities that
+    represent it, and the reason and evidence for any other status.
+    """
+    scope: dict
+    payload: dict
+    coverage: dict
+
+
+def _anchor_activities(payload: dict) -> dict:
+    activities = {}
+    for activity_id, activity in payload['activities'].items():
+        for anchor_id in activity['anchor_ids']:
+            activities.setdefault(anchor_id, set()).add(activity_id)
+    return activities
+
+
+def slice_unit(scope: dict, payload: dict) -> Unit:
+    """The unit a validated slice forms, from its anchor dispositions."""
+    activities = _anchor_activities(payload)
+    coverage = {}
+    for disposition in payload['dispositions']:
+        if disposition['subject_kind'] == 'anchor':
+            coverage[disposition['subject_id']] = {
+                'status': disposition['status'],
+                'activity_ids': sorted(activities.get(disposition['subject_id'], ())),
+                'reason': disposition['reason'],
+                'evidence_ids': sorted(disposition['evidence_ids']),
+            }
+    return Unit(scope, payload, coverage)
+
+
+def reconciled_unit(scope: dict, payload: dict, children) -> Unit:
+    """The unit a validated reconciliation forms over `children`.
+
+    Anchors its activities hold are represented; any other anchor keeps the
+    first status a child gave it.
+    """
+    activities = _anchor_activities(payload)
+    coverage = {}
     for child in children:
-        payload = _namespace_child_payload(child.payload, child.scope_id)
-        for collection in ('activities', 'rules', 'concepts', 'information_uses', 'claims'):
-            context[collection].update(copy.deepcopy(payload[collection]))
-    # A compact reconciliation still supplies an exact usable citation. Other
-    # already-validated excerpts stay hash references through the manifest.
-    cited = sorted({evidence_id for child in children for payload in [child.payload]
-                    for collection in ('activities', 'rules', 'concepts',
-                                       'information_uses', 'claims')
-                    for item in payload[collection].values()
-                    for evidence_id in item.get('evidence_ids', [])})
-    for child in children:
-        child_payload, child_id = child.payload, child.scope_id
-        child_anchors = sorted({anchor for activity in child_payload['activities'].values()
-                                for anchor in activity['anchor_ids']}
-                               | set(child_payload['excluded_anchor_ids'])
-                               | set(child_payload['pending_anchor_ids']))
-        claim_id = identifier('claim', 'coverage_manifest', child_id)
-        context['claims'][claim_id] = record(
-            'Claim', id=claim_id, subject_id=child_id,
-            text=(f'Validated {child.strategy} child scope covers canonical anchors: '
-                  + ', '.join(child_anchors) + '; typed cut edges: '
-                  + (', '.join(child.cut_edge_ids) or 'none')),
-            kind='coverage_manifest',
-            evidence_ids=cited[:1],
-            trace_ids=sorted({trace_id
-                              for activity in child_payload['activities'].values()
-                              for trace_id in activity['trace_ids']}),
-            semantic_review='supported')
-    if cited:
-        evidence_id = cited[0]
-        context['evidence'][evidence_id] = copy.deepcopy(model['evidence'][evidence_id])
-        snapshot_id = context['evidence'][evidence_id]['locator'].get('snapshot_id')
-        if snapshot_id:
-            context['source_snapshots'][snapshot_id] = copy.deepcopy(
-                model['source_snapshots'][snapshot_id])
-    # Reconciliation consumes already validated semantic records. Raw trace,
-    # edge and excerpt records remain content-hash references; rehydrating them
-    # here would recreate the oversized leaf graph and defeat segmentation.
-    manifest_builder(model, context)
-    packet['context'] = context
-    packet['input_fingerprint'] = digest(context)
-    validate(packet, 'ActivityPacket')
-    return packet
+        for anchor_id, item in child.coverage.items():
+            if anchor_id in activities:
+                coverage[anchor_id] = {'status': 'represented',
+                                       'activity_ids': sorted(activities[anchor_id]),
+                                       'reason': None, 'evidence_ids': []}
+            else:
+                coverage.setdefault(anchor_id, copy.deepcopy(item))
+    return Unit(scope, payload, coverage)
 
 
-def grouping_reconciliation_packet(model: dict, child_payloads,
-                                   manifest_builder) -> dict:
-    """Build a compact, exhaustive grouping request from verified children."""
-    context = record('PacketContext')
+def _ids(records, field) -> set:
+    return {value for item in records for value in item.get(field) or []}
+
+
+def reconciliation_scope(model: dict, units, *, scope_id: str,
+                         parent_scope_id: str | None = None) -> dict:
+    """An unsized reconciliation scope over validated `units`.
+
+    It carries every unit's semantic records, the evidence excerpts those
+    records cite, and one coverage manifest per unit. Raw graph records stay
+    identity-only references: each unit already validated them against their
+    full content, and re-sending them would rebuild the graph that did not fit.
+    """
+    units = sorted(units, key=lambda unit: unit.scope['scope_id'])
+    context = record('GraphContext')
     context['capabilities'] = copy.deepcopy(model.get('capabilities', []))
-    activity_ids = set()
-    cited = set()
-    for payload in sorted(child_payloads, key=digest):
-        for collection in ('domains', 'ownerships', 'relationships',
-                           'rule_relationships', 'claims'):
-            overlap = set(context[collection]) & set(payload[collection])
-            if overlap:
-                raise DomainError('INVALID_ID',
-                                  'Grouping children reused a semantic record ID')
-            context[collection].update(copy.deepcopy(payload[collection]))
-        activity_ids.update(
-            membership['activity_id']
-            for domain in payload['domains'].values()
-            for membership in domain['activity_memberships'])
-        activity_ids.update(
-            claim['subject_id'] for claim in payload['claims'].values()
-            if claim['subject_id'] in model['activities'])
-        cited.update(
-            evidence_id
-            for collection in ('domains', 'ownerships', 'relationships',
-                               'rule_relationships', 'claims')
-            for item in payload[collection].values()
-            for evidence_id in item.get('evidence_ids', []))
+    for unit in units:
+        for collection in SEMANTIC_COLLECTIONS:
+            for record_id, item in unit.payload[collection].items():
+                existing = context[collection].get(record_id)
+                if existing is not None and existing != item:
+                    raise DomainError(
+                        'INVALID_ID',
+                        f'Child scopes proposed different records under {record_id}',
+                        record_id)
+                context[collection][record_id] = copy.deepcopy(item)
+    for unit in units:
+        _manifest(context, unit)
+    semantic = [item for collection in SEMANTIC_COLLECTIONS
+                for item in context[collection].values()]
     context['evidence'] = {key: copy.deepcopy(model['evidence'][key])
-                           for key in sorted(cited) if key in model['evidence']}
-    snapshot_ids = {item['locator'].get('snapshot_id')
-                    for item in context['evidence'].values()}
-    context['source_snapshots'] = {
-        key: copy.deepcopy(model['source_snapshots'][key])
-        for key in sorted(snapshot_ids) if key in model['source_snapshots']}
-    manifest_builder(model, context)
-    packet = record('GroupingPacket', context=context,
-                    activity_ids=sorted(activity_ids))
-    packet['input_fingerprint'] = digest(context)
-    validate(packet, 'GroupingPacket')
-    return packet
+                           for key in sorted(_ids(semantic, 'evidence_ids'))
+                           if key in model['evidence']}
+    from .business_domain_synthesis import _reference_manifest
+    _reference_manifest(model, context)
+    validate(context, 'GraphContext')
+    child_ids = [unit.scope['scope_id'] for unit in units]
+    cross = sorted({edge_id for unit in units for edge_id in unit.scope['cross_scope_edge_ids']})
+    scope = record(
+        'GraphScope', scope_id=scope_id, scope_kind='reconciliation',
+        partition_strategy='reconciliation', estimated_input_tokens=0,
+        parent_scope_id=parent_scope_id,
+        input_fingerprint=digest({'context': context, 'child_scope_ids': child_ids,
+                                  'cross_scope_edge_ids': cross}),
+        context=context, source_representation_ids=[], canonical_anchor_ids=[],
+        child_scope_ids=child_ids, cross_scope_edge_ids=cross)
+    validate(scope, 'GraphScope')
+    return scope
 
 
-def _namespace_child_payload(payload: dict, child_scope_id: str) -> dict:
-    """Keep conflicting child proposals distinct inside a reconciliation request."""
-    replacements = {}
-    for collection in ('activities', 'rules', 'concepts', 'information_uses', 'claims'):
-        for old in payload[collection]:
-            replacements[old] = identifier(
-                old.split(':', 1)[0], 'child', child_scope_id, old)
-    def rewrite(value):
-        if isinstance(value, str):
-            return replacements.get(value, value)
-        if isinstance(value, list):
-            return [rewrite(item) for item in value]
-        if isinstance(value, dict):
-            return {replacements.get(key, key): rewrite(item)
-                    for key, item in value.items()}
-        return value
-    return rewrite(payload)
+def _manifest(context: dict, unit: Unit) -> None:
+    """State one unit's coverage as a claim the reconciliation can cite and check."""
+    scope, coverage = unit.scope, unit.coverage
+    by_status = {status: sorted(anchor_id for anchor_id, item in coverage.items()
+                                if item['status'] == status)
+                 for status in ('represented', 'excluded', 'unresolved')}
+    represented = '; '.join(
+        f"{anchor_id} by {', '.join(coverage[anchor_id]['activity_ids']) or 'no activity'}"
+        for anchor_id in by_status['represented']) or 'none'
+    others = '; '.join(
+        f"{anchor_id} {coverage[anchor_id]['status']}: {coverage[anchor_id]['reason']}"
+        for anchor_id in by_status['excluded'] + by_status['unresolved']) or 'none'
+    contributed = sorted(record_id for collection in SEMANTIC_COLLECTIONS
+                         for record_id in unit.payload[collection])
+    # Cite the unit's own evidence, its dispositions first: a citation chosen
+    # for another unit would not support this unit's coverage.
+    evidence = [eid for item in coverage.values() for eid in item['evidence_ids']]
+    evidence += [eid for collection in SEMANTIC_COLLECTIONS
+                 for item in unit.payload[collection].values()
+                 for eid in item.get('evidence_ids') or []]
+    claim_id = identifier('claim', COVERAGE_MANIFEST, scope['scope_id'])
+    context['claims'][claim_id] = record(
+        'Claim', id=claim_id, subject_id=scope['scope_id'], kind=COVERAGE_MANIFEST,
+        text=(f"Validated {scope['partition_strategy']} child scope {scope['scope_id']}. "
+              f"Represented anchors: {represented}. "
+              f"Excluded or unresolved anchors: {others}. "
+              f"Records it contributes: {', '.join(contributed) or 'none'}. "
+              f"Typed cross-scope edges: {', '.join(scope['cross_scope_edge_ids']) or 'none'}."),
+        evidence_ids=list(dict.fromkeys(evidence))[:MANIFEST_EVIDENCE],
+        trace_ids=sorted(_ids(unit.payload['activities'].values(), 'trace_ids')),
+        semantic_review='supported')
 
 
-def normalized_children(values) -> list[ValidatedActivityChild]:
-    children = []
-    for value in values:
-        if isinstance(value, ValidatedActivityChild):
-            children.append(value)
-        else:
-            children.append(ValidatedActivityChild(
-                identifier('scope', 'validated_child', digest(value)),
-                'entrypoint_bundle', (), value))
-    return sorted(children, key=lambda child: child.scope_id)
+def reconciliation_findings(units, payload: dict) -> list[dict]:
+    """Repairable findings for coverage a reconciliation candidate must keep.
+
+    Reconciliation may merge or regroup activities, never drop an anchor a
+    unit represented. A child reported as represented must name records it
+    contributed.
+    """
+    represented = set(_anchor_activities(payload))
+    lost = sorted({anchor_id for unit in units for anchor_id, item in unit.coverage.items()
+                   if item['status'] == 'represented' and anchor_id not in represented})
+    findings = []
+    if lost:
+        findings.append({
+            'code': 'INVALID_COVERAGE', 'severity': 'error',
+            'message': ('Reconciliation dropped anchors a validated child represented; '
+                        'every such anchor must stay in a reconciled activity'),
+            'subject_ids': lost, 'evidence_ids': []})
+    contributed = {unit.scope['scope_id']: {record_id for collection in SEMANTIC_COLLECTIONS
+                                            for record_id in unit.payload[collection]}
+                   for unit in units}
+    for disposition in payload['dispositions']:
+        if disposition['subject_kind'] == 'child_scope' and disposition['status'] == 'represented':
+            unknown = set(disposition['incorporated_record_ids']) - contributed.get(
+                disposition['subject_id'], set())
+            if unknown:
+                findings.append({
+                    'code': 'INVALID_COVERAGE', 'severity': 'error',
+                    'message': 'A represented child names records it did not contribute',
+                    'subject_ids': sorted({disposition['subject_id'], *unknown}),
+                    'evidence_ids': []})
+    return findings
+
+
+def unassigned_anchors(unit: Unit) -> list[dict]:
+    """Published dispositions of the anchors the root does not represent."""
+    return [record('Unassigned', subject_id=anchor_id,
+                   status='excluded' if item['status'] == 'excluded' else 'pending',
+                   reason=item['reason'])
+            for anchor_id, item in sorted(unit.coverage.items())
+            if item['status'] != 'represented']
+
+
+def plan_reconciliation(units, build, fits) -> list[list[Unit]]:
+    """Group units, in order, into the fewest stable groups whose rollup fits.
+
+    `build(units)` returns a sized reconciliation scope. A unit that fits with
+    no neighbour forms a group of one, which the caller passes up unchanged.
+    """
+    return [group for group, _ in _pack(list(units), build, fits)]

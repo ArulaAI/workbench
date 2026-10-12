@@ -17,12 +17,14 @@ import time
 import threading
 import uuid
 from datetime import datetime, timezone
+from dataclasses import dataclass
 from pathlib import Path
 from .business_domain_schema import (
     DEFINITIONS, REFERENCE_TARGETS, COLLECTIONS, DomainError, atomic_write, canonical, digest, identifier,
     now, read_json, record, validate, validate_references, implementation_hash,
     validation_finding, validation_findings, candidate_scope_findings,
     verification_report_findings, activity_closure, information_use_closure,
+    required_scope_subjects,
 )
 from .business_domain_work import whole_graph_scope
 
@@ -745,7 +747,36 @@ def wire_schema(type_name: str, packet=None) -> dict:
             for name,child in shape.get('$defs',{}).items():
                 annotate(child,name)
         annotate(result,type_name)
+        _constrain_scope_subjects(result, type_name, packet)
     return result
+
+
+def _constrain_scope_subjects(schema, type_name, packet):
+    """Name a scope's required subjects in the schema that must cover them.
+
+    A verifier must check, and a candidate must dispose of, exactly the
+    subjects `required_scope_subjects` names; which correspondences qualify
+    is a rule the provider would otherwise have to reconstruct. The subjects
+    become the only admissible values. Completeness is not a schema count: a
+    missing subject stays a deterministic finding the repair chain receives.
+    """
+    if 'scope_kind' not in packet:
+        return
+    subjects = sorted(required_scope_subjects(packet))
+    if not subjects:
+        return
+    every = ' Include every one of the enumerated scope subjects exactly once.'
+    if type_name == 'VerificationReport':
+        checked = schema['properties']['checked_subject_ids']
+        checked['items'] = {'type': 'string', 'enum': subjects}
+        checked['description'] = (checked.get('description', '') + every).strip()
+    elif type_name == 'CandidatePayload':
+        dispositions = schema['properties']['dispositions']
+        dispositions['description'] = (dispositions.get('description', '') + every).strip()
+        # Conditional rules compile to one `anyOf` variant per case.
+        disposition = schema['$defs']['ScopeDisposition']
+        for variant in disposition.get('anyOf', [disposition]):
+            variant['properties']['subject_id']['enum'] = subjects
 
 
 def from_wire(value, schema):
@@ -1448,6 +1479,16 @@ def fit_packet(packet, max_bytes):
     raise DomainError('PACKET_LIMIT','Complete graph scope exceeds request allowance; previous publication and validated work are preserved')
 
 
+@dataclass(frozen=True)
+class RepairState:
+    """Where a repair chain stands: the rejected candidate and its rejection."""
+    candidate: dict
+    findings: list
+    report: dict
+    attempts: int
+    signatures: tuple
+
+
 class Synthesis:
     def __init__(self, root, config, provider, counters, cancelled=lambda:False,
                  heartbeat=lambda:None, recorder=None):
@@ -1788,14 +1829,32 @@ class Synthesis:
             request = {**request,'project_instructions':self.project_instructions}
         return projected_input_token_estimate(request, schema)
 
+    def _projected_provider(self):
+        """Whether dispatch sends the compact projected wire to this provider."""
+        return (self.provider is None
+                or getattr(self.provider, 'accepts_projected_wire', False))
+
     def _size_graph(self, graph):
+        """Size a scope as dispatch will measure its synthesis request.
+
+        A provider that receives the projected wire is charged for the
+        projection; any other provider receives, and is charged for, the
+        canonical request. Sizing with the same measure keeps a scope that
+        planning admits from being refused at dispatch.
+        """
         graph = copy.deepcopy(graph)
         estimates = []
         for _ in range(2):
-            request = self.request_for('synthesize', graph)
-            estimates.append(self.estimate_input(
-                semantic_request_identity_input(request),
-                wire_schema('CandidatePayload', graph)))
+            # The estimate becomes part of the scope, and so of every cache
+            # key derived from it: measure only the stable semantic request,
+            # never its per-attempt ID or deadline.
+            request = semantic_request_identity_input(
+                self.request_for('synthesize', graph))
+            schema = wire_schema('CandidatePayload', graph)
+            if self._projected_provider():
+                estimates.append(self.estimate_input(request, schema))
+            else:
+                estimates.append(input_token_estimate(request, schema))
             graph['estimated_input_tokens'] = max(estimates)
             validate(graph, 'GraphScope')
         return graph
@@ -1816,18 +1875,29 @@ class Synthesis:
             self.counters['semantic_units_active'] += 1
         try:
             synthesis_request = self.request_for('synthesize', graph)
+            resumed = self._resumed_state(synthesis_request)
             initial_findings = None
-            try:
-                candidate, cached = self._run_with_retries(
-                    synthesis_request, allow_candidate_cache=True)
-            except DomainError as exc:
-                if not (exc.repair_kind == 'semantic' and exc.findings
-                        and exc.rejected_candidate is not None):
-                    raise
-                candidate = exc.rejected_candidate
-                cached = False
-                initial_findings = exc.findings
-            if cached:
+            if resumed is not None:
+                if self.recorder:
+                    self.recorder.progress(
+                        'semantic', f'Resuming an interrupted repair chain after '
+                        f'{resumed.attempts} repair round(s)')
+                candidate, cached = None, False
+            else:
+                try:
+                    candidate, cached = self._run_with_retries(
+                        synthesis_request, allow_candidate_cache=True)
+                except DomainError as exc:
+                    if not (exc.repair_kind == 'semantic' and exc.findings
+                            and exc.rejected_candidate is not None):
+                        raise
+                    candidate = exc.rejected_candidate
+                    cached = False
+                    initial_findings = exc.findings
+            if resumed is not None:
+                result = self._repair_chain(
+                    graph, synthesis_request, validate_candidate, resumed)
+            elif cached:
                 self.cached_unit_threads.add(threading.get_ident())
                 result = candidate
             else:
@@ -2047,10 +2117,24 @@ class Synthesis:
         if not findings and report['verdict'] == 'pass':
             self._commit_candidate_response(synthesis_request, verification_key)
             return candidate
+        return self._repair_chain(
+            graph, synthesis_request, validate_candidate,
+            RepairState(candidate, findings, report, 0,
+                        (self._finding_signature(findings, report),)))
 
-        seen = {self._finding_signature(findings, report)}
+    def _repair_chain(self, graph, synthesis_request, validate_candidate, state):
+        """Repair until verification passes, from `state` onward.
+
+        After every rejected round the chain is checkpointed under the
+        synthesis request, so an interrupted chain resumes on the next refresh
+        with the repairs it has left. A chain that succeeds, stalls on the same
+        defects or exhausts its repairs leaves no checkpoint.
+        """
+        candidate, findings, report = state.candidate, state.findings, state.report
+        seen = set(state.signatures)
+        self._checkpoint(synthesis_request, state)
         for repair_attempt in range(
-                1, POLICY['semantic_repair_limit'] + 1):
+                state.attempts + 1, POLICY['semantic_repair_limit'] + 1):
             repair_request = self.request_for(
                 'repair', graph, candidate, findings, report)
             try:
@@ -2104,6 +2188,7 @@ class Synthesis:
             stalled = signature in seen
             exhausted = repair_attempt == POLICY['semantic_repair_limit']
             if stalled or exhausted:
+                self._discard_checkpoint(synthesis_request)
                 reason = ('repeated the same blocking defect set' if stalled
                           else 'reached the configured repair limit')
                 raise DomainError(
@@ -2118,11 +2203,63 @@ class Synthesis:
             seen.add(signature)
             candidate, findings, report = (
                 repaired, repaired_findings, repaired_report)
+            self._checkpoint(synthesis_request, RepairState(
+                candidate, findings, report, repair_attempt, tuple(sorted(seen))))
         self._commit_candidate_response(repair_request, verification_key)
-        # The unchanged whole-graph synthesis request is the stable checkpoint.
+        # The unchanged synthesis request keys the validated result.
         self._commit_or_store_repaired_synthesis(
             synthesis_request, repaired, verification_key)
+        self._discard_checkpoint(synthesis_request)
         return repaired
+
+    def _checkpoint_path(self, request):
+        return (self.root/'.speed/context/business-domain-pending'
+                /f'{self._request_key(request)}.json')
+
+    def _checkpoint(self, request, state):
+        artifact = record(
+            'PendingRepairArtifact', request_key=self._request_key(request),
+            provider_projection_version=ProviderProjection.VERSION,
+            provider_fingerprint=self.provider_hash,
+            prompt_fingerprint=prompt_fingerprint(),
+            updated_at=now(),
+            attempts_used=state.attempts,
+            attempted_signatures=sorted(state.signatures),
+            candidate=state.candidate, findings=state.findings,
+            verification_report=state.report)
+        validate(artifact, 'PendingRepairArtifact')
+        atomic_write(self._checkpoint_path(request), artifact,
+                     self.config['max_artifact_bytes'])
+
+    def _discard_checkpoint(self, request):
+        self._checkpoint_path(request).unlink(missing_ok=True)
+
+    def _resumed_state(self, request):
+        """The checkpointed repair state of `request`, if it can resume.
+
+        A checkpoint resumes only for the same request, provider projection,
+        provider and agent instructions, and only while repairs remain; any
+        other is discarded.
+        """
+        path = self._checkpoint_path(request)
+        artifact = read_json(path, self.config['max_artifact_bytes'])
+        if not artifact:
+            return None
+        try:
+            validate(artifact, 'PendingRepairArtifact')
+        except DomainError:
+            artifact = None
+        if (artifact is None
+                or artifact['request_key'] != self._request_key(request)
+                or artifact['provider_projection_version'] != ProviderProjection.VERSION
+                or artifact['provider_fingerprint'] != self.provider_hash
+                or artifact['prompt_fingerprint'] != prompt_fingerprint()
+                or artifact['attempts_used'] >= POLICY['semantic_repair_limit']):
+            path.unlink(missing_ok=True)
+            return None
+        return RepairState(artifact['candidate'], artifact['findings'],
+                           artifact['verification_report'], artifact['attempts_used'],
+                           tuple(artifact['attempted_signatures']))
 
     def _reserve_completion(self, estimated_input):
         """Protect the complete bounded synthesis/verification repair chain."""
@@ -2170,6 +2307,33 @@ class Synthesis:
         """Require room to resend a candidate plus verifier report for repair."""
         return (estimated_input + 2*self.effective_request_output_tokens
                 <= self.effective_request_input_tokens)
+
+    def sequence_fits(self, graph):
+        """Whether one sized scope's complete semantic sequence can run.
+
+        The sequence is synthesis, independent verification, one repair and
+        reverification: every request must fit the request allowance, and the
+        whole sequence the build budget, as `_reserve_completion` reserves it
+        for a first scope. Mode selection asks this before dispatching
+        anything; dispatch still enforces every limit itself.
+        """
+        return self.sequence_limit(graph) is None
+
+    def sequence_limit(self, graph):
+        """The limit one sized scope's complete sequence exceeds, or None.
+
+        `max_request_input_tokens` when a single request is too large,
+        otherwise the build budget setting the sequence would exhaust.
+        """
+        estimated = graph['estimated_input_tokens']
+        output = self.effective_request_output_tokens
+        if not self._completion_request_fits(estimated):
+            return 'max_request_input_tokens'
+        if 4*estimated + 4*output > self.config['max_build_input_tokens']:
+            return 'max_build_input_tokens'
+        if 4*output > self.config['max_build_output_tokens']:
+            return 'max_build_output_tokens'
+        return None
 
     def _consume_completion(self, reservations):
         reservation = self.completion_reservations.get(threading.get_ident())
@@ -2651,9 +2815,7 @@ class Synthesis:
                         level='warning')
                 pass
 
-        projected_provider = (
-            self.provider is None
-            or getattr(self.provider, 'accepts_projected_wire', False))
+        projected_provider = self._projected_provider()
         dispatch_request = provider_request if projected_provider else request
         dispatch_schema = provider_schema if projected_provider else schema
         projected_input = self.estimate_input(provider_request, provider_schema)

@@ -175,7 +175,7 @@ def _reason(facts, caller, written):
 
 def _platform(facts, caller, written, provider):
     reason = _reason(facts, caller, written)
-    assert f'a type typescript provides' in reason and f' {provider}, ' in reason, reason
+    assert 'a type typescript provides' in reason and f' {provider}, ' in reason, reason
     return reason
 
 

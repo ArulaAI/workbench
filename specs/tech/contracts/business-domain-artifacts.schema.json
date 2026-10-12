@@ -6193,113 +6193,64 @@
         "kind": {
           "const": "pending_repair"
         },
-        "packet_key": {
+        "request_key": {
           "type": "string",
           "pattern": "^[0-9a-f]{64}$"
         },
         "provider_projection_version": {
-          "const": 1
+          "type": "integer",
+          "minimum": 1
         },
-        "semantic_hash": {
+        "provider_fingerprint": {
           "type": "string",
           "pattern": "^[0-9a-f]{64}$"
         },
-        "stage": {
-          "enum": [
-            "activity",
-            "grouping",
-            "evidence_review"
-          ]
+        "prompt_fingerprint": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
         },
         "updated_at": {
           "type": "string",
           "format": "date-time"
         },
-        "next_operation": {
-          "const": "repair"
+        "attempts_used": {
+          "type": "integer",
+          "minimum": 0
         },
-        "attempted_repair_signatures": {
+        "attempted_signatures": {
           "type": "array",
           "items": {
             "type": "string",
-            "pattern": "^(schema|semantic):[0-9a-f]{64}$"
+            "pattern": "^[0-9a-f]{64}$"
           },
           "uniqueItems": true
         },
-        "correction": {
-          "type": "object",
-          "properties": {
-            "code": {
-              "type": "string"
-            },
-            "message": {
-              "type": "string"
-            },
-            "repair_kind": {
-              "enum": [
-                "schema",
-                "semantic",
-                "verifier_contract"
-              ]
-            },
-            "rejected_candidate": {},
-            "findings": {
-              "type": "array",
-              "items": {
-                "$ref": "#/$defs/ValidationFinding"
-              }
-            },
-            "verification_report": {},
-            "allowed_reference_ids": {
-              "type": "object",
-              "properties": {
-                "claim_ids": {
-                  "type": "array",
-                  "items": {
-                    "type": "string",
-                    "pattern": "^claim:[^ ]+$"
-                  },
-                  "uniqueItems": true
-                },
-                "evidence_ids": {
-                  "type": "array",
-                  "items": {
-                    "type": "string",
-                    "pattern": "^ev:[^ ]+$"
-                  },
-                  "uniqueItems": true
-                }
-              },
-              "minProperties": 1,
-              "additionalProperties": false
-            },
-            "instruction": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "required": [
-            "code",
-            "message",
-            "repair_kind",
-            "rejected_candidate",
-            "findings",
-            "verification_report",
-            "instruction"
-          ],
-          "additionalProperties": false
+        "candidate": {
+          "$ref": "#/$defs/CandidatePayload"
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ValidationFinding"
+          }
+        },
+        "verification_report": {
+          "$ref": "#/$defs/VerificationReport"
         }
       },
       "required": [
         "schema_version",
         "kind",
-        "packet_key",
+        "request_key",
         "provider_projection_version",
-        "semantic_hash",
-        "stage",
+        "provider_fingerprint",
+        "prompt_fingerprint",
         "updated_at",
-        "next_operation",
-        "correction"
+        "attempts_used",
+        "attempted_signatures",
+        "candidate",
+        "findings",
+        "verification_report"
       ],
       "additionalProperties": false
     },
