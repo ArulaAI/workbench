@@ -7,6 +7,12 @@ set -euo pipefail
 SPEED_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export SPEED_DIR    # Available to Python subprocesses
 PROJECT_ROOT="${SPEED_PROJECT_ROOT:-$(pwd)}"
+# An agent runs inside its task worktree (<project>/.speed/worktrees/<feature>/task-N),
+# which only holds git-tracked files. Workbench state for new features lives in the real
+# project, so resolve the project root back out of the worktree.
+case "$PROJECT_ROOT" in
+    */.speed/worktrees/*) PROJECT_ROOT="${PROJECT_ROOT%%/.speed/worktrees/*}" ;;
+esac
 # MSYS converts native executable arguments but does not convert path values
 # embedded in environment variables or Python source. Keep native equivalents
 # for Python bridges when Workbench is launched from Git Bash on Windows.
