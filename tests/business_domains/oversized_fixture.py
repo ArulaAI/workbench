@@ -243,12 +243,32 @@ class ReconcilingProvider(PassingProvider):
                       input_fingerprint=graph['input_fingerprint'], activities=activities,
                       domains=domains, claims=claims, dispositions=dispositions)
 
+    def _merge_by_anchor(self, context):
+        """One activity per anchor set: segments of one anchor become one."""
+        groups = {}
+        for activity_id, activity in sorted(context['activities'].items()):
+            groups.setdefault(tuple(activity['anchor_ids']), []).append(activity)
+        activities, claims = {}, {}
+        for index, (anchor_ids, members) in enumerate(sorted(groups.items())):
+            if len(members) == 1:
+                [activity] = members
+                activities[activity['id']] = copy.deepcopy(activity)
+                for claim_id in activity['claim_ids']:
+                    claims[claim_id] = copy.deepcopy(context['claims'][claim_id])
+                continue
+            activity_id, claim_id = f'activity:merged{index}', f'claim:merged{index}'
+            traces = sorted({trace for member in members for trace in member['trace_ids']})
+            evidence = sorted({eid for member in members for eid in member['evidence_ids']})
+            claims[claim_id] = self._claim(claim_id, activity_id,
+                                           f'Handles entry point {anchor_ids[0]}.', evidence, traces)
+            activities[activity_id] = record('Activity', id=activity_id, name=members[0]['name'],
+                description=f'Handles entry point {anchor_ids[0]}.', anchor_ids=list(anchor_ids),
+                trace_ids=traces, evidence_ids=evidence, claim_ids=[claim_id], support='partial')
+        return activities, claims
+
     def _reconcile(self, graph, _allowed):
         context = graph['context']
-        activities = copy.deepcopy(context['activities'])
-        claims = {claim_id: copy.deepcopy(claim) for claim_id, claim in context['claims'].items()
-                  if claim['kind'] != 'coverage_manifest'
-                  and claim['subject_id'] in activities}
+        activities, claims = self._merge_by_anchor(context)
         evidence = sorted({eid for item in activities.values() for eid in item['evidence_ids']})
         domains = {'domain:orders': self._domain(activities, claims, evidence)}
         dispositions = []
@@ -259,7 +279,7 @@ class ReconcilingProvider(PassingProvider):
             listed = manifest['text'].split('Records it contributes: ', 1)[1]
             listed = listed.split('. Typed cross-scope edges', 1)[0]
             incorporated = sorted(item for item in listed.split(', ')
-                                  if item in activities)
+                                  if item in context['activities'])
             dispositions.append(record('ScopeDisposition', id=f'disposition:c{index}',
                 subject_kind='child_scope', subject_id=child_id, status='represented',
                 incorporated_record_ids=incorporated))
@@ -331,6 +351,65 @@ class RepairingProvider(ReconcilingProvider):
             payload = record('RepairPayload',
                              parent_candidate_hash=request['parent_candidate_hash'],
                              candidate=candidate)
+            return encode(payload, DEFINITIONS['RepairPayload']), {
+                'last': {'inputTokens': 10, 'outputTokens': 10}}
+        return super().generate(request, schema, *rest)
+
+
+class SplittingProvider(ReconcilingProvider):
+    """Split the first anchor's behaviour into two activities until repaired."""
+
+    def _synthesize(self, graph, allowed):
+        payload = super()._synthesize(graph, allowed)
+        first = sorted(payload['activities'])[0]
+        # A concept of its own gives the twin a distinct identity, as differing
+        # rules or concepts do for a model's split; its derived lists still
+        # match the activity it was split from.
+        twin = copy.deepcopy(payload['activities'][first])
+        twin.update(id='activity:twin', name=twin['name'] + ': record the result',
+                    claim_ids=['claim:twin'], concept_ids=['concept:result'])
+        payload['concepts']['concept:result'] = record(
+            'Concept', id='concept:result', name='Order result',
+            qualified_type_names=[], symbol_ids=[],
+            evidence_ids=twin['evidence_ids'], claim_ids=['claim:twin'])
+        payload['activities'][twin['id']] = twin
+        payload['claims']['claim:twin'] = self._claim(
+            'claim:twin', twin['id'], twin['description'], twin['evidence_ids'],
+            twin['trace_ids'])
+        payload['domains']['domain:orders']['activity_memberships'].append(record(
+            'ActivityMembership', activity_id=twin['id'], role='supporting',
+            claim_ids=['claim:domain']))
+        anchor = twin['anchor_ids'][0]
+        for disposition in payload['dispositions']:
+            if disposition['subject_id'] == anchor:
+                disposition['activity_ids'] = sorted(disposition['activity_ids'] + [twin['id']])
+        return payload
+
+    def generate(self, request, schema, *rest):
+        if request['operation'] == 'verify' and request['deterministic_findings']:
+            # A verifier fails a candidate deterministic validation rejected.
+            self.requests.append(copy.deepcopy(request))
+            graph = request['graph']
+            subjects = sorted({subject for finding in request['deterministic_findings']
+                               for subject in finding['subject_ids']
+                               if subject in request['candidate']['activities']})
+            report = record(
+                'VerificationReport', scope_id=graph['scope_id'],
+                input_fingerprint=graph['input_fingerprint'], verdict='fail',
+                findings=[record('VerificationFinding', id='verification_finding:split',
+                                 category='incorrect_split', severity='blocking',
+                                 message='One trace is split into several activities.',
+                                 subject_ids=subjects)],
+                checked_subject_ids=sorted(required_scope_subjects(graph)))
+            return encode(report, DEFINITIONS['VerificationReport']), {
+                'last': {'inputTokens': 10, 'outputTokens': 10}}
+        if request['operation'] == 'repair':
+            self.requests.append(copy.deepcopy(request))
+            merged = ReconcilingProvider._synthesize(
+                self, request['graph'], set(request['allowed_evidence_ids']))
+            payload = record('RepairPayload',
+                             parent_candidate_hash=request['parent_candidate_hash'],
+                             candidate=merged)
             return encode(payload, DEFINITIONS['RepairPayload']), {
                 'last': {'inputTokens': 10, 'outputTokens': 10}}
         return super().generate(request, schema, *rest)

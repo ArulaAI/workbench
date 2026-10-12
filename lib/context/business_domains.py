@@ -458,6 +458,25 @@ def accept_candidate(model, graph, payload, *, verified=False):
                     candidate, activity).items():
                 candidate['activities'][activity_id][field] = sorted(identifiers)
 
+    # An activity's inputs, outputs and effects derive from the traces it
+    # selects. Activities of one anchor that derive identical lists divide one
+    # behaviour that no repair of those lists can separate.
+    derived = {}
+    for activity_id in payload['activities']:
+        stored = candidate['activities'][activity_id]
+        lists = tuple(tuple(sorted(stored[field])) for field in (
+            'input_binding_ids', 'output_binding_ids', 'effect_ids'))
+        if any(lists):
+            for anchor_id in stored['anchor_ids']:
+                derived.setdefault((anchor_id, lists), []).append(activity_id)
+    for (anchor_id, _), activity_ids in sorted(derived.items()):
+        if len(activity_ids) > 1:
+            report(
+                'INCORRECT_SPLIT',
+                'Activities of one anchor derive identical inputs, outputs and effects '
+                'from their traces; model them as one activity',
+                anchor_id, *sorted(activity_ids))
+
     for use_id in sorted(payload['information_uses']):
         use = payload['information_uses'][use_id]
         if use['activity_id'] not in payload['activities']:
