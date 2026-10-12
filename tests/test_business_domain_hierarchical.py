@@ -9,11 +9,10 @@ partition; see tests/business_domains/oversized_fixture.py.
 The first section holds the foundation: fixtures, calibration and the fit rule
 that selects the mode. The second holds BD-40's acceptance behaviour. Each of
 those tests is a strict expected failure until the phase named in its marker
-implements it, so a phase is finished only when its markers come off.
+implemented it; every marker has now come off.
 """
 import copy
 
-import pytest
 
 from lib.context.business_domain_extract import Extractor
 from lib.context.business_domain_schema import copy_facts, settings
@@ -144,8 +143,6 @@ def _requests(provider, kind, operation='synthesize'):
             and request['graph']['scope_kind'] == kind]
 
 
-PHASE_2 = pytest.mark.xfail(strict=True, reason='Phase 2: basic hierarchical orchestration')
-PHASE_4 = pytest.mark.xfail(strict=True, reason='Phase 4: application-boundary slicing')
 
 
 def test_an_oversized_monolith_publishes_through_entry_point_bundles(tmp_path):
@@ -275,7 +272,6 @@ def test_progress_counts_validated_slices_before_root_reconciliation(tmp_path):
     assert status['limits']['semantic_units_pending'] == status['limits']['semantic_units_total'] - 1
 
 
-@PHASE_4
 def test_a_monorepo_is_sliced_by_application_boundary_first(tmp_path):
     root = write_monorepo(tmp_path, entry_points=3)
     config = force_split(calibrate(root).splitting_allowance())
@@ -574,3 +570,57 @@ def test_the_provider_schema_names_exactly_the_subjects_a_scope_requires(tmp_pat
         assert report['properties']['checked_subject_ids']['items']['enum'] == required
         assert all(variant['properties']['subject_id']['enum'] == required
                    for variant in candidate['$defs']['ScopeDisposition']['anyOf'])
+
+
+
+# ── Phase 4: application boundaries ────────────────────────────────────
+
+def _services(model, graph):
+    return {model['symbols'][model['anchors'][anchor]['symbol_id']]['file'].split('/')[1]
+            for anchor in graph['canonical_anchor_ids']}
+
+
+def test_each_service_that_fits_is_one_application_boundary_slice(tmp_path):
+    root = write_monorepo(tmp_path, entry_points=3)
+    calibration = calibrate(root)
+    provider = _Capture()
+
+    model, status = discover(root, force_split(calibration.splitting_allowance()),
+                             provider=provider)
+
+    slices = [graph for graph in provider.scopes if graph['scope_kind'] == 'slice']
+    assert model is not None and status['root_reconciled']
+    assert sorted(graph['partition_strategy'] for graph in slices) == ['application_boundary'] * 3
+    assert sorted(_services(model, graph).pop() for graph in slices) == [
+        'billing', 'catalog', 'shipping']
+    assert all(len(graph['canonical_anchor_ids']) == 3 for graph in slices)
+
+
+def test_a_service_too_large_for_one_request_is_bundled_within_itself(tmp_path):
+    root = write_monorepo(tmp_path, services=('billing', 'catalog'), entry_points=2)
+    write_monorepo(tmp_path, services=('ledger',), entry_points=8)
+    calibration = calibrate(root)
+    provider = _Capture()
+
+    model, status = discover(root, force_split(calibration.splitting_allowance()),
+                             provider=provider)
+
+    slices = [graph for graph in provider.scopes if graph['scope_kind'] == 'slice']
+    by_strategy = {}
+    for graph in slices:
+        assert len(_services(model, graph)) == 1, 'a slice never spans two services'
+        by_strategy.setdefault(graph['partition_strategy'], set()).update(
+            _services(model, graph))
+    assert model is not None and status['root_reconciled']
+    assert by_strategy['entrypoint_bundle'] == {'ledger'}
+    assert by_strategy['application_boundary'] == {'billing', 'catalog'}
+
+
+def test_a_single_service_repository_goes_straight_to_entry_point_bundles(tmp_path):
+    config = _split_monolith(tmp_path)
+    provider = _Capture()
+
+    discover(tmp_path, config, provider=provider)
+
+    assert {graph['partition_strategy'] for graph in provider.scopes
+            if graph['scope_kind'] == 'slice'} == {'entrypoint_bundle'}

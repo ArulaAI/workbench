@@ -92,7 +92,9 @@ def whole_graph_scope(model: dict, selected: dict | None = None) -> dict:
 # "Large-repository hierarchical mode"). The graph stays whole in canonical
 # storage; only requests are divided:
 #
-#   entry-point bundle   the complete trace closures of several anchors
+#   application boundary the complete trace closures of one service's anchors
+#   entry-point bundle   the closures of several anchors of a boundary too
+#                        large for one request
 #   execution segment    part of one anchor's closure too large for a request,
 #                        cut at typed execution edges
 #   reconciliation       validated units rolled up; segments into their anchor,
@@ -170,16 +172,33 @@ def _edge_users(model: dict) -> dict:
     return users
 
 
+def application_boundaries(model: dict) -> dict:
+    """Boundary name -> its canonical anchors, from each anchor's service.
+
+    A service is the deployable boundary extraction found for the anchor's
+    source (its nearest build manifest); an anchor without one belongs to the
+    repository boundary.
+    """
+    boundaries = {}
+    for anchor_id, anchor in model['anchors'].items():
+        resource = model['resources'].get(anchor['operation'].get('service_resource_id') or '')
+        name = resource['name'] if resource else 'repository'
+        boundaries.setdefault(name, []).append(anchor_id)
+    return {name: sorted(anchor_ids) for name, anchor_ids in sorted(boundaries.items())}
+
+
 def plan_slices(model: dict, build_bundle, build_segment, fits, limit) -> list[dict]:
     """Sized slices covering every canonical anchor, in a deterministic order.
 
-    Anchors are packed into entry-point bundles in canonical-ID order. Shared
-    implementation appears in every bundle that reaches it, and its edges are
-    declared cross-scope so reconciliation recognises the shared records. An
-    anchor whose closure alone exceeds one request is cut into execution
-    segments instead; one that exceeds the build budget cannot run at all.
+    The primary partition is the application boundary: every anchor of one
+    deployable service in one slice. A boundary too large for one request is
+    packed into entry-point bundles in canonical-ID order, and an anchor too
+    large alone is cut into execution segments. No slice spans two boundaries.
+    Shared implementation appears in every slice that reaches it, and its
+    edges are declared cross-scope so reconciliation recognises the shared
+    records.
 
-    `build_bundle(anchor_ids, cross_scope_edge_ids)` and
+    `build_bundle(anchor_ids, cross_scope_edge_ids, strategy)` and
     `build_segment(view, anchor_id, cut_edge_ids)` return sized scopes;
     `fits(scope)` decides whether a scope's complete sequence can run and
     `limit(scope)` names the setting it exceeds when it cannot.
@@ -190,13 +209,29 @@ def plan_slices(model: dict, build_bundle, build_segment, fits, limit) -> list[d
         for anchor_id in anchors:
             owned.setdefault(anchor_id, set()).add(edge_id)
 
-    def bundle(anchor_ids):
+    def build(anchor_ids, strategy='entrypoint_bundle'):
         members = set(anchor_ids)
         edges = set().union(*(owned.get(anchor_id, set()) for anchor_id in anchor_ids))
-        return build_bundle(anchor_ids, sorted(e for e in edges if users[e] - members))
+        return build_bundle(anchor_ids, sorted(e for e in edges if users[e] - members),
+                            strategy)
 
+    boundaries = application_boundaries(model)
     slices = []
-    for anchor_ids, scope in _pack(sorted(model['anchors']), bundle, fits):
+    for anchors in boundaries.values():
+        # A lone boundary is the whole graph, already known not to fit.
+        if len(boundaries) > 1:
+            scope = build(anchors, 'application_boundary')
+            if fits(scope):
+                slices.append(scope)
+                continue
+        slices.extend(_bundles(model, anchors, build, build_segment, fits, limit))
+    return slices
+
+
+def _bundles(model, anchors, build, build_segment, fits, limit) -> list[dict]:
+    """Entry-point bundles over `anchors`, segmenting any anchor too large alone."""
+    slices = []
+    for anchor_ids, scope in _pack(anchors, build, fits):
         if fits(scope):
             slices.append(scope)
             continue

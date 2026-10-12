@@ -4,8 +4,9 @@ Selected when the complete graph's synthesis, verification, repair and
 reverification sequence does not fit one request (tech spec, "Large-repository
 hierarchical mode"). The plan is fixed before anything is dispatched:
 
-    1. Pack canonical anchors into entry-point bundles; cut any anchor whose
-       closure alone is too large into execution segments.
+    1. Slice by application boundary; pack a boundary too large for one
+       request into entry-point bundles, and cut any anchor too large alone
+       into execution segments.
     2. Reserve the build budget for every slice and the root.
     3. Synthesize, verify and repair every slice, `provider_concurrency` at a
        time, under the same contracts as a whole graph.
@@ -19,6 +20,7 @@ reuses all completed work. Nothing here publishes.
 from __future__ import annotations
 
 import threading
+from collections import Counter
 from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
 
 from .business_domain_schema import DomainError, digest, identifier
@@ -32,10 +34,10 @@ from .business_domain_work import (
 
 def plan(baseline: dict, synthesis) -> list[dict]:
     """Sized slices covering every canonical anchor."""
-    def bundle(anchor_ids, cross_scope_edge_ids):
+    def bundle(anchor_ids, cross_scope_edge_ids, strategy):
         selected = _model_ready_context(baseline, anchor_ids)
         return synthesis._size_graph(slice_scope(
-            baseline, anchor_ids, selected, 'entrypoint_bundle',
+            baseline, anchor_ids, selected, strategy,
             cross_scope_edge_ids=cross_scope_edge_ids))
 
     def segment(view, anchor_id, cut_edge_ids):
@@ -200,6 +202,16 @@ class _Run:
             level += 1
 
 
+def _describe(slices, segmented) -> str:
+    counts = Counter(scope['partition_strategy'] for scope in slices)
+    parts = [f'{counts[strategy]} {label}' for strategy, label in (
+        ('application_boundary', 'application boundaries'),
+        ('entrypoint_bundle', 'entry-point bundles'),
+        ('execution_segment', f'execution segments of {len(segmented)} oversized entry points'),
+    ) if counts[strategy]]
+    return ', '.join(parts)
+
+
 def _group_id(units) -> str:
     return identifier('scope', 'reconciliation',
                       digest(sorted(unit.scope['scope_id'] for unit in units)))
@@ -223,12 +235,8 @@ def run(baseline: dict, synthesis, accept, *, status, heartbeat, recorder=None):
                             semantic_units_pending=0)
     attempt = _Run(baseline, synthesis, accept, status, heartbeat, recorder)
     attempt.add_units(len(slices) + len(segmented))
-    bundles = sum(scope['partition_strategy'] == 'entrypoint_bundle' for scope in slices)
-    attempt.progress(
-        f'Hierarchical mode: {bundles} entry-point bundles'
-        + (f', {len(slices) - bundles} execution segments of {len(segmented)} '
-           'oversized entry points' if segmented else '')
-        + ' (the complete graph does not fit one request)')
+    attempt.progress(f'Hierarchical mode: {_describe(slices, segmented)} '
+                     '(the complete graph does not fit one request)')
     attempt.beat()
 
     payloads = attempt.dispatch([(scope, attempt.validator(scope)) for scope in slices], 'Slice')
