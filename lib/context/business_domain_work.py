@@ -1015,10 +1015,9 @@ def _regroup(expanded: dict, supplied: dict, merged: set) -> None:
     """Settle the children's domains, ownerships and relationships.
 
     A returned domain claims its member activities. A child domain keeps the
-    activities no returned domain claims, and is retired when none remain; its
-    ownerships then move to the domain holding its activities, unless that
-    domain already owns the concept. Two ownerships of one concept in one
-    domain combine. Relationships follow their activities: each end's domain
+    activities no returned domain claims, and is retired when none remain;
+    each of its ownerships moves to the domain now holding the activities it
+    rests on. Two ownerships of one concept in one domain combine. Relationships follow their activities: each end's domain
     is its activity's primary domain, and links to activities that no longer
     exist, or within one activity, are dropped.
     """
@@ -1079,9 +1078,6 @@ def _regroup(expanded: dict, supplied: dict, merged: set) -> None:
         successor[domain_id] = min(targets, key=lambda target: (-targets.count(target), target),
                                    default=None)
 
-    def settled(domain_id):
-        return domain_id if domain_id in domains else successor.get(domain_id)
-
     ownerships = {}
     for ownership_id in sorted(expanded['ownerships']) + sorted(
             set(supplied['ownerships']) - set(expanded['ownerships'])):
@@ -1091,11 +1087,19 @@ def _regroup(expanded: dict, supplied: dict, merged: set) -> None:
         if (ownership_id not in expanded['ownerships'] and origin in returned
                 and ownership_id not in domains[origin]['ownership_ids']):
             continue
-        item['domain_id'] = settled(origin) if origin else None
-        if item['domain_id'] is None:
-            continue
         item['activity_ids'] = list(dict.fromkeys(
             activity_id for activity_id in map(current, item['activity_ids']) if activity_id))
+        if origin in domains or not origin:
+            item['domain_id'] = origin
+        else:
+            # A retired domain's activities may now sit in several domains;
+            # its ownership goes where the activities it rests on went.
+            homes = [home[activity_id] for activity_id in item['activity_ids']
+                     if activity_id in home]
+            item['domain_id'] = min(homes, key=lambda target: (-homes.count(target), target),
+                                    default=successor.get(origin))
+        if item['domain_id'] is None:
+            continue
         ownerships[ownership_id] = item
     for _, group in sorted(_by_owner(ownerships).items()):
         if len(group) < 2:

@@ -377,3 +377,23 @@ def test_rules_of_different_slices_over_one_observation_must_become_one():
 
     assert finding['code'] == 'DUPLICATE_RULE'
     assert finding['subject_ids'] == ['rule:a', 'rule:b']
+
+
+def test_a_retired_domains_ownerships_follow_their_own_activities():
+    scope, answer = _regrouping_scope()
+    context = scope['context']
+    # domain:one holds a and b; its two ownerships rest on one activity each.
+    context['domains']['domain:one']['activity_memberships'].append(
+        {'activity_id': 'activity:b', 'role': 'supporting', 'claim_ids': []})
+    context['ownerships']['ownership:two']['domain_id'] = 'domain:one'
+    context['concepts']['concept:d'] = {'id': 'concept:d', 'claim_ids': []}
+    context['ownerships']['ownership:two']['concept_id'] = 'concept:d'
+    del context['domains']['domain:two']
+    answer['domains'] = {'domain:ledger': _domain('domain:ledger', 'activity:a'),
+                         'domain:payments': _domain('domain:payments', 'activity:b')}
+
+    complete = expand_reconciliation(scope, answer)
+
+    owners = {ownership_id: item['domain_id']
+              for ownership_id, item in complete['ownerships'].items()}
+    assert owners == {'ownership:one': 'domain:ledger', 'ownership:two': 'domain:payments'}
