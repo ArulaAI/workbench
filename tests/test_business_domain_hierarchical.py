@@ -411,7 +411,7 @@ def test_a_root_that_drops_a_represented_anchor_is_sent_back_for_repair():
                    [('anchor:a', 'represented', None), ('anchor:b', 'represented', None)],
                    {'activity:a': ['anchor:a'], 'activity:b': ['anchor:b']})
     root = {collection: {} for collection in ('activities', 'information_uses',
-                                              'relationships', 'domains')}
+                                              'relationships', 'domains', 'rules')}
     root['activities'] = {'activity:a': {'anchor_ids': ['anchor:a']}}
     root['dispositions'] = [{'subject_kind': 'child_scope', 'subject_id': 'scope:child',
                              'status': 'represented',

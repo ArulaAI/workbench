@@ -346,3 +346,34 @@ def test_a_membership_without_claims_rests_on_its_activity_claims():
 
     [membership] = complete['domains']['domain:pay']['activity_memberships']
     assert membership['claim_ids'] == ['claim:merged']
+
+
+def test_a_returned_rule_replaces_child_rules_over_the_same_observations():
+    scope, answer = _merging_scope()
+    for rule_id in ('rule:one', 'rule:two'):
+        scope['context']['rules'][rule_id]['observation_ids'] = ['observation:velocity']
+    answer['activities'] = {}
+    answer['rules'] = {'rule:velocity': {'id': 'rule:velocity',
+                                         'observation_ids': ['observation:velocity']}}
+    answer['dispositions'][0]['incorporated_record_ids'] = ['activity:one', 'activity:two']
+
+    complete = expand_reconciliation(scope, answer)
+
+    assert set(complete['rules']) == {'rule:velocity'}
+    assert {activity['rule_ids'][0] for activity in complete['activities'].values()} == {
+        'rule:velocity'}
+
+
+def test_rules_of_different_slices_over_one_observation_must_become_one():
+    units, candidate = _connected_units()
+    candidate['relationships'] = {'relationship:x': {
+        'from_activity_id': 'activity:refund', 'to_activity_id': 'activity:authorise'}}
+    for unit, rule_id in zip(units, ('rule:a', 'rule:b')):
+        rule = {'id': rule_id, 'observation_ids': ['observation:velocity']}
+        unit.payload['rules'][rule_id] = rule
+        candidate['rules'][rule_id] = rule
+
+    [finding] = reconciliation_findings({}, units, candidate)
+
+    assert finding['code'] == 'DUPLICATE_RULE'
+    assert finding['subject_ids'] == ['rule:a', 'rule:b']

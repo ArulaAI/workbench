@@ -796,6 +796,7 @@ def expand_reconciliation(scope: dict, payload: dict) -> dict:
              and disposition['status'] == 'represented'
              for record_id in disposition['incorporated_record_ids']}
     _carry(expanded, supplied, named | _referenced(expanded, supplied), merged)
+    _supersede_rules(expanded, supplied)
     _regroup(expanded, supplied, merged)
     groupings = {record_id for collection in GROUPING_COLLECTIONS
                  for record_id in expanded[collection]}
@@ -810,6 +811,34 @@ def expand_reconciliation(scope: dict, payload: dict) -> dict:
     _drop_replaced_references(expanded, supplied)
     _link_claims(expanded)
     return expanded
+
+
+def _supersede_rules(expanded: dict, supplied: dict) -> None:
+    """Replace child rules with the returned rule over the same observations.
+
+    Children describe one observed rule independently; a rule the answer
+    returns over observations replaces every child rule citing only those,
+    and what named a replaced rule names the returned one.
+    """
+    returned = {rule_id: set(rule.get('observation_ids', ()))
+                for rule_id, rule in expanded['rules'].items()
+                if rule_id not in supplied['rules'] and rule.get('observation_ids')}
+    replaced = {}
+    for rule_id in sorted(supplied['rules']):
+        observed = set(supplied['rules'][rule_id].get('observation_ids', ()))
+        if rule_id in returned or not observed:
+            continue
+        successor = min((other for other, covered in returned.items() if observed <= covered),
+                        default=None)
+        if successor is not None:
+            replaced[rule_id] = successor
+    if not replaced:
+        return
+    for rule_id in replaced:
+        expanded['rules'].pop(rule_id, None)
+    for collection in SEMANTIC_COLLECTIONS:
+        for record_id, item in expanded[collection].items():
+            expanded[collection][record_id] = _renamed(item, replaced)
 
 
 def _rehome(expanded: dict, supplied: dict, merged: set) -> None:
@@ -1204,7 +1233,24 @@ def reconciliation_findings(model: dict, units, payload: dict) -> list[dict]:
                     'message': 'A represented child names records it did not contribute',
                     'subject_ids': sorted({disposition['subject_id'], *unknown}),
                     'evidence_ids': []})
-    return findings + _link_findings(payload, units) + _merge_findings(model, units, payload)
+    return (findings + _link_findings(payload, units) + _merge_findings(model, units, payload)
+            + _rule_findings(payload, units))
+
+
+def _rule_findings(payload: dict, units) -> list[dict]:
+    """Rules of different units over the same observations are one rule."""
+    unit_of = {rule_id: unit.scope['scope_id'] for unit in units
+               for rule_id in unit.payload['rules']}
+    groups = {}
+    for rule_id, rule in payload['rules'].items():
+        if rule.get('observation_ids'):
+            groups.setdefault(frozenset(rule['observation_ids']), []).append(rule_id)
+    return [{'code': 'DUPLICATE_RULE', 'severity': 'error',
+             'message': ('Rules from different child scopes describe the same observations; '
+                         'return one rule over those observations, which replaces them'),
+             'subject_ids': sorted(group), 'evidence_ids': []}
+            for _, group in sorted(groups.items(), key=lambda item: sorted(item[1]))
+            if len({unit_of.get(rule_id) for rule_id in group}) > 1]
 
 
 def _link_findings(payload: dict, units) -> list[dict]:
