@@ -14,7 +14,7 @@
 #   - Atomic versioned directory layout
 #   - Shell rc integration (PATH + SPEED_PYTHON)
 #
-# Requirements: bash >= 4.3, curl, git, jq, coreutils (timeout), claude or codex CLI
+# Requirements: bash >= 3.2, curl, git, jq, claude or codex CLI
 #
 # Proxy support:
 #   The installer respects HTTP_PROXY, HTTPS_PROXY, and NO_PROXY from
@@ -27,7 +27,7 @@ set -euo pipefail
 SPEED_HOME="${HOME}/.speed"
 SPEED_REPO="${SPEED_REPO:-https://github.com/<org>/speed.git}"   # Override for internal mirrors
 SPEED_TARBALL_URL="${SPEED_TARBALL_URL:-}"   # Override for tarball download
-MIN_BASH_VERSION="4.3"
+MIN_BASH_VERSION="3.2"
 REQUIRED_PYTHON="3.12"
 MARKER_COMMENT="# Added by SPEED installer"
 INSTALLER_VERSION="1.0.0"
@@ -190,10 +190,6 @@ check_system_deps() {
     command_exists git  || missing+=("git")
     command_exists jq   || missing+=("jq")
 
-    if ! command_exists timeout && ! command_exists gtimeout; then
-        missing+=("coreutils")
-    fi
-
     if [[ ${#missing[@]} -gt 0 ]]; then
         local install_hint=""
         if [[ "$PLATFORM_OS" == "macos" ]]; then
@@ -210,7 +206,7 @@ check_system_deps() {
         error "Missing required dependencies: ${missing[*]}. Run: ${install_hint}"
     fi
 
-    info "System dependencies satisfied: curl, git, jq, timeout"
+    info "System dependencies satisfied: curl, git, jq (agent timeout has a bundled Python fallback)"
 }
 
 # ── Provider Check ────────────────────────────────────────────

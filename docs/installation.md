@@ -9,21 +9,21 @@ Covers: system prerequisites, installing SPEED, building grammar libraries, init
 
 ## Prerequisites
 
-SPEED runs on Linux and macOS. It requires bash 4.3+, a handful of CLI tools, Python 3.12+, and at least one AI agent provider.
+SPEED runs on Linux and macOS. It requires bash 3.2+, a handful of CLI tools, Python 3.12+, and at least one AI agent provider.
 
 ### System dependencies
 
 | Dependency | Why | macOS | Linux (apt) |
 |-----------|-----|-------|-------------|
-| bash >= 4.3 | Associative arrays, namerefs | `brew install bash` | Ships with distro |
+| bash >= 3.2 | Command orchestration | Included with macOS | Ships with distro |
 | git | Worktree isolation, branch management | Xcode CLT or `brew install git` | `apt install git` |
 | jq | JSON parsing for task state | `brew install jq` | `apt install jq` |
 | curl | Network operations | Pre-installed | `apt install curl` |
-| GNU timeout | Agent time limits | `brew install coreutils` (provides `gtimeout`) | Ships with coreutils |
+| Agent timeout | Agent time limits | Bundled Python runner | Bundled Python runner |
 | Node.js >= 18 | Required to install agent provider CLIs | `brew install node` | `apt install nodejs npm` |
 | Python 3.12+ | Context extraction, grounding, gates | `brew install python@3.12` | Ships with `python3` or `apt install python3` |
 
-macOS ships bash 3.2. You need Homebrew bash (`brew install bash`) for SPEED to work.
+macOS ships bash 3.2, which SPEED supports. On macOS/Linux, SPEED always uses its bundled Python timeout runner; coreutils is not required. Windows retains its existing GNU timeout backend.
 
 ### Agent provider
 
@@ -326,7 +326,7 @@ my-project/
 | Problem | Fix |
 |---------|-----|
 | `bash version too old` | `brew install bash` (macOS ships 3.2) |
-| `timeout command not found` | `brew install coreutils` |
+| `No usable agent timeout runner` | Verify `SPEED_PYTHON` and the bundled `lib/timeout` files |
 | `jq not found` | `brew install jq` or `apt install jq` |
 | `No agent provider found` | Install Claude CLI: `npm install -g @anthropic-ai/claude-code` |
 | `python3 not found` | The curl installer creates its own venv; for manual installs, ensure python3 is on PATH |

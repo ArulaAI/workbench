@@ -8,19 +8,25 @@
 
 # ── Resolve timeout command ──────────────────────────────────────
 _TIMEOUT_CMD=""
-if command -v timeout &>/dev/null; then
-    _TIMEOUT_CMD="timeout"
-elif command -v gtimeout &>/dev/null; then
-    _TIMEOUT_CMD="gtimeout"
+if _python_timeout_available; then
+    export SPEED_PYTHON="${SPEED_PYTHON:-$_deps_python}"
+    _TIMEOUT_CMD="${LIB_DIR}/timeout"
+elif [[ "$OSTYPE" == msys* || "$OSTYPE" == cygwin* ]]; then
+    # Native Windows Python cannot manage POSIX process groups.
+    if command -v timeout &>/dev/null; then
+        _TIMEOUT_CMD="timeout"
+    elif command -v gtimeout &>/dev/null; then
+        _TIMEOUT_CMD="gtimeout"
+    fi
 fi
 
 # Hard gate: refuse to run agents without a timeout command.
 require_timeout_cmd() {
     if [[ -z "$_TIMEOUT_CMD" ]]; then
         log_error_block \
-            "Cannot find 'timeout' or 'gtimeout' command" \
-            "SPEED requires GNU timeout to enforce agent time limits" \
-            "macOS: brew install coreutils  |  Linux: apt install coreutils"
+            "No usable agent timeout runner" \
+            "SPEED requires GNU timeout or its bundled Python fallback" \
+            "Verify SPEED_PYTHON and the Workbench lib/timeout files"
         return 1
     fi
 }

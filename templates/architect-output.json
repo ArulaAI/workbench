@@ -8,7 +8,7 @@
       "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["id", "title", "description", "acceptance_criteria", "depends_on", "agent_model", "files_touched"],
+        "required": ["id", "title", "description", "acceptance_criteria", "depends_on", "agent_model", "files_touched", "spec_references"],
         "properties": {
           "id": {
             "type": "string",
@@ -39,6 +39,20 @@
             "type": "array",
             "items": { "type": "string" },
             "description": "Files this task will create or modify (relative to project root)"
+          },
+          "spec_references": {
+            "type": "array",
+            "minItems": 1,
+            "description": "Requirements authorizing this task. In defect mode, spec must be the exact supplied defect file path.",
+            "items": {
+              "type": "object",
+              "required": ["spec", "section", "requirement"],
+              "properties": {
+                "spec": { "type": "string" },
+                "section": { "type": "string" },
+                "requirement": { "type": "string" }
+              }
+            }
           }
         }
       }

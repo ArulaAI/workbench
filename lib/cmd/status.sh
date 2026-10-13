@@ -248,7 +248,7 @@ cmd_status() {
 
     # Failure classification breakdown
     local fc_total=0 fc_pipeline=0 fc_complexity=0 fc_unclassified=0
-    declare -A fc_breakdown
+    local fc_breakdown="{}"
     for f in "${TASKS_DIR}"/*.json; do
         [[ -f "$f" ]] || continue
         local fc_class fc_sub
@@ -262,7 +262,7 @@ cmd_status() {
             *) ((fc_unclassified++)) || true ;;
         esac
         local fc_key="${fc_class}:${fc_sub}"
-        fc_breakdown["$fc_key"]=$(( ${fc_breakdown["$fc_key"]:-0} + 1 ))
+        fc_breakdown=$(printf '%s\n' "$fc_breakdown" | jq -c --arg key "$fc_key" '.[$key] = ((.[$key] // 0) + 1)')
     done
     if [[ $fc_total -gt 0 ]]; then
         local fc_ratio=0
@@ -272,13 +272,8 @@ cmd_status() {
         echo ""
         echo -e "${BOLD}Failure Classification:${RESET} ${fc_total} classified failures"
         echo -e "  Pipeline: ${COLOR_WARN}${fc_pipeline}${RESET} (${fc_ratio}%)  |  Complexity: ${COLOR_ERROR}${fc_complexity}${RESET}  |  Unclassified: ${fc_unclassified}"
-        if [[ ${#fc_breakdown[@]} -gt 0 ]]; then
-            echo -e "  ${COLOR_DIM}Breakdown:${RESET}"
-            for key in $(echo "${!fc_breakdown[@]}" | tr ' ' '\n' | sort); do
-                local count=${fc_breakdown[$key]}
-                echo -e "    ${key}: ${count}"
-            done
-        fi
+        echo -e "  ${COLOR_DIM}Breakdown:${RESET}"
+        printf '%s\n' "$fc_breakdown" | jq -r 'to_entries | sort_by(.key)[] | "    \(.key): \(.value)"'
         if [[ $fc_pipeline -gt $fc_complexity ]]; then
             echo -e "  ${COLOR_WARN}${SYM_WARN}${RESET} Majority pipeline failures — context or decomposition may need adjustment"
         fi

@@ -1,0 +1,12 @@
+#!/bin/sh
+# Keep provider call sites unchanged and honor the configured Workbench Python.
+_timeout_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd) || exit 125
+_timeout_python=${SPEED_PYTHON:-}
+if [ -z "$_timeout_python" ]; then
+    if [ -x "$_timeout_root/.venv/bin/python3" ]; then
+        _timeout_python="$_timeout_root/.venv/bin/python3"
+    else
+        _timeout_python=python3
+    fi
+fi
+exec "$_timeout_python" "$_timeout_root/lib/timeout_runner.py" "$@"

@@ -830,8 +830,9 @@ cmd_plan() {
 
     # ── Step 2: Audit Loop ────────────────────────────────────────────
     # Each registered spec audited independently. Caller-controlled output path.
-    declare -A _audit_phase1_sections
-    declare -A _audit_phase2_sections
+    # Phase data follows the existing spec indexes (Bash 3.2 has no associative arrays).
+    local -a _audit_phase1_sections=()
+    local -a _audit_phase2_sections=()
     local audit_sizing_rec=""
     local audit_sizing_rationale=""
 
@@ -878,8 +879,8 @@ cmd_plan() {
                         audit_sizing_rationale=$(echo "$parsed_audit" | jq -r '.sizing.rationale // ""' 2>/dev/null)
                     log_step "Audit sizing: ${COLOR_STEP}~${estimated_tasks} tasks${RESET} (${spec_label}) — will phase the architect"
                 fi
-                _audit_phase1_sections["$spec_path"]=$(echo "$parsed_audit" | jq -c '.sizing.phase_sections.phase_1 // []' 2>/dev/null)
-                _audit_phase2_sections["$spec_path"]=$(echo "$parsed_audit" | jq -c '.sizing.phase_sections.phase_2 // []' 2>/dev/null)
+                _audit_phase1_sections[$spec_index]=$(echo "$parsed_audit" | jq -c '.sizing.phase_sections.phase_1 // []' 2>/dev/null)
+                _audit_phase2_sections[$spec_index]=$(echo "$parsed_audit" | jq -c '.sizing.phase_sections.phase_2 // []' 2>/dev/null)
             fi
         fi
     done
@@ -1033,15 +1034,15 @@ cmd_plan() {
             echo ""
 
             # ── Step 3: Split specs the audit assigned to phases ─────────
-            declare -A _phase1_content
-            declare -A _phase2_content
+            local -a _phase1_content=()
+            local -a _phase2_content=()
             local _split_failed=false
 
             for spec_index in "${!plan_spec_paths[@]}"; do
                 local spec_path="${plan_spec_paths[$spec_index]}"
                 local spec_content="${plan_spec_contents[$spec_index]}"
-                local phase1_sections="${_audit_phase1_sections[$spec_path]:-[]}"
-                local phase2_sections="${_audit_phase2_sections[$spec_path]:-[]}"
+                local phase1_sections="${_audit_phase1_sections[$spec_index]:-[]}"
+                local phase2_sections="${_audit_phase2_sections[$spec_index]:-[]}"
 
                 [[ "$phase1_sections" == "[]" && "$phase2_sections" == "[]" ]] && continue
 
@@ -1071,8 +1072,8 @@ cmd_plan() {
                         [[ -n "$warn" ]] && log_warn "Spec split ($(basename "$spec_path")): ${warn}"
                     done
                     log_step "$(basename "$spec_path"): Phase 1 $(printf '%s' "$phase1_split" | wc -c | tr -d ' ')c, Phase 2 $(printf '%s' "$phase2_split" | wc -c | tr -d ' ')c (original $(printf '%s' "$spec_content" | wc -c | tr -d ' ')c)"
-                    _phase1_content["$spec_path"]="$phase1_split"
-                    _phase2_content["$spec_path"]="$phase2_split"
+                    _phase1_content[$spec_index]="$phase1_split"
+                    _phase2_content[$spec_index]="$phase2_split"
                 fi
             done
 
@@ -1092,8 +1093,8 @@ cmd_plan() {
             for spec_index in "${!plan_spec_paths[@]}"; do
                 local spec_path="${plan_spec_paths[$spec_index]}"
                 local spec_label="${plan_spec_labels[$spec_index]}"
-                local phase1_sections="${_audit_phase1_sections[$spec_path]:-[]}"
-                local phase2_sections="${_audit_phase2_sections[$spec_path]:-[]}"
+                local phase1_sections="${_audit_phase1_sections[$spec_index]:-[]}"
+                local phase2_sections="${_audit_phase2_sections[$spec_index]:-[]}"
                 if [[ "$phase1_sections" == "[]" && "$phase2_sections" == "[]" ]]; then
                     log_step "${spec_label}: no phase_sections — full spec for both phases"
                 else
@@ -1106,7 +1107,7 @@ cmd_plan() {
             for spec_index in "${!plan_spec_paths[@]}"; do
                 local spec_path="${plan_spec_paths[$spec_index]}"
                 local spec_label="${plan_spec_labels[$spec_index]}"
-                local content="${_phase1_content[$spec_path]:-${plan_spec_contents[$spec_index]}}"
+                local content="${_phase1_content[$spec_index]:-${plan_spec_contents[$spec_index]}}"
                 phase1_message+="\n\n## ${spec_label}\n\n${content}"
             done
             if [[ -n "$SPEC_CODEBASE_CONTEXT" ]]; then
@@ -1169,7 +1170,7 @@ cmd_plan() {
             for spec_index in "${!plan_spec_paths[@]}"; do
                 local spec_path="${plan_spec_paths[$spec_index]}"
                 local spec_label="${plan_spec_labels[$spec_index]}"
-                local content="${_phase2_content[$spec_path]:-${plan_spec_contents[$spec_index]}}"
+                local content="${_phase2_content[$spec_index]:-${plan_spec_contents[$spec_index]}}"
                 phase2_message+="\n\n## ${spec_label}\n\n${content}"
             done
             if [[ -n "$SPEC_CODEBASE_CONTEXT" ]]; then

@@ -30,7 +30,7 @@ learn_conventions() {
     [[ "${MP_ENABLED:-}" == "true" ]] && memory_dir="$(mp_knowledge_dir)"
 
     local output
-    output=$($_TIMEOUT_CMD 120 env PYTHONPATH="${SCRIPT_DIR}" $(_learn_python) -c "
+    output=$("$_TIMEOUT_CMD" 120 env PYTHONPATH="${SCRIPT_DIR}" "$(_learn_python)" -c "
 import sys, os
 from pathlib import Path
 sys.path.insert(0, os.environ.get('SPEED_DIR', '.'))

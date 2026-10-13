@@ -4,7 +4,7 @@
 # Validates that all hard dependencies are present before any command runs.
 # Sourced early in the speed entrypoint (after config.sh + log.sh).
 #
-# Checks: bash version, git, jq, timeout/gtimeout, python3 + core packages,
+# Checks: bash version, git, jq, GNU or bundled Python timeout, python3 + core packages,
 #          agent provider (claude/codex), platform-native grammars.
 
 # ── Helpers ──────────────────────────────────────────────────────
@@ -149,7 +149,7 @@ _resolve_ast_grep() {
 _check_bash_version() {
     local current="${BASH_VERSION%%(*}"
     current="${current%%-*}"
-    local min="4.3"
+    local min="3.2"
 
     local IFS='.'
     local cur=($current) req=($min)
@@ -165,7 +165,7 @@ _check_bash_version() {
             esac
             log_error_block \
                 "bash ${current} is too old (need >= ${min})" \
-                "SPEED uses associative arrays and namerefs that require bash 4.3+" \
+                "SPEED requires bash 3.2 or newer" \
                 "$fix"
             return 1
         fi
@@ -196,19 +196,24 @@ _check_jq() {
     return 1
 }
 
+_python_timeout_available() {
+    [[ "$OSTYPE" == msys* || "$OSTYPE" == cygwin* ]] && return 1
+    [[ -x "${LIB_DIR}/timeout" && -f "${LIB_DIR}/timeout_runner.py" ]] || return 1
+    _resolve_python
+    [[ -n "$_deps_python" ]] || return 1
+    "$_deps_python" -c 'import os; raise SystemExit(os.name != "posix")' >/dev/null 2>&1
+}
+
 _check_timeout() {
-    command -v timeout &>/dev/null && return 0
-    command -v gtimeout &>/dev/null && return 0
-    _detect_os
-    local fix
-    case "$_deps_os" in
-        Darwin) fix="$(_install_hint coreutils "provides gtimeout")" ;;
-        *)      fix="$(_install_hint coreutils "provides the timeout command")" ;;
-    esac
+    _python_timeout_available && return 0
+    if [[ "$OSTYPE" == msys* || "$OSTYPE" == cygwin* ]]; then
+        command -v timeout &>/dev/null && return 0
+        command -v gtimeout &>/dev/null && return 0
+    fi
     log_error_block \
-        "Cannot find 'timeout' or 'gtimeout'" \
-        "SPEED requires GNU timeout to enforce agent time limits" \
-        "$fix"
+        "No usable agent timeout runner" \
+        "Use GNU timeout, or the bundled Python fallback on macOS/Linux" \
+        "Verify SPEED_PYTHON and the Workbench lib/timeout files"
     return 1
 }
 
