@@ -623,3 +623,23 @@ def test_an_activity_that_only_calls_the_writer_leaves_the_ownership():
     assert list(candidate['ownerships']) == ['ownership:lifecycle']
     assert candidate['ownerships']['ownership:lifecycle']['activity_ids'] == ['activity:authorise']
     assert candidate['domains']['domain:gateway']['ownership_ids'] == []
+
+
+def test_a_rule_enforced_inside_a_called_activity_applies_to_it():
+    from lib.context.business_domain_work import _attach_rules_to_enforcers
+    model = {'anchors': {'anchor:gateway': {'symbol_id': 'symbol:gateway'},
+                         'anchor:authorise': {'symbol_id': 'symbol:authorise'}},
+             'traces': {'trace:gateway': {'symbol_ids': ['symbol:gateway', 'symbol:authorise',
+                                                         'symbol:vault']},
+                        'trace:authorise': {'symbol_ids': ['symbol:authorise', 'symbol:vault']}}}
+    candidate = {collection: {} for collection in SEMANTIC_COLLECTIONS}
+    candidate['activities'] = {
+        'activity:gateway': {'anchor_ids': ['anchor:gateway'], 'trace_ids': ['trace:gateway'],
+                             'rule_ids': ['rule:last4']},
+        'activity:authorise': {'anchor_ids': ['anchor:authorise'],
+                               'trace_ids': ['trace:authorise'], 'rule_ids': []}}
+    candidate['rules'] = {'rule:last4': {'enforcement_sites': [{'source_id': 'symbol:vault'}]}}
+
+    _attach_rules_to_enforcers(candidate, model)
+
+    assert candidate['activities']['activity:authorise']['rule_ids'] == ['rule:last4']

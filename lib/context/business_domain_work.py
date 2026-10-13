@@ -842,6 +842,7 @@ def expand_reconciliation(scope: dict, payload: dict, model: dict | None = None)
     _keep_writers(expanded)
     if model is not None:
         _drop_delegating_owners(expanded, model)
+        _attach_rules_to_enforcers(expanded, model)
     _collect_domain_rules(expanded)
     _link_claims(expanded)
     return expanded
@@ -875,6 +876,42 @@ def _keep_writers(expanded: dict) -> None:
                 'activity_id') in writers]
 
 
+def _call_graph(expanded: dict, model: dict) -> tuple[dict, dict]:
+    """Each activity's entry-point symbols, and the symbols its traces reach."""
+    entry, reached = {}, {}
+    for activity_id, activity in expanded['activities'].items():
+        entry[activity_id] = {model['anchors'][anchor_id].get('symbol_id')
+                              for anchor_id in activity['anchor_ids']
+                              if anchor_id in model.get('anchors', {})} - {None}
+        reached[activity_id] = {symbol_id for trace_id in activity['trace_ids']
+                                for symbol_id in model.get('traces', {}).get(
+                                    trace_id, {}).get('symbol_ids', ())}
+    return entry, reached
+
+
+def _attach_rules_to_enforcers(expanded: dict, model: dict) -> None:
+    """A rule enforced inside an activity another one calls applies to both.
+
+    A rule attached to a calling activity, whose enforcement sites all lie
+    within the trace of an activity it calls, is enforced by that activity
+    too, and is attached to it.
+    """
+    entry, reached = _call_graph(expanded, model)
+    activities = expanded['activities']
+    for rule_id in sorted(expanded['rules']):
+        rule = expanded['rules'][rule_id]
+        sites = {site['source_id'] for site in rule.get('enforcement_sites') or ()}
+        if not sites:
+            continue
+        callers = [activity_id for activity_id, activity in activities.items()
+                   if rule_id in activity.get('rule_ids', ())]
+        for activity_id in sorted(activities):
+            activity = activities[activity_id]
+            if (rule_id not in activity.get('rule_ids', ()) and sites <= reached[activity_id]
+                    and any(entry[activity_id] & reached[caller] for caller in callers)):
+                activity['rule_ids'] = [*activity['rule_ids'], rule_id]
+
+
 def _drop_delegating_owners(expanded: dict, model: dict) -> None:
     """Credit a write to the activity that performs it, not to one calling it.
 
@@ -885,17 +922,7 @@ def _drop_delegating_owners(expanded: dict, model: dict) -> None:
     activity goes when the called activity's domain owns the concept.
     """
     activities = expanded['activities']
-
-    def symbols(activity, field):
-        if field == 'anchors':
-            return {model['anchors'][anchor_id].get('symbol_id')
-                    for anchor_id in activity['anchor_ids'] if anchor_id in model.get('anchors', {})}
-        return {symbol_id for trace_id in activity['trace_ids']
-                for symbol_id in model.get('traces', {}).get(trace_id, {}).get('symbol_ids', ())}
-
-    entry = {activity_id: symbols(activity, 'anchors') - {None}
-             for activity_id, activity in activities.items()}
-    reached = {activity_id: symbols(activity, 'traces') for activity_id, activity in activities.items()}
+    entry, reached = _call_graph(expanded, model)
     writes = {}
     for use in expanded['information_uses'].values():
         if use['access'] in WRITE_ACCESS and use['activity_id'] in activities:
