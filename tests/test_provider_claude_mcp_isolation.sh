@@ -67,4 +67,17 @@ if grep -Fx -- "bypassPermissions" "$CAPTURE" >/dev/null; then
     exit 1
 fi
 
+export SPEED_PROVIDER_EVENTS_FILE="$TMP/reviewer-events.jsonl"
+_provider_stream_exec() {
+    printf '%s\n' "$@" > "$CAPTURE"
+    printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"StructuredOutput","input":{"schema_version":1,"issues":[]}}]}}' > "$2"
+    echo 'Review complete.'
+}
+
+review_output=$(provider_run_json "$TMP/system.md" "message" "$TMP/schema.json" \
+    "sonnet" 1 "Read Glob Grep" "Reviewer")
+printf '%s\n' "$review_output" | jq -e '.schema_version == 1 and .issues == []' >/dev/null
+[[ -s "$SPEED_PROVIDER_EVENTS_FILE" ]]
+grep -Fx -- "$SPEED_PROVIDER_EVENTS_FILE" "$CAPTURE" >/dev/null
+
 echo "PASS: Claude calls isolate MCP configuration and restrict/preauthorize only the requested tools"

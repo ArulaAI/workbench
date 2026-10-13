@@ -446,7 +446,7 @@ provider_run_json() {
     local timestamp
     timestamp=$(date +%s)
     mkdir -p "$LOGS_DIR"
-    local events_file="${LOGS_DIR}/${label}-${timestamp}.jsonl"
+    local events_file="${SPEED_PROVIDER_EVENTS_FILE:-${LOGS_DIR}/${label}-${timestamp}.jsonl}"
 
     # Stderr temp file
     local stderr_file

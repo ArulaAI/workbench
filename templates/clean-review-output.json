@@ -1,0 +1,27 @@
+{
+  "type": "object",
+  "required": ["schema_version", "issues"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["message", "severity"],
+        "additionalProperties": false,
+        "properties": {
+          "message": {"type": "string"},
+          "file": {"type": "string"},
+          "line": {"type": "integer"},
+          "severity": {"type": "string", "enum": ["critical", "major", "minor", "nit"]},
+          "observed": {"type": "string"},
+          "expected": {"type": "string"},
+          "reproduction": {"type": "string"},
+          "scenario_id": {"type": "string"},
+          "testable": {"type": "boolean"}
+        }
+      }
+    }
+  }
+}

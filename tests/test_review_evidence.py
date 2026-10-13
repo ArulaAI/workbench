@@ -3,11 +3,37 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from jsonschema import Draft202012Validator
+
 from lib.evidence_cli import main as evidence_main
 from lib.review_evidence import parse_clean_review_payload, parse_report_findings_events
 
 
 class CleanReviewEvidenceTests(unittest.TestCase):
+    def test_output_schema_matches_review_ingester(self):
+        schema_path = Path(__file__).resolve().parents[1] / "templates/clean-review-output.json"
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        validator = Draft202012Validator(schema)
+        Draft202012Validator.check_schema(schema)
+
+        for payload in (
+            {"schema_version": 1, "issues": []},
+            {"schema_version": 1, "issues": [{
+                "message": "Fee mismatch", "severity": "major", "file": "src/payments.py",
+                "line": 12, "observed": "Fee is 2", "expected": "Fee is 3",
+                "reproduction": "Run the fee test", "scenario_id": "RISK-02",
+                "testable": True,
+            }]},
+        ):
+            validator.validate(payload)
+            self.assertEqual(parse_clean_review_payload(json.dumps(payload)), payload)
+
+        for payload in (
+            {"schema_version": 1, "issues": [{"message": "Fee mismatch"}]},
+            {"schema_version": 1, "issues": [], "verdict": "approve"},
+        ):
+            self.assertTrue(list(validator.iter_errors(payload)))
+
     def test_confirmed_tool_missing_severity_uses_matching_final_json(self):
         findings = [
             {"summary": "Capture fee floors instead of rounding", "file": "src/payments/service.ts", "line": 119},

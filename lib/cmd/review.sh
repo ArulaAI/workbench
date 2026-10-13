@@ -187,10 +187,12 @@ EOF
     local review_output review_events
     mkdir -p "$LOGS_DIR"
     review_events=$(mktemp "${LOGS_DIR}/Reviewer-XXXXXX")
-    if ! review_output=$(SPEED_PROVIDER_EVENTS_FILE="$review_events" _call_with_retry provider_run \
+    if ! review_output=$(SPEED_PROVIDER_EVENTS_FILE="$review_events" _call_with_retry provider_run_json \
         "${AGENTS_DIR}/clean-context-reviewer.md" \
         "$review_prompt" \
+        "${TEMPLATES_DIR}/clean-review-output.json" \
         "$MODEL_SUPPORT" \
+        "$DEFAULT_MAX_TURNS" \
         "$AGENT_TOOLS_READONLY" \
         "Reviewer"); then
         log_error "Reviewer agent failed for task ${task_id}"
