@@ -944,7 +944,14 @@ def test_nonpassing_repaired_candidate_is_not_cached(tmp_path):
     assert responses
     assert all('"operation":"verify"' in path.read_text()
                for path in responses)
-    assert sum(request['operation'] == 'repair'
+    # The second repair returns the candidate unchanged: it is not verified,
+    # and the third is told so; ignoring it again stalls the chain.
+    repairs = [request for request in provider.requests
+               if request['operation'] == 'repair']
+    assert len(repairs) == 3
+    assert 'UNCHANGED_REPAIR' in {
+        finding['code'] for finding in repairs[2]['deterministic_findings']}
+    assert sum(request['operation'] == 'verify'
                for request in provider.requests) == 2
 
 

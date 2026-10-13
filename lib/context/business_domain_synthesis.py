@@ -1479,6 +1479,10 @@ def fit_packet(packet, max_bytes):
     raise DomainError('PACKET_LIMIT','Complete graph scope exceeds request allowance; previous publication and validated work are preserved')
 
 
+def _as_returned(graph, candidate):
+    return graph, candidate
+
+
 @dataclass(frozen=True)
 class RepairState:
     """Where a repair chain stands: the rejected candidate and its rejection."""
@@ -1956,8 +1960,14 @@ class Synthesis:
             model, sorted(model.get('anchors', {})))
         return self._size_graph(whole_graph_scope(model, selected))
 
-    def run(self, graph: dict, validate_candidate) -> dict:
-        """Synthesize, verify and run the bounded semantic repair chain."""
+    def run(self, graph: dict, validate_candidate, review=None) -> dict:
+        """Synthesize, verify and run the bounded semantic repair chain.
+
+        `review(graph, candidate)` returns the scope and candidate verification
+        sees: for a reconciliation, the complete candidate expanded from its
+        compact answer. Without it a candidate is verified as returned.
+        """
+        review = review or _as_returned
         owner = threading.get_ident() not in self.completion_reservations
         if owner:
             with self.accounting_lock:
@@ -1987,14 +1997,14 @@ class Synthesis:
                     initial_findings = exc.findings
             if resumed is not None:
                 result = self._repair_chain(
-                    graph, synthesis_request, validate_candidate, resumed)
+                    graph, synthesis_request, validate_candidate, resumed, review)
             elif cached:
                 self.cached_unit_threads.add(threading.get_ident())
                 result = candidate
             else:
                 result = self._validate_verify_repair(
                     graph, synthesis_request, candidate, validate_candidate,
-                    initial_findings=initial_findings)
+                    review, initial_findings=initial_findings)
             if owner:
                 with self.accounting_lock:
                     self.counters['semantic_units_validated'] += 1
@@ -2168,6 +2178,30 @@ class Synthesis:
         return sorted(changed - allowed)
 
     @staticmethod
+    def _ignored_findings(before, after, findings, report):
+        """The subjects a repair left untouched, when it changed nothing else.
+
+        A repair acts on its findings when it changes a record one names, or
+        any record other than a claim. Rewording unrelated claims alone is no
+        repair. Returns the named subjects in that case, otherwise nothing.
+        """
+        named = {subject_id
+                 for finding in [*(findings or []),
+                                 *((report or {}).get('findings', []))]
+                 if finding.get('severity') in ('error', 'blocking')
+                 for subject_id in finding.get('subject_ids', [])}
+        if not named:
+            return []
+        previous, current = _candidate_records(before), _candidate_records(after)
+        changed = {record_id for record_id in set(previous) | set(current)
+                   if previous.get(record_id) != current.get(record_id)}
+        structural = {record_id for record_id in changed
+                      if (previous.get(record_id) or current.get(record_id))[0] != 'claims'}
+        if changed & named or structural:
+            return []
+        return sorted(named)
+
+    @staticmethod
     def _finding_signature(findings, report):
         """Stable rejection identity used to detect a stalled repair."""
         return digest({
@@ -2195,13 +2229,13 @@ class Synthesis:
         return combined
 
     def _validate_verify_repair(self, graph, synthesis_request, candidate,
-                                validate_candidate, initial_findings=None):
+                                validate_candidate, review, initial_findings=None):
         findings = (copy.deepcopy(initial_findings)
                     if initial_findings is not None
                     else self._candidate_findings(
                         graph, candidate, validate_candidate))
         verify_request = self.request_for(
-            'verify', graph, candidate, findings)
+            'verify', *review(graph, candidate), findings)
         report, _ = self._run_with_retries(
             verify_request, report_requires_failure=bool(findings))
         verification_key = self.last_response_keys[threading.get_ident()]
@@ -2211,16 +2245,26 @@ class Synthesis:
         return self._repair_chain(
             graph, synthesis_request, validate_candidate,
             RepairState(candidate, findings, report, 0,
-                        (self._finding_signature(findings, report),)))
+                        (self._finding_signature(findings, report),)), review)
 
-    def _repair_chain(self, graph, synthesis_request, validate_candidate, state):
+    def _repair_chain(self, graph, synthesis_request, validate_candidate, state,
+                      review=None):
         """Repair until verification passes, from `state` onward.
 
         After every rejected round the chain is checkpointed under the
         synthesis request, so an interrupted chain resumes on the next refresh
         with the repairs it has left. A chain that succeeds, stalls on the same
         defects or exhausts its repairs leaves no checkpoint.
+
+        A repair that leaves every named record and every record other than
+        claims as it was did not act on its findings: it is not verified, and
+        the next round receives the same findings with that stated. A
+        reconciliation answers with its changes only, so every record it
+        returns is its own decision and none is restored or judged a
+        regression.
         """
+        review = review or _as_returned
+        compact = graph['scope_kind'] == 'reconciliation'
         candidate, findings, report = state.candidate, state.findings, state.report
         seen = set(state.signatures)
         self._checkpoint(synthesis_request, state)
@@ -2245,9 +2289,13 @@ class Synthesis:
             else:
                 identity_changes = self.last_identity_changes.pop(
                     threading.get_ident(), [])
-                repaired, identity_changes, restored = \
-                    self._restore_out_of_scope_revisions(
-                        candidate, repaired, identity_changes, findings, report)
+                restored = regressions = []
+                if not compact:
+                    repaired, identity_changes, restored = \
+                        self._restore_out_of_scope_revisions(
+                            candidate, repaired, identity_changes, findings, report)
+                    regressions = self._repair_regressions(
+                        candidate, identity_changes, findings, report)
                 if restored and self.recorder:
                     self.recorder.progress('semantic',
                         f'Repair revised {len(restored)} records no finding named; '
@@ -2255,24 +2303,37 @@ class Synthesis:
                         details={'record_ids': restored})
                 repaired_findings = self._candidate_findings(
                     graph, repaired, validate_candidate)
-                regressions = self._repair_regressions(
-                    candidate, identity_changes, findings, report)
                 if regressions:
                     repaired_findings.append(validation_finding(
                         'UNJUSTIFIED_REGRESSION',
                         f'Repair changed {len(regressions)} records outside '
                         'the finding dependency closure',
                         subject_ids=regressions))
-                reverify_request = self.request_for(
-                    'verify', graph, repaired, repaired_findings)
-                repaired_report, _ = self._run_with_retries(
-                    reverify_request,
-                    report_requires_failure=bool(repaired_findings))
-                verification_key = self.last_response_keys[
-                    threading.get_ident()]
-                if (not repaired_findings
-                        and repaired_report['verdict'] == 'pass'):
-                    break
+                ignored = self._ignored_findings(
+                    review(graph, candidate)[1], review(graph, repaired)[1],
+                    findings, report)
+                if ignored:
+                    if self.recorder:
+                        self.recorder.progress('semantic',
+                            'Repair changed none of the records its findings name; '
+                            'it was not verified', level='warning')
+                    repaired_findings.append(validation_finding(
+                        'UNCHANGED_REPAIR',
+                        'The repair changed none of the records the findings name '
+                        'and no record other than claims; return the records the '
+                        'findings require', subject_ids=ignored))
+                    repaired_report = report
+                else:
+                    reverify_request = self.request_for(
+                        'verify', *review(graph, repaired), repaired_findings)
+                    repaired_report, _ = self._run_with_retries(
+                        reverify_request,
+                        report_requires_failure=bool(repaired_findings))
+                    verification_key = self.last_response_keys[
+                        threading.get_ident()]
+                    if (not repaired_findings
+                            and repaired_report['verdict'] == 'pass'):
+                        break
 
             signature = self._finding_signature(
                 repaired_findings, repaired_report)

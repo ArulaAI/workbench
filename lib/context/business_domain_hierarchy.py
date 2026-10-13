@@ -27,6 +27,7 @@ from .business_domain_schema import DomainError, digest, identifier
 from .business_domain_synthesis import _model_ready_context
 from .business_domain_work import (
     ROOT_SCOPE_ID, anchor_scope_id, expand_reconciliation, plan_reconciliation,
+    verification_view,
     plan_slices, reconciled_unit, reconciliation_findings, reconciliation_scope,
     slice_scope, slice_unit,
 )
@@ -106,7 +107,7 @@ class _Run:
                                                 - limits['semantic_units_validated'])
 
     def dispatch(self, jobs, label):
-        """Run `(scope, validate)` jobs concurrently; payloads in job order.
+        """Run `(scope, validate, review)` jobs concurrently; payloads in job order.
 
         On the first failure no further job starts; running jobs finish so
         their validated responses are cached, then the earliest failure in
@@ -114,10 +115,10 @@ class _Run:
         """
         results = {}
 
-        def one(index, scope, validate):
+        def one(index, scope, validate, review):
             self.progress(f'{label} {index + 1}/{len(jobs)} started')
             self.beat(scope['scope_id'])
-            payload = self.synthesis.run(scope, validate)
+            payload = self.synthesis.run(scope, validate, review=review)
             with self.lock:
                 results[index] = payload
                 done = len(results)
@@ -128,8 +129,7 @@ class _Run:
 
         workers = max(1, min(self.synthesis.config['provider_concurrency'], len(jobs)))
         with ThreadPoolExecutor(max_workers=workers, thread_name_prefix='domain-scope') as pool:
-            futures = [pool.submit(one, index, scope, validate)
-                       for index, (scope, validate) in enumerate(jobs)]
+            futures = [pool.submit(one, index, *job) for index, job in enumerate(jobs)]
             _, unfinished = wait(futures, return_when=FIRST_EXCEPTION)
             failed = [future for future in futures
                       if future.done() and not future.cancelled() and future.exception()]
@@ -140,15 +140,24 @@ class _Run:
                 raise failed[0].exception()
         return [results[index] for index in range(len(jobs))]
 
-    def validator(self, scope, children=None):
-        if children is None:
-            return lambda candidate: self.accept(scope, candidate)
+    def slice_job(self, scope):
+        return scope, lambda candidate: self.accept(scope, candidate), None
+
+    def reconciliation_job(self, scope, children):
+        """A reconciliation job: its answer is expanded before it is judged.
+
+        Validation and verification both see the complete candidate SPEED
+        publishes, never the compact answer it was built from.
+        """
+        def review(graph, candidate):
+            complete = expand_reconciliation(graph, candidate)
+            return verification_view(graph, complete), complete
 
         def validate(candidate):
             complete = expand_reconciliation(scope, candidate)
             self.accept(scope, complete)
-            return reconciliation_findings(children, complete)
-        return validate
+            return reconciliation_findings(self.baseline, children, complete)
+        return scope, validate, review
 
     def sized_reconciliation(self, units, scope_id, parent_scope_id=None):
         return self.synthesis._size_graph(reconciliation_scope(
@@ -166,7 +175,7 @@ class _Run:
                     f'{scope["estimated_input_tokens"]:,} input tokens, more than one '
                     'request allows', scope['scope_id'])
         payloads = self.dispatch(
-            [(scope, self.validator(scope, units))
+            [self.reconciliation_job(scope, units)
              for scope, (_, _, units) in zip(scopes, groups)], label)
         return [reconciled_unit(scope, expand_reconciliation(scope, payload), units)
                 for scope, payload, (_, _, units) in zip(scopes, payloads, groups)]
@@ -241,7 +250,7 @@ def run(baseline: dict, synthesis, accept, *, status, heartbeat, recorder=None):
                      '(the complete graph does not fit one request)')
     attempt.beat()
 
-    payloads = attempt.dispatch([(scope, attempt.validator(scope)) for scope in slices], 'Slice')
+    payloads = attempt.dispatch([attempt.slice_job(scope) for scope in slices], 'Slice')
     units = [slice_unit(scope, payload) for scope, payload in zip(slices, payloads)]
     if segmented:
         segments = {parent: [unit for unit in units if unit.scope['parent_scope_id'] == parent

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass
+from itertools import combinations
 
 from .business_domain_schema import DomainError, digest, identifier, record, validate
 
@@ -110,7 +111,15 @@ SEMANTIC_COLLECTIONS = (
     'activities', 'rules', 'concepts', 'information_uses', 'ownerships',
     'rule_relationships', 'claims', 'domains', 'relationships')
 COVERAGE_MANIFEST = 'coverage_manifest'
+CROSS_SCOPE_INFORMATION = 'cross_scope_information'
+MERGE_CANDIDATE = 'merge_candidate'
+# What SPEED states about a reconciliation's children. The reconciliation reads
+# and cites these claims; they are never part of its candidate.
+SPEED_CLAIM_KINDS = frozenset({COVERAGE_MANIFEST, CROSS_SCOPE_INFORMATION, MERGE_CANDIDATE})
 GROUPING_COLLECTIONS = ('domains', 'ownerships', 'relationships')
+WRITE_ACCESS = frozenset({'creates', 'updates', 'deletes'})
+# When two ownerships of one concept land in one domain, the stronger stands.
+OWNERSHIP_STRENGTH = ('authoritative_source', 'creates', 'maintains', 'shared', 'unknown')
 # Citations per coverage manifest: enough to locate a child's evidence without
 # re-sending every excerpt it already had verified.
 MANIFEST_EVIDENCE = 8
@@ -462,9 +471,13 @@ def reconciliation_scope(model: dict, units, *, scope_id: str,
     """An unsized reconciliation scope over validated `units`.
 
     It carries every unit's semantic records, the evidence excerpts those
-    records cite, and one coverage manifest per unit. Raw graph records stay
-    identity-only references: each unit already validated them against their
-    full content, and re-sending them would rebuild the graph that did not fit.
+    records cite, one coverage manifest per unit, and what SPEED derives about
+    how the units connect: information one unit reads that only another
+    writes, and domains of different units that one boundary may cover. Child
+    concepts naming the same code type arrive as one concept. Raw graph
+    records stay identity-only references: each unit already validated them
+    against their full content, and re-sending them would rebuild the graph
+    that did not fit.
     """
     units = sorted(units, key=lambda unit: unit.scope['scope_id'])
     context = record('GraphContext')
@@ -479,8 +492,10 @@ def reconciliation_scope(model: dict, units, *, scope_id: str,
                         f'Child scopes proposed different records under {record_id}',
                         record_id)
                 context[collection][record_id] = copy.deepcopy(item)
+    aliases = _merge_concepts(model, context)
     for unit in units:
-        _manifest(context, unit)
+        _manifest(context, unit, aliases)
+    _state_links(model, context, units)
     semantic = [item for collection in SEMANTIC_COLLECTIONS
                 for item in context[collection].values()]
     context['evidence'] = {key: copy.deepcopy(model['evidence'][key])
@@ -491,7 +506,7 @@ def reconciliation_scope(model: dict, units, *, scope_id: str,
     validate(context, 'GraphContext')
     child_ids = [unit.scope['scope_id'] for unit in units]
     cross = sorted({edge_id for unit in units for edge_id in unit.scope['cross_scope_edge_ids']})
-    manifests = [coverage_manifest(unit) for unit in units]
+    manifests = [_renamed(coverage_manifest(unit), aliases) for unit in units]
     scope = record(
         'GraphScope', scope_id=scope_id, scope_kind='reconciliation',
         partition_strategy='reconciliation', estimated_input_tokens=0,
@@ -525,7 +540,7 @@ def coverage_manifest(unit: Unit) -> dict:
     }
 
 
-def _manifest(context: dict, unit: Unit) -> None:
+def _manifest(context: dict, unit: Unit, aliases: dict) -> None:
     """State one unit's coverage as a claim the reconciliation can cite."""
     scope, coverage = unit.scope, unit.coverage
     by_status = {status: sorted(anchor_id for anchor_id, item in coverage.items()
@@ -537,8 +552,9 @@ def _manifest(context: dict, unit: Unit) -> None:
     others = '; '.join(
         f"{anchor_id} {coverage[anchor_id]['status']}: {coverage[anchor_id]['reason']}"
         for anchor_id in by_status['excluded'] + by_status['unresolved']) or 'none'
-    contributed = sorted(record_id for collection in SEMANTIC_COLLECTIONS
-                         for record_id in unit.payload[collection])
+    contributed = sorted({aliases.get(record_id, record_id)
+                          for collection in SEMANTIC_COLLECTIONS
+                          for record_id in unit.payload[collection]})
     # Cite the unit's own evidence, its dispositions first: a citation chosen
     # for another unit would not support this unit's coverage.
     evidence = [eid for item in coverage.values() for eid in item['evidence_ids']]
@@ -558,108 +574,511 @@ def _manifest(context: dict, unit: Unit) -> None:
         semantic_review='supported')
 
 
+def _merge_concepts(model: dict, context: dict) -> dict:
+    """Merge child concepts that name one code type; return their aliases.
+
+    Each unit names the concepts it meets independently, so one type can
+    arrive as several concepts. Concepts whose qualified type names resolve to
+    a common declared type are one concept: the first by ID stands for all of
+    them, with their names, symbols, evidence and claims, and every reference
+    to another is rewritten to it. A bare type name resolves only when exactly
+    one declared symbol carries it.
+    """
+    declared = {}
+    for symbol in model.get('symbols', {}).values():
+        name = symbol.get('qualified_name') or ''
+        if '::' in name:
+            declared.setdefault(name.rpartition('::')[2], set()).add(name)
+
+    def resolve(name):
+        if '::' in name:
+            return name
+        matches = declared.get(name, ())
+        return next(iter(matches)) if len(matches) == 1 else None
+
+    parent = {}
+
+    def root(concept_id):
+        while parent.get(concept_id, concept_id) != concept_id:
+            concept_id = parent[concept_id]
+        return concept_id
+
+    first = {}
+    for concept_id in sorted(context['concepts']):
+        for name in context['concepts'][concept_id]['qualified_type_names']:
+            key = resolve(name)
+            if key is None:
+                continue
+            if key not in first:
+                first[key] = concept_id
+                continue
+            one, other = sorted((root(first[key]), root(concept_id)))
+            if one != other:
+                parent[other] = one
+    aliases = {concept_id: root(concept_id) for concept_id in context['concepts']
+               if root(concept_id) != concept_id}
+    for alias, canonical in sorted(aliases.items()):
+        kept, merged = context['concepts'][canonical], context['concepts'].pop(alias)
+        for field in ('qualified_type_names', 'symbol_ids', 'evidence_ids', 'claim_ids'):
+            kept[field] = sorted(set(kept[field]) | set(merged[field]))
+    if aliases:
+        for collection in SEMANTIC_COLLECTIONS:
+            for record_id, item in context[collection].items():
+                context[collection][record_id] = _renamed(item, aliases)
+    return aliases
+
+
+def _renamed(value, aliases):
+    """`value` with every ID in `aliases` replaced, lists of IDs deduplicated."""
+    if isinstance(value, str):
+        return aliases.get(value, value)
+    if isinstance(value, list):
+        items = [_renamed(item, aliases) for item in value]
+        if all(isinstance(item, str) for item in items):
+            return list(dict.fromkeys(items))
+        return items
+    if isinstance(value, dict):
+        return {key: _renamed(item, aliases) for key, item in value.items()}
+    return value
+
+
+def _children_of(units, activities: dict) -> dict:
+    """The units whose anchors each activity carries."""
+    unit_of = {anchor_id: unit.scope['scope_id'] for unit in units
+               for anchor_id in unit.coverage}
+    return {activity_id: {unit_of[anchor_id] for anchor_id in activity['anchor_ids']
+                          if anchor_id in unit_of}
+            for activity_id, activity in activities.items()}
+
+
+def cross_scope_reads(activities: dict, uses: dict, children: dict) -> list:
+    """`(reader, resource, writers)` for information only other units write.
+
+    A unit validated the links between its own activities; what one unit's
+    activity reads and only activities of other units create, update or
+    delete is a dependency no unit could see.
+    """
+    writers, readers = {}, {}
+    for use in uses.values():
+        if use['activity_id'] not in activities:
+            continue
+        target = (writers if use['access'] in WRITE_ACCESS
+                  else readers if use['access'] == 'reads' else None)
+        for resource_id in use['resource_ids'] if target is not None else ():
+            target.setdefault(resource_id, set()).add(use['activity_id'])
+    found = []
+    for resource_id, reading in sorted(readers.items()):
+        writing = writers.get(resource_id, set())
+        for reader in sorted(reading - writing):
+            own = children.get(reader, set())
+            if writing and not any(children.get(writer, set()) & own for writer in writing):
+                found.append((reader, resource_id, sorted(writing)))
+    return found
+
+
+def _owner(model: dict, anchor_id: str) -> str | None:
+    """The class, or else the module, that declares an anchor's symbol."""
+    anchor = model.get('anchors', {}).get(anchor_id) or {}
+    symbol = model.get('symbols', {}).get(anchor.get('symbol_id')) or {}
+    module, _, member = (symbol.get('qualified_name') or '').rpartition('::')
+    if not module:
+        return None
+    return f'{module}::{member.rpartition(".")[0]}' if '.' in member else module
+
+
+def _plain(name: str) -> str:
+    return ''.join(character for character in name.casefold() if character.isalnum())
+
+
+def merge_candidates(model: dict, domains: dict, activities: dict, children: dict) -> list:
+    """`(domain, domain, shared owners)` that one business boundary may cover.
+
+    Units are cut by size, so entry points one class or module declares can
+    land in different units and come back as different domains. Two domains
+    of disjoint units are candidates when their primary activities' anchors
+    share a declaring class or module, or when the domains bear the same name.
+    """
+    owners, names, units = {}, {}, {}
+    for domain_id, domain in domains.items():
+        members = [membership['activity_id'] for membership in domain['activity_memberships']
+                   if membership['activity_id'] in activities and membership['role'] == 'primary']
+        owners[domain_id] = {_owner(model, anchor_id) for activity_id in members
+                             for anchor_id in activities[activity_id]['anchor_ids']} - {None}
+        names[domain_id] = _plain(domain['name'])
+        units[domain_id] = set().union(*(children.get(activity_id, set())
+                                         for activity_id in members))
+    found = []
+    for one, other in combinations(sorted(domains), 2):
+        if not units[one] or not units[other] or units[one] & units[other]:
+            continue
+        shared = sorted(owners[one] & owners[other])
+        if shared or names[one] == names[other]:
+            found.append((one, other, shared))
+    return found
+
+
+def _state_links(model: dict, context: dict, units) -> None:
+    """State, as claims, how the units connect where no unit could see it."""
+    activities = context['activities']
+    children = _children_of(units, activities)
+    reads = {}
+    for reader, resource_id, writers in cross_scope_reads(
+            activities, context['information_uses'], children):
+        reads.setdefault(resource_id, []).append((reader, writers))
+    for resource_id, entries in sorted(reads.items()):
+        resource = model.get('resources', {}).get(resource_id) or {}
+        writers = sorted({writer for _, found in entries for writer in found})
+        readers = [reader for reader, _ in entries]
+        evidence = [eid for use in context['information_uses'].values()
+                    if resource_id in use['resource_ids']
+                    and use['activity_id'] in {*readers, *writers}
+                    for eid in use['evidence_ids']]
+        _speed_claim(context, CROSS_SCOPE_INFORMATION, resource_id, (
+            f"{resource.get('name') or resource_id} ({resource_id}) is read by "
+            f"{_named(activities, readers)} and written only in other child scopes, by "
+            f"{_named(activities, writers)}. Link each reader to a writer with a "
+            'uses_information_from relationship, or place them in one domain.'),
+            evidence, model)
+    for one, other, shared in merge_candidates(model, context['domains'], activities, children):
+        domains = context['domains']
+        basis = (f"entry points declared by {', '.join(shared)}" if shared
+                 else 'the same name')
+        _speed_claim(context, MERGE_CANDIDATE, one, (
+            f"Domains {one} ({domains[one]['name']}) and {other} ({domains[other]['name']}) "
+            f'come from different child scopes and share {basis}. Merge them into one '
+            'returned domain, or return one of them with an alternative naming the other '
+            'and the evidence for keeping them separate.'),
+            [*domains[one]['evidence_ids'], *domains[other]['evidence_ids']], model,
+            key=other)
+
+
+def _named(activities: dict, activity_ids) -> str:
+    return ', '.join(f"{activity_id} ({activities[activity_id]['name']})"
+                     for activity_id in activity_ids)
+
+
+def _speed_claim(context, kind, subject_id, text, evidence, model, key=None) -> None:
+    claim_id = identifier('claim', kind, subject_id, key)
+    context['claims'][claim_id] = record(
+        'Claim', id=claim_id, subject_id=subject_id, kind=kind, text=text,
+        evidence_ids=[eid for eid in dict.fromkeys(evidence)
+                      if eid in model.get('evidence', {})][:MANIFEST_EVIDENCE],
+        trace_ids=[], semantic_review='supported')
+
+
 def expand_reconciliation(scope: dict, payload: dict) -> dict:
     """The complete candidate a compact reconciliation answer stands for.
 
-    A reconciliation returns only what it changes: merged or new records, its
-    domains and one disposition per child, whose `incorporated_record_ids`
-    name the child records it keeps or merges. Kept records, and the claims,
-    rules, concepts and information uses they rest on, are copied from the
-    scope into the candidate. A record the answer returns itself stands as
-    returned, and a child activity whose anchors are all held by activities
-    the answer returned was merged into them and is not copied. Domains,
-    ownerships and relationships are the children's groupings, which the
-    answer replaces: they are carried only when a disposition names them.
+    A reconciliation returns only what it changes: merged or new records, the
+    domains it forms or changes, and one disposition per child whose
+    `incorporated_record_ids` name the child activities, rules, concepts and
+    information uses it keeps. Kept records, and the claims, rules, concepts
+    and information uses they rest on, are copied from the scope. A child
+    activity whose anchors are all held by activities the answer returned was
+    merged into them and is not copied.
+
+    The children's groupings stay unless the answer changes them; see
+    `_regroup`. SPEED does this bookkeeping so the answer never has to
+    restate what it keeps.
     """
     if scope['scope_kind'] != 'reconciliation':
         return payload
     supplied = scope['context']
     expanded = copy.deepcopy(payload)
-    present = {record_id for collection in SEMANTIC_COLLECTIONS
-               for record_id in expanded[collection]}
+    returned = {record_id for collection in SEMANTIC_COLLECTIONS
+                for record_id in expanded[collection]}
     held = {anchor_id for activity in expanded['activities'].values()
             for anchor_id in activity['anchor_ids']}
     merged = {activity_id for activity_id, activity in supplied['activities'].items()
-              if activity_id not in present and set(activity['anchor_ids']) <= held}
+              if activity_id not in returned and set(activity['anchor_ids']) <= held}
     named = {record_id for disposition in expanded['dispositions']
              if disposition['subject_kind'] == 'child_scope'
              and disposition['status'] == 'represented'
              for record_id in disposition['incorporated_record_ids']}
-    pending = named | _referenced(expanded, supplied)
+    _carry(expanded, supplied, named | _referenced(expanded, supplied), merged)
+    _regroup(expanded, supplied, merged)
+    groupings = {record_id for collection in GROUPING_COLLECTIONS
+                 for record_id in expanded[collection]}
+    _carry(expanded, supplied,
+           _referenced({collection: expanded[collection] for collection in GROUPING_COLLECTIONS},
+                       supplied)
+           | {claim_id for claim_id, claim in supplied['claims'].items()
+              if claim['subject_id'] in groupings},
+           merged)
+    _drop_replaced_references(expanded, supplied)
+    return expanded
+
+
+def verification_view(scope: dict, complete: dict) -> dict:
+    """The reconciliation scope as verification of `complete` receives it.
+
+    The complete candidate already holds every child record it keeps, so the
+    scope keeps only the child records the candidate replaced, merged or
+    retired, against which verification checks the change, and SPEED's own
+    claims. Verification then costs no more than the scope it reviews.
+    """
+    view = copy.deepcopy(scope)
+    context = view['context']
+    held = {record_id for collection in SEMANTIC_COLLECTIONS
+            for record_id in complete[collection]}
+    omitted = {}
+    for collection in SEMANTIC_COLLECTIONS:
+        records = context[collection]
+        context[collection] = {
+            record_id: item for record_id, item in records.items()
+            if record_id not in held or item.get('kind') in SPEED_CLAIM_KINDS}
+        omitted.update((record_id, (collection, item)) for record_id, item in records.items()
+                       if record_id not in context[collection])
+    # What the supplied records still cite stays identifiable, as any record
+    # a scope omits does.
+    for record_id in sorted(_referenced_ids(
+            {collection: context[collection] for collection in SEMANTIC_COLLECTIONS},
+            set(omitted))):
+        collection, item = omitted[record_id]
+        context['record_refs'][record_id] = {'id': record_id, 'collection': collection,
+                                             'content_hash': digest(item)}
+    return view
+
+
+def _referenced_ids(value, known: set) -> set:
+    found = set()
+
+    def walk(item):
+        if isinstance(item, str):
+            if item in known:
+                found.add(item)
+        elif isinstance(item, list):
+            for child in item:
+                walk(child)
+        elif isinstance(item, dict):
+            for child in item.values():
+                walk(child)
+
+    walk(value)
+    return found
+
+
+def _carry(expanded: dict, supplied: dict, pending: set, merged: set) -> None:
+    """Copy `pending` supplied records, and what they rest on, into `expanded`.
+
+    Groupings are `_regroup`'s; SPEED's own claims and records about merged
+    activities are never copied.
+    """
+    present = {record_id for collection in SEMANTIC_COLLECTIONS
+               for record_id in expanded[collection]}
+    pending = set(pending)
     while pending:
         record_id = pending.pop()
         if record_id in present or record_id in merged:
             continue
         collection = next((name for name in SEMANTIC_COLLECTIONS
                            if record_id in supplied[name]), None)
-        if collection is None or (collection in GROUPING_COLLECTIONS
-                                  and record_id not in named):
+        if collection is None or collection in GROUPING_COLLECTIONS:
             continue
         item = copy.deepcopy(supplied[collection][record_id])
-        if item.get('kind') == COVERAGE_MANIFEST:
+        if (item.get('kind') in SPEED_CLAIM_KINDS
+                or {item.get('activity_id'), item.get('subject_id')} & merged):
             continue
         expanded[collection][record_id] = item
         present.add(record_id)
         pending |= _referenced({collection: {record_id: item}}, supplied) - present
         pending |= {dependent_id for name in ('information_uses', 'claims')
                     for dependent_id, dependent in supplied[name].items()
-                    if dependent_id not in present and dependent.get('kind') != COVERAGE_MANIFEST
-                    and record_id in (dependent.get('activity_id'), dependent.get('subject_id'))
-                    and not {dependent.get('activity_id'), dependent.get('subject_id')} & merged}
-    _drop_replaced_references(expanded, supplied)
-    return expanded
+                    if dependent_id not in present
+                    and record_id in (dependent.get('activity_id'), dependent.get('subject_id'))}
+
+
+def _regroup(expanded: dict, supplied: dict, merged: set) -> None:
+    """Settle the children's domains, ownerships and relationships.
+
+    A returned domain claims its member activities. A child domain keeps the
+    activities no returned domain claims, and is retired when none remain; its
+    ownerships then move to the domain holding its activities, unless that
+    domain already owns the concept. Two ownerships of one concept in one
+    domain combine. Relationships follow their activities: each end's domain
+    is its activity's primary domain, and links to activities that no longer
+    exist, or within one activity, are dropped.
+    """
+    activities = expanded['activities']
+    holder = {}
+    for activity_id in sorted(activities):
+        for anchor_id in activities[activity_id]['anchor_ids']:
+            holder.setdefault(anchor_id, activity_id)
+
+    def current(activity_id):
+        if activity_id in activities:
+            return activity_id
+        if activity_id in merged:
+            return next((holder[anchor_id] for anchor_id
+                         in supplied['activities'][activity_id]['anchor_ids']
+                         if anchor_id in holder), None)
+        return None
+
+    domains = expanded['domains']
+    returned = set(domains)
+    claimed = {membership['activity_id'] for domain in domains.values()
+               for membership in domain['activity_memberships']}
+    primary = {membership['activity_id'] for domain in domains.values()
+               for membership in domain['activity_memberships']
+               if membership['role'] == 'primary'}
+    retiring = []
+    for domain_id in sorted(set(supplied['domains']) - returned):
+        domain = copy.deepcopy(supplied['domains'][domain_id])
+        members = {}
+        for membership in domain['activity_memberships']:
+            activity_id = current(membership['activity_id'])
+            if activity_id is None or activity_id in claimed or activity_id in members:
+                continue
+            role = membership['role']
+            if role == 'primary' and activity_id in primary:
+                role = 'supporting'
+            primary |= {activity_id} if role == 'primary' else set()
+            members[activity_id] = {**membership, 'activity_id': activity_id, 'role': role}
+        if members:
+            domain['activity_memberships'] = list(members.values())
+            domains[domain_id] = domain
+        else:
+            retiring.append(domain_id)
+
+    home = {}
+    for domain_id in sorted(domains):
+        for membership in domains[domain_id]['activity_memberships']:
+            if membership['role'] == 'primary':
+                home.setdefault(membership['activity_id'], domain_id)
+    for domain_id in sorted(domains):
+        for membership in domains[domain_id]['activity_memberships']:
+            home.setdefault(membership['activity_id'], domain_id)
+    successor = {}
+    for domain_id in retiring:
+        targets = [home[activity_id] for membership
+                   in supplied['domains'][domain_id]['activity_memberships']
+                   if (activity_id := current(membership['activity_id'])) in home]
+        successor[domain_id] = min(targets, key=lambda target: (-targets.count(target), target),
+                                   default=None)
+
+    def settled(domain_id):
+        return domain_id if domain_id in domains else successor.get(domain_id)
+
+    ownerships = {}
+    for ownership_id in sorted(expanded['ownerships']) + sorted(
+            set(supplied['ownerships']) - set(expanded['ownerships'])):
+        item = copy.deepcopy(expanded['ownerships'].get(ownership_id)
+                             or supplied['ownerships'][ownership_id])
+        origin = item['domain_id']
+        if (ownership_id not in expanded['ownerships'] and origin in returned
+                and ownership_id not in domains[origin]['ownership_ids']):
+            continue
+        item['domain_id'] = settled(origin) if origin else None
+        if item['domain_id'] is None:
+            continue
+        item['activity_ids'] = list(dict.fromkeys(
+            activity_id for activity_id in map(current, item['activity_ids']) if activity_id))
+        ownerships[ownership_id] = item
+    for _, group in sorted(_by_owner(ownerships).items()):
+        if len(group) < 2:
+            continue
+        group.sort(key=lambda ownership_id: (
+            ownership_id not in expanded['ownerships'],
+            OWNERSHIP_STRENGTH.index(ownerships[ownership_id]['kind']), ownership_id))
+        kept = ownerships[group[0]]
+        for ownership_id in group[1:]:
+            other = ownerships.pop(ownership_id)
+            for field in ('activity_ids', 'information_use_ids', 'claim_ids',
+                          'evidence_ids', 'unresolved_questions'):
+                kept[field] = list(dict.fromkeys([*kept[field], *other[field]]))
+    expanded['ownerships'] = ownerships
+    for domain_id, domain in domains.items():
+        domain['ownership_ids'] = sorted(ownership_id for ownership_id, item in ownerships.items()
+                                         if item['domain_id'] == domain_id)
+
+    relationships, seen = {}, set()
+    for relationship_id in sorted(expanded['relationships']) + sorted(
+            set(supplied['relationships']) - set(expanded['relationships'])):
+        item = copy.deepcopy(expanded['relationships'].get(relationship_id)
+                             or supplied['relationships'][relationship_id])
+        source, target = current(item['from_activity_id']), current(item['to_activity_id'])
+        key = (source, target, item['kind'])
+        if source is None or target is None or source == target or key in seen:
+            continue
+        if source not in home or target not in home:
+            continue
+        seen.add(key)
+        item.update(from_activity_id=source, to_activity_id=target,
+                    from_domain_id=home[source], to_domain_id=home[target])
+        relationships[relationship_id] = item
+    expanded['relationships'] = relationships
+
+
+def _by_owner(ownerships: dict) -> dict:
+    groups = {}
+    for ownership_id, item in ownerships.items():
+        groups.setdefault((item['domain_id'], item['concept_id']), []).append(ownership_id)
+    return groups
 
 
 def _drop_replaced_references(expanded: dict, supplied: dict) -> None:
-    """Remove what kept records say about child records the answer replaced.
+    """Remove what the candidate still says about child records it replaced.
 
-    A kept record may cite a merged-away activity, or a claim about a child
-    grouping the answer replaced; neither is part of the candidate.
+    A child record the candidate does not hold was merged away, retired or
+    dropped. Records that depend on one, such as an information use of a
+    merged activity or a claim about a retired domain, go with it, and lists
+    that name one lose that entry, until nothing refers to a replaced record.
     """
-    present = {record_id for name in SEMANTIC_COLLECTIONS for record_id in expanded[name]}
     supplied_ids = {record_id for name in SEMANTIC_COLLECTIONS for record_id in supplied[name]}
-    replaced = supplied_ids - present
-    expanded['claims'] = {claim_id: claim for claim_id, claim in expanded['claims'].items()
-                          if claim['subject_id'] not in replaced}
-    claims = set(expanded['claims'])
+    dependent_fields = {'information_uses': ('activity_id', 'concept_id'),
+                        'claims': ('subject_id',), 'ownerships': ('concept_id',)}
+    while True:
+        present = {record_id for name in SEMANTIC_COLLECTIONS for record_id in expanded[name]}
+        replaced = supplied_ids - present
+        orphans = {(name, record_id) for name, fields in dependent_fields.items()
+                   for record_id, item in expanded[name].items()
+                   if any(item.get(field) in replaced for field in fields)}
+        if not orphans:
+            break
+        for name, record_id in orphans:
+            del expanded[name][record_id]
     for name in SEMANTIC_COLLECTIONS:
-        for item in expanded[name].values():
-            if 'claim_ids' in item:
-                item['claim_ids'] = [claim_id for claim_id in item['claim_ids']
-                                     if claim_id in claims or claim_id not in supplied_ids]
-    for rule in expanded['rules'].values():
-        if 'activity_ids' in rule:
-            rule['activity_ids'] = [activity_id for activity_id in rule['activity_ids']
-                                    if activity_id in expanded['activities']]
+        for record_id, item in expanded[name].items():
+            expanded[name][record_id] = _without(item, replaced)
+
+
+def _without(value, replaced: set):
+    """`value` with every ID in `replaced` removed from its lists of IDs."""
+    if isinstance(value, list):
+        return [_without(item, replaced) for item in value
+                if not (isinstance(item, str) and item in replaced)]
+    if isinstance(value, dict):
+        return {key: _without(item, replaced) for key, item in value.items()}
+    return value
 
 
 def _referenced(payload: dict, supplied: dict) -> set:
     """Supplied semantic records the records of `payload` name."""
     known = {record_id for name in SEMANTIC_COLLECTIONS for record_id in supplied[name]}
-    found = set()
-
-    def walk(value):
-        if isinstance(value, str):
-            if value in known:
-                found.add(value)
-        elif isinstance(value, list):
-            for item in value:
-                walk(item)
-        elif isinstance(value, dict):
-            for item in value.values():
-                walk(item)
-
-    for name in SEMANTIC_COLLECTIONS:
-        walk(payload.get(name, {}))
-    return found
+    return _referenced_ids([payload.get(name, {}) for name in SEMANTIC_COLLECTIONS], known)
 
 
-def reconciliation_findings(units, payload: dict) -> list[dict]:
-    """Repairable findings for coverage a reconciliation candidate must keep.
+def _home_domains(payload: dict) -> dict:
+    """Each activity's primary domain, else the first domain holding it."""
+    home = {}
+    for role in ('primary', 'supporting'):
+        for domain_id in sorted(payload['domains']):
+            for membership in payload['domains'][domain_id]['activity_memberships']:
+                if membership['role'] == role:
+                    home.setdefault(membership['activity_id'], domain_id)
+    return home
+
+
+def reconciliation_findings(model: dict, units, payload: dict) -> list[dict]:
+    """Repairable findings on a complete reconciliation candidate.
 
     Reconciliation may merge or regroup activities, never drop an anchor a
-    unit represented. A child reported as represented must name records it
-    contributed.
+    unit represented, and a child reported as represented must name records
+    it contributed. Where units connect in ways no unit could see, the
+    candidate must account for it: information one unit reads that only
+    another writes needs a relationship or a shared domain, and domains that
+    one boundary may cover need merging or a recorded decision to keep them
+    apart.
     """
     represented = set(_anchor_activities(payload))
     lost = sorted({anchor_id for unit in units for anchor_id, item in unit.coverage.items()
@@ -671,7 +1090,14 @@ def reconciliation_findings(units, payload: dict) -> list[dict]:
             'message': ('Reconciliation dropped anchors a validated child represented; '
                         'every such anchor must stay in a reconciled activity'),
             'subject_ids': lost, 'evidence_ids': []})
-    contributed = {unit.scope['scope_id']: {record_id for collection in SEMANTIC_COLLECTIONS
+    # A child contributed a concept merged into another under that one's ID.
+    aliases = _merge_concepts(model, {
+        collection: ({record_id: copy.deepcopy(item) for unit in units
+                      for record_id, item in unit.payload['concepts'].items()}
+                     if collection == 'concepts' else {})
+        for collection in SEMANTIC_COLLECTIONS})
+    contributed = {unit.scope['scope_id']: {aliases.get(record_id, record_id)
+                                            for collection in SEMANTIC_COLLECTIONS
                                             for record_id in unit.payload[collection]}
                    for unit in units}
     for disposition in payload['dispositions']:
@@ -684,6 +1110,72 @@ def reconciliation_findings(units, payload: dict) -> list[dict]:
                     'message': 'A represented child names records it did not contribute',
                     'subject_ids': sorted({disposition['subject_id'], *unknown}),
                     'evidence_ids': []})
+    return findings + _link_findings(payload, units) + _merge_findings(model, units, payload)
+
+
+def _link_findings(payload: dict, units) -> list[dict]:
+    home = _home_domains(payload)
+    linked = {frozenset((item['from_activity_id'], item['to_activity_id']))
+              for item in payload['relationships'].values()}
+    findings = []
+    for reader, resource_id, writers in cross_scope_reads(
+            payload['activities'], payload['information_uses'],
+            _children_of(units, payload['activities'])):
+        if any(frozenset((reader, writer)) in linked
+               or (home.get(reader) is not None and home.get(reader) == home.get(writer))
+               for writer in writers):
+            continue
+        findings.append({
+            'code': 'MISSING_RELATIONSHIP', 'severity': 'error',
+            'message': ('An activity reads information that only other child scopes write; '
+                        'link it to a writer with a uses_information_from relationship, '
+                        'or place them in one domain'),
+            'subject_ids': sorted({reader, resource_id, *writers}), 'evidence_ids': []})
+    return findings
+
+
+def _merge_findings(model: dict, units, payload: dict) -> list[dict]:
+    activities = {activity_id: activity for unit in units
+                  for activity_id, activity in unit.payload['activities'].items()}
+    domains = {domain_id: domain for unit in units
+               for domain_id, domain in unit.payload['domains'].items()}
+    holder = {}
+    for activity_id in sorted(payload['activities']):
+        for anchor_id in payload['activities'][activity_id]['anchor_ids']:
+            holder.setdefault(anchor_id, activity_id)
+    home = _home_domains(payload)
+
+    def settled(domain_id):
+        """The candidate domains now holding a child domain's activities."""
+        return {home[holder[anchor_id]]
+                for membership in domains[domain_id]['activity_memberships']
+                if membership['activity_id'] in activities
+                for anchor_id in activities[membership['activity_id']]['anchor_ids']
+                if anchor_id in holder and holder[anchor_id] in home}
+
+    def decided(sides):
+        """Whether a domain on one side records a boundary decision naming the other."""
+        for side, other in (sides, sides[::-1]):
+            for domain_id in side:
+                domain = payload['domains'].get(domain_id)
+                if domain and any(set(item['subject_ids']) & other
+                                  for item in domain['alternatives'] + domain['exclusions']):
+                    return True
+        return False
+
+    findings = []
+    for one, other, _ in merge_candidates(model, domains, activities,
+                                          _children_of(units, activities)):
+        now = settled(one), settled(other)
+        if now[0] & now[1] or decided(({one, *now[0]}, {other, *now[1]})):
+            continue
+        findings.append({
+            'code': 'UNDECIDED_MERGE', 'severity': 'error',
+            'message': ('Domains of different child scopes that one boundary may cover are '
+                        'still separate with no recorded decision; merge them, or record '
+                        'an alternative naming the other domain with the evidence for '
+                        'keeping them apart'),
+            'subject_ids': sorted({one, other, *now[0], *now[1]}), 'evidence_ids': []})
     return findings
 
 
