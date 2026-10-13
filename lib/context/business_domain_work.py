@@ -579,10 +579,11 @@ def _merge_concepts(model: dict, context: dict) -> dict:
 
     Each unit names the concepts it meets independently, so one type can
     arrive as several concepts. Concepts whose qualified type names resolve to
-    a common declared type are one concept: the first by ID stands for all of
-    them, with their names, symbols, evidence and claims, and every reference
-    to another is rewritten to it. A bare type name resolves only when exactly
-    one declared symbol carries it.
+    a common declared type are one concept, as are concepts of one name that
+    information uses keep in a common store: the first by ID stands for all
+    of them, with their names, symbols, evidence and claims, and every
+    reference to another is rewritten to it. A bare type name resolves only
+    when exactly one declared symbol carries it.
     """
     declared = {}
     for symbol in model.get('symbols', {}).values():
@@ -615,6 +616,20 @@ def _merge_concepts(model: dict, context: dict) -> dict:
             one, other = sorted((root(first[key]), root(concept_id)))
             if one != other:
                 parent[other] = one
+    # A concept a unit named without its type is the concept of the same name
+    # another unit keeps in the same store.
+    stores = {}
+    for use in context['information_uses'].values():
+        stores.setdefault(use['concept_id'], set()).update(use['resource_ids'])
+    named = {}
+    for concept_id in sorted(context['concepts']):
+        name = _plain(context['concepts'][concept_id].get('name') or '')
+        for other in named.get(name, ()) if name else ():
+            if stores.get(concept_id, set()) & stores.get(other, set()):
+                one, other = sorted((root(other), root(concept_id)))
+                if one != other:
+                    parent[other] = one
+        named.setdefault(name, []).append(concept_id)
     aliases = {concept_id: root(concept_id) for concept_id in context['concepts']
                if root(concept_id) != concept_id}
     for alias, canonical in sorted(aliases.items()):
@@ -819,8 +834,50 @@ def expand_reconciliation(scope: dict, payload: dict) -> dict:
     _rehome(expanded, supplied, merged)
     _drop_orphan_rules(expanded, supplied, returned)
     _drop_replaced_references(expanded, supplied)
+    _keep_writers(expanded)
+    _collect_domain_rules(expanded)
     _link_claims(expanded)
     return expanded
+
+
+def _keep_writers(expanded: dict) -> None:
+    """Keep in each authoritative ownership only the activities that write it.
+
+    Creating or maintaining information takes a write of it; an activity
+    whose uses of the concept only read it, and those uses, leave a creates,
+    maintains or authoritative ownership. One left with no writer stays as it
+    is, for review to judge.
+    """
+    writes = {}
+    for use_id, use in expanded['information_uses'].items():
+        if use['access'] in WRITE_ACCESS:
+            writes.setdefault((use['activity_id'], use['concept_id']), set()).add(use_id)
+    for ownership in expanded['ownerships'].values():
+        if ownership['kind'] not in ('creates', 'maintains', 'authoritative_source'):
+            continue
+        writers = [activity_id for activity_id in ownership['activity_ids']
+                   if (activity_id, ownership['concept_id']) in writes]
+        if not writers or writers == ownership['activity_ids']:
+            continue
+        written = set().union(*(writes[(activity_id, ownership['concept_id'])]
+                                for activity_id in writers))
+        ownership['activity_ids'] = writers
+        ownership['information_use_ids'] = [
+            use_id for use_id in ownership['information_use_ids']
+            if use_id in written or expanded['information_uses'].get(use_id, {}).get(
+                'activity_id') in writers]
+
+
+def _collect_domain_rules(expanded: dict) -> None:
+    """A domain lists the rules its primary activities apply."""
+    for domain in expanded['domains'].values():
+        applied = [rule_id for membership in domain.get('activity_memberships', ())
+                   if membership['role'] == 'primary'
+                   for rule_id in expanded['activities'].get(
+                       membership['activity_id'], {}).get('rule_ids', ())
+                   if rule_id in expanded['rules']]
+        if 'rules' in domain:
+            domain['rules'] = list(dict.fromkeys([*domain['rules'], *applied]))
 
 
 def _rule_basis(rule: dict):

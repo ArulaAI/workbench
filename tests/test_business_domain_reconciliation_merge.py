@@ -457,3 +457,51 @@ def test_a_kept_domain_naming_a_replaced_rule_names_its_replacement():
 
     assert set(complete['rules']) == {'rule:velocity'}
     assert complete['domains']['domain:risk']['rules'] == ['rule:velocity']
+
+
+def test_concepts_of_one_name_kept_in_one_store_are_one():
+    context = {collection: {} for collection in SEMANTIC_COLLECTIONS}
+    context['concepts'] = {
+        name: {'id': name, 'name': 'Idempotency record', 'qualified_type_names': names,
+               'symbol_ids': [], 'evidence_ids': [], 'claim_ids': []}
+        for name, names in (('concept:1', ['src/pay.ts::Payments.idempotent']),
+                            ('concept:2', []))}
+    context['information_uses'] = {
+        use: {'id': use, 'activity_id': 'activity:a', 'concept_id': concept,
+              'resource_ids': ['resource:idempotent'], 'access': 'creates'}
+        for use, concept in (('use:1', 'concept:1'), ('use:2', 'concept:2'))}
+
+    assert _merge_concepts({'symbols': {}}, context) == {'concept:2': 'concept:1'}
+
+
+def test_a_creating_ownership_keeps_only_activities_that_write_its_concept():
+    scope, answer = _merging_scope()
+    context = scope['context']
+    context['activities']['activity:reader'] = {
+        'id': 'activity:reader', 'anchor_ids': ['anchor:read'], 'claim_ids': [], 'rule_ids': [],
+        'concept_ids': [], 'information_use_ids': ['use:read']}
+    context['information_uses']['use:read'] = {
+        'id': 'use:read', 'activity_id': 'activity:reader', 'concept_id': 'concept:payment',
+        'resource_ids': ['resource:payments'], 'access': 'reads'}
+    answer['dispositions'][0]['incorporated_record_ids'].append('activity:reader')
+    answer['domains'] = {'domain:pay': _domain('domain:pay', 'activity:merged', 'activity:reader')}
+    answer['ownerships'] = {'ownership:payment': {
+        'id': 'ownership:payment', 'domain_id': 'domain:pay', 'concept_id': 'concept:payment',
+        'kind': 'creates', 'activity_ids': ['activity:merged', 'activity:reader'],
+        'information_use_ids': ['use:one', 'use:read'], 'claim_ids': [], 'evidence_ids': [],
+        'unresolved_questions': []}}
+
+    complete = expand_reconciliation(scope, answer)
+
+    ownership = complete['ownerships']['ownership:payment']
+    assert ownership['activity_ids'] == ['activity:merged']
+    assert ownership['information_use_ids'] == ['use:one']
+
+
+def test_a_domain_lists_the_rules_its_activities_apply():
+    scope, answer = _merging_scope()
+    answer['domains'] = {'domain:pay': _domain('domain:pay', 'activity:merged')}
+
+    complete = expand_reconciliation(scope, answer)
+
+    assert complete['domains']['domain:pay']['rules'] == ['rule:merged']
