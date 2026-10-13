@@ -110,6 +110,7 @@ SEMANTIC_COLLECTIONS = (
     'activities', 'rules', 'concepts', 'information_uses', 'ownerships',
     'rule_relationships', 'claims', 'domains', 'relationships')
 COVERAGE_MANIFEST = 'coverage_manifest'
+GROUPING_COLLECTIONS = ('domains', 'ownerships', 'relationships')
 # Citations per coverage manifest: enough to locate a child's evidence without
 # re-sending every excerpt it already had verified.
 MANIFEST_EVIDENCE = 8
@@ -566,7 +567,9 @@ def expand_reconciliation(scope: dict, payload: dict) -> dict:
     rules, concepts and information uses they rest on, are copied from the
     scope into the candidate. A record the answer returns itself stands as
     returned, and a child activity whose anchors are all held by activities
-    the answer returned was merged into them and is not copied.
+    the answer returned was merged into them and is not copied. Domains,
+    ownerships and relationships are the children's groupings, which the
+    answer replaces: they are carried only when a disposition names them.
     """
     if scope['scope_kind'] != 'reconciliation':
         return payload
@@ -578,18 +581,19 @@ def expand_reconciliation(scope: dict, payload: dict) -> dict:
             for anchor_id in activity['anchor_ids']}
     merged = {activity_id for activity_id, activity in supplied['activities'].items()
               if activity_id not in present and set(activity['anchor_ids']) <= held}
-    pending = {record_id for disposition in expanded['dispositions']
-               if disposition['subject_kind'] == 'child_scope'
-               and disposition['status'] == 'represented'
-               for record_id in disposition['incorporated_record_ids']}
-    pending |= _referenced(expanded, supplied)
+    named = {record_id for disposition in expanded['dispositions']
+             if disposition['subject_kind'] == 'child_scope'
+             and disposition['status'] == 'represented'
+             for record_id in disposition['incorporated_record_ids']}
+    pending = named | _referenced(expanded, supplied)
     while pending:
         record_id = pending.pop()
         if record_id in present or record_id in merged:
             continue
         collection = next((name for name in SEMANTIC_COLLECTIONS
                            if record_id in supplied[name]), None)
-        if collection is None:
+        if collection is None or (collection in GROUPING_COLLECTIONS
+                                  and record_id not in named):
             continue
         item = copy.deepcopy(supplied[collection][record_id])
         if item.get('kind') == COVERAGE_MANIFEST:
@@ -602,7 +606,31 @@ def expand_reconciliation(scope: dict, payload: dict) -> dict:
                     if dependent_id not in present and dependent.get('kind') != COVERAGE_MANIFEST
                     and record_id in (dependent.get('activity_id'), dependent.get('subject_id'))
                     and not {dependent.get('activity_id'), dependent.get('subject_id')} & merged}
+    _drop_replaced_references(expanded, supplied)
     return expanded
+
+
+def _drop_replaced_references(expanded: dict, supplied: dict) -> None:
+    """Remove what kept records say about child records the answer replaced.
+
+    A kept record may cite a merged-away activity, or a claim about a child
+    grouping the answer replaced; neither is part of the candidate.
+    """
+    present = {record_id for name in SEMANTIC_COLLECTIONS for record_id in expanded[name]}
+    supplied_ids = {record_id for name in SEMANTIC_COLLECTIONS for record_id in supplied[name]}
+    replaced = supplied_ids - present
+    expanded['claims'] = {claim_id: claim for claim_id, claim in expanded['claims'].items()
+                          if claim['subject_id'] not in replaced}
+    claims = set(expanded['claims'])
+    for name in SEMANTIC_COLLECTIONS:
+        for item in expanded[name].values():
+            if 'claim_ids' in item:
+                item['claim_ids'] = [claim_id for claim_id in item['claim_ids']
+                                     if claim_id in claims or claim_id not in supplied_ids]
+    for rule in expanded['rules'].values():
+        if 'activity_ids' in rule:
+            rule['activity_ids'] = [activity_id for activity_id in rule['activity_ids']
+                                    if activity_id in expanded['activities']]
 
 
 def _referenced(payload: dict, supplied: dict) -> set:

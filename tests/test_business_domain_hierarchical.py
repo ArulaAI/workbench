@@ -710,3 +710,30 @@ def test_segments_reconcile_into_one_activity_per_anchor(tmp_path):
 
     [activity] = model['activities'].values()
     assert activity['anchor_ids'] == list(model['anchors'])
+
+
+def test_expansion_leaves_child_groupings_to_the_answer():
+    from lib.context.business_domain_work import SEMANTIC_COLLECTIONS, expand_reconciliation
+    context = {collection: {} for collection in SEMANTIC_COLLECTIONS}
+    context['activities'] = {'activity:a': {'id': 'activity:a', 'anchor_ids': ['anchor:a'],
+                                            'claim_ids': [], 'rule_ids': [],
+                                            'concept_ids': ['concept:c']}}
+    context['concepts'] = {'concept:c': {'id': 'concept:c',
+                                         'claim_ids': ['claim:domain', 'claim:concept']}}
+    context['domains'] = {'domain:child': {'id': 'domain:child'}}
+    context['ownerships'] = {'ownership:o': {'id': 'ownership:o', 'domain_id': 'domain:child',
+                                             'concept_id': 'concept:c'}}
+    context['claims'] = {'claim:domain': {'id': 'claim:domain', 'subject_id': 'domain:child',
+                                          'kind': 'boundary'},
+                         'claim:concept': {'id': 'claim:concept', 'subject_id': 'concept:c',
+                                           'kind': 'behavior'}}
+    scope = {'scope_kind': 'reconciliation', 'context': context}
+    answer = {collection: {} for collection in SEMANTIC_COLLECTIONS}
+    answer['dispositions'] = [{'subject_kind': 'child_scope', 'subject_id': 'scope:child',
+                               'status': 'represented', 'incorporated_record_ids': ['activity:a']}]
+
+    complete = expand_reconciliation(scope, answer)
+
+    assert complete['domains'] == {} and complete['ownerships'] == {}
+    assert set(complete['claims']) == {'claim:concept'}
+    assert complete['concepts']['concept:c']['claim_ids'] == ['claim:concept']
