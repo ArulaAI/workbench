@@ -268,3 +268,81 @@ def test_a_repair_that_ignores_its_findings_is_recognised():
     # A finding about a claim is answered by rewording that claim.
     about_a_claim = {'findings': [{'severity': 'blocking', 'subject_ids': ['claim:1']}]}
     assert Synthesis._ignored_findings(before, reworded, [], about_a_claim) == []
+
+
+def _merging_scope():
+    """Two child activities of one anchor, each with a use and a rule."""
+    context = {collection: {} for collection in SEMANTIC_COLLECTIONS}
+    context['activities'] = {
+        name: {'id': name, 'anchor_ids': ['anchor:pay'], 'claim_ids': [], 'rule_ids': [rule],
+               'concept_ids': [], 'information_use_ids': [use]}
+        for name, rule, use in (('activity:one', 'rule:one', 'use:one'),
+                                ('activity:two', 'rule:two', 'use:two'))}
+    context['information_uses'] = {
+        use: {'id': use, 'activity_id': activity, 'concept_id': 'concept:payment',
+              'resource_ids': [resource], 'access': 'creates'}
+        for use, activity, resource in (('use:one', 'activity:one', 'resource:payments'),
+                                        ('use:two', 'activity:two', 'resource:ledger'))}
+    context['concepts'] = {'concept:payment': {'id': 'concept:payment', 'claim_ids': []}}
+    context['rules'] = {rule: {'id': rule} for rule in ('rule:one', 'rule:two')}
+    answer = {collection: {} for collection in SEMANTIC_COLLECTIONS}
+    answer['activities'] = {'activity:merged': {
+        'id': 'activity:merged', 'anchor_ids': ['anchor:pay'], 'claim_ids': [],
+        'rule_ids': ['rule:merged'], 'concept_ids': [], 'information_use_ids': []}}
+    answer['rules'] = {'rule:merged': {'id': 'rule:merged'}}
+    answer['claims'] = {'claim:merged': {'id': 'claim:merged', 'subject_id': 'activity:merged',
+                                         'kind': 'behavior'}}
+    answer['dispositions'] = [{'subject_kind': 'child_scope', 'subject_id': 'scope:child',
+                               'status': 'represented',
+                               'incorporated_record_ids': ['rule:one', 'rule:two']}]
+    return {'scope_kind': 'reconciliation', 'context': context}, answer
+
+
+def test_a_merged_activity_takes_over_the_information_uses_it_replaced():
+    scope, answer = _merging_scope()
+
+    complete = expand_reconciliation(scope, answer)
+
+    merged = complete['activities']['activity:merged']
+    assert {use['activity_id'] for use in complete['information_uses'].values()} == {
+        'activity:merged'}
+    assert set(merged['information_use_ids']) == {'use:one', 'use:two'}
+    assert merged['concept_ids'] == ['concept:payment']
+
+
+def test_child_rules_nothing_applies_after_a_merge_are_dropped():
+    scope, answer = _merging_scope()
+
+    complete = expand_reconciliation(scope, answer)
+
+    assert set(complete['rules']) == {'rule:merged'}
+
+
+def test_a_record_lists_every_claim_about_it():
+    scope, answer = _merging_scope()
+
+    complete = expand_reconciliation(scope, answer)
+
+    assert complete['activities']['activity:merged']['claim_ids'] == ['claim:merged']
+
+
+def test_claims_about_replaced_activities_move_to_the_merged_one():
+    scope, answer = _merging_scope()
+    scope['context']['claims'] = {'claim:one': {'id': 'claim:one', 'subject_id': 'activity:one',
+                                                'kind': 'behavior'}}
+    del answer['claims']['claim:merged']
+
+    complete = expand_reconciliation(scope, answer)
+
+    assert complete['claims']['claim:one']['subject_id'] == 'activity:merged'
+    assert complete['activities']['activity:merged']['claim_ids'] == ['claim:one']
+
+
+def test_a_membership_without_claims_rests_on_its_activity_claims():
+    scope, answer = _merging_scope()
+    answer['domains'] = {'domain:pay': _domain('domain:pay', 'activity:merged')}
+
+    complete = expand_reconciliation(scope, answer)
+
+    [membership] = complete['domains']['domain:pay']['activity_memberships']
+    assert membership['claim_ids'] == ['claim:merged']

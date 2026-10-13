@@ -699,7 +699,11 @@ def test_expansion_carries_kept_records_and_drops_merged_ones():
     complete = expand_reconciliation(scope, answer)
 
     assert set(complete['activities']) == {'activity:kept', 'activity:merged'}
-    assert set(complete['claims']) == {'claim:kept'}
+    # The merged activity states no claims of its own, so the claims about the
+    # parts it replaced now describe it.
+    assert {claim_id: claim['subject_id'] for claim_id, claim in complete['claims'].items()} == {
+        'claim:kept': 'activity:kept', 'claim:part1': 'activity:merged',
+        'claim:part2': 'activity:merged'}
     assert set(complete['rules']) == {'rule:r'}
 
 

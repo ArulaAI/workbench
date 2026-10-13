@@ -805,8 +805,102 @@ def expand_reconciliation(scope: dict, payload: dict) -> dict:
            | {claim_id for claim_id, claim in supplied['claims'].items()
               if claim['subject_id'] in groupings},
            merged)
+    _rehome(expanded, supplied, merged)
+    _drop_orphan_rules(expanded, supplied, returned)
     _drop_replaced_references(expanded, supplied)
+    _link_claims(expanded)
     return expanded
+
+
+def _rehome(expanded: dict, supplied: dict, merged: set) -> None:
+    """Give a merged activity what was established about the activities it replaced.
+
+    A child activity's information uses and the claims about its behaviour
+    follow its anchors and traces, which the activity now holding those
+    anchors holds; they move to it unless the answer stated that activity's
+    uses, or its claims, itself.
+    """
+    activities = expanded['activities']
+    holder = {}
+    for activity_id in sorted(activities):
+        for anchor_id in activities[activity_id]['anchor_ids']:
+            holder.setdefault(anchor_id, activity_id)
+
+    def target_of(activity_id):
+        return next((holder[anchor_id] for anchor_id
+                     in supplied['activities'][activity_id]['anchor_ids']
+                     if anchor_id in holder), None)
+
+    described = {claim['subject_id'] for claim in expanded['claims'].values()}
+    for claim_id in sorted(supplied['claims']):
+        claim = supplied['claims'][claim_id]
+        if claim['subject_id'] not in merged or claim.get('kind') in SPEED_CLAIM_KINDS:
+            continue
+        target = target_of(claim['subject_id'])
+        if target is not None and target not in described and claim_id not in expanded['claims']:
+            expanded['claims'][claim_id] = {**copy.deepcopy(claim), 'subject_id': target}
+    stated = {use['activity_id'] for use in expanded['information_uses'].values()}
+    seen = {_use_key(use) for use in expanded['information_uses'].values()}
+    for use_id in sorted(supplied['information_uses']):
+        use = supplied['information_uses'][use_id]
+        if use['activity_id'] not in merged:
+            continue
+        target = target_of(use['activity_id'])
+        if target is None or target in stated:
+            continue
+        item = {**copy.deepcopy(use), 'activity_id': target}
+        if _use_key(item) in seen:
+            continue
+        seen.add(_use_key(item))
+        expanded['information_uses'][use_id] = item
+        activity = activities[target]
+        activity['information_use_ids'] = list(dict.fromkeys(
+            [*activity['information_use_ids'], use_id]))
+        if use['concept_id'] in expanded['concepts'] or use['concept_id'] in supplied['concepts']:
+            activity['concept_ids'] = list(dict.fromkeys([*activity['concept_ids'],
+                                                          use['concept_id']]))
+            if use['concept_id'] not in expanded['concepts']:
+                expanded['concepts'][use['concept_id']] = copy.deepcopy(
+                    supplied['concepts'][use['concept_id']])
+
+
+def _use_key(use: dict) -> tuple:
+    return (use['activity_id'], use['concept_id'], tuple(sorted(use['resource_ids'])),
+            use['access'])
+
+
+def _drop_orphan_rules(expanded: dict, supplied: dict, returned: set) -> None:
+    """Remove carried child rules nothing in the candidate applies any more.
+
+    A rule the answer merged into one it returned is still named by the child
+    records that cited it; once no activity or domain does, it is gone.
+    """
+    applied = {rule_id for activity in expanded['activities'].values()
+               for rule_id in activity.get('rule_ids', ())}
+    applied |= {rule_id for domain in expanded['domains'].values()
+                for rule_id in domain.get('rules', ())}
+    for rule_id in sorted(set(expanded['rules'])):
+        if rule_id in supplied['rules'] and rule_id not in returned and rule_id not in applied:
+            del expanded['rules'][rule_id]
+
+
+def _link_claims(expanded: dict) -> None:
+    """List every claim about a record in that record's `claim_ids`.
+
+    A domain membership the answer gave no claim rests on the claims about
+    its activity.
+    """
+    about = {}
+    for claim_id in sorted(expanded['claims']):
+        about.setdefault(expanded['claims'][claim_id]['subject_id'], []).append(claim_id)
+    for collection in SEMANTIC_COLLECTIONS:
+        for record_id, item in expanded[collection].items():
+            if 'claim_ids' in item and record_id in about:
+                item['claim_ids'] = list(dict.fromkeys([*item['claim_ids'], *about[record_id]]))
+    for domain in expanded['domains'].values():
+        for membership in domain.get('activity_memberships', ()):
+            if not membership['claim_ids']:
+                membership['claim_ids'] = list(about.get(membership['activity_id'], ()))
 
 
 def verification_view(scope: dict, complete: dict) -> dict:
