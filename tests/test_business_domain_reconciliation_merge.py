@@ -643,3 +643,21 @@ def test_a_rule_enforced_inside_a_called_activity_applies_to_it():
     _attach_rules_to_enforcers(candidate, model)
 
     assert candidate['activities']['activity:authorise']['rule_ids'] == ['rule:last4']
+
+
+def test_claims_about_a_combined_ownership_name_the_one_it_became():
+    scope, answer = _regrouping_scope()
+    answer['domains'] = {'domain:merged': _domain('domain:merged', 'activity:a', 'activity:b')}
+    answer['ownerships'] = {
+        name: {'id': name, 'domain_id': 'domain:merged', 'concept_id': 'concept:c', 'kind': kind,
+               'activity_ids': [activity], 'information_use_ids': [], 'claim_ids': [],
+               'evidence_ids': [], 'unresolved_questions': []}
+        for name, kind, activity in (('ownership:x', 'creates', 'activity:a'),
+                                     ('ownership:y', 'maintains', 'activity:b'))}
+    answer['claims'] = {'claim:y': {'id': 'claim:y', 'subject_id': 'ownership:y',
+                                    'kind': 'ownership'}}
+
+    complete = expand_reconciliation(scope, answer)
+
+    assert list(complete['ownerships']) == ['ownership:x']
+    assert complete['claims']['claim:y']['subject_id'] == 'ownership:x'

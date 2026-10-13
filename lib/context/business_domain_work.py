@@ -838,7 +838,7 @@ def expand_reconciliation(scope: dict, payload: dict, model: dict | None = None)
     _supersede_rules(expanded, supplied)
     _rehome(expanded, supplied, merged)
     _drop_orphan_rules(expanded, supplied, returned)
-    _drop_replaced_references(expanded, supplied)
+    _drop_replaced_references(expanded, supplied, returned)
     _keep_writers(expanded)
     if model is not None:
         _drop_delegating_owners(expanded, model)
@@ -1324,26 +1324,36 @@ def _regroup(expanded: dict, supplied: dict, merged: set) -> None:
         if item['domain_id'] is None:
             continue
         ownerships[ownership_id] = item
+    combined = {}
     for _, group in sorted(_by_owner(ownerships).items()):
         if len(group) < 2:
             continue
         stated = [ownership_id for ownership_id in group if ownership_id in expanded['ownerships']]
+        group.sort(key=lambda ownership_id: (
+            ownership_id not in stated,
+            OWNERSHIP_STRENGTH.index(ownerships[ownership_id]['kind']), ownership_id))
         if stated:
             # The answer's ownership of a concept in a domain replaces the
             # children's there; it is not widened with what they listed.
             for ownership_id in group:
                 if ownership_id not in stated:
                     ownerships.pop(ownership_id)
-            group = stated
-        group.sort(key=lambda ownership_id: (
-            OWNERSHIP_STRENGTH.index(ownerships[ownership_id]['kind']), ownership_id))
+                    combined[ownership_id] = group[0]
+            group = [ownership_id for ownership_id in group if ownership_id in stated]
         kept = ownerships[group[0]]
         for ownership_id in group[1:]:
+            combined[ownership_id] = group[0]
             other = ownerships.pop(ownership_id)
             for field in ('activity_ids', 'information_use_ids', 'claim_ids',
                           'evidence_ids', 'unresolved_questions'):
                 kept[field] = list(dict.fromkeys([*kept[field], *other[field]]))
     expanded['ownerships'] = ownerships
+    if combined:
+        # What named a combined ownership names the one it became.
+        for collection in SEMANTIC_COLLECTIONS:
+            if collection != 'ownerships':
+                for record_id, item in expanded[collection].items():
+                    expanded[collection][record_id] = _renamed(item, combined)
     for domain_id, domain in domains.items():
         domain['ownership_ids'] = sorted(ownership_id for ownership_id, item in ownerships.items()
                                          if item['domain_id'] == domain_id)
@@ -1373,7 +1383,7 @@ def _by_owner(ownerships: dict) -> dict:
     return groups
 
 
-def _drop_replaced_references(expanded: dict, supplied: dict) -> None:
+def _drop_replaced_references(expanded: dict, supplied: dict, returned: set = frozenset()) -> None:
     """Remove what the candidate still says about child records it replaced.
 
     A child record the candidate does not hold was merged away, retired or
@@ -1381,7 +1391,10 @@ def _drop_replaced_references(expanded: dict, supplied: dict) -> None:
     merged activity or a claim about a retired domain, go with it, and lists
     that name one lose that entry, until nothing refers to a replaced record.
     """
+    # Records the answer returned that the bookkeeping since removed are gone
+    # as well as replaced child records.
     supplied_ids = {record_id for name in SEMANTIC_COLLECTIONS for record_id in supplied[name]}
+    supplied_ids |= set(returned)
     dependent_fields = {'information_uses': ('activity_id', 'concept_id'),
                         'claims': ('subject_id',), 'ownerships': ('concept_id',)}
     while True:
