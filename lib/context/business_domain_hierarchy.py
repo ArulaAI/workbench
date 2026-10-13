@@ -26,9 +26,9 @@ from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
 from .business_domain_schema import DomainError, digest, identifier
 from .business_domain_synthesis import _model_ready_context
 from .business_domain_work import (
-    ROOT_SCOPE_ID, anchor_scope_id, plan_reconciliation, plan_slices,
-    reconciled_unit, reconciliation_findings, reconciliation_scope, slice_scope,
-    slice_unit,
+    ROOT_SCOPE_ID, anchor_scope_id, expand_reconciliation, plan_reconciliation,
+    plan_slices, reconciled_unit, reconciliation_findings, reconciliation_scope,
+    slice_scope, slice_unit,
 )
 
 
@@ -145,8 +145,9 @@ class _Run:
             return lambda candidate: self.accept(scope, candidate)
 
         def validate(candidate):
-            self.accept(scope, candidate)
-            return reconciliation_findings(children, candidate)
+            complete = expand_reconciliation(scope, candidate)
+            self.accept(scope, complete)
+            return reconciliation_findings(children, complete)
         return validate
 
     def sized_reconciliation(self, units, scope_id, parent_scope_id=None):
@@ -167,7 +168,7 @@ class _Run:
         payloads = self.dispatch(
             [(scope, self.validator(scope, units))
              for scope, (_, _, units) in zip(scopes, groups)], label)
-        return [reconciled_unit(scope, payload, units)
+        return [reconciled_unit(scope, expand_reconciliation(scope, payload), units)
                 for scope, payload, (_, _, units) in zip(scopes, payloads, groups)]
 
     def to_root(self, units):

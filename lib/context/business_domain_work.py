@@ -557,6 +557,75 @@ def _manifest(context: dict, unit: Unit) -> None:
         semantic_review='supported')
 
 
+def expand_reconciliation(scope: dict, payload: dict) -> dict:
+    """The complete candidate a compact reconciliation answer stands for.
+
+    A reconciliation returns only what it changes: merged or new records, its
+    domains and one disposition per child, whose `incorporated_record_ids`
+    name the child records it keeps or merges. Kept records, and the claims,
+    rules, concepts and information uses they rest on, are copied from the
+    scope into the candidate. A record the answer returns itself stands as
+    returned, and a child activity whose anchors are all held by activities
+    the answer returned was merged into them and is not copied.
+    """
+    if scope['scope_kind'] != 'reconciliation':
+        return payload
+    supplied = scope['context']
+    expanded = copy.deepcopy(payload)
+    present = {record_id for collection in SEMANTIC_COLLECTIONS
+               for record_id in expanded[collection]}
+    held = {anchor_id for activity in expanded['activities'].values()
+            for anchor_id in activity['anchor_ids']}
+    merged = {activity_id for activity_id, activity in supplied['activities'].items()
+              if activity_id not in present and set(activity['anchor_ids']) <= held}
+    pending = {record_id for disposition in expanded['dispositions']
+               if disposition['subject_kind'] == 'child_scope'
+               and disposition['status'] == 'represented'
+               for record_id in disposition['incorporated_record_ids']}
+    pending |= _referenced(expanded, supplied)
+    while pending:
+        record_id = pending.pop()
+        if record_id in present or record_id in merged:
+            continue
+        collection = next((name for name in SEMANTIC_COLLECTIONS
+                           if record_id in supplied[name]), None)
+        if collection is None:
+            continue
+        item = copy.deepcopy(supplied[collection][record_id])
+        if item.get('kind') == COVERAGE_MANIFEST:
+            continue
+        expanded[collection][record_id] = item
+        present.add(record_id)
+        pending |= _referenced({collection: {record_id: item}}, supplied) - present
+        pending |= {dependent_id for name in ('information_uses', 'claims')
+                    for dependent_id, dependent in supplied[name].items()
+                    if dependent_id not in present and dependent.get('kind') != COVERAGE_MANIFEST
+                    and record_id in (dependent.get('activity_id'), dependent.get('subject_id'))
+                    and not {dependent.get('activity_id'), dependent.get('subject_id')} & merged}
+    return expanded
+
+
+def _referenced(payload: dict, supplied: dict) -> set:
+    """Supplied semantic records the records of `payload` name."""
+    known = {record_id for name in SEMANTIC_COLLECTIONS for record_id in supplied[name]}
+    found = set()
+
+    def walk(value):
+        if isinstance(value, str):
+            if value in known:
+                found.add(value)
+        elif isinstance(value, list):
+            for item in value:
+                walk(item)
+        elif isinstance(value, dict):
+            for item in value.values():
+                walk(item)
+
+    for name in SEMANTIC_COLLECTIONS:
+        walk(payload.get(name, {}))
+    return found
+
+
 def reconciliation_findings(units, payload: dict) -> list[dict]:
     """Repairable findings for coverage a reconciliation candidate must keep.
 

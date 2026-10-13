@@ -647,3 +647,66 @@ def test_the_root_receives_a_structured_manifest_for_every_child(tmp_path):
         assert contributed <= {record_id for collection in ('activities', 'claims', 'domains',
                                                             'rules', 'concepts')
                                for record_id in root['context'][collection]}
+
+
+# ── Compact reconciliation ─────────────────────────────────────────────
+
+def test_the_root_answers_with_changes_and_keeps_the_rest_by_id(tmp_path):
+    config = _split_monolith(tmp_path)
+    provider = _Capture()
+
+    model, _ = discover(tmp_path, config, provider=provider)
+
+    [root] = [graph for graph in provider.scopes if graph['scope_kind'] == 'reconciliation']
+    root_answer = provider._reconcile(root, set())
+    # One activity per anchor in every slice: nothing to merge, everything kept.
+    assert root_answer['activities'] == {}
+    kept = {record_id for disposition in root_answer['dispositions']
+            for record_id in disposition['incorporated_record_ids']}
+    assert kept == set(root['context']['activities'])
+    # The published model holds every kept activity with the claims it rests on.
+    assert len(model['activities']) == len(model['anchors'])
+    assert all(set(activity['claim_ids']) <= set(model['claims'])
+               for activity in model['activities'].values())
+
+
+def test_expansion_carries_kept_records_and_drops_merged_ones():
+    from lib.context.business_domain_work import SEMANTIC_COLLECTIONS, expand_reconciliation
+    context = {collection: {} for collection in SEMANTIC_COLLECTIONS}
+    context['activities'] = {
+        'activity:kept': {'id': 'activity:kept', 'anchor_ids': ['anchor:a'],
+                          'claim_ids': ['claim:kept'], 'rule_ids': ['rule:r']},
+        'activity:part1': {'id': 'activity:part1', 'anchor_ids': ['anchor:b'],
+                           'claim_ids': ['claim:part1'], 'rule_ids': []},
+        'activity:part2': {'id': 'activity:part2', 'anchor_ids': ['anchor:b'],
+                           'claim_ids': ['claim:part2'], 'rule_ids': []}}
+    context['claims'] = {name: {'id': name, 'subject_id': subject, 'kind': 'behavior'}
+                         for name, subject in (('claim:kept', 'activity:kept'),
+                                               ('claim:part1', 'activity:part1'),
+                                               ('claim:part2', 'activity:part2'))}
+    context['rules'] = {'rule:r': {'id': 'rule:r'}}
+    scope = {'scope_kind': 'reconciliation', 'context': context}
+    answer = {collection: {} for collection in SEMANTIC_COLLECTIONS}
+    answer['activities'] = {'activity:merged': {'id': 'activity:merged', 'anchor_ids': ['anchor:b'],
+                                                'claim_ids': [], 'rule_ids': []}}
+    answer['dispositions'] = [{'subject_kind': 'child_scope', 'subject_id': 'scope:child',
+                               'status': 'represented',
+                               'incorporated_record_ids': ['activity:kept', 'activity:part1',
+                                                           'activity:part2']}]
+
+    complete = expand_reconciliation(scope, answer)
+
+    assert set(complete['activities']) == {'activity:kept', 'activity:merged'}
+    assert set(complete['claims']) == {'claim:kept'}
+    assert set(complete['rules']) == {'rule:r'}
+
+
+def test_segments_reconcile_into_one_activity_per_anchor(tmp_path):
+    root = write_long_chain(tmp_path, steps=24)
+    calibration = calibrate(root)
+    config = force_split(calibration.allowance(int(calibration.whole * 0.8)))
+
+    model, _ = discover(root, config, provider=ReconcilingProvider())
+
+    [activity] = model['activities'].values()
+    assert activity['anchor_ids'] == list(model['anchors'])

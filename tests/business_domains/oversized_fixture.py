@@ -172,9 +172,9 @@ class ReconcilingProvider(PassingProvider):
 
     For a whole graph or a slice it proposes one activity per canonical anchor,
     citing that anchor's own evidence and traces, and groups them in one
-    domain. For a reconciliation scope it keeps every child activity, groups
-    them anew, and reports each child represented by exactly the activities its
-    coverage manifest lists as contributed.
+    domain. For a reconciliation scope it answers compactly: it returns only
+    the activities it merges (an anchor's segments become one) and its domain,
+    and keeps every other child activity by naming it incorporated.
     """
 
     def generate(self, request, schema, *rest):
@@ -244,42 +244,43 @@ class ReconcilingProvider(PassingProvider):
                       domains=domains, claims=claims, dispositions=dispositions)
 
     def _merge_by_anchor(self, context):
-        """One activity per anchor set: segments of one anchor become one."""
+        """Kept child activity IDs, and one merged activity per anchor that has several."""
         groups = {}
         for activity_id, activity in sorted(context['activities'].items()):
             groups.setdefault(tuple(activity['anchor_ids']), []).append(activity)
-        activities, claims = {}, {}
+        kept, merged, claims = [], {}, {}
         for index, (anchor_ids, members) in enumerate(sorted(groups.items())):
             if len(members) == 1:
-                [activity] = members
-                activities[activity['id']] = copy.deepcopy(activity)
-                for claim_id in activity['claim_ids']:
-                    claims[claim_id] = copy.deepcopy(context['claims'][claim_id])
+                kept.append(members[0]['id'])
                 continue
             activity_id, claim_id = f'activity:merged{index}', f'claim:merged{index}'
             traces = sorted({trace for member in members for trace in member['trace_ids']})
             evidence = sorted({eid for member in members for eid in member['evidence_ids']})
             claims[claim_id] = self._claim(claim_id, activity_id,
                                            f'Handles entry point {anchor_ids[0]}.', evidence, traces)
-            activities[activity_id] = record('Activity', id=activity_id, name=members[0]['name'],
+            merged[activity_id] = record('Activity', id=activity_id, name=members[0]['name'],
                 description=f'Handles entry point {anchor_ids[0]}.', anchor_ids=list(anchor_ids),
                 trace_ids=traces, evidence_ids=evidence, claim_ids=[claim_id], support='partial')
-        return activities, claims
+        return kept, merged, claims
 
     def _reconcile(self, graph, _allowed):
+        """Answer compactly: merged activities and domains; keep the rest by ID."""
         context = graph['context']
-        activities, claims = self._merge_by_anchor(context)
-        evidence = sorted({eid for item in activities.values() for eid in item['evidence_ids']})
-        domains = {'domain:orders': self._domain(activities, claims, evidence)}
-        dispositions = []
+        kept, activities, claims = self._merge_by_anchor(context)
+        grouped = {activity_id: True for activity_id in kept}
+        grouped.update(activities)
+        evidence = sorted({eid for activity_id in kept
+                           for eid in context['activities'][activity_id]['evidence_ids']}
+                          | {eid for item in activities.values() for eid in item['evidence_ids']})
+        domains = {'domain:orders': self._domain(grouped, claims, evidence)}
         manifests = {item['child_scope_id']: item for item in graph['coverage_manifests']}
+        dispositions = []
         for index, child_id in enumerate(sorted(graph['child_scope_ids'])):
-            incorporated = sorted(record_id for record_id in
-                                  manifests[child_id]['contributed_record_ids']
-                                  if record_id in context['activities'])
+            contributed = set(manifests[child_id]['contributed_record_ids'])
             dispositions.append(record('ScopeDisposition', id=f'disposition:c{index}',
                 subject_kind='child_scope', subject_id=child_id, status='represented',
-                incorporated_record_ids=incorporated))
+                incorporated_record_ids=sorted(contributed & set(kept))
+                or sorted(contributed & set(context['activities']))))
         return record('CandidatePayload', scope_id=graph['scope_id'],
                       input_fingerprint=graph['input_fingerprint'], activities=activities,
                       domains=domains, claims=claims, dispositions=dispositions)
