@@ -557,3 +557,22 @@ def test_a_child_naming_a_concept_merged_by_store_names_one_it_contributed():
                                   'incorporated_record_ids': ['concept:1']}]
 
     assert reconciliation_findings({}, units, candidate) == []
+
+
+def test_a_returned_domain_naming_a_merged_away_activity_holds_its_replacement():
+    scope, answer = _merging_scope()
+    answer['domains'] = {'domain:pay': _domain('domain:pay', 'activity:one', 'activity:two')}
+
+    complete = expand_reconciliation(scope, answer)
+
+    assert [membership['activity_id'] for membership
+            in complete['domains']['domain:pay']['activity_memberships']] == ['activity:merged']
+
+
+def test_a_rule_lists_the_activities_that_apply_it():
+    scope, answer = _merging_scope()
+    answer['rules']['rule:merged']['activity_ids'] = []
+
+    complete = expand_reconciliation(scope, answer)
+
+    assert complete['rules']['rule:merged']['activity_ids'] == ['activity:merged']

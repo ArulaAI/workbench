@@ -874,7 +874,14 @@ def _keep_writers(expanded: dict) -> None:
 
 
 def _collect_domain_rules(expanded: dict) -> None:
-    """A domain lists the rules its primary activities apply."""
+    """A domain lists the rules its primary activities apply, and a rule the
+    activities that apply it."""
+    for rule_id, rule in expanded['rules'].items():
+        if 'activity_ids' in rule:
+            rule['activity_ids'] = list(dict.fromkeys([
+                *rule['activity_ids'],
+                *sorted(activity_id for activity_id, activity in expanded['activities'].items()
+                        if rule_id in activity.get('rule_ids', ()))]))
     for domain in expanded['domains'].values():
         applied = [rule_id for membership in domain.get('activity_memberships', ())
                    if membership['role'] == 'primary'
@@ -1125,6 +1132,17 @@ def _regroup(expanded: dict, supplied: dict, merged: set) -> None:
 
     domains = expanded['domains']
     returned = set(domains)
+    # A returned domain may name a child activity the answer merged away; it
+    # means the activity that replaced it.
+    for domain in domains.values():
+        members = {}
+        for membership in domain['activity_memberships']:
+            activity_id = current(membership['activity_id']) or membership['activity_id']
+            if activity_id not in members:
+                members[activity_id] = {**membership, 'activity_id': activity_id}
+            elif membership['role'] == 'primary':
+                members[activity_id]['role'] = 'primary'
+        domain['activity_memberships'] = list(members.values())
     claimed = {membership['activity_id'] for domain in domains.values()
                for membership in domain['activity_memberships']}
     primary = {membership['activity_id'] for domain in domains.values()
