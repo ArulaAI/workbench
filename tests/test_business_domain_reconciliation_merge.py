@@ -125,6 +125,21 @@ def test_verification_sees_only_the_child_records_the_candidate_replaced():
     assert set(scope['context']['domains']) == {'domain:one', 'domain:two', 'domain:three'}
 
 
+def test_kept_records_the_coverage_manifests_name_stay_identifiable():
+    scope, answer = _regrouping_scope()
+    scope['context']['record_refs'] = {}
+    scope['coverage_manifests'] = [{'child_scope_id': 'scope:child',
+                                    'represented': [{'anchor_id': 'anchor:c',
+                                                     'activity_ids': ['activity:c']}]}]
+    complete = expand_reconciliation(scope, answer)
+
+    view = verification_view(scope, complete)
+
+    # activity:c is kept, so the view omits it; its manifest still names it.
+    assert 'activity:c' not in view['context']['activities']
+    assert 'activity:c' in view['context']['record_refs']
+
+
 def test_concepts_naming_one_code_type_are_supplied_as_one():
     model = {'symbols': {'symbol:p': {'qualified_name': 'src/pay.ts::Payment'},
                          'symbol:m': {'qualified_name': 'src/money.ts::Minor'}}}

@@ -829,11 +829,11 @@ def verification_view(scope: dict, complete: dict) -> dict:
             if record_id not in held or item.get('kind') in SPEED_CLAIM_KINDS}
         omitted.update((record_id, (collection, item)) for record_id, item in records.items()
                        if record_id not in context[collection])
-    # What the supplied records still cite stays identifiable, as any record
-    # a scope omits does.
-    for record_id in sorted(_referenced_ids(
-            {collection: context[collection] for collection in SEMANTIC_COLLECTIONS},
-            set(omitted))):
+    # What the scope still cites, in its records or its coverage manifests,
+    # stays identifiable, as any record a scope omits does.
+    cited = {key: value for key, value in view.items() if key != 'context'}
+    cited['context'] = {key: value for key, value in context.items() if key != 'record_refs'}
+    for record_id in sorted(_referenced_ids(cited, set(omitted))):
         collection, item = omitted[record_id]
         context['record_refs'][record_id] = {'id': record_id, 'collection': collection,
                                              'content_hash': digest(item)}
