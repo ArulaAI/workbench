@@ -3,6 +3,7 @@
   "transient_retry_limit": 1,
   "schema_repair_limit": 2,
   "semantic_repair_limit": 4,
+  "reconciliation_repair_limit": 6,
   "transient_retry_codes": [
     "PROVIDER_FAILED",
     "PROVIDER_TIMEOUT"

@@ -1483,6 +1483,18 @@ def _as_returned(graph, candidate):
     return graph, candidate
 
 
+def _repair_limit(graph):
+    """Repairs one scope's candidate may receive.
+
+    A reconciliation joins validated children, and its review finds what no
+    child could see; it converges over more rounds than a scope built from the
+    graph, so it has its own configured limit.
+    """
+    if graph.get('scope_kind') == 'reconciliation':
+        return POLICY['reconciliation_repair_limit']
+    return POLICY['semantic_repair_limit']
+
+
 @dataclass(frozen=True)
 class RepairState:
     """Where a repair chain stands: the rejected candidate and its rejection."""
@@ -2265,11 +2277,12 @@ class Synthesis:
         """
         review = review or _as_returned
         compact = graph['scope_kind'] == 'reconciliation'
+        limit = _repair_limit(graph)
         candidate, findings, report = state.candidate, state.findings, state.report
         seen = set(state.signatures)
         self._checkpoint(synthesis_request, state)
         for repair_attempt in range(
-                state.attempts + 1, POLICY['semantic_repair_limit'] + 1):
+                state.attempts + 1, limit + 1):
             repair_request = self.request_for(
                 'repair', graph, candidate, findings, report)
             try:
@@ -2338,7 +2351,7 @@ class Synthesis:
             signature = self._finding_signature(
                 repaired_findings, repaired_report)
             stalled = signature in seen
-            exhausted = repair_attempt == POLICY['semantic_repair_limit']
+            exhausted = repair_attempt == limit
             if stalled or exhausted:
                 self._discard_checkpoint(synthesis_request)
                 reason = ('repeated the same blocking defect set' if stalled
@@ -2406,7 +2419,7 @@ class Synthesis:
                 or artifact['provider_projection_version'] != ProviderProjection.VERSION
                 or artifact['provider_fingerprint'] != self.provider_hash
                 or artifact['prompt_fingerprint'] != prompt_fingerprint()
-                or artifact['attempts_used'] >= POLICY['semantic_repair_limit']):
+                or artifact['attempts_used'] >= _repair_limit(request['graph'])):
             path.unlink(missing_ok=True)
             return None
         return RepairState(artifact['candidate'], artifact['findings'],

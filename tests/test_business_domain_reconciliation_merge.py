@@ -519,3 +519,11 @@ def test_a_returned_ownership_replaces_the_childrens_without_widening():
 
     assert list(complete['ownerships']) == ['ownership:revised']
     assert complete['ownerships']['ownership:revised']['activity_ids'] == ['activity:b']
+
+
+def test_a_reconciliation_has_its_own_repair_limit():
+    from lib.context.business_domain_synthesis import POLICY, _repair_limit
+
+    assert _repair_limit({'scope_kind': 'reconciliation'}) == POLICY['reconciliation_repair_limit']
+    assert _repair_limit({'scope_kind': 'slice'}) == POLICY['semantic_repair_limit']
+    assert POLICY['reconciliation_repair_limit'] > POLICY['semantic_repair_limit']
