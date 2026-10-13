@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import re
 from dataclasses import dataclass
 from itertools import combinations
 
@@ -837,6 +838,7 @@ def expand_reconciliation(scope: dict, payload: dict, model: dict | None = None)
     # replaced rule back.
     _supersede_rules(expanded, supplied)
     _rehome(expanded, supplied, merged)
+    _supersede_claims(expanded, supplied, returned)
     _drop_orphan_rules(expanded, supplied, returned)
     _drop_replaced_references(expanded, supplied, returned)
     _keep_writers(expanded)
@@ -848,32 +850,34 @@ def expand_reconciliation(scope: dict, payload: dict, model: dict | None = None)
     return expanded
 
 
+# The accesses that establish each kind of authoritative ownership.
+OWNING_ACCESS = {'creates': frozenset({'creates'}),
+                 'maintains': WRITE_ACCESS,
+                 'authoritative_source': WRITE_ACCESS}
+
+
 def _keep_writers(expanded: dict) -> None:
     """Keep in each authoritative ownership only the activities that write it.
 
-    Creating or maintaining information takes a write of it; an activity
-    whose uses of the concept only read it, and those uses, leave a creates,
-    maintains or authoritative ownership. One left with no writer stays as it
-    is, for review to judge.
+    A creates ownership rests on creating the concept, and a maintains or
+    authoritative one on writing it; an activity whose uses of the concept do
+    neither leaves the ownership. One left with no such activity stays as it
+    is, for review to judge. An ownership cites only its activities' uses.
     """
-    writes = {}
-    for use_id, use in expanded['information_uses'].items():
-        if use['access'] in WRITE_ACCESS:
-            writes.setdefault((use['activity_id'], use['concept_id']), set()).add(use_id)
+    uses = expanded['information_uses']
     for ownership in expanded['ownerships'].values():
-        if ownership['kind'] not in ('creates', 'maintains', 'authoritative_source'):
-            continue
-        writers = [activity_id for activity_id in ownership['activity_ids']
-                   if (activity_id, ownership['concept_id']) in writes]
-        if not writers or writers == ownership['activity_ids']:
-            continue
-        written = set().union(*(writes[(activity_id, ownership['concept_id'])]
-                                for activity_id in writers))
-        ownership['activity_ids'] = writers
+        owning = OWNING_ACCESS.get(ownership['kind'])
+        if owning is not None:
+            writers = [activity_id for activity_id in ownership['activity_ids']
+                       if any(use['activity_id'] == activity_id
+                              and use['concept_id'] == ownership['concept_id']
+                              and use['access'] in owning for use in uses.values())]
+            if writers:
+                ownership['activity_ids'] = writers
+        held = set(ownership['activity_ids'])
         ownership['information_use_ids'] = [
             use_id for use_id in ownership['information_use_ids']
-            if use_id in written or expanded['information_uses'].get(use_id, {}).get(
-                'activity_id') in writers]
+            if uses.get(use_id, {}).get('activity_id') in held]
 
 
 def _call_graph(expanded: dict, model: dict) -> tuple[dict, dict]:
@@ -1108,6 +1112,19 @@ def _rehome(expanded: dict, supplied: dict, merged: set) -> None:
 def _use_key(use: dict) -> tuple:
     return (use['activity_id'], use['concept_id'], tuple(sorted(use['resource_ids'])),
             use['access'])
+
+
+def _supersede_claims(expanded: dict, supplied: dict, returned: set) -> None:
+    """A claim the answer makes about a record replaces the children's claims
+    of the same kind about it, so a restated claim does not stand beside the
+    one it corrects."""
+    restated = {(claim['subject_id'], claim['kind']) for claim_id, claim in expanded['claims'].items()
+                if claim_id in returned and claim_id not in supplied['claims']}
+    for claim_id in sorted(expanded['claims']):
+        claim = expanded['claims'][claim_id]
+        if (claim_id in supplied['claims'] and claim_id not in returned
+                and (claim['subject_id'], claim['kind']) in restated):
+            del expanded['claims'][claim_id]
 
 
 def _drop_orphan_rules(expanded: dict, supplied: dict, returned: set) -> None:
@@ -1482,7 +1499,51 @@ def reconciliation_findings(model: dict, units, payload: dict) -> list[dict]:
                     'subject_ids': sorted({disposition['subject_id'], *unknown}),
                     'evidence_ids': []})
     return (findings + _link_findings(payload, units) + _merge_findings(model, units, payload)
-            + _rule_findings(payload, units))
+            + _rule_findings(payload, units) + _scope_text_findings(payload, units))
+
+
+# A child record's statement of what lay outside its own scope.
+_CHILD_SCOPE = re.compile(
+    r"\b(?:not|outside|beyond)\b[^.;]{0,40}?\bthis (?:child )?scope\b"
+    r"|\bnot (?:in|part of) (?:this |the )?scope\b"
+    r"|\bnot anchors? in this scope\b", re.IGNORECASE)
+_STATED_FIELDS = ('description', 'summary', 'boundary_rationale', 'rationale', 'text',
+                  'unresolved_questions', 'explanation')
+
+
+def _scope_text_findings(payload: dict, units) -> list[dict]:
+    """Kept child records still stating limits their child scope had."""
+    kept = {record_id: item for unit in units for collection in SEMANTIC_COLLECTIONS
+            for record_id, item in unit.payload.get(collection, {}).items()}
+    stale = []
+    for collection in SEMANTIC_COLLECTIONS:
+        for record_id, item in payload.get(collection, {}).items():
+            if record_id not in kept or item.get('kind') in SPEED_CLAIM_KINDS:
+                continue
+            # Bookkeeping may have changed its groupings; what matters is
+            # whether it still says what the child said.
+            text = ' '.join(_stated(item))
+            if text == ' '.join(_stated(kept[record_id])) and _CHILD_SCOPE.search(text):
+                stale.append(record_id)
+    if not stale:
+        return []
+    return [{'code': 'STALE_SCOPE_STATEMENT', 'severity': 'error',
+             'message': ('Kept child records state what lay outside their child scope, which '
+                         'this reconciliation holds; return them revised for the merged scope'),
+             'subject_ids': sorted(stale), 'evidence_ids': []}]
+
+
+def _stated(value, key=None):
+    """The free text a record states, field by field."""
+    if isinstance(value, str):
+        if key in _STATED_FIELDS:
+            yield value
+    elif isinstance(value, list):
+        for item in value:
+            yield from _stated(item, key)
+    elif isinstance(value, dict):
+        for field, item in value.items():
+            yield from _stated(item, field)
 
 
 def _rule_findings(payload: dict, units) -> list[dict]:

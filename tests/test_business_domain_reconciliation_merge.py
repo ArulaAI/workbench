@@ -661,3 +661,54 @@ def test_claims_about_a_combined_ownership_name_the_one_it_became():
 
     assert list(complete['ownerships']) == ['ownership:x']
     assert complete['claims']['claim:y']['subject_id'] == 'ownership:x'
+
+
+def test_an_ownership_cites_only_its_own_activities_uses_and_creators_create():
+    from lib.context.business_domain_work import _keep_writers
+    candidate = {collection: {} for collection in SEMANTIC_COLLECTIONS}
+    candidate['information_uses'] = {
+        use: {'activity_id': activity, 'concept_id': 'concept:entry', 'access': access}
+        for use, activity, access in (('use:post', 'activity:post', 'creates'),
+                                      ('use:reset', 'activity:reset', 'deletes'),
+                                      ('use:authorise', 'activity:authorise', 'creates'))}
+    candidate['ownerships'] = {'ownership:entries': {
+        'concept_id': 'concept:entry', 'kind': 'creates',
+        'activity_ids': ['activity:post', 'activity:reset'],
+        'information_use_ids': ['use:post', 'use:reset', 'use:authorise']}}
+
+    _keep_writers(candidate)
+
+    ownership = candidate['ownerships']['ownership:entries']
+    assert ownership['activity_ids'] == ['activity:post']
+    assert ownership['information_use_ids'] == ['use:post']
+
+
+def test_a_restated_claim_replaces_the_childs_claim_of_that_kind():
+    scope, answer = _regrouping_scope()
+    scope['context']['claims']['claim:boundary'] = {
+        'id': 'claim:boundary', 'subject_id': 'domain:three', 'kind': 'boundary',
+        'text': 'The gateway is not in this scope.'}
+    scope['context']['domains']['domain:three']['claim_ids'] = ['claim:boundary']
+    answer['claims'] = {'claim:revised': {'id': 'claim:revised', 'subject_id': 'domain:three',
+                                          'kind': 'boundary', 'text': 'The gateway calls it.'}}
+
+    complete = expand_reconciliation(scope, answer)
+
+    assert 'claim:boundary' not in complete['claims']
+    assert complete['domains']['domain:three']['claim_ids'] == ['claim:revised']
+
+
+def test_kept_child_records_stating_their_scope_limits_are_a_finding():
+    units, candidate = _connected_units()
+    candidate['relationships'] = {'relationship:x': {
+        'from_activity_id': 'activity:refund', 'to_activity_id': 'activity:authorise'}}
+    stale = {'id': 'domain:refunds', 'name': 'Refunds', 'activity_memberships': [],
+             'boundary_rationale': 'Authorise is outside this scope, so it is not modelled.',
+             'alternatives': [], 'exclusions': []}
+    units[1].payload['domains']['domain:refunds'] = stale
+    candidate['domains']['domain:refunds'] = dict(stale)
+
+    [finding] = reconciliation_findings({}, units, candidate)
+
+    assert finding['code'] == 'STALE_SCOPE_STATEMENT'
+    assert finding['subject_ids'] == ['domain:refunds']
