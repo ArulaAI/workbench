@@ -586,8 +586,12 @@ def _merge_concepts(model: dict, context: dict) -> dict:
     when exactly one declared symbol carries it.
     """
     declared = {}
-    for symbol in model.get('symbols', {}).values():
-        name = symbol.get('qualified_name') or ''
+    qualified = [symbol.get('qualified_name') or '' for symbol in model.get('symbols', {}).values()]
+    # A type another unit already named in full is declared too, though the
+    # symbol table holds no symbol for it, as for a class property.
+    qualified += [name for concept in context['concepts'].values()
+                  for name in concept['qualified_type_names']]
+    for name in qualified:
         if '::' in name:
             declared.setdefault(name.rpartition('::')[2], set()).add(name)
 
@@ -620,7 +624,8 @@ def _merge_concepts(model: dict, context: dict) -> dict:
     # another unit keeps in the same store.
     stores = {}
     for use in context['information_uses'].values():
-        stores.setdefault(use['concept_id'], set()).update(use['resource_ids'])
+        if use.get('concept_id'):
+            stores.setdefault(use['concept_id'], set()).update(use['resource_ids'])
     named = {}
     for concept_id in sorted(context['concepts']):
         name = _plain(context['concepts'][concept_id].get('name') or '')
@@ -1309,8 +1314,8 @@ def reconciliation_findings(model: dict, units, payload: dict) -> list[dict]:
     # A child contributed a concept merged into another under that one's ID.
     aliases = _merge_concepts(model, {
         collection: ({record_id: copy.deepcopy(item) for unit in units
-                      for record_id, item in unit.payload['concepts'].items()}
-                     if collection == 'concepts' else {})
+                      for record_id, item in unit.payload[collection].items()}
+                     if collection in ('concepts', 'information_uses') else {})
         for collection in SEMANTIC_COLLECTIONS})
     contributed = {unit.scope['scope_id']: {aliases.get(record_id, record_id)
                                             for collection in SEMANTIC_COLLECTIONS

@@ -527,3 +527,33 @@ def test_a_reconciliation_has_its_own_repair_limit():
     assert _repair_limit({'scope_kind': 'reconciliation'}) == POLICY['reconciliation_repair_limit']
     assert _repair_limit({'scope_kind': 'slice'}) == POLICY['semantic_repair_limit']
     assert POLICY['reconciliation_repair_limit'] > POLICY['semantic_repair_limit']
+
+
+def test_a_bare_type_name_resolves_to_the_full_name_another_concept_gives():
+    context = {collection: {} for collection in SEMANTIC_COLLECTIONS}
+    context['concepts'] = {
+        name: {'id': name, 'name': label, 'qualified_type_names': names,
+               'symbol_ids': [], 'evidence_ids': [], 'claim_ids': []}
+        for name, label, names in (
+            ('concept:1', 'Card attempt history', ['RiskRules.attempts']),
+            ('concept:2', 'Card attempt history (velocity)',
+             ['src/risk/rules.ts::RiskRules.attempts']))}
+
+    assert _merge_concepts({'symbols': {}}, context) == {'concept:2': 'concept:1'}
+
+
+def test_a_child_naming_a_concept_merged_by_store_names_one_it_contributed():
+    units, candidate = _connected_units()
+    candidate['relationships'] = {'relationship:x': {
+        'from_activity_id': 'activity:refund', 'to_activity_id': 'activity:authorise'}}
+    for unit, concept_id in zip(units, ('concept:1', 'concept:2')):
+        unit.payload['concepts'][concept_id] = {
+            'id': concept_id, 'name': 'Payment', 'qualified_type_names': [],
+            'symbol_ids': [], 'evidence_ids': [], 'claim_ids': []}
+        for use in unit.payload['information_uses'].values():
+            use['concept_id'] = concept_id
+    candidate['dispositions'] = [{'subject_kind': 'child_scope', 'subject_id': 'scope:read',
+                                  'status': 'represented',
+                                  'incorporated_record_ids': ['concept:1']}]
+
+    assert reconciliation_findings({}, units, candidate) == []
