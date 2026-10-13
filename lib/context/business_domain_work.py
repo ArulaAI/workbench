@@ -1341,8 +1341,9 @@ def reconciliation_findings(model: dict, units, payload: dict) -> list[dict]:
                    for unit in units}
     for disposition in payload['dispositions']:
         if disposition['subject_kind'] == 'child_scope' and disposition['status'] == 'represented':
-            unknown = set(disposition['incorporated_record_ids']) - contributed.get(
-                disposition['subject_id'], set())
+            unknown = {record_id for record_id in disposition['incorporated_record_ids']
+                       if aliases.get(record_id, record_id) not in contributed.get(
+                           disposition['subject_id'], set())}
             if unknown:
                 findings.append({
                     'code': 'INVALID_COVERAGE', 'severity': 'error',
