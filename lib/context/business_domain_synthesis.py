@@ -1489,6 +1489,36 @@ class RepairState:
     signatures: tuple
 
 
+SHUTDOWN = threading.Event()
+
+
+def request_shutdown():
+    """Stop every running synthesis: each provider call ends and its process
+    group is killed within one poll, whichever thread made it."""
+    SHUTDOWN.set()
+
+
+USAGE_FIELDS = ('inputTokens', 'outputTokens', 'peakInputTokens', 'peakOutputTokens')
+
+
+def _reported_usage(path):
+    """Token usage the provider reported for one request, or none.
+
+    Totals cover every model turn the request took and are charged to the
+    build budget; peaks are the largest single turn, which is what a
+    per-request limit bounds. A provider that reports nothing leaves its
+    reservations in force.
+    """
+    try:
+        value = json.loads(path.read_text())
+    except (OSError, ValueError, UnicodeError):
+        return {}
+    if not isinstance(value, dict):
+        return {}
+    return {key: value[key] for key in USAGE_FIELDS
+            if type(value.get(key)) is int and value[key] >= 0}
+
+
 class Synthesis:
     def __init__(self, root, config, provider, counters, cancelled=lambda:False,
                  heartbeat=lambda:None, recorder=None):
@@ -1561,12 +1591,12 @@ class Synthesis:
         self.alias_registries = {}
         self.alias_registries_lock = threading.Lock()
 
-    def _speed_call(self, action, *args, timeout=30):
+    def _speed_call(self, action, *args, timeout=30, env=None):
         boundary = (self.recorder.boundary(
             'provider.'+action,{'action':action,'argument_count':len(args)})
             if self.recorder else None)
         try:
-            value = self._speed_call_unlogged(action,*args,timeout=timeout)
+            value = self._speed_call_unlogged(action,*args,timeout=timeout,env=env)
             if boundary:
                 boundary.success(value,schema='ProviderResponse')
             return value
@@ -1575,14 +1605,15 @@ class Synthesis:
                 boundary.__exit__(type(exc),exc,exc.__traceback__)
             raise
 
-    def _speed_call_unlogged(self, action, *args, timeout=30):
+    def _speed_call_unlogged(self, action, *args, timeout=30, env=None):
         """Call digest's command-owned provider entry point."""
         if self.is_cancelled():
             raise DomainError('CANCELLED','Discovery cancelled')
         bridge = AGENTS.parent/'lib/cmd/domains.sh'
         with tempfile.TemporaryFile(mode='w+b') as output, tempfile.TemporaryFile(mode='w+b') as errors:
             process = subprocess.Popen(['bash',str(bridge),action,*map(str,args)],
-                cwd=self.root,env={**os.environ,'SPEED_PROJECT_ROOT':str(self.root)},
+                cwd=self.root,env={**os.environ,'SPEED_PROJECT_ROOT':str(self.root),
+                                   **(env or {})},
                 stdout=output,stderr=errors,start_new_session=True)
             end = time.monotonic()+timeout
             try:
@@ -1654,14 +1685,18 @@ class Synthesis:
             directory = Path(directory)
             (directory/'request.json').write_bytes(canonical(request))
             (directory/'schema.json').write_bytes(canonical(schema))
+            usage_path = directory/'usage.json'
             value = self._speed_call('agent',
                 AGENTS/f'business-domain-{role}.md',
                 directory/'request.json',directory/'schema.json',request['model'],
-                attempt_timeout,timeout=watchdog_timeout)
-            return value,{}  # Shared invoker returns payload; budget reservations remain in force.
+                attempt_timeout,timeout=watchdog_timeout,
+                env={'SPEED_PROVIDER_USAGE_FILE':str(usage_path)})
+            usage = _reported_usage(usage_path)
+            return value,({'last':usage} if usage else {})
 
     def is_cancelled(self):
-        return self.provider_failure is not None or self.stopping.is_set() or self.cancelled()
+        return (self.provider_failure is not None or self.stopping.is_set()
+                or SHUTDOWN.is_set() or self.cancelled())
 
     def _is_provider_failure(self, exc):
         failure = exc.provider_failure
@@ -2909,7 +2944,10 @@ class Synthesis:
                         self.counters['input_tokens_reserved'] += adjustment
                     else:
                         self.output_reserved += adjustment
-                    exceeded |= tokens > (
+                    # A request may take several model turns; its limit bounds
+                    # each turn, so a reported peak is what must fit.
+                    peak = actual.get('peak'+kind.capitalize()+'Tokens', tokens)
+                    exceeded |= peak > (
                         request_input_limit if kind == 'input'
                         else request['max_output_tokens'])
         if exceeded:

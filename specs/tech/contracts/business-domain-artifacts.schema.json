@@ -6763,6 +6763,12 @@
             "pattern": "^[a-z_]+:[^ ]+$"
           },
           "uniqueItems": true
+        },
+        "coverage_manifests": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CoverageManifest"
+          }
         }
       },
       "required": [
@@ -6808,6 +6814,9 @@
                     "maxProperties": 0
                   }
                 }
+              },
+              "coverage_manifests": {
+                "maxItems": 0
               }
             }
           }
@@ -6834,6 +6843,9 @@
                 ]
               },
               "child_scope_ids": {
+                "maxItems": 0
+              },
+              "coverage_manifests": {
                 "maxItems": 0
               }
             }
@@ -7705,6 +7717,101 @@
         "id",
         "collection",
         "content_hash"
+      ],
+      "additionalProperties": false
+    },
+    "CoverageManifest": {
+      "type": "object",
+      "properties": {
+        "child_scope_id": {
+          "type": "string",
+          "pattern": "^[a-z_]+:[^ ]+$"
+        },
+        "partition_strategy": {
+          "enum": [
+            "application_boundary",
+            "entrypoint_bundle",
+            "execution_segment",
+            "reconciliation"
+          ]
+        },
+        "represented": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "anchor_id": {
+                "type": "string",
+                "pattern": "^[a-z_]+:[^ ]+$"
+              },
+              "activity_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[a-z_]+:[^ ]+$"
+                },
+                "minItems": 1
+              }
+            },
+            "required": [
+              "anchor_id",
+              "activity_ids"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "unrepresented": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "anchor_id": {
+                "type": "string",
+                "pattern": "^[a-z_]+:[^ ]+$"
+              },
+              "status": {
+                "enum": [
+                  "excluded",
+                  "unresolved"
+                ]
+              },
+              "reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "anchor_id",
+              "status",
+              "reason"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "contributed_record_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z_]+:[^ ]+$"
+          }
+        },
+        "cross_scope_edge_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z_]+:[^ ]+$"
+          }
+        }
+      },
+      "required": [
+        "child_scope_id",
+        "partition_strategy",
+        "represented",
+        "unrepresented",
+        "contributed_record_ids",
+        "cross_scope_edge_ids"
       ],
       "additionalProperties": false
     }

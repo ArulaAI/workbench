@@ -173,8 +173,8 @@ class ReconcilingProvider(PassingProvider):
     For a whole graph or a slice it proposes one activity per canonical anchor,
     citing that anchor's own evidence and traces, and groups them in one
     domain. For a reconciliation scope it keeps every child activity, groups
-    them anew, and reports each child represented by exactly the records its
-    coverage manifest lists.
+    them anew, and reports each child represented by exactly the activities its
+    coverage manifest lists as contributed.
     """
 
     def generate(self, request, schema, *rest):
@@ -272,14 +272,11 @@ class ReconcilingProvider(PassingProvider):
         evidence = sorted({eid for item in activities.values() for eid in item['evidence_ids']})
         domains = {'domain:orders': self._domain(activities, claims, evidence)}
         dispositions = []
+        manifests = {item['child_scope_id']: item for item in graph['coverage_manifests']}
         for index, child_id in enumerate(sorted(graph['child_scope_ids'])):
-            manifest = next(claim for claim in context['claims'].values()
-                            if claim['kind'] == 'coverage_manifest'
-                            and claim['subject_id'] == child_id)
-            listed = manifest['text'].split('Records it contributes: ', 1)[1]
-            listed = listed.split('. Typed cross-scope edges', 1)[0]
-            incorporated = sorted(item for item in listed.split(', ')
-                                  if item in context['activities'])
+            incorporated = sorted(record_id for record_id in
+                                  manifests[child_id]['contributed_record_ids']
+                                  if record_id in context['activities'])
             dispositions.append(record('ScopeDisposition', id=f'disposition:c{index}',
                 subject_kind='child_scope', subject_id=child_id, status='represented',
                 incorporated_record_ids=incorporated))

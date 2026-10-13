@@ -490,20 +490,42 @@ def reconciliation_scope(model: dict, units, *, scope_id: str,
     validate(context, 'GraphContext')
     child_ids = [unit.scope['scope_id'] for unit in units]
     cross = sorted({edge_id for unit in units for edge_id in unit.scope['cross_scope_edge_ids']})
+    manifests = [coverage_manifest(unit) for unit in units]
     scope = record(
         'GraphScope', scope_id=scope_id, scope_kind='reconciliation',
         partition_strategy='reconciliation', estimated_input_tokens=0,
         parent_scope_id=parent_scope_id,
         input_fingerprint=digest({'context': context, 'child_scope_ids': child_ids,
-                                  'cross_scope_edge_ids': cross}),
+                                  'cross_scope_edge_ids': cross,
+                                  'coverage_manifests': manifests}),
         context=context, source_representation_ids=[], canonical_anchor_ids=[],
-        child_scope_ids=child_ids, cross_scope_edge_ids=cross)
+        child_scope_ids=child_ids, cross_scope_edge_ids=cross,
+        coverage_manifests=manifests)
     validate(scope, 'GraphScope')
     return scope
 
 
+def coverage_manifest(unit: Unit) -> dict:
+    """What one validated unit established, as its parent receives it."""
+    coverage = unit.coverage
+    return {
+        'child_scope_id': unit.scope['scope_id'],
+        'partition_strategy': unit.scope['partition_strategy'],
+        'represented': [{'anchor_id': anchor_id, 'activity_ids': item['activity_ids']}
+                        for anchor_id, item in sorted(coverage.items())
+                        if item['status'] == 'represented' and item['activity_ids']],
+        'unrepresented': [{'anchor_id': anchor_id, 'status': item['status'],
+                           'reason': item['reason']}
+                          for anchor_id, item in sorted(coverage.items())
+                          if item['status'] != 'represented'],
+        'contributed_record_ids': sorted(record_id for collection in SEMANTIC_COLLECTIONS
+                                         for record_id in unit.payload[collection]),
+        'cross_scope_edge_ids': list(unit.scope['cross_scope_edge_ids']),
+    }
+
+
 def _manifest(context: dict, unit: Unit) -> None:
-    """State one unit's coverage as a claim the reconciliation can cite and check."""
+    """State one unit's coverage as a claim the reconciliation can cite."""
     scope, coverage = unit.scope, unit.coverage
     by_status = {status: sorted(anchor_id for anchor_id, item in coverage.items()
                                 if item['status'] == status)

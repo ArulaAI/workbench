@@ -44,6 +44,8 @@ Assess at least these failure classes:
 
 Evaluate claims at their stated scope. A cited excerpt must support the actual assertion, not merely mention the same noun. A rule whose basis includes `test_expected` must cite a test whose assertions check that rule's condition or outcome; one that includes `documented` must cite a section stating the same condition or outcome. A test that only calls the code, or a section that only names the operation, makes that basis an unsupported claim. Reads do not establish ownership; declarations do not prove execution or deployment; UI validation does not prove server enforcement; directory proximity and generic helper reuse do not establish domains. A coherent proposal need not be explicitly named in source, but its business purpose and membership must be evidenced.
 
+In a reconciliation scope, compare the candidate with `coverage_manifests`. Every anchor a child represented must remain in a returned activity, and a candidate that returns domains without the child activities it reconciles is incomplete.
+
 SPEED derives each activity's input bindings, output bindings and effects from the traces it selects, so activities that select the same trace carry identical lists. Do not report identical derived lists as copied, merged or misassigned. Do report a claim that contradicts its activity's derived lists, and an activity split from one trace whose records divide that trace's inputs, outputs or writes among them.
 
 An information use is valid only when a `reads_data` or `writes_data` edge in its activity's selected traces reaches each resource it cites. A `memory_store` resource is in-process state: an information use or ownership may rest on it, but a claim that its data is persisted or durable is unsupported.

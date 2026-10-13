@@ -947,7 +947,10 @@ source_representation_ids: Array<ID>
 canonical_anchor_ids: Array<ID>
 child_scope_ids: Array<ID>
 cross_scope_edge_ids: Array<ID>
+coverage_manifests: Array<CoverageManifest>   # reconciliation scopes only
 ```
+
+`CoverageManifest` states, for one child of a reconciliation scope, what that validated child established: `child_scope_id`, `partition_strategy`, `represented` (each anchor with the child's activity IDs representing it), `unrepresented` (each excluded or unresolved anchor with its status and reason), `contributed_record_ids` (every semantic record the child supplies) and `cross_scope_edge_ids`. A represented child disposition names its incorporated records from `contributed_record_ids`. Whole-graph and slice scopes carry no manifests.
 
 Whole-graph scope uses `partition_strategy: none`, contains the complete validated fact collections, has null `parent_scope_id`, no child scopes and no omitted `record_refs`. A slice has a parent, no child scopes and uses `application_boundary`, `entrypoint_bundle` or `execution_segment`. Application-boundary and entrypoint-bundle slices contain complete trace/evidence closure for their canonical anchors. An oversized individual closure may use execution-segment slices cut only at typed trace edges; each segment carries the cut edges, applicable anchor identity, evidence and unresolved obligations, and the root reconciliation alone emits the authoritative final anchor disposition. A reconciliation scope uses `partition_strategy: reconciliation`, contains no raw source-representation or canonical-anchor IDs, and contains one or more validated child semantic scopes, cross-scope relationships, coverage manifests and the evidence required for its claims. Its parent is null only at the hierarchy root. `estimated_input_tokens` is calculated over the exact canonical wire serialization before dispatch. `record_refs` may preserve cross-scope identity but never substitutes for excerpts required to support a material claim.
 

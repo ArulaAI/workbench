@@ -9,12 +9,14 @@ unavailable, 130 cancelled.
 import argparse
 import json
 import re
+import signal
 import sys
 import time
 from pathlib import Path
 
 from .business_domain_extract import Extractor, extraction_measurements
 from .business_domain_schema import DomainError, atomic_write, read_status, settings
+from .business_domain_synthesis import request_shutdown
 from .business_domains import build_lock, cancel_build, discover, load, paths
 from .discovery_logging import DiscoveryRecorder
 from .utils import load_speed_toml
@@ -457,6 +459,16 @@ def cancel(root):
 MODES = {'run': run, 'facts': facts_only, 'status': status, 'cancel': cancel}
 
 
+def _stop(signum, frame):
+    """End every provider call, in every thread, before this process exits.
+
+    Without this, a terminated discovery leaves its provider processes
+    running, and spending, with no one to read their answers.
+    """
+    request_shutdown()
+    raise KeyboardInterrupt
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog='speed discover domains')
     parser.add_argument('--root', default='.')
@@ -467,6 +479,8 @@ def main(argv=None):
     parser.set_defaults(mode='run')
     args = parser.parse_args(argv)
     root = Path(args.root).resolve()
+    for signum in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(signum, _stop)
     try:
         if not root.is_dir():
             raise DomainError('INVALID_ROOT', 'Repository root does not exist')

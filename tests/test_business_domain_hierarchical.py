@@ -365,12 +365,13 @@ def test_the_build_budget_is_reserved_for_the_root_before_any_request(tmp_path):
     assert 'nothing was dispatched' in status['error']['message']
 
 
-def test_the_reservation_charges_every_unit_a_complete_sequence(tmp_path):
+def test_the_reservation_covers_every_slice_and_the_complete_root(tmp_path):
     config = _split_monolith(tmp_path)
     output = ReconcilingProvider.provider_max_output_tokens
-    # Room for the whole sequence of all but one unit: the run must not start.
+    # Two slices' synthesis and verification plus the root's four requests,
+    # less one token: the run must not start.
     config['business_domains'].update(max_request_output_tokens=output,
-                                      max_build_output_tokens=4 * output * 2)
+                                      max_build_output_tokens=(2 * 2 + 4) * output - 1)
 
     model, status = discover(tmp_path, config, provider=ReconcilingProvider())
 
@@ -469,7 +470,7 @@ def test_a_root_too_large_for_one_request_is_reconciled_in_levels(tmp_path):
     # Room for one entry point per bundle: sixteen bundles, whose records
     # together exceed one reconciliation request.
     config = force_split(calibration.allowance(max(calibration.anchors.values())) + 400)
-    # Seventeen units, each charged a full four-request sequence.
+    # Sixteen slices' synthesis and verification, the root and its levels.
     config['business_domains']['max_build_output_tokens'] = 1_000_000
     provider = _Capture()
 
@@ -624,3 +625,25 @@ def test_a_single_service_repository_goes_straight_to_entry_point_bundles(tmp_pa
 
     assert {graph['partition_strategy'] for graph in provider.scopes
             if graph['scope_kind'] == 'slice'} == {'entrypoint_bundle'}
+
+
+def test_the_root_receives_a_structured_manifest_for_every_child(tmp_path):
+    config = _split_monolith(tmp_path)
+    provider = _Capture()
+
+    discover(tmp_path, config, provider=provider)
+
+    [root] = [graph for graph in provider.scopes if graph['scope_kind'] == 'reconciliation']
+    slices = {graph['scope_id']: graph for graph in provider.scopes
+              if graph['scope_kind'] == 'slice'}
+    manifests = {item['child_scope_id']: item for item in root['coverage_manifests']}
+    assert set(manifests) == set(slices) == set(root['child_scope_ids'])
+    for scope_id, manifest in manifests.items():
+        represented = {item['anchor_id'] for item in manifest['represented']}
+        assert represented == set(slices[scope_id]['canonical_anchor_ids'])
+        contributed = set(manifest['contributed_record_ids'])
+        assert {activity for item in manifest['represented']
+                for activity in item['activity_ids']} <= contributed
+        assert contributed <= {record_id for collection in ('activities', 'claims', 'domains',
+                                                            'rules', 'concepts')
+                               for record_id in root['context'][collection]}

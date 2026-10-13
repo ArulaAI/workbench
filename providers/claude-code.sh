@@ -469,6 +469,28 @@ provider_run() {
 # Args: system_prompt_file user_message json_schema_file [model] [max_turns] [tools] [label]
 #   Exit 1 = CLI crash, timeout, or empty output
 #   Exit 2 = CLI error envelope (max turns, tool error, etc.)
+# Write the request's token usage, from the final result event, to $2:
+#   inputTokens, outputTokens          totals across every model turn, as spent
+#   peakInputTokens, peakOutputTokens  the largest single turn, which is what a
+#                                      per-request limit bounds
+# Input counts every token a turn read, cached or not. Nothing is written when
+# the event carries no usage.
+_claude_report_usage() {
+    local events_file="$1" usage_file="$2" usage
+    usage=$(grep '"type":"result"' "$events_file" 2>/dev/null | tail -1 | jq -c '
+        def read: (.input_tokens // 0) + (.cache_read_input_tokens // 0)
+                  + (.cache_creation_input_tokens // 0);
+        .usage // empty
+        | (.iterations // []) as $turns
+        | {inputTokens: read, outputTokens: (.output_tokens // 0),
+           peakInputTokens: ([$turns[] | read] | max // null),
+           peakOutputTokens: ([$turns[] | .output_tokens // 0] | max // null)}
+        | .peakInputTokens //= .inputTokens
+        | .peakOutputTokens //= .outputTokens' 2>/dev/null)
+    [[ -n "$usage" ]] && printf '%s\n' "$usage" > "$usage_file"
+    return 0
+}
+
 provider_run_json() {
     local system_prompt_file="$1"
     local user_message="$2"
@@ -553,6 +575,10 @@ provider_run_json() {
         # On error envelope (rc=2), echo the result for callers that inspect it
         [[ $rc -eq 2 && -n "$result_text" ]] && echo "$result_text"
         return $rc
+    fi
+
+    if [[ -n "${SPEED_PROVIDER_USAGE_FILE:-}" ]]; then
+        _claude_report_usage "$events_file" "$SPEED_PROVIDER_USAGE_FILE"
     fi
 
     # With --json-schema + stream-json, the structured JSON is produced via

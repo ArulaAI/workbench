@@ -51,20 +51,21 @@ def plan(baseline: dict, synthesis) -> list[dict]:
 
 
 def reserve(slices: list[dict], synthesis) -> None:
-    """Fail before dispatch unless every slice and the root fit the build budget.
+    """Fail before dispatch unless the slices and the root fit the build budget.
 
-    Every unit is charged its complete synthesis, verification, repair and
-    reverification, each request at its full output allowance: a provider
-    that reports no usage is charged exactly that, so a smaller estimate lets
-    a run start that the budget cannot finish. The root is charged at the
-    largest size one request admits; its exact size is known only once the
-    slices return.
+    As the spec requires, the root's complete synthesis, verification, repair
+    and reverification is reserved before any slice is dispatched, together
+    with every slice's synthesis and verification; repairs are admitted as
+    they arise. Requests are charged at their full output allowance, the most
+    a provider that reports no usage can be charged. The root is charged at
+    the largest size one request admits, known exactly only once the slices
+    return.
     """
     output = synthesis.effective_request_output_tokens
     root = synthesis.effective_request_input_tokens - 2 * output
-    sizes = [scope['estimated_input_tokens'] for scope in slices] + [root]
-    needed = {'input': sum(4 * size + 4 * output for size in sizes),
-              'output': 4 * output * len(sizes)}
+    sizes = [scope['estimated_input_tokens'] for scope in slices]
+    needed = {'input': sum(2 * size + output for size in sizes) + 4 * root + 4 * output,
+              'output': 2 * output * len(sizes) + 4 * output}
     for kind, amount in needed.items():
         setting = f'max_build_{kind}_tokens'
         if amount > synthesis.config[setting]:
