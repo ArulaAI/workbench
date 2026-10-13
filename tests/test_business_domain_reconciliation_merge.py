@@ -439,3 +439,21 @@ def test_a_disposition_naming_the_answers_own_records_names_only_child_records()
     complete = expand_reconciliation(scope, answer)
 
     assert complete['dispositions'][0]['incorporated_record_ids'] == ['rule:one', 'rule:two']
+
+
+def test_a_kept_domain_naming_a_replaced_rule_names_its_replacement():
+    scope, answer = _merging_scope()
+    context = scope['context']
+    for rule_id in ('rule:one', 'rule:two'):
+        context['rules'][rule_id]['observation_ids'] = ['observation:velocity']
+    context['domains'] = {'domain:risk': {**_domain('domain:risk', 'activity:one'),
+                                          'rules': ['rule:one']}}
+    answer['activities'] = {}
+    answer['rules'] = {'rule:velocity': {'id': 'rule:velocity',
+                                         'observation_ids': ['observation:velocity']}}
+    answer['dispositions'][0]['incorporated_record_ids'] = ['activity:one', 'activity:two']
+
+    complete = expand_reconciliation(scope, answer)
+
+    assert set(complete['rules']) == {'rule:velocity'}
+    assert complete['domains']['domain:risk']['rules'] == ['rule:velocity']

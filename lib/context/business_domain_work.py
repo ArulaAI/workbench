@@ -804,7 +804,6 @@ def expand_reconciliation(scope: dict, payload: dict) -> dict:
                 record_id for record_id in disposition['incorporated_record_ids']
                 if record_id not in returned or record_id in supplied_ids]
     _carry(expanded, supplied, named | _referenced(expanded, supplied), merged)
-    _supersede_rules(expanded, supplied)
     _regroup(expanded, supplied, merged)
     groupings = {record_id for collection in GROUPING_COLLECTIONS
                  for record_id in expanded[collection]}
@@ -814,6 +813,9 @@ def expand_reconciliation(scope: dict, payload: dict) -> dict:
            | {claim_id for claim_id, claim in supplied['claims'].items()
               if claim['subject_id'] in groupings},
            merged)
+    # After everything kept is carried, so no kept domain or activity brings a
+    # replaced rule back.
+    _supersede_rules(expanded, supplied)
     _rehome(expanded, supplied, merged)
     _drop_orphan_rules(expanded, supplied, returned)
     _drop_replaced_references(expanded, supplied)
