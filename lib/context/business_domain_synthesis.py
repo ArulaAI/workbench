@@ -1548,7 +1548,11 @@ class Synthesis:
                 else:
                     self.project_instructions = instruction_path.read_text(encoding='utf-8')
             speed_root = AGENTS.parent
-            self.provider_hash = digest({'config':self.agent_config,
+            # How long a call may run decides neither what it asks nor what a
+            # valid answer is, so it does not invalidate validated responses.
+            semantic_config = {key: value for key, value in self.agent_config.items()
+                               if key not in ('agent_timeout', 'kill_grace')}
+            self.provider_hash = digest({'config':semantic_config,
                 'implementation':implementation_hash(Path(__file__),speed_root/'lib/cmd/domains.sh',
                     speed_root/'lib/provider.sh',speed_root/'providers'/(self.agent_config['provider']+'.sh'),
                     *([Path(self.agent_config['agent_file'])] if self.agent_config['agent_file'] else []))})

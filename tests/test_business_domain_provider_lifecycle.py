@@ -147,3 +147,28 @@ def test_a_turn_beyond_the_request_allowance_is_refused(tmp_path):
 
     assert model is None
     assert status['error']['code'] in {'PROVIDER_BUDGET', 'PROVIDER_UNAVAILABLE'}
+
+
+def test_call_timeouts_do_not_change_the_provider_fingerprint(tmp_path, monkeypatch):
+    configs = []
+
+    def config(self, action, *args, timeout=30, env=None):
+        return dict(configs[-1])
+
+    base = {'provider': 'claude-code', 'model': 'opus', 'planning_model': 'opus',
+            'agent_file': '', 'agent_timeout': 2400, 'kill_grace': 10,
+            'provider_context_tokens': 1_000_000, 'provider_max_output_tokens': 128_000,
+            'output_limit_enforcement': 'provider',
+            'models': {'opus': {'provider_context_tokens': 1_000_000,
+                                'provider_max_output_tokens': 128_000,
+                                'output_limit_enforcement': 'provider'}}}
+    monkeypatch.setattr(Synthesis, '_speed_call', config)
+    hashes = []
+    for timeout in (2400, 3600):
+        configs.append({**base, 'agent_timeout': timeout})
+        hashes.append(Synthesis(tmp_path, settings({}), None, {}).provider_hash)
+    configs.append({**base, 'model': 'sonnet', 'planning_model': 'sonnet'})
+    other = Synthesis(tmp_path, settings({}), None, {}).provider_hash
+
+    assert hashes[0] == hashes[1]
+    assert other != hashes[0]
