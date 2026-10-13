@@ -576,3 +576,17 @@ def test_a_rule_lists_the_activities_that_apply_it():
     complete = expand_reconciliation(scope, answer)
 
     assert complete['rules']['rule:merged']['activity_ids'] == ['activity:merged']
+
+
+def test_rules_at_one_site_that_name_the_same_rule_are_one_whatever_their_kind():
+    site = [{'source_id': 'symbol:post', 'activity_ids': [], 'condition': None, 'evidence_ids': []}]
+    balanced = {'name': 'Every ledger posting is a balanced pair', 'observation_ids': [],
+                'enforcement_sites': site, 'evaluation_kind': 'calculation'}
+    written = {'name': 'Every ledger post writes a balanced pair', 'observation_ids': [],
+               'enforcement_sites': site, 'evaluation_kind': 'data_constraint'}
+    other = {'name': 'Amounts must be integer minor units', 'observation_ids': [],
+             'enforcement_sites': site, 'evaluation_kind': 'predicate'}
+
+    from lib.context.business_domain_work import _same_rule
+    assert _same_rule(balanced, written)
+    assert not _same_rule(balanced, other)

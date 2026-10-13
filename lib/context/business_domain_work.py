@@ -905,6 +905,33 @@ def _rule_basis(rule: dict):
     return ('enforced', sites, rule.get('evaluation_kind')) if sites else None
 
 
+def _words(name: str) -> set:
+    words = {''.join(character for character in word if character.isalnum())
+             for word in name.casefold().split()}
+    return {word for word in words if len(word) > 2}
+
+
+def _same_rule(rule: dict, other: dict, *, within: bool = False) -> bool:
+    """Whether two rule records describe one rule.
+
+    Rules over observations are one rule when their observations agree; with
+    `within`, when `rule`'s lie within `other`'s. Rules without are one rule
+    when enforced at the same sites, or `rule`'s within `other`'s, and they
+    are the same kind of check or plainly name the same rule.
+    """
+    observed, others = set(rule.get('observation_ids') or ()), set(other.get('observation_ids') or ())
+    if observed or others:
+        return bool(observed) and (observed <= others if within else observed == others)
+    sites = {site['source_id'] for site in rule.get('enforcement_sites') or ()}
+    covering = {site['source_id'] for site in other.get('enforcement_sites') or ()}
+    if not sites or not (sites <= covering if within else sites == covering):
+        return False
+    if rule.get('evaluation_kind') == other.get('evaluation_kind'):
+        return True
+    words, other_words = _words(rule.get('name', '')), _words(other.get('name', ''))
+    return len(words & other_words) * 2 >= max(len(words), len(other_words), 1)
+
+
 def _supersede_rules(expanded: dict, supplied: dict) -> None:
     """Replace child rules with the returned rule describing the same rule.
 
@@ -917,12 +944,10 @@ def _supersede_rules(expanded: dict, supplied: dict) -> None:
     replaced = {}
     for rule_id in sorted(supplied['rules']):
         rule = supplied['rules'][rule_id]
-        basis, observed = _rule_basis(rule), set(rule.get('observation_ids') or ())
-        if rule_id in returned or basis is None:
+        if rule_id in returned or _rule_basis(rule) is None:
             continue
         successor = min((other for other, candidate in returned.items()
-                         if _rule_basis(candidate) == basis
-                         or (observed and observed <= set(candidate.get('observation_ids') or ()))),
+                         if _same_rule(rule, candidate, within=True)),
                         default=None)
         if successor is not None:
             replaced[rule_id] = successor
@@ -1358,17 +1383,23 @@ def _rule_findings(payload: dict, units) -> list[dict]:
     """Rules of different units describing the same rule are one rule."""
     unit_of = {rule_id: unit.scope['scope_id'] for unit in units
                for rule_id in unit.payload['rules']}
-    groups = {}
-    for rule_id, rule in payload['rules'].items():
-        basis = _rule_basis(rule)
-        if basis is not None:
-            groups.setdefault(basis, []).append(rule_id)
+    groups = []
+    for rule_id in sorted(payload['rules']):
+        rule = payload['rules'][rule_id]
+        if _rule_basis(rule) is None:
+            continue
+        group = next((group for group in groups
+                      if _same_rule(rule, payload['rules'][group[0]])), None)
+        if group is None:
+            groups.append([rule_id])
+        else:
+            group.append(rule_id)
     return [{'code': 'DUPLICATE_RULE', 'severity': 'error',
              'message': ('Rules from different child scopes describe the same rule, over the '
                          'same observations or enforced at the same sites; return one rule, '
                          'which replaces them'),
              'subject_ids': sorted(group), 'evidence_ids': []}
-            for _, group in sorted(groups.items(), key=lambda item: sorted(item[1]))
+            for group in groups
             if len({unit_of.get(rule_id) for rule_id in group}) > 1]
 
 
