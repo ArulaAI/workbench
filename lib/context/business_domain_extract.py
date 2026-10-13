@@ -27,7 +27,7 @@ from .business_domain_entrypoints import (GAP_CODES, LANGUAGE_GAP, LIKELY_MISSED
 from .language_registry import (SOURCE_ADAPTER_CAPABILITIES, PathClassification,
     RegistryConfigurationError, registry)
 from .business_domain_schema import (DEFAULTS, DomainError, account_artifact_bytes,
-    atomic_write, digest, identifier, implementation_hash, limits, now, record,
+    atomic_write, canonical, digest, identifier, implementation_hash, limits, now, record,
     validate, validate_source_warning_coverage, read_json)
 from .utils import is_credential_path
 
@@ -1436,6 +1436,12 @@ class Extractor:
         self._capabilities()
         self._traces()
         self._entrypoint_coverage()
+        # Resources gather evidence, and the extraction gathers warnings, as
+        # units are visited, in an order that can differ between processes;
+        # facts, and every scope and cache key built from them, must not.
+        for resource in self.facts['resources'].values():
+            resource['evidence_ids'] = sorted(set(resource['evidence_ids']))
+        self.facts['warnings'].sort(key=canonical)
         from .business_domain_snapshots import capture_supplied
         self.external_freshness,self.snapshot_inputs = capture_supplied(self)
         self.facts['coverage']['anchors_total']=len(self.facts['anchors'])
