@@ -787,6 +787,8 @@ def expand_reconciliation(scope: dict, payload: dict) -> dict:
     expanded = copy.deepcopy(payload)
     returned = {record_id for collection in SEMANTIC_COLLECTIONS
                 for record_id in expanded[collection]}
+    supplied_ids = {record_id for collection in SEMANTIC_COLLECTIONS
+                    for record_id in supplied[collection]}
     held = {anchor_id for activity in expanded['activities'].values()
             for anchor_id in activity['anchor_ids']}
     merged = {activity_id for activity_id, activity in supplied['activities'].items()
@@ -795,6 +797,12 @@ def expand_reconciliation(scope: dict, payload: dict) -> dict:
              if disposition['subject_kind'] == 'child_scope'
              and disposition['status'] == 'represented'
              for record_id in disposition['incorporated_record_ids']}
+    for disposition in expanded['dispositions']:
+        if disposition['subject_kind'] == 'child_scope':
+            # The answer's own records are not child records it incorporates.
+            disposition['incorporated_record_ids'] = [
+                record_id for record_id in disposition['incorporated_record_ids']
+                if record_id not in returned or record_id in supplied_ids]
     _carry(expanded, supplied, named | _referenced(expanded, supplied), merged)
     _supersede_rules(expanded, supplied)
     _regroup(expanded, supplied, merged)

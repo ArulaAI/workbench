@@ -430,3 +430,12 @@ def test_unmerged_rules_enforced_alike_in_different_slices_are_a_finding():
     [finding] = reconciliation_findings({}, units, candidate)
 
     assert finding['code'] == 'DUPLICATE_RULE'
+
+
+def test_a_disposition_naming_the_answers_own_records_names_only_child_records():
+    scope, answer = _merging_scope()
+    answer['dispositions'][0]['incorporated_record_ids'] += ['activity:merged', 'rule:merged']
+
+    complete = expand_reconciliation(scope, answer)
+
+    assert complete['dispositions'][0]['incorporated_record_ids'] == ['rule:one', 'rule:two']
