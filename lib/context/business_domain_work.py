@@ -813,22 +813,37 @@ def expand_reconciliation(scope: dict, payload: dict) -> dict:
     return expanded
 
 
-def _supersede_rules(expanded: dict, supplied: dict) -> None:
-    """Replace child rules with the returned rule over the same observations.
+def _rule_basis(rule: dict):
+    """What identifies the rule a record describes, or None.
 
-    Children describe one observed rule independently; a rule the answer
-    returns over observations replaces every child rule citing only those,
-    and what named a replaced rule names the returned one.
+    A rule over observations is the rule those observations show. One with
+    none is identified by where it is enforced and what kind of check it is.
     """
-    returned = {rule_id: set(rule.get('observation_ids', ()))
-                for rule_id, rule in expanded['rules'].items()
-                if rule_id not in supplied['rules'] and rule.get('observation_ids')}
+    observed = frozenset(rule.get('observation_ids') or ())
+    if observed:
+        return ('observed', observed)
+    sites = frozenset(site['source_id'] for site in rule.get('enforcement_sites') or ())
+    return ('enforced', sites, rule.get('evaluation_kind')) if sites else None
+
+
+def _supersede_rules(expanded: dict, supplied: dict) -> None:
+    """Replace child rules with the returned rule describing the same rule.
+
+    Children describe one rule independently; a rule the answer returns
+    replaces every child rule with its basis, or citing only observations it
+    cites, and what named a replaced rule names the returned one.
+    """
+    returned = {rule_id: rule for rule_id, rule in expanded['rules'].items()
+                if rule_id not in supplied['rules'] and _rule_basis(rule)}
     replaced = {}
     for rule_id in sorted(supplied['rules']):
-        observed = set(supplied['rules'][rule_id].get('observation_ids', ()))
-        if rule_id in returned or not observed:
+        rule = supplied['rules'][rule_id]
+        basis, observed = _rule_basis(rule), set(rule.get('observation_ids') or ())
+        if rule_id in returned or basis is None:
             continue
-        successor = min((other for other, covered in returned.items() if observed <= covered),
+        successor = min((other for other, candidate in returned.items()
+                         if _rule_basis(candidate) == basis
+                         or (observed and observed <= set(candidate.get('observation_ids') or ()))),
                         default=None)
         if successor is not None:
             replaced[rule_id] = successor
@@ -1242,16 +1257,18 @@ def reconciliation_findings(model: dict, units, payload: dict) -> list[dict]:
 
 
 def _rule_findings(payload: dict, units) -> list[dict]:
-    """Rules of different units over the same observations are one rule."""
+    """Rules of different units describing the same rule are one rule."""
     unit_of = {rule_id: unit.scope['scope_id'] for unit in units
                for rule_id in unit.payload['rules']}
     groups = {}
     for rule_id, rule in payload['rules'].items():
-        if rule.get('observation_ids'):
-            groups.setdefault(frozenset(rule['observation_ids']), []).append(rule_id)
+        basis = _rule_basis(rule)
+        if basis is not None:
+            groups.setdefault(basis, []).append(rule_id)
     return [{'code': 'DUPLICATE_RULE', 'severity': 'error',
-             'message': ('Rules from different child scopes describe the same observations; '
-                         'return one rule over those observations, which replaces them'),
+             'message': ('Rules from different child scopes describe the same rule, over the '
+                         'same observations or enforced at the same sites; return one rule, '
+                         'which replaces them'),
              'subject_ids': sorted(group), 'evidence_ids': []}
             for _, group in sorted(groups.items(), key=lambda item: sorted(item[1]))
             if len({unit_of.get(rule_id) for rule_id in group}) > 1]

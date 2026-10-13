@@ -397,3 +397,36 @@ def test_a_retired_domains_ownerships_follow_their_own_activities():
     owners = {ownership_id: item['domain_id']
               for ownership_id, item in complete['ownerships'].items()}
     assert owners == {'ownership:one': 'domain:ledger', 'ownership:two': 'domain:payments'}
+
+
+def test_rules_without_observations_are_one_rule_where_they_are_enforced_alike():
+    scope, answer = _merging_scope()
+    site = {'source_id': 'symbol:post', 'activity_ids': [], 'condition': None, 'evidence_ids': []}
+    for rule_id in ('rule:one', 'rule:two'):
+        scope['context']['rules'][rule_id].update(
+            observation_ids=[], enforcement_sites=[site], evaluation_kind='data_constraint')
+    answer['activities'] = {}
+    answer['rules'] = {'rule:balanced': {'id': 'rule:balanced', 'observation_ids': [],
+                                         'enforcement_sites': [site],
+                                         'evaluation_kind': 'data_constraint'}}
+    answer['dispositions'][0]['incorporated_record_ids'] = ['activity:one', 'activity:two']
+
+    complete = expand_reconciliation(scope, answer)
+
+    assert set(complete['rules']) == {'rule:balanced'}
+
+
+def test_unmerged_rules_enforced_alike_in_different_slices_are_a_finding():
+    units, candidate = _connected_units()
+    candidate['relationships'] = {'relationship:x': {
+        'from_activity_id': 'activity:refund', 'to_activity_id': 'activity:authorise'}}
+    site = {'source_id': 'symbol:post', 'activity_ids': [], 'condition': None, 'evidence_ids': []}
+    for unit, rule_id in zip(units, ('rule:a', 'rule:b')):
+        rule = {'id': rule_id, 'observation_ids': [], 'enforcement_sites': [site],
+                'evaluation_kind': 'data_constraint'}
+        unit.payload['rules'][rule_id] = rule
+        candidate['rules'][rule_id] = rule
+
+    [finding] = reconciliation_findings({}, units, candidate)
+
+    assert finding['code'] == 'DUPLICATE_RULE'
