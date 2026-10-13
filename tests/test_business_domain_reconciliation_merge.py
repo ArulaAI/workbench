@@ -505,3 +505,17 @@ def test_a_domain_lists_the_rules_its_activities_apply():
     complete = expand_reconciliation(scope, answer)
 
     assert complete['domains']['domain:pay']['rules'] == ['rule:merged']
+
+
+def test_a_returned_ownership_replaces_the_childrens_without_widening():
+    scope, answer = _regrouping_scope()
+    answer['domains'] = {'domain:merged': _domain('domain:merged', 'activity:a', 'activity:b')}
+    answer['ownerships'] = {'ownership:revised': {
+        'id': 'ownership:revised', 'domain_id': 'domain:merged', 'concept_id': 'concept:c',
+        'kind': 'creates', 'activity_ids': ['activity:b'], 'information_use_ids': [],
+        'claim_ids': [], 'evidence_ids': [], 'unresolved_questions': []}}
+
+    complete = expand_reconciliation(scope, answer)
+
+    assert list(complete['ownerships']) == ['ownership:revised']
+    assert complete['ownerships']['ownership:revised']['activity_ids'] == ['activity:b']

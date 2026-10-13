@@ -1186,8 +1186,15 @@ def _regroup(expanded: dict, supplied: dict, merged: set) -> None:
     for _, group in sorted(_by_owner(ownerships).items()):
         if len(group) < 2:
             continue
+        stated = [ownership_id for ownership_id in group if ownership_id in expanded['ownerships']]
+        if stated:
+            # The answer's ownership of a concept in a domain replaces the
+            # children's there; it is not widened with what they listed.
+            for ownership_id in group:
+                if ownership_id not in stated:
+                    ownerships.pop(ownership_id)
+            group = stated
         group.sort(key=lambda ownership_id: (
-            ownership_id not in expanded['ownerships'],
             OWNERSHIP_STRENGTH.index(ownerships[ownership_id]['kind']), ownership_id))
         kept = ownerships[group[0]]
         for ownership_id in group[1:]:
