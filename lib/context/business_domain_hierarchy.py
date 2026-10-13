@@ -150,11 +150,11 @@ class _Run:
         publishes, never the compact answer it was built from.
         """
         def review(graph, candidate):
-            complete = expand_reconciliation(graph, candidate)
+            complete = expand_reconciliation(graph, candidate, self.baseline)
             return verification_view(graph, complete), complete
 
         def validate(candidate):
-            complete = expand_reconciliation(scope, candidate)
+            complete = expand_reconciliation(scope, candidate, self.baseline)
             self.accept(scope, complete)
             return reconciliation_findings(self.baseline, children, complete)
         return scope, validate, review
@@ -177,7 +177,7 @@ class _Run:
         payloads = self.dispatch(
             [self.reconciliation_job(scope, units)
              for scope, (_, _, units) in zip(scopes, groups)], label)
-        return [reconciled_unit(scope, expand_reconciliation(scope, payload), units)
+        return [reconciled_unit(scope, expand_reconciliation(scope, payload, self.baseline), units)
                 for scope, payload, (_, _, units) in zip(scopes, payloads, groups)]
 
     def to_root(self, units):

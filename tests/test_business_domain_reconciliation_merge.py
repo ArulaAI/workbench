@@ -590,3 +590,36 @@ def test_rules_at_one_site_that_name_the_same_rule_are_one_whatever_their_kind()
     from lib.context.business_domain_work import _same_rule
     assert _same_rule(balanced, written)
     assert not _same_rule(balanced, other)
+
+
+def test_an_activity_that_only_calls_the_writer_leaves_the_ownership():
+    from lib.context.business_domain_work import _drop_delegating_owners
+    model = {'anchors': {'anchor:gateway': {'symbol_id': 'symbol:gateway'},
+                         'anchor:authorise': {'symbol_id': 'symbol:authorise'}},
+             'traces': {'trace:gateway': {'symbol_ids': ['symbol:gateway', 'symbol:authorise']},
+                        'trace:authorise': {'symbol_ids': ['symbol:authorise']}}}
+    candidate = {collection: {} for collection in SEMANTIC_COLLECTIONS}
+    candidate['activities'] = {
+        'activity:gateway': {'id': 'activity:gateway', 'anchor_ids': ['anchor:gateway'],
+                             'trace_ids': ['trace:gateway']},
+        'activity:authorise': {'id': 'activity:authorise', 'anchor_ids': ['anchor:authorise'],
+                               'trace_ids': ['trace:authorise']}}
+    candidate['information_uses'] = {
+        f'use:{name}': {'activity_id': f'activity:{name}', 'concept_id': 'concept:payment',
+                        'access': 'creates', 'effect_ids': ['effect:store'],
+                        'resource_ids': ['resource:payments']}
+        for name in ('gateway', 'authorise')}
+    candidate['ownerships'] = {
+        'ownership:gateway': {'id': 'ownership:gateway', 'concept_id': 'concept:payment',
+                              'domain_id': 'domain:gateway', 'kind': 'creates',
+                              'activity_ids': ['activity:gateway']},
+        'ownership:lifecycle': {'id': 'ownership:lifecycle', 'concept_id': 'concept:payment',
+                                'domain_id': 'domain:lifecycle', 'kind': 'creates',
+                                'activity_ids': ['activity:authorise', 'activity:gateway']}}
+    candidate['domains'] = {'domain:gateway': {'ownership_ids': ['ownership:gateway']}}
+
+    _drop_delegating_owners(candidate, model)
+
+    assert list(candidate['ownerships']) == ['ownership:lifecycle']
+    assert candidate['ownerships']['ownership:lifecycle']['activity_ids'] == ['activity:authorise']
+    assert candidate['domains']['domain:gateway']['ownership_ids'] == []

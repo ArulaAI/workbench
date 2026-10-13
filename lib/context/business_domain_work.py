@@ -786,7 +786,7 @@ def _speed_claim(context, kind, subject_id, text, evidence, model, key=None) -> 
         trace_ids=[], semantic_review='supported')
 
 
-def expand_reconciliation(scope: dict, payload: dict) -> dict:
+def expand_reconciliation(scope: dict, payload: dict, model: dict | None = None) -> dict:
     """The complete candidate a compact reconciliation answer stands for.
 
     A reconciliation returns only what it changes: merged or new records, the
@@ -840,6 +840,8 @@ def expand_reconciliation(scope: dict, payload: dict) -> dict:
     _drop_orphan_rules(expanded, supplied, returned)
     _drop_replaced_references(expanded, supplied)
     _keep_writers(expanded)
+    if model is not None:
+        _drop_delegating_owners(expanded, model)
     _collect_domain_rules(expanded)
     _link_claims(expanded)
     return expanded
@@ -871,6 +873,70 @@ def _keep_writers(expanded: dict) -> None:
             use_id for use_id in ownership['information_use_ids']
             if use_id in written or expanded['information_uses'].get(use_id, {}).get(
                 'activity_id') in writers]
+
+
+def _drop_delegating_owners(expanded: dict, model: dict) -> None:
+    """Credit a write to the activity that performs it, not to one calling it.
+
+    An activity whose trace calls another activity's entry point reaches that
+    activity's writes too. Where every write it makes of a concept is one the
+    called activity also makes, it only requests the change: it leaves the
+    authoritative ownerships of that concept, and an ownership left with no
+    activity goes when the called activity's domain owns the concept.
+    """
+    activities = expanded['activities']
+
+    def symbols(activity, field):
+        if field == 'anchors':
+            return {model['anchors'][anchor_id].get('symbol_id')
+                    for anchor_id in activity['anchor_ids'] if anchor_id in model.get('anchors', {})}
+        return {symbol_id for trace_id in activity['trace_ids']
+                for symbol_id in model.get('traces', {}).get(trace_id, {}).get('symbol_ids', ())}
+
+    entry = {activity_id: symbols(activity, 'anchors') - {None}
+             for activity_id, activity in activities.items()}
+    reached = {activity_id: symbols(activity, 'traces') for activity_id, activity in activities.items()}
+    writes = {}
+    for use in expanded['information_uses'].values():
+        if use['access'] in WRITE_ACCESS and use['activity_id'] in activities:
+            writes.setdefault((use['activity_id'], use['concept_id']), set()).update(use['effect_ids'])
+
+    def delegate(activity_id, concept_id):
+        """The activity `activity_id` calls that makes all its writes of the concept."""
+        own = writes.get((activity_id, concept_id), set())
+        return next((other for other in sorted(activities)
+                     if other != activity_id and entry[other] & reached[activity_id]
+                     and own and own <= writes.get((other, concept_id), set())), None)
+
+    authoritative = ('creates', 'maintains', 'authoritative_source')
+    removed = set()
+    for ownership_id in sorted(expanded['ownerships']):
+        ownership = expanded['ownerships'][ownership_id]
+        if ownership['kind'] not in authoritative:
+            continue
+        concept_id = ownership['concept_id']
+        delegated = {activity_id: delegate(activity_id, concept_id)
+                     for activity_id in ownership['activity_ids']}
+        kept = [activity_id for activity_id, other in delegated.items() if other is None]
+        if kept:
+            ownership['activity_ids'] = kept
+            continue
+        callees = set(delegated.values())
+        owned_elsewhere = any(
+            other_id != ownership_id and other['concept_id'] == concept_id
+            and other['kind'] in authoritative and callees & set(other['activity_ids'])
+            for other_id, other in expanded['ownerships'].items())
+        if owned_elsewhere:
+            del expanded['ownerships'][ownership_id]
+            removed.add(ownership_id)
+            removed |= {claim_id for claim_id, claim in expanded['claims'].items()
+                        if claim['subject_id'] == ownership_id}
+    for claim_id in removed & set(expanded['claims']):
+        del expanded['claims'][claim_id]
+    if removed:
+        for name in SEMANTIC_COLLECTIONS:
+            for record_id, item in expanded[name].items():
+                expanded[name][record_id] = _without(item, removed)
 
 
 def _collect_domain_rules(expanded: dict) -> None:
