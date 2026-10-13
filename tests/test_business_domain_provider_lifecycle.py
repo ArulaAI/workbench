@@ -77,27 +77,45 @@ def test_a_shutdown_request_cancels_every_synthesis(synthesis):
     assert synthesis.is_cancelled()
 
 
-def test_a_shutdown_kills_the_running_provider_process_group(synthesis, monkeypatch):
-    started = {}
+def _alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def test_a_shutdown_ends_every_process_the_provider_call_started(synthesis, monkeypatch, tmp_path):
+    # A wrapper like `timeout` puts its child in a process group of its own,
+    # out of reach of a signal to the call's group.
+    marker = tmp_path / 'grandchild.pid'
     real_popen = subprocess.Popen
+    started = {}
 
     def popen(command, **kwargs):
-        process = real_popen(['sleep', '30'], start_new_session=True,
+        if command[0] != 'bash':
+            return real_popen(command, **kwargs)
+        script = (f'perl -e \'setpgrp(0,0); print "$$"; exec "sleep", "30"\' > {marker} & '
+                  'wait')
+        process = real_popen(['/bin/bash', '-c', script], start_new_session=True,
                              stdout=kwargs['stdout'], stderr=kwargs['stderr'])
         started['pid'] = process.pid
         return process
 
     monkeypatch.setattr(subprocess, 'Popen', popen)
-    threading.Timer(0.5, request_shutdown).start()
+    threading.Timer(1.0, request_shutdown).start()
     began = time.monotonic()
 
     with pytest.raises(DomainError) as raised:
         synthesis._speed_call_unlogged('agent', timeout=30)
 
+    grandchild = int(marker.read_text().strip())
     assert raised.value.code == 'CANCELLED'
-    assert time.monotonic() - began < 5
-    with pytest.raises(ProcessLookupError):
-        os.killpg(started['pid'], 0)
+    assert time.monotonic() - began < 8
+    deadline = time.monotonic() + 3
+    while _alive(grandchild) and time.monotonic() < deadline:
+        time.sleep(0.1)
+    assert not _alive(started['pid']) and not _alive(grandchild)
 
 
 def test_the_cli_turns_a_termination_signal_into_a_shutdown(monkeypatch):

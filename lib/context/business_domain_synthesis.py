@@ -1492,6 +1492,62 @@ class RepairState:
 SHUTDOWN = threading.Event()
 
 
+def _descendants(pid):
+    """Every process started, directly or not, by `pid`."""
+    table = subprocess.run(['ps', '-Ao', 'pid=,ppid='], capture_output=True,
+                           text=True, check=False).stdout
+    children = {}
+    for line in table.splitlines():
+        fields = line.split()
+        if len(fields) == 2 and all(field.isdigit() for field in fields):
+            children.setdefault(int(fields[1]), []).append(int(fields[0]))
+    found, stack = [], [pid]
+    while stack:
+        for child in children.get(stack.pop(), []):
+            found.append(child)
+            stack.append(child)
+    return found
+
+
+def _terminate_tree(process, grace=2.0):
+    """End a provider call and everything it started.
+
+    Its process group is not enough: `timeout` and other wrappers start
+    process groups of their own, and their children outlive a group signal.
+    The whole tree is read before anything is signalled, because a process
+    whose parent dies is re-parented and can no longer be found from it.
+    """
+    victims = [process.pid, *_descendants(process.pid)]
+
+    def signal_all(signum):
+        for pid in victims:
+            try:
+                os.kill(pid, signum)
+            except (ProcessLookupError, PermissionError):
+                pass
+
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        pass
+    signal_all(signal.SIGTERM)
+    deadline = time.monotonic() + grace
+    while time.monotonic() < deadline and _any_alive(victims):
+        time.sleep(0.1)
+    signal_all(signal.SIGKILL)
+    process.wait()
+
+
+def _any_alive(pids):
+    for pid in pids:
+        try:
+            os.kill(pid, 0)
+            return True
+        except (ProcessLookupError, PermissionError):
+            continue
+    return False
+
+
 def request_shutdown():
     """Stop every running synthesis: each provider call ends and its process
     group is killed within one poll, whichever thread made it."""
@@ -1672,11 +1728,7 @@ class Synthesis:
                     raise DomainError('INVALID_PROVIDER_OUTPUT','SPEED agent returned invalid JSON') from exc
             finally:
                 if process.poll() is None:
-                    os.killpg(process.pid,signal.SIGTERM)
-                    try:process.wait(timeout=2)
-                    except subprocess.TimeoutExpired:
-                        os.killpg(process.pid,signal.SIGKILL)
-                        process.wait()
+                    _terminate_tree(process)
 
     def _run_agent(self, request, schema, timeout, role):
         if timeout <= 0:
