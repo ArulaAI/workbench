@@ -780,3 +780,24 @@ def test_a_direct_call_between_domains_is_recorded_once_and_not_through_a_callee
     assert (relationship['from_activity_id'], relationship['to_activity_id']) == (
         'activity:gateway', 'activity:authorise')
     assert relationship['kind'] == 'requests_action_from'
+
+
+def test_a_reader_of_what_another_domain_writes_is_linked_to_the_writer():
+    from lib.context.business_domain_work import _link_information_flow
+    candidate = {collection: {} for collection in SEMANTIC_COLLECTIONS}
+    candidate['activities'] = {name: {'trace_ids': [f'trace:{name}']}
+                               for name in ('activity:total', 'activity:capture')}
+    candidate['domains'] = {
+        'domain:ledger': {'activity_memberships': [{'activity_id': 'activity:total', 'role': 'primary'}]},
+        'domain:pay': {'activity_memberships': [{'activity_id': 'activity:capture', 'role': 'primary'}]}}
+    candidate['information_uses'] = {
+        'use:read': {'activity_id': 'activity:total', 'access': 'reads',
+                     'resource_ids': ['resource:entries'], 'evidence_ids': ['ev:read']},
+        'use:write': {'activity_id': 'activity:capture', 'access': 'creates',
+                      'resource_ids': ['resource:entries'], 'evidence_ids': ['ev:write']}}
+
+    _link_information_flow(candidate, {'ev:read', 'ev:write'})
+
+    [relationship] = candidate['relationships'].values()
+    assert (relationship['from_activity_id'], relationship['to_activity_id'], relationship['kind']) == (
+        'activity:total', 'activity:capture', 'uses_information_from')

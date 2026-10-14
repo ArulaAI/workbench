@@ -845,6 +845,7 @@ def expand_reconciliation(scope: dict, payload: dict, model: dict | None = None)
         _drop_delegating_owners(expanded, model)
         _attach_rules_to_enforcers(expanded, model)
         _link_direct_calls(expanded, model, set(supplied.get('evidence', {})))
+    _link_information_flow(expanded, set(supplied.get('evidence', {})))
     _keep_writers(expanded)
     _prune_symbol_memberships(expanded)
     _collect_domain_rules(expanded)
@@ -933,6 +934,48 @@ def _link_direct_calls(expanded: dict, model: dict, citable: set) -> None:
                 kind='requests_action_from', trace_ids=list(activities[caller]['trace_ids']),
                 evidence_ids=evidence[:MANIFEST_EVIDENCE])
             linked.add(frozenset((caller, callee)))
+
+
+def _link_information_flow(expanded: dict, citable: set) -> None:
+    """Record that an activity uses information another domain's activity writes.
+
+    Information uses state what each activity reads and writes. A reader in
+    one domain of a resource a writer in another domain writes uses
+    information from it; a pair no relationship records yet gets one,
+    resting on the reader's and writer's evidence for that resource.
+    """
+    home = _home_domains(expanded)
+    activities = expanded['activities']
+    linked = {frozenset((item['from_activity_id'], item['to_activity_id']))
+              for item in expanded['relationships'].values()}
+    readers, writers = {}, {}
+    for use in expanded['information_uses'].values():
+        if use['activity_id'] not in activities:
+            continue
+        # Deleting information is not a source of it.
+        target = (writers if use['access'] in ('creates', 'updates')
+                  else readers if use['access'] == 'reads' else None)
+        for resource_id in use['resource_ids'] if target is not None else ():
+            target.setdefault(resource_id, {}).setdefault(use['activity_id'], set()).update(
+                evidence_id for evidence_id in use.get('evidence_ids', ()) if evidence_id in citable)
+    for resource_id in sorted(readers):
+        for reader, reader_evidence in sorted(readers[resource_id].items()):
+            for writer, writer_evidence in sorted(writers.get(resource_id, {}).items()):
+                pair = frozenset((reader, writer))
+                if (reader == writer or pair in linked or home.get(reader) is None
+                        or home.get(writer) is None or home[reader] == home[writer]):
+                    continue
+                evidence = sorted(reader_evidence | writer_evidence)
+                if not evidence:
+                    continue
+                relationship_id = identifier('relationship', reader, writer, 'uses_information_from')
+                expanded['relationships'][relationship_id] = record(
+                    'Relationship', id=relationship_id, from_activity_id=reader,
+                    to_activity_id=writer, from_domain_id=home[reader], to_domain_id=home[writer],
+                    kind='uses_information_from',
+                    trace_ids=list(activities[reader].get('trace_ids', ())),
+                    evidence_ids=evidence[:MANIFEST_EVIDENCE])
+                linked.add(pair)
 
 
 def _attach_rules_to_enforcers(expanded: dict, model: dict) -> None:
