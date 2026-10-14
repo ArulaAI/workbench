@@ -4,6 +4,8 @@
   "schema_repair_limit": 2,
   "semantic_repair_limit": 4,
   "reconciliation_repair_limit": 6,
+  "candidate_reserve_fraction": 0.25,
+  "candidate_reserve_floor_tokens": 32000,
   "transient_retry_codes": [
     "PROVIDER_FAILED",
     "PROVIDER_TIMEOUT"

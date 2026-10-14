@@ -1995,6 +1995,11 @@ class Synthesis:
                     self.recorder.progress(
                         'semantic', f'Resuming an interrupted repair chain after '
                         f'{resumed.attempts} repair round(s)')
+                # The chain is sized by its scope, as a fresh one is, not by
+                # the larger repair request that now comes first.
+                with self.accounting_lock:
+                    self._reserve_completion(graph['estimated_input_tokens'],
+                                             graph.get('scope_kind'))
                 candidate, cached = None, False
             else:
                 try:
@@ -2426,7 +2431,7 @@ class Synthesis:
                            artifact['verification_report'], artifact['attempts_used'],
                            tuple(artifact['attempted_signatures']))
 
-    def _reserve_completion(self, estimated_input):
+    def _reserve_completion(self, estimated_input, scope_kind=None):
         """Protect the complete bounded synthesis/verification repair chain."""
         owner = threading.get_ident()
         if owner not in self.completion_reservations:
@@ -2441,7 +2446,7 @@ class Synthesis:
                       else 2*estimated_input + candidate),
             'output': operations*self.effective_request_output_tokens,
         }
-        if not self._completion_request_fits(estimated_input):
+        if not self._completion_request_fits(estimated_input, scope_kind):
             raise DomainError('PACKET_LIMIT',
                               'Complete semantic repair sequence exceeds the request input allowance')
         while True:
@@ -2468,10 +2473,29 @@ class Synthesis:
             self.counters[field] = max(self.counters[field],
                                        self.completion_protected[kind])
 
-    def _completion_request_fits(self, estimated_input):
-        """Require room to resend a candidate plus verifier report for repair."""
-        return (estimated_input + 2*self.effective_request_output_tokens
+    def _completion_request_fits(self, estimated_input, scope_kind=None):
+        """Require room to resend a candidate plus verifier report for repair.
+
+        A request needs the scope, the candidate it reviews or repairs and
+        the response allowance. The response allowance covers the provider's
+        reasoning as well as its answer; only the answer comes back as a
+        candidate, so the candidate is reserved at what a scope of this size
+        yields. A reconciliation is reviewed as its complete expanded model
+        and keeps the full allowance. Every request is measured exactly again
+        before dispatch, so an unexpectedly large candidate fails that request
+        rather than overrunning it.
+        """
+        output = self.effective_request_output_tokens
+        return (estimated_input + output + self._candidate_reserve(estimated_input, scope_kind)
                 <= self.effective_request_input_tokens)
+
+    def _candidate_reserve(self, estimated_input, scope_kind=None):
+        """Input room for the candidate a scope's review or repair carries."""
+        output = self.effective_request_output_tokens
+        if scope_kind == 'reconciliation':
+            return output
+        return min(output, max(POLICY['candidate_reserve_floor_tokens'],
+                               math.ceil(estimated_input * POLICY['candidate_reserve_fraction'])))
 
     def sequence_fits(self, graph):
         """Whether one sized scope's complete semantic sequence can run.
@@ -2492,7 +2516,7 @@ class Synthesis:
         """
         estimated = graph['estimated_input_tokens']
         output = self.effective_request_output_tokens
-        if not self._completion_request_fits(estimated):
+        if not self._completion_request_fits(estimated, graph.get('scope_kind')):
             return 'max_request_input_tokens'
         if 4*estimated + 4*output > self.config['max_build_input_tokens']:
             return 'max_build_input_tokens'
@@ -2998,7 +3022,7 @@ class Synthesis:
             self._await_provider_gate()
             if self.provider_failure is not None:
                 raise self.provider_failure
-            self._reserve_completion(projected_input)
+            self._reserve_completion(projected_input, request['graph'].get('scope_kind'))
             self._consume_completion(reservations)
             for kind in ('input', 'output'):
                 used = (self.counters['input_tokens_reserved']
