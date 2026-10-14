@@ -831,3 +831,24 @@ def test_a_returned_record_keeps_only_the_claims_it_lists():
 
     assert 'claim:stale' not in complete['claims']
     assert complete['domains']['domain:three']['claim_ids'] == ['claim:three']
+
+
+def test_a_segment_names_only_its_own_traces_on_a_shared_effect():
+    from lib.context.business_domain_work import segment_view
+    model = {
+        'symbols': {'symbol:a': {'evidence_ids': []}, 'symbol:b': {'evidence_ids': []}},
+        'edges': {'edge:ab': {'from_ref': {'id': 'symbol:a', 'kind': 'symbol'},
+                              'to_ref': {'id': 'symbol:b', 'kind': 'symbol'}, 'evidence_ids': []}},
+        'traces': {
+            'trace:mine': {'id': 'trace:mine', 'anchor_id': 'anchor:mine', 'symbol_ids': ['symbol:a', 'symbol:b'],
+                           'edge_ids': ['edge:ab'], 'frontier_ids': [], 'obligation_ids': []},
+            'trace:other': {'id': 'trace:other', 'anchor_id': 'anchor:other', 'symbol_ids': ['symbol:a'],
+                            'edge_ids': ['edge:ab'], 'frontier_ids': [], 'obligation_ids': []}},
+        'trace_obligations': {},
+        'effects': {'effect:write': {'id': 'effect:write', 'edge_id': 'edge:ab',
+                                     'trace_ids': ['trace:mine', 'trace:other']}}}
+
+    view, _ = segment_view(model, 'anchor:mine', ['symbol:a', 'symbol:b'])
+
+    assert view['effects']['effect:write']['trace_ids'] == ['trace:mine']
+    assert model['effects']['effect:write']['trace_ids'] == ['trace:mine', 'trace:other']

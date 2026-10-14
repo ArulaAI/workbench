@@ -400,7 +400,11 @@ def segment_view(model: dict, anchor_id: str, primary_symbols) -> tuple[dict, tu
     view = dict(model)
     view['traces'] = traces
     view['trace_obligations'] = obligations
-    view['effects'] = {key: effect for key, effect in model['effects'].items()
+    # An effect several entry points reach names their traces too; in the
+    # segment it serves only the segment's traces.
+    view['effects'] = {key: {**effect, 'trace_ids': sorted(set(effect['trace_ids']) & set(traces))}
+                       if 'trace_ids' in effect else effect
+                       for key, effect in model['effects'].items()
                        if effect.get('edge_id') in selected_edges}
     return view, tuple(sorted(cut_edges))
 
