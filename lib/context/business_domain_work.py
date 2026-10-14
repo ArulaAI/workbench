@@ -173,6 +173,36 @@ def _pack(items, build, fits):
         yield group, built
 
 
+def _affinity_pack(items, build, fits, shared, tries=2):
+    """Pack items into groups by the code they share, deterministically.
+
+    A group starts from the first remaining item in canonical order and grows
+    by the remaining item sharing the most with it (`shared(item)` is the set
+    it brings), canonical order breaking ties; of the `tries` closest, the
+    first that still fits joins. Items that share code land together, so the
+    code is carried once per group instead of once per item's group. Yields
+    `(group, built)` pairs like `_pack`; an item that does not fit alone is
+    yielded alone for the caller to handle.
+    """
+    remaining = sorted(items)
+    while remaining:
+        group = [remaining.pop(0)]
+        built = build(group)
+        carried = set(shared(group[0]))
+        while remaining and fits(built):
+            closest = sorted(remaining, key=lambda item: (-len(shared(item) & carried), item))
+            for item in closest[:tries]:
+                candidate = build(group + [item])
+                if fits(candidate):
+                    group.append(item)
+                    remaining.remove(item)
+                    built, carried = candidate, carried | shared(item)
+                    break
+            else:
+                break
+        yield group, built
+
+
 def _edge_users(model: dict) -> dict:
     """Edge ID -> the canonical anchors whose traces include it."""
     users = {}
@@ -202,8 +232,8 @@ def plan_slices(model: dict, build_bundle, build_segment, fits, limit) -> list[d
 
     The primary partition is the application boundary: every anchor of one
     deployable service in one slice. A boundary too large for one request is
-    packed into entry-point bundles in canonical-ID order, and an anchor too
-    large alone is cut into execution segments. No slice spans two boundaries.
+    packed into entry-point bundles grouped by the code their traces share,
+    and an anchor too large alone is cut into execution segments. No slice spans two boundaries.
     Shared implementation appears in every slice that reaches it, and its
     edges are declared cross-scope so reconciliation recognises the shared
     records.
@@ -234,14 +264,15 @@ def plan_slices(model: dict, build_bundle, build_segment, fits, limit) -> list[d
             if fits(scope):
                 slices.append(scope)
                 continue
-        slices.extend(_bundles(model, anchors, build, build_segment, fits, limit))
+        slices.extend(_bundles(model, anchors, build, build_segment, fits, limit,
+                               lambda anchor_id: owned.get(anchor_id, set())))
     return slices
 
 
-def _bundles(model, anchors, build, build_segment, fits, limit) -> list[dict]:
+def _bundles(model, anchors, build, build_segment, fits, limit, shared) -> list[dict]:
     """Entry-point bundles over `anchors`, segmenting any anchor too large alone."""
     slices = []
-    for anchor_ids, scope in _pack(anchors, build, fits):
+    for anchor_ids, scope in _affinity_pack(anchors, build, fits, shared):
         if fits(scope):
             slices.append(scope)
             continue

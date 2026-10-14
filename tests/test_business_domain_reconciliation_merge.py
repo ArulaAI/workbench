@@ -852,3 +852,17 @@ def test_a_segment_names_only_its_own_traces_on_a_shared_effect():
 
     assert view['effects']['effect:write']['trace_ids'] == ['trace:mine']
     assert model['effects']['effect:write']['trace_ids'] == ['trace:mine', 'trace:other']
+
+
+def test_entry_points_sharing_code_are_packed_together():
+    from lib.context.business_domain_work import _affinity_pack
+    code = {'anchor:1': {'owner'}, 'anchor:2': {'vet'}, 'anchor:3': {'owner'}, 'anchor:4': {'vet'}}
+
+    def build(group):
+        return sorted(group)
+
+    groups = [group for group, _ in _affinity_pack(
+        code, build, lambda built: len(built) <= 2, lambda anchor: code[anchor])]
+
+    # In canonical order 1 and 2 would share a slice; by shared code, 1 joins 3.
+    assert groups == [['anchor:1', 'anchor:3'], ['anchor:2', 'anchor:4']]
