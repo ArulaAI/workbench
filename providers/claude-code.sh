@@ -499,11 +499,20 @@ provider_run_json() {
         return $rc
     fi
 
-    # With --json-schema + stream-json, the structured JSON is produced via
-    # the StructuredOutput tool call, NOT in the result event's .result field.
-    # The .result field contains the agent's conversational text (markdown).
-    # Extract the structured output from the StructuredOutput tool_use event.
+    # Claude Code can put schema output in the result event even when .result
+    # contains conversational text. Prefer that payload over .result.
     local structured_output
+    structured_output=$(jq -c '
+        select(.type == "result") |
+        .structured_output |
+        select(type == "object" or type == "array")
+    ' "$events_file" 2>/dev/null | tail -1)
+    if [[ -n "$structured_output" ]]; then
+        echo "$structured_output"
+        return 0
+    fi
+
+    # Other Claude Code versions send it in a StructuredOutput tool call.
     structured_output=$(jq -r '
         select(.type == "assistant") |
         .message.content[]? |
