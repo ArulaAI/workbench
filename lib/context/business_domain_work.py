@@ -836,6 +836,7 @@ def expand_reconciliation(scope: dict, payload: dict, model: dict | None = None)
     # After everything kept is carried, so no kept domain or activity brings a
     # replaced rule back.
     _supersede_rules(expanded, supplied)
+    _merge_duplicate_rules(expanded, scope)
     _rehome(expanded, supplied, merged)
     _supersede_claims(expanded, supplied, returned)
     _drop_orphan_rules(expanded, supplied, returned)
@@ -843,6 +844,7 @@ def expand_reconciliation(scope: dict, payload: dict, model: dict | None = None)
     if model is not None:
         _drop_delegating_owners(expanded, model)
         _attach_rules_to_enforcers(expanded, model)
+        _link_direct_calls(expanded, model, set(supplied.get('evidence', {})))
     _keep_writers(expanded)
     _prune_symbol_memberships(expanded)
     _collect_domain_rules(expanded)
@@ -891,6 +893,46 @@ def _call_graph(expanded: dict, model: dict) -> tuple[dict, dict]:
                                 for symbol_id in model.get('traces', {}).get(
                                     trace_id, {}).get('symbol_ids', ())}
     return entry, reached
+
+
+def _link_direct_calls(expanded: dict, model: dict, citable: set) -> None:
+    """Record a direct call from one domain's activity to another's.
+
+    An activity whose own code calls another activity's entry point requests
+    action from it. A call made inside a third activity it calls is that
+    activity's, not a direct one. A call between domains no relationship
+    records yet gets one, resting on the call's evidence the scope supplies.
+    """
+    entry, reached = _call_graph(expanded, model)
+    activities = expanded['activities']
+    home = _home_domains(expanded)
+    linked = {frozenset((item['from_activity_id'], item['to_activity_id']))
+              for item in expanded['relationships'].values()}
+    calls = [edge for edge in model.get('edges', {}).values()
+             if edge.get('kind') == 'calls' and (edge.get('to_ref') or {}).get('kind') == 'symbol'
+             and edge.get('from_ref')]
+    for caller in sorted(activities):
+        delegated = set().union(*(reached[other] for other in activities
+                                  if other != caller and entry[other] & reached[caller]))
+        own = reached[caller] - delegated | entry[caller]
+        for callee in sorted(activities):
+            if (callee == caller or frozenset((caller, callee)) in linked
+                    or home.get(caller) is None or home.get(callee) is None
+                    or home[caller] == home[callee]):
+                continue
+            evidence = sorted({evidence_id for edge in calls
+                               if edge['to_ref']['id'] in entry[callee]
+                               and edge['from_ref'].get('id') in own
+                               for evidence_id in edge['evidence_ids'] if evidence_id in citable})
+            if not evidence:
+                continue
+            relationship_id = identifier('relationship', caller, callee, 'requests_action_from')
+            expanded['relationships'][relationship_id] = record(
+                'Relationship', id=relationship_id, from_activity_id=caller,
+                to_activity_id=callee, from_domain_id=home[caller], to_domain_id=home[callee],
+                kind='requests_action_from', trace_ids=list(activities[caller]['trace_ids']),
+                evidence_ids=evidence[:MANIFEST_EVIDENCE])
+            linked.add(frozenset((caller, callee)))
 
 
 def _attach_rules_to_enforcers(expanded: dict, model: dict) -> None:
@@ -1040,6 +1082,51 @@ def _same_rule(rule: dict, other: dict, *, within: bool = False) -> bool:
         return True
     words, other_words = _words(rule.get('name', '')), _words(other.get('name', ''))
     return len(words & other_words) * 2 >= max(len(words), len(other_words), 1)
+
+
+def _merge_duplicate_rules(expanded: dict, scope: dict) -> None:
+    """Make one rule of the copies different children kept of it.
+
+    Children describe one rule independently. Where the answer left copies
+    from different children that describe the same rule, the copy most
+    activities apply stands for all of them, with their activities,
+    concepts, sites, evidence, observations, conflicts and questions, and
+    what named another names it.
+    """
+    child_of = {record_id: manifest['child_scope_id']
+                for manifest in scope.get('coverage_manifests', ())
+                for record_id in manifest.get('contributed_record_ids', ())}
+    rules = expanded['rules']
+    groups = []
+    for rule_id in sorted(rules):
+        if rule_id not in child_of or _rule_basis(rules[rule_id]) is None:
+            continue
+        group = next((group for group in groups if _same_rule(rules[rule_id], rules[group[0]])), None)
+        if group is None:
+            groups.append([rule_id])
+        else:
+            group.append(rule_id)
+    replaced = {}
+    for group in groups:
+        if len({child_of[rule_id] for rule_id in group}) < 2:
+            continue
+        group.sort(key=lambda rule_id: (-len(rules[rule_id].get('activity_ids') or ()), rule_id))
+        kept = rules[group[0]]
+        for rule_id in group[1:]:
+            other = rules.pop(rule_id)
+            replaced[rule_id] = group[0]
+            for field in ('activity_ids', 'concept_ids', 'evidence_ids', 'observation_ids',
+                          'conflicts', 'unresolved_questions'):
+                if field in kept:
+                    kept[field] = list(dict.fromkeys([*kept[field], *(other.get(field) or ())]))
+            if 'enforcement_sites' in kept:
+                sources = {site['source_id'] for site in kept['enforcement_sites']}
+                kept['enforcement_sites'] += [site for site in other.get('enforcement_sites') or ()
+                                              if site['source_id'] not in sources]
+    if replaced:
+        for collection in SEMANTIC_COLLECTIONS:
+            for record_id, item in expanded[collection].items():
+                expanded[collection][record_id] = _renamed(item, replaced)
 
 
 def _supersede_rules(expanded: dict, supplied: dict) -> None:

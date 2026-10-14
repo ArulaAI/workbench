@@ -726,3 +726,57 @@ def test_an_ownership_drops_the_uses_of_an_activity_that_only_delegated():
     ownership = candidate['ownerships']['ownership:payment']
     assert ownership['activity_ids'] == ['activity:authorise']
     assert ownership['information_use_ids'] == ['use:authorise']
+
+
+def test_copies_of_one_rule_from_different_children_become_one():
+    from lib.context.business_domain_work import _merge_duplicate_rules
+    site = [{'source_id': 'symbol:post', 'activity_ids': [], 'condition': None, 'evidence_ids': []}]
+    candidate = {collection: {} for collection in SEMANTIC_COLLECTIONS}
+    candidate['rules'] = {
+        rule_id: {'name': 'Every ledger posting is a balanced pair', 'observation_ids': [],
+                  'enforcement_sites': site, 'evaluation_kind': 'data_constraint',
+                  'activity_ids': activities, 'evidence_ids': [f'ev:{rule_id[-1]}']}
+        for rule_id, activities in (('rule:a', ['activity:post', 'activity:pay']),
+                                    ('rule:b', ['activity:refund']))}
+    candidate['activities'] = {'activity:refund': {'rule_ids': ['rule:b']}}
+    scope = {'coverage_manifests': [{'child_scope_id': 'scope:1', 'contributed_record_ids': ['rule:a']},
+                                    {'child_scope_id': 'scope:2', 'contributed_record_ids': ['rule:b']}]}
+
+    _merge_duplicate_rules(candidate, scope)
+
+    assert list(candidate['rules']) == ['rule:a']
+    assert candidate['rules']['rule:a']['activity_ids'] == ['activity:post', 'activity:pay',
+                                                           'activity:refund']
+    assert candidate['activities']['activity:refund']['rule_ids'] == ['rule:a']
+
+
+def test_a_direct_call_between_domains_is_recorded_once_and_not_through_a_callee():
+    from lib.context.business_domain_work import _link_direct_calls
+    model = {'anchors': {f'anchor:{name}': {'symbol_id': f'symbol:{name}'}
+                         for name in ('gateway', 'authorise', 'post')},
+             'traces': {'trace:gateway': {'symbol_ids': ['symbol:gateway', 'symbol:authorise',
+                                                         'symbol:post']},
+                        'trace:authorise': {'symbol_ids': ['symbol:authorise', 'symbol:post']},
+                        'trace:post': {'symbol_ids': ['symbol:post']}},
+             'edges': {
+                 'edge:1': {'kind': 'calls', 'from_ref': {'id': 'symbol:gateway', 'kind': 'symbol'},
+                            'to_ref': {'id': 'symbol:authorise', 'kind': 'symbol'},
+                            'evidence_ids': ['ev:call']},
+                 'edge:2': {'kind': 'calls', 'from_ref': {'id': 'symbol:authorise', 'kind': 'symbol'},
+                            'to_ref': {'id': 'symbol:post', 'kind': 'symbol'},
+                            'evidence_ids': ['ev:post']}}}
+    candidate = {collection: {} for collection in SEMANTIC_COLLECTIONS}
+    candidate['activities'] = {f'activity:{name}': {'anchor_ids': [f'anchor:{name}'],
+                                                    'trace_ids': [f'trace:{name}']}
+                               for name in ('gateway', 'authorise', 'post')}
+    candidate['domains'] = {
+        'domain:risk': {'activity_memberships': [{'activity_id': 'activity:gateway', 'role': 'primary'}]},
+        'domain:pay': {'activity_memberships': [{'activity_id': 'activity:authorise', 'role': 'primary'},
+                                                {'activity_id': 'activity:post', 'role': 'primary'}]}}
+
+    _link_direct_calls(candidate, model, {'ev:call', 'ev:post'})
+
+    [relationship] = candidate['relationships'].values()
+    assert (relationship['from_activity_id'], relationship['to_activity_id']) == (
+        'activity:gateway', 'activity:authorise')
+    assert relationship['kind'] == 'requests_action_from'
