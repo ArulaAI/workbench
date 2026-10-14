@@ -1097,7 +1097,11 @@ def _rule_basis(rule: dict):
     if observed:
         return ('observed', observed)
     sites = frozenset(site['source_id'] for site in rule.get('enforcement_sites') or ())
-    return ('enforced', sites, rule.get('evaluation_kind')) if sites else None
+    if sites:
+        return ('enforced', sites, rule.get('evaluation_kind'))
+    # A rule only documented or tested is identified by what it is called.
+    name = _plain(rule.get('name') or '')
+    return ('named', name) if name else None
 
 
 def _words(name: str) -> set:
@@ -1119,6 +1123,9 @@ def _same_rule(rule: dict, other: dict, *, within: bool = False) -> bool:
         return bool(observed) and (observed <= others if within else observed == others)
     sites = {site['source_id'] for site in rule.get('enforcement_sites') or ()}
     covering = {site['source_id'] for site in other.get('enforcement_sites') or ()}
+    if not sites and not covering:
+        name = _plain(rule.get('name') or '')
+        return bool(name) and name == _plain(other.get('name') or '')
     if not sites or not (sites <= covering if within else sites == covering):
         return False
     if rule.get('evaluation_kind') == other.get('evaluation_kind'):
@@ -1258,15 +1265,27 @@ def _use_key(use: dict) -> tuple:
 
 
 def _supersede_claims(expanded: dict, supplied: dict, returned: set) -> None:
-    """A claim the answer makes about a record replaces the children's claims
-    of the same kind about it, so a restated claim does not stand beside the
-    one it corrects."""
+    """Keep the answer's word on what is claimed about the records it returns.
+
+    A claim the answer makes about a record replaces the children's claims of
+    the same kind about it, and a record the answer returns rests on the
+    claims it lists: a child claim about it the answer left out is dropped.
+    """
     restated = {(claim['subject_id'], claim['kind']) for claim_id, claim in expanded['claims'].items()
                 if claim_id in returned and claim_id not in supplied['claims']}
+    listed = {record_id: set(item['claim_ids'])
+              for collection in SEMANTIC_COLLECTIONS if collection != 'claims'
+              for record_id, item in expanded[collection].items()
+              if record_id in returned and item.get('claim_ids')}
     for claim_id in sorted(expanded['claims']):
         claim = expanded['claims'][claim_id]
-        if (claim_id in supplied['claims'] and claim_id not in returned
-                and (claim['subject_id'], claim['kind']) in restated):
+        if claim_id not in supplied['claims'] or claim_id in returned:
+            continue
+        subject = claim['subject_id']
+        # A claim moved here from a replaced record was not the answer's to list.
+        about_it = supplied['claims'][claim_id]['subject_id'] == subject
+        if (subject, claim['kind']) in restated or (
+                about_it and subject in listed and claim_id not in listed[subject]):
             del expanded['claims'][claim_id]
 
 

@@ -801,3 +801,33 @@ def test_a_reader_of_what_another_domain_writes_is_linked_to_the_writer():
     [relationship] = candidate['relationships'].values()
     assert (relationship['from_activity_id'], relationship['to_activity_id'], relationship['kind']) == (
         'activity:total', 'activity:capture', 'uses_information_from')
+
+
+def test_a_documented_rule_is_replaced_by_the_returned_rule_of_its_name():
+    scope, answer = _merging_scope()
+    for rule_id in ('rule:one', 'rule:two'):
+        scope['context']['rules'][rule_id].update(
+            name='Refund within the captured amount', observation_ids=[], enforcement_sites=[])
+    answer['activities'] = {}
+    answer['rules'] = {'rule:refund': {'id': 'rule:refund', 'name': 'Refund within the captured amount',
+                                       'observation_ids': [], 'enforcement_sites': []}}
+    answer['dispositions'][0]['incorporated_record_ids'] = ['activity:one', 'activity:two']
+
+    complete = expand_reconciliation(scope, answer)
+
+    assert set(complete['rules']) == {'rule:refund'}
+
+
+def test_a_returned_record_keeps_only_the_claims_it_lists():
+    scope, answer = _regrouping_scope()
+    scope['context']['claims']['claim:stale'] = {
+        'id': 'claim:stale', 'subject_id': 'domain:three', 'kind': 'scope_note',
+        'text': 'Capture is not modelled in this slice.'}
+    returned = _domain('domain:three', 'activity:c')
+    returned['claim_ids'] = ['claim:three']
+    answer['domains'] = {'domain:three': returned}
+
+    complete = expand_reconciliation(scope, answer)
+
+    assert 'claim:stale' not in complete['claims']
+    assert complete['domains']['domain:three']['claim_ids'] == ['claim:three']
