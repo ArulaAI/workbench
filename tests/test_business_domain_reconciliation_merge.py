@@ -712,3 +712,33 @@ def test_kept_child_records_stating_their_scope_limits_are_a_finding():
 
     assert finding['code'] == 'STALE_SCOPE_STATEMENT'
     assert finding['subject_ids'] == ['domain:refunds']
+
+
+def test_an_ownership_drops_the_uses_of_an_activity_that_only_delegated():
+    from lib.context.business_domain_work import _drop_delegating_owners, _keep_writers
+    model = {'anchors': {'anchor:gateway': {'symbol_id': 'symbol:gateway'},
+                         'anchor:authorise': {'symbol_id': 'symbol:authorise'}},
+             'traces': {'trace:gateway': {'symbol_ids': ['symbol:gateway', 'symbol:authorise']},
+                        'trace:authorise': {'symbol_ids': ['symbol:authorise']}}}
+    candidate = {collection: {} for collection in SEMANTIC_COLLECTIONS}
+    candidate['activities'] = {
+        name: {'anchor_ids': [f'anchor:{name}'], 'trace_ids': [f'trace:{name}']}
+        for name in ('gateway', 'authorise')}
+    candidate['activities'] = {f'activity:{name}': value
+                               for name, value in candidate['activities'].items()}
+    candidate['information_uses'] = {
+        f'use:{name}': {'activity_id': f'activity:{name}', 'concept_id': 'concept:payment',
+                        'access': 'creates', 'effect_ids': ['effect:store'],
+                        'resource_ids': ['resource:payments']}
+        for name in ('gateway', 'authorise')}
+    candidate['ownerships'] = {'ownership:payment': {
+        'concept_id': 'concept:payment', 'domain_id': 'domain:pay', 'kind': 'creates',
+        'activity_ids': ['activity:authorise', 'activity:gateway'],
+        'information_use_ids': ['use:authorise', 'use:gateway']}}
+
+    _drop_delegating_owners(candidate, model)
+    _keep_writers(candidate)
+
+    ownership = candidate['ownerships']['ownership:payment']
+    assert ownership['activity_ids'] == ['activity:authorise']
+    assert ownership['information_use_ids'] == ['use:authorise']

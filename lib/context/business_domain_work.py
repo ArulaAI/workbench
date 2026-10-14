@@ -841,10 +841,11 @@ def expand_reconciliation(scope: dict, payload: dict, model: dict | None = None)
     _supersede_claims(expanded, supplied, returned)
     _drop_orphan_rules(expanded, supplied, returned)
     _drop_replaced_references(expanded, supplied, returned)
-    _keep_writers(expanded)
     if model is not None:
         _drop_delegating_owners(expanded, model)
         _attach_rules_to_enforcers(expanded, model)
+    _keep_writers(expanded)
+    _prune_symbol_memberships(expanded)
     _collect_domain_rules(expanded)
     _link_claims(expanded)
     return expanded
@@ -968,6 +969,19 @@ def _drop_delegating_owners(expanded: dict, model: dict) -> None:
         for name in SEMANTIC_COLLECTIONS:
             for record_id, item in expanded[name].items():
                 expanded[name][record_id] = _without(item, removed)
+
+
+def _prune_symbol_memberships(expanded: dict) -> None:
+    """A domain's symbol memberships name only activities the candidate holds.
+
+    Acceptance derives them again from the activities; until then they must
+    not credit an activity the reconciliation replaced.
+    """
+    for domain in expanded['domains'].values():
+        if 'symbol_memberships' in domain:
+            domain['symbol_memberships'] = [
+                membership for membership in domain['symbol_memberships']
+                if membership.get('activity_id') in expanded['activities']]
 
 
 def _collect_domain_rules(expanded: dict) -> None:
