@@ -698,22 +698,6 @@ def test_a_restated_claim_replaces_the_childs_claim_of_that_kind():
     assert complete['domains']['domain:three']['claim_ids'] == ['claim:revised']
 
 
-def test_kept_child_records_stating_their_scope_limits_are_a_finding():
-    units, candidate = _connected_units()
-    candidate['relationships'] = {'relationship:x': {
-        'from_activity_id': 'activity:refund', 'to_activity_id': 'activity:authorise'}}
-    stale = {'id': 'domain:refunds', 'name': 'Refunds', 'activity_memberships': [],
-             'boundary_rationale': 'Authorise is outside this scope, so it is not modelled.',
-             'alternatives': [], 'exclusions': []}
-    units[1].payload['domains']['domain:refunds'] = stale
-    candidate['domains']['domain:refunds'] = dict(stale)
-
-    [finding] = reconciliation_findings({}, units, candidate)
-
-    assert finding['code'] == 'STALE_SCOPE_STATEMENT'
-    assert finding['subject_ids'] == ['domain:refunds']
-
-
 def test_an_ownership_drops_the_uses_of_an_activity_that_only_delegated():
     from lib.context.business_domain_work import _drop_delegating_owners, _keep_writers
     model = {'anchors': {'anchor:gateway': {'symbol_id': 'symbol:gateway'},

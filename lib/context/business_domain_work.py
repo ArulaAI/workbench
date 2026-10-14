@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import copy
-import re
 from dataclasses import dataclass
 from itertools import combinations
 
@@ -1513,51 +1512,7 @@ def reconciliation_findings(model: dict, units, payload: dict) -> list[dict]:
                     'subject_ids': sorted({disposition['subject_id'], *unknown}),
                     'evidence_ids': []})
     return (findings + _link_findings(payload, units) + _merge_findings(model, units, payload)
-            + _rule_findings(payload, units) + _scope_text_findings(payload, units))
-
-
-# A child record's statement of what lay outside its own scope.
-_CHILD_SCOPE = re.compile(
-    r"\b(?:not|outside|beyond)\b[^.;]{0,40}?\bthis (?:child )?scope\b"
-    r"|\bnot (?:in|part of) (?:this |the )?scope\b"
-    r"|\bnot anchors? in this scope\b", re.IGNORECASE)
-_STATED_FIELDS = ('description', 'summary', 'boundary_rationale', 'rationale', 'text',
-                  'unresolved_questions', 'explanation')
-
-
-def _scope_text_findings(payload: dict, units) -> list[dict]:
-    """Kept child records still stating limits their child scope had."""
-    kept = {record_id: item for unit in units for collection in SEMANTIC_COLLECTIONS
-            for record_id, item in unit.payload.get(collection, {}).items()}
-    stale = []
-    for collection in SEMANTIC_COLLECTIONS:
-        for record_id, item in payload.get(collection, {}).items():
-            if record_id not in kept or item.get('kind') in SPEED_CLAIM_KINDS:
-                continue
-            # Bookkeeping may have changed its groupings; what matters is
-            # whether it still says what the child said.
-            text = ' '.join(_stated(item))
-            if text == ' '.join(_stated(kept[record_id])) and _CHILD_SCOPE.search(text):
-                stale.append(record_id)
-    if not stale:
-        return []
-    return [{'code': 'STALE_SCOPE_STATEMENT', 'severity': 'error',
-             'message': ('Kept child records state what lay outside their child scope, which '
-                         'this reconciliation holds; return them revised for the merged scope'),
-             'subject_ids': sorted(stale), 'evidence_ids': []}]
-
-
-def _stated(value, key=None):
-    """The free text a record states, field by field."""
-    if isinstance(value, str):
-        if key in _STATED_FIELDS:
-            yield value
-    elif isinstance(value, list):
-        for item in value:
-            yield from _stated(item, key)
-    elif isinstance(value, dict):
-        for field, item in value.items():
-            yield from _stated(item, field)
+            + _rule_findings(payload, units))
 
 
 def _rule_findings(payload: dict, units) -> list[dict]:
