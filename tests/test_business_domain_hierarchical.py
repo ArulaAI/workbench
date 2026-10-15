@@ -12,6 +12,7 @@ those tests is a strict expected failure until the phase named in its marker
 implemented it; every marker has now come off.
 """
 import copy
+import json
 
 
 from lib.context.business_domain_extract import Extractor
@@ -716,3 +717,35 @@ def test_segments_reconcile_into_one_activity_per_anchor(tmp_path):
 
     [activity] = model['activities'].values()
     assert activity['anchor_ids'] == list(model['anchors'])
+
+
+class _OverlongOnceProvider(ReconcilingProvider):
+    """Answers the first multi-entry-point slice beyond the response allowance."""
+
+    def __init__(self):
+        super().__init__()
+        self.overlong = None
+
+    def generate(self, request, schema, *rest):
+        value, usage = super().generate(request, schema, *rest)
+        graph = request['graph']
+        if (request['operation'] == 'synthesize' and graph.get('scope_kind') == 'slice'
+                and len(graph['canonical_anchor_ids']) > 1 and self.overlong in (None, graph['scope_id'])):
+            self.overlong = graph['scope_id']
+            return value, {'last': {'outputTokens': 10, 'peakOutputTokens': 10_000_000}}
+        return value, usage
+
+
+def test_a_slice_whose_answer_is_too_long_is_split_and_remembered(tmp_path):
+    root = write_monolith(tmp_path, entry_points=6)
+    calibration = calibrate(root)
+    config = force_split(calibration.allowance(int(calibration.whole * 0.75)))
+    provider = _OverlongOnceProvider()
+
+    model, status = discover(root, config, provider=provider)
+
+    assert status['error'] is None and model is not None
+    assert len({anchor for activity in model['activities'].values()
+                for anchor in activity['anchor_ids']}) == len(model['anchors'])
+    hints = json.loads((root / '.speed/context/business-domain-split-hints.json').read_text())
+    assert hints == [provider.overlong]

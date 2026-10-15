@@ -19,6 +19,8 @@ reuses all completed work. Nothing here publishes.
 """
 from __future__ import annotations
 
+import json
+import math
 import threading
 from collections import Counter
 from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
@@ -26,11 +28,54 @@ from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
 from .business_domain_schema import DomainError, digest, identifier
 from .business_domain_synthesis import _model_ready_context
 from .business_domain_work import (
-    ROOT_SCOPE_ID, anchor_scope_id, expand_reconciliation, plan_reconciliation,
-    verification_view,
-    plan_slices, reconciled_unit, reconciliation_findings, reconciliation_scope,
-    slice_scope, slice_unit,
+    ROOT_SCOPE_ID, _affinity_pack, _edge_users, anchor_scope_id, expand_reconciliation,
+    plan_reconciliation, plan_slices, reconciled_unit, reconciliation_findings,
+    reconciliation_scope, slice_scope, slice_unit, verification_view,
 )
+
+SPLIT_HINTS = '.speed/context/business-domain-split-hints.json'
+
+
+def _split_hints(synthesis) -> set:
+    """Bundles a past run found too large for one answer."""
+    try:
+        return set(json.loads((synthesis.root / SPLIT_HINTS).read_text()))
+    except (OSError, ValueError):
+        return set()
+
+
+def _remember_split(synthesis, scope_id: str) -> None:
+    hints = _split_hints(synthesis) | {scope_id}
+    path = synthesis.root / SPLIT_HINTS
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(sorted(hints)))
+
+
+def split_bundle(baseline: dict, synthesis, scope: dict) -> list[dict]:
+    """Two sized bundles over a bundle's entry points, grouped by shared code.
+
+    A bundle whose answer exceeds the response allowance is halved; its entry
+    points keep the bundles' grouping by the code their traces share.
+    """
+    users = _edge_users(baseline)
+    owned = {}
+    for edge_id, anchors in users.items():
+        for anchor_id in anchors:
+            owned.setdefault(anchor_id, set()).add(edge_id)
+
+    def build(anchor_ids):
+        members = set(anchor_ids)
+        edges = set().union(*(owned.get(anchor_id, set()) for anchor_id in anchor_ids))
+        selected = _model_ready_context(baseline, anchor_ids)
+        return synthesis._size_graph(slice_scope(
+            baseline, anchor_ids, selected, 'entrypoint_bundle',
+            cross_scope_edge_ids=sorted(e for e in edges if users[e] - members)))
+
+    anchors = scope['canonical_anchor_ids']
+    half = math.ceil(len(anchors) / 2)
+    return [built for _, built in _affinity_pack(
+        anchors, build, lambda built: len(built['canonical_anchor_ids']) <= half,
+        lambda anchor_id: owned.get(anchor_id, set()))]
 
 
 def plan(baseline: dict, synthesis) -> list[dict]:
@@ -47,8 +92,17 @@ def plan(baseline: dict, synthesis) -> list[dict]:
             view, [anchor_id], selected, 'execution_segment',
             cross_scope_edge_ids=cut_edge_ids, parent_scope_id=anchor_scope_id(anchor_id)))
 
-    return plan_slices(baseline, bundle, segment, synthesis.sequence_fits,
-                       synthesis.sequence_limit)
+    slices = plan_slices(baseline, bundle, segment, synthesis.sequence_fits,
+                         synthesis.sequence_limit)
+    hints = _split_hints(synthesis)
+    planned = []
+    while slices:
+        scope = slices.pop(0)
+        if scope['scope_id'] in hints and len(scope['canonical_anchor_ids']) > 1:
+            slices[:0] = split_bundle(baseline, synthesis, scope)
+        else:
+            planned.append(scope)
+    return planned
 
 
 def reserve(slices: list[dict], synthesis) -> None:
@@ -106,8 +160,8 @@ class _Run:
             limits['semantic_units_pending'] = (limits['semantic_units_total']
                                                 - limits['semantic_units_validated'])
 
-    def dispatch(self, jobs, label):
-        """Run `(scope, validate, review)` jobs concurrently; payloads in job order.
+    def dispatch(self, jobs, label, runner=None):
+        """Run `(scope, validate, review)` jobs concurrently; results in job order.
 
         On the first failure no further job starts; running jobs finish so
         their validated responses are cached, then the earliest failure in
@@ -118,7 +172,7 @@ class _Run:
         def one(index, scope, validate, review):
             self.progress(f'{label} {index + 1}/{len(jobs)} started')
             self.beat(scope['scope_id'])
-            payload = self.synthesis.run(scope, validate, review=review)
+            payload = (runner or self.synthesis.run)(scope, validate, review=review)
             with self.lock:
                 results[index] = payload
                 done = len(results)
@@ -139,6 +193,30 @@ class _Run:
                 wait(futures)
                 raise failed[0].exception()
         return [results[index] for index in range(len(jobs))]
+
+    def run_slice(self, scope, validate, review=None):
+        """A slice's validated `(scope, payload)` pairs.
+
+        A bundle whose answer exceeds the response allowance is halved and
+        each half run in its place; the bundle is remembered so the next run
+        plans the halves from the start.
+        """
+        try:
+            return [(scope, self.synthesis.run(scope, validate, review=review))]
+        except DomainError as exc:
+            if (exc.code != 'PROVIDER_BUDGET' or scope['partition_strategy'] != 'entrypoint_bundle'
+                    or len(scope['canonical_anchor_ids']) < 2):
+                raise
+        _remember_split(self.synthesis, scope['scope_id'])
+        halves = split_bundle(self.baseline, self.synthesis, scope)
+        self.add_units(len(halves) - 1)
+        self.progress(f'A slice of {len(scope["canonical_anchor_ids"])} entry points needed a '
+                      f'longer answer than one response allows; split into {len(halves)}',
+                      level='warning')
+        results = []
+        for half in halves:
+            results += self.run_slice(*self.slice_job(half))
+        return results
 
     def slice_job(self, scope):
         return scope, lambda candidate: self.accept(scope, candidate), None
@@ -250,8 +328,9 @@ def run(baseline: dict, synthesis, accept, *, status, heartbeat, recorder=None):
                      '(the complete graph does not fit one request)')
     attempt.beat()
 
-    payloads = attempt.dispatch([attempt.slice_job(scope) for scope in slices], 'Slice')
-    units = [slice_unit(scope, payload) for scope, payload in zip(slices, payloads)]
+    results = attempt.dispatch([attempt.slice_job(scope) for scope in slices], 'Slice',
+                               runner=attempt.run_slice)
+    units = [slice_unit(scope, payload) for pairs in results for scope, payload in pairs]
     if segmented:
         segments = {parent: [unit for unit in units if unit.scope['parent_scope_id'] == parent
                              and unit.scope['partition_strategy'] == 'execution_segment']
