@@ -1436,11 +1436,16 @@ class Extractor:
         self._capabilities()
         self._traces()
         self._entrypoint_coverage()
-        # Resources gather evidence, and the extraction gathers warnings, as
-        # units are visited, in an order that can differ between processes;
+        # Resources gather evidence, interactions their bindings, and the
+        # extraction gathers warnings, as units are visited, in an order that
+        # can differ between processes;
         # facts, and every scope and cache key built from them, must not.
         for resource in self.facts['resources'].values():
             resource['evidence_ids'] = sorted(set(resource['evidence_ids']))
+        for trace in self.facts['traces'].values():
+            interaction = trace.get('ui_interaction')
+            if interaction and interaction.get('binding_ids'):
+                interaction['binding_ids'] = sorted(set(interaction['binding_ids']))
         self.facts['warnings'].sort(key=canonical)
         from .business_domain_snapshots import capture_supplied
         self.external_freshness,self.snapshot_inputs = capture_supplied(self)
