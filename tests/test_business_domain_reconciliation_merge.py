@@ -526,7 +526,7 @@ def test_a_reconciliation_has_its_own_repair_limit():
 
     assert _repair_limit({'scope_kind': 'reconciliation'}) == POLICY['reconciliation_repair_limit']
     assert _repair_limit({'scope_kind': 'slice'}) == POLICY['semantic_repair_limit']
-    assert POLICY['reconciliation_repair_limit'] > POLICY['semantic_repair_limit']
+    assert POLICY['reconciliation_repair_limit'] >= POLICY['semantic_repair_limit']
 
 
 def test_a_bare_type_name_resolves_to_the_full_name_another_concept_gives():

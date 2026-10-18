@@ -2,7 +2,7 @@
   "domain_identity_min_overlap": 0.7,
   "transient_retry_limit": 1,
   "schema_repair_limit": 2,
-  "semantic_repair_limit": 4,
+  "semantic_repair_limit": 6,
   "reconciliation_repair_limit": 6,
   "candidate_reserve_fraction": 0.25,
   "candidate_reserve_floor_tokens": 32000,
