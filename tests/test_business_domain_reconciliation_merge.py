@@ -8,7 +8,7 @@ candidate answers it.
 """
 from lib.context.business_domain_synthesis import Synthesis
 from lib.context.business_domain_work import (
-    SEMANTIC_COLLECTIONS, Unit, _merge_concepts, expand_reconciliation,
+    SEMANTIC_COLLECTIONS, Unit, _combine_records, _merge_concepts, expand_reconciliation,
     reconciliation_findings, verification_view,
 )
 
@@ -866,3 +866,22 @@ def test_entry_points_sharing_code_are_packed_together():
 
     # In canonical order 1 and 2 would share a slice; by shared code, 1 joins 3.
     assert groups == [['anchor:1', 'anchor:3'], ['anchor:2', 'anchor:4']]
+
+
+def test_one_record_two_slices_word_differently_is_supplied_once():
+    # An ID comes from what identifies a record, so slices that reach the same
+    # relationship give it the same ID whatever words they explain it in.
+    first = {'id': 'rule_relationship:x', 'from_observation_id': 'observation:a',
+             'to_observation_id': 'observation:b', 'kind': 'equivalent',
+             'explanation': 'Both checks decide insert versus update.',
+             'evidence_ids': ['ev:1', 'ev:2'], 'verification': 'inferred'}
+    second = {**first, 'explanation': 'isNew() is id == null, so both checks agree.',
+              'evidence_ids': ['ev:3', 'ev:1']}
+
+    combined = _combine_records(first, second)
+
+    assert combined['explanation'] == first['explanation']
+    assert combined['evidence_ids'] == ['ev:1', 'ev:2', 'ev:3']
+    verified = {**second, 'verification': 'verified'}
+    assert _combine_records(first, verified)['explanation'] == second['explanation']
+    assert _combine_records(first, dict(first)) == first

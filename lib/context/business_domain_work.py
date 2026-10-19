@@ -501,6 +501,29 @@ def _ids(records, field) -> set:
     return {value for item in records for value in item.get(field) or []}
 
 
+VERIFICATION_STRENGTH = ('verified', 'inferred', 'unresolved')
+
+
+def _combine_records(existing, item):
+    """One record two child scopes proposed under the same ID.
+
+    An ID is derived from the fields that identify a record, never from its
+    wording, so two versions describe the same thing in different words. The
+    better verified version is kept, then the first child's, and the evidence
+    either cites is kept.
+    """
+    if existing == item:
+        return existing
+    strength = lambda record: (VERIFICATION_STRENGTH.index(record['verification'])
+                               if record.get('verification') in VERIFICATION_STRENGTH
+                               else len(VERIFICATION_STRENGTH))
+    kept = copy.deepcopy(item if strength(item) < strength(existing) else existing)
+    if 'evidence_ids' in kept:
+        kept['evidence_ids'] = sorted(
+            set(existing.get('evidence_ids', [])) | set(item.get('evidence_ids', [])))
+    return kept
+
+
 def reconciliation_scope(model: dict, units, *, scope_id: str,
                          parent_scope_id: str | None = None) -> dict:
     """An unsized reconciliation scope over validated `units`.
@@ -521,12 +544,9 @@ def reconciliation_scope(model: dict, units, *, scope_id: str,
         for collection in SEMANTIC_COLLECTIONS:
             for record_id, item in unit.payload[collection].items():
                 existing = context[collection].get(record_id)
-                if existing is not None and existing != item:
-                    raise DomainError(
-                        'INVALID_ID',
-                        f'Child scopes proposed different records under {record_id}',
-                        record_id)
-                context[collection][record_id] = copy.deepcopy(item)
+                context[collection][record_id] = (
+                    copy.deepcopy(item) if existing is None
+                    else _combine_records(existing, item))
     aliases = _merge_concepts(model, context)
     for unit in units:
         _manifest(context, unit, aliases)
