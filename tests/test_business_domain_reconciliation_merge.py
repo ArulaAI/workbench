@@ -1032,3 +1032,29 @@ def test_declared_or_unknown_statuses_and_uncitable_evidence_state_nothing():
         candidate = _contract_candidate()
         _contract_status_conflicts(candidate, _contract_model(expression), citable)
         assert candidate['claims'] == {}
+
+
+def test_child_prose_citing_its_own_request_aliases_reads_by_name(monkeypatch):
+    # A child's answer cites records by the aliases of its own request; in the
+    # parent request the same alias would name a different record.
+    from lib.context import business_domain_synthesis
+    from lib.context.business_domain_work import _decode_prose_aliases
+
+    class Projection:
+        def __init__(self, scope):
+            self.canonical_ids = {'_ref:0': 'trace:add', '_ref:1': 'ev:1', '_ref:2': 'rule:r'}
+    monkeypatch.setattr(business_domain_synthesis, 'ProviderProjection', Projection)
+    payload = {collection: {} for collection in SEMANTIC_COLLECTIONS}
+    payload['activities'] = {'activity:add': {'id': 'activity:add', 'name': 'Add pet',
+                                              'trace_ids': ['trace:add']}}
+    payload['rules'] = {'rule:r': {'id': 'rule:r', 'name': 'Pet needs an owner',
+                                   'description': 'See _ref:2, _ref:1 and trace _ref:0; _ref:7 too.'}}
+    scope = {'scope_id': 'scope:child', 'context': {'evidence': {'ev:1': {
+        'locator': {'path': 'src/Pets.java', 'start_line': 12}}}}}
+
+    decoded = _decode_prose_aliases(Unit(scope, payload, {}))
+
+    assert decoded.payload['rules']['rule:r']['description'] == (
+        'See "Pet needs an owner", src/Pets.java:12 and trace the trace of "Add pet"; '
+        'a record of child scope scope:child too.')
+    assert decoded.payload['activities'] == payload['activities']

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import re
 from dataclasses import dataclass
 from itertools import combinations
@@ -525,6 +526,58 @@ def _combine_records(existing, item):
     return kept
 
 
+PROSE_ALIAS = re.compile(r'_ref:(\d+)')
+
+
+def _decode_prose_aliases(unit: Unit) -> Unit:
+    """`unit` with the provider aliases its prose cites made readable.
+
+    A provider names records by request-local aliases, and its explanations
+    cite them. In a parent request the same alias names a different record,
+    so carried prose would point at the wrong one. An alias of the unit's own
+    request becomes the record's name or location; one its request did not
+    send names the child scope.
+    """
+    text = json.dumps([unit.payload, unit.coverage])
+    if not PROSE_ALIAS.search(text):
+        return unit
+    from .business_domain_synthesis import ProviderProjection
+    try:
+        canonical = ProviderProjection(unit.scope).canonical_ids
+    except DomainError:
+        canonical = {}
+    context = unit.scope.get('context') or {}
+    records = {record_id: item for collection in SEMANTIC_COLLECTIONS
+               for record_id, item in unit.payload.get(collection, {}).items()}
+    holders = {}
+    for activity in unit.payload.get('activities', {}).values():
+        for trace_id in activity.get('trace_ids', ()):
+            holders.setdefault(trace_id, activity.get('name') or activity['id'])
+
+    def label(match):
+        ident = canonical.get(match.group(0))
+        if ident is None:
+            return f'a record of child scope {unit.scope["scope_id"]}'
+        if records.get(ident, {}).get('name'):
+            return f'"{records[ident]["name"]}"'
+        if ident in holders:
+            return f'the trace of "{holders[ident]}"'
+        locator = (context.get('evidence', {}).get(ident) or {}).get('locator') or {}
+        if locator.get('path'):
+            return f"{locator['path']}:{locator.get('start_line', '')}".rstrip(':')
+        return ident
+
+    def rewrite(value, key=None):
+        if isinstance(value, dict):
+            return {name: rewrite(item, name) for name, item in value.items()}
+        if isinstance(value, list):
+            return [rewrite(item, key) for item in value]
+        if isinstance(value, str) and not (key == 'id' or (key or '').endswith(('_id', '_ids'))):
+            return PROSE_ALIAS.sub(label, value)
+        return value
+    return Unit(unit.scope, rewrite(unit.payload), rewrite(unit.coverage))
+
+
 def reconciliation_scope(model: dict, units, *, scope_id: str,
                          parent_scope_id: str | None = None) -> dict:
     """An unsized reconciliation scope over validated `units`.
@@ -538,7 +591,8 @@ def reconciliation_scope(model: dict, units, *, scope_id: str,
     against their full content, and re-sending them would rebuild the graph
     that did not fit.
     """
-    units = sorted(units, key=lambda unit: unit.scope['scope_id'])
+    units = [_decode_prose_aliases(unit)
+             for unit in sorted(units, key=lambda unit: unit.scope['scope_id'])]
     context = record('GraphContext')
     context['capabilities'] = copy.deepcopy(model.get('capabilities', []))
     for unit in units:
