@@ -133,6 +133,9 @@ def reserve(slices: list[dict], synthesis) -> None:
                 'and run again.'))
 
 
+FINAL_REQUEST_CEILING = 800000
+
+
 class _Run:
     """One hierarchical attempt: dispatch, progress and unit accounting."""
 
@@ -325,7 +328,12 @@ class _Run:
         """
         synthesis = self.synthesis
         current = synthesis.effective_request_input_tokens
-        widened = math.floor(current * POLICY['final_reconciliation_input_factor'])
+        # A repair carries the scope, the candidate and the provider's own
+        # earlier attempt, so the final request gets generous room, still
+        # within the provider's context window where known.
+        widened = max(math.floor(current * POLICY['final_reconciliation_input_factor']),
+                      min(FINAL_REQUEST_CEILING,
+                          synthesis.provider_context_tokens or FINAL_REQUEST_CEILING))
         if synthesis.provider_context_tokens:
             widened = min(widened, synthesis.provider_context_tokens)
         if widened <= current:

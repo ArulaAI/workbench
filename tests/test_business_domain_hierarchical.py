@@ -782,7 +782,8 @@ def test_only_the_final_reconciliation_may_widen_its_request():
 
     attempt, synthesis = run(None)
     assert _Run.widen_for_root(attempt)
-    assert synthesis.effective_request_input_tokens == int(450000 * POLICY['final_reconciliation_input_factor'])
+    assert synthesis.effective_request_input_tokens == max(
+        int(450000 * POLICY['final_reconciliation_input_factor']), 800000)
     # Never past the provider's context window.
     attempt, synthesis = run(480000)
     assert _Run.widen_for_root(attempt) and synthesis.effective_request_input_tokens == 480000

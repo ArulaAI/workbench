@@ -1028,8 +1028,14 @@ def expand_reconciliation(scope: dict, payload: dict, model: dict | None = None)
            merged)
     # After everything kept is carried, so no kept domain or activity brings a
     # replaced rule back.
-    _supersede_rules(expanded, supplied)
-    _merge_duplicate_rules(expanded, scope)
+    # At the root, a child rule the answer returns changed is the answer's
+    # revision of it: it replaces the child rules it describes, and no stale
+    # copy is merged back into it.
+    revised = (frozenset(rule_id for rule_id, rule in payload['rules'].items()
+                         if rule_id in supplied['rules'] and rule != supplied['rules'][rule_id])
+               if scope.get('scope_id') == ROOT_SCOPE_ID else frozenset())
+    _supersede_rules(expanded, supplied, revised)
+    _merge_duplicate_rules(expanded, scope, revised)
     _rehome(expanded, supplied, merged)
     _supersede_claims(expanded, supplied, returned)
     _drop_orphan_rules(expanded, supplied, returned)
@@ -1439,7 +1445,7 @@ def _same_rule(rule: dict, other: dict, *, within: bool = False) -> bool:
     return len(words & other_words) * 2 >= max(len(words), len(other_words), 1)
 
 
-def _merge_duplicate_rules(expanded: dict, scope: dict) -> None:
+def _merge_duplicate_rules(expanded: dict, scope: dict, revised=frozenset()) -> None:
     """Make one rule of the copies different children kept of it.
 
     Children describe one rule independently. Where the answer left copies
@@ -1450,7 +1456,8 @@ def _merge_duplicate_rules(expanded: dict, scope: dict) -> None:
     """
     child_of = {record_id: manifest['child_scope_id']
                 for manifest in scope.get('coverage_manifests', ())
-                for record_id in manifest.get('contributed_record_ids', ())}
+                for record_id in manifest.get('contributed_record_ids', ())
+                if record_id not in revised}
     rules = expanded['rules']
     groups = []
     for rule_id in sorted(rules):
@@ -1484,7 +1491,7 @@ def _merge_duplicate_rules(expanded: dict, scope: dict) -> None:
                 expanded[collection][record_id] = _renamed(item, replaced)
 
 
-def _supersede_rules(expanded: dict, supplied: dict) -> None:
+def _supersede_rules(expanded: dict, supplied: dict, revised=frozenset()) -> None:
     """Replace child rules with the returned rule describing the same rule.
 
     Children describe one rule independently; a rule the answer returns
@@ -1492,7 +1499,7 @@ def _supersede_rules(expanded: dict, supplied: dict) -> None:
     cites, and what named a replaced rule names the returned one.
     """
     returned = {rule_id: rule for rule_id, rule in expanded['rules'].items()
-                if rule_id not in supplied['rules'] and _rule_basis(rule)}
+                if (rule_id not in supplied['rules'] or rule_id in revised) and _rule_basis(rule)}
     replaced = {}
     for rule_id in sorted(supplied['rules']):
         rule = supplied['rules'][rule_id]

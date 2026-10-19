@@ -6,6 +6,8 @@ hand their ownerships on, and relationships follow their activities. Where
 children connect in ways none could see, SPEED states it and checks that the
 candidate answers it.
 """
+import copy
+
 from lib.context.business_domain_synthesis import Synthesis
 from lib.context.business_domain_work import (
     SEMANTIC_COLLECTIONS, Unit, _combine_records, _merge_concepts, _mixed_observation_findings,
@@ -1128,3 +1130,30 @@ def test_a_rule_citing_another_rules_observation_instead_of_its_own_is_named():
     candidate['rules']['rule:merged']['observation_ids'] = [
         'observation:1', 'observation:2', 'observation:3', 'observation:9']
     assert _mixed_observation_findings(candidate, [Unit({'scope_id': 'scope:c'}, child, {})]) == []
+
+
+def test_a_child_rule_the_root_returns_revised_takes_no_stale_copy_back():
+    from lib.context.business_domain_work import ROOT_SCOPE_ID
+    stale = 'No endpoint in scope updates pets.'
+    rule = {'name': 'Pet saved', 'observation_ids': ['observation:1'],
+            'activity_ids': [], 'unresolved_questions': [stale]}
+    context = {collection: {} for collection in SEMANTIC_COLLECTIONS}
+    context['rules'] = {'rule:a': {**rule, 'id': 'rule:a'}, 'rule:b': {**rule, 'id': 'rule:b'}}
+    manifests = [{'child_scope_id': child, 'contributed_record_ids': [rule_id]}
+                 for child, rule_id in (('scope:1', 'rule:a'), ('scope:2', 'rule:b'))]
+    answer = {collection: {} for collection in SEMANTIC_COLLECTIONS}
+    answer['rules'] = {'rule:a': {**rule, 'id': 'rule:a', 'unresolved_questions': []}}
+    answer['dispositions'] = [{'subject_kind': 'child_scope', 'subject_id': manifest['child_scope_id'],
+                               'status': 'represented',
+                               'incorporated_record_ids': manifest['contributed_record_ids']}
+                              for manifest in manifests]
+
+    def expand(scope_id):
+        scope = {'scope_id': scope_id, 'scope_kind': 'reconciliation', 'context': context,
+                 'coverage_manifests': manifests}
+        return expand_reconciliation(scope, copy.deepcopy(answer))['rules']
+
+    root = expand(ROOT_SCOPE_ID)
+    assert list(root) == ['rule:a'] and root['rule:a']['unresolved_questions'] == []
+    # Below the root, the duplicate copies still merge as before.
+    assert expand('scope:group')['rule:a']['unresolved_questions'] == [stale]
