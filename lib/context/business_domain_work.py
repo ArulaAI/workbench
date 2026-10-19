@@ -789,9 +789,22 @@ def cross_scope_reads(activities: dict, uses: dict, children: dict) -> list:
 
 
 def _owner(model: dict, anchor_id: str) -> str | None:
-    """The class, or else the module, that declares an anchor's symbol."""
+    """The class, or else the module, that implements an anchor.
+
+    An operation an API contract documents is owned by the code implementing
+    it, not by the contract file every documented operation shares.
+    """
     anchor = model.get('anchors', {}).get(anchor_id) or {}
-    symbol = model.get('symbols', {}).get(anchor.get('symbol_id')) or {}
+    representations = [item for item in anchor.get('representations') or ()
+                       if isinstance(item, dict)]
+    implementations = sorted(item['symbol_id'] for item in representations
+                             if item.get('role') == 'implementation' and item.get('symbol_id'))
+    contracts = {item.get('symbol_id') for item in representations
+                 if item.get('role') == 'contract'}
+    symbol_id = implementations[0] if implementations else anchor.get('symbol_id')
+    if not implementations and symbol_id in contracts:
+        return None
+    symbol = model.get('symbols', {}).get(symbol_id) or {}
     module, _, member = (symbol.get('qualified_name') or '').rpartition('::')
     if not module:
         return None
@@ -940,7 +953,7 @@ def expand_reconciliation(scope: dict, payload: dict, model: dict | None = None)
     _link_information_flow(expanded, set(supplied.get('evidence', {})))
     _keep_writers(expanded)
     _prune_symbol_memberships(expanded)
-    _collect_domain_rules(expanded)
+    _collect_domain_rules(expanded, returned, supplied)
     _link_claims(expanded)
     return expanded
 
@@ -1160,9 +1173,25 @@ def _prune_symbol_memberships(expanded: dict) -> None:
                 if membership.get('activity_id') in expanded['activities']]
 
 
-def _collect_domain_rules(expanded: dict) -> None:
+def _collect_domain_rules(expanded: dict, returned=frozenset(), supplied=None) -> None:
     """A domain lists the rules its primary activities apply, and a rule the
-    activities that apply it."""
+    activities that apply it.
+
+    A rule naming an activity is listed back by it, unless the answer returned
+    that activity without the rule a child carried: the answer's record wins.
+    A technical rule is listed on a domain only where the domain names it.
+    """
+    carried = set((supplied or {}).get('rules', ())) - set(returned)
+    for rule_id in sorted(expanded['rules']):
+        rule = expanded['rules'][rule_id]
+        for activity_id in list(rule.get('activity_ids') or ()):
+            activity = expanded['activities'].get(activity_id)
+            if activity is None or 'rule_ids' not in activity or rule_id in activity['rule_ids']:
+                continue
+            if activity_id in returned and rule_id in carried:
+                rule['activity_ids'].remove(activity_id)
+            else:
+                activity['rule_ids'] = [*activity['rule_ids'], rule_id]
     for rule_id, rule in expanded['rules'].items():
         if 'activity_ids' in rule:
             rule['activity_ids'] = list(dict.fromkeys([
@@ -1174,7 +1203,8 @@ def _collect_domain_rules(expanded: dict) -> None:
                    if membership['role'] == 'primary'
                    for rule_id in expanded['activities'].get(
                        membership['activity_id'], {}).get('rule_ids', ())
-                   if rule_id in expanded['rules']]
+                   if rule_id in expanded['rules']
+                   and expanded['rules'][rule_id].get('category') != 'technical']
         if 'rules' in domain:
             domain['rules'] = list(dict.fromkeys([*domain['rules'], *applied]))
 

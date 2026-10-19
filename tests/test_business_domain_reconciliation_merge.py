@@ -921,3 +921,55 @@ def test_a_concept_named_without_a_type_is_the_typed_concept_of_its_name():
 
     # Where two typed concepts share the name, the untyped one could be either.
     assert _merge_concepts({'symbols': {}}, context) == {'concept:2': 'concept:1'}
+
+
+def test_a_returned_rule_naming_an_activity_is_listed_back_by_it():
+    scope, answer = _merging_scope()
+    answer['activities']['activity:merged']['rule_ids'] = []
+    answer['rules']['rule:merged']['activity_ids'] = ['activity:merged']
+
+    complete = expand_reconciliation(scope, answer)
+
+    assert complete['activities']['activity:merged']['rule_ids'] == ['rule:merged']
+
+
+def test_a_returned_activity_that_drops_a_carried_rule_is_unlinked_from_it():
+    scope, answer = _merging_scope()
+    scope['context']['rules']['rule:kept'] = {'id': 'rule:kept', 'activity_ids': ['activity:merged']}
+    answer['dispositions'][0]['incorporated_record_ids'] = ['rule:one', 'rule:two']
+
+    complete = expand_reconciliation(scope, answer)
+
+    assert 'rule:kept' not in complete['activities']['activity:merged']['rule_ids']
+    if 'rule:kept' in complete['rules']:
+        assert complete['rules']['rule:kept']['activity_ids'] == []
+
+
+def test_a_domain_does_not_gain_a_technical_rule_it_leaves_out():
+    scope, answer = _merging_scope()
+    answer['rules']['rule:merged']['category'] = 'technical'
+    answer['domains'] = {'domain:pay': {**_domain('domain:pay', 'activity:merged'), 'rules': []}}
+
+    complete = expand_reconciliation(scope, answer)
+
+    assert complete['domains']['domain:pay']['rules'] == []
+
+
+def test_operations_one_contract_documents_are_owned_by_their_implementations():
+    from lib.context.business_domain_work import _owner
+
+    def anchor(implementation):
+        representations = [{'role': 'contract', 'symbol_id': 'symbol:api'}]
+        if implementation:
+            representations.append({'role': 'implementation', 'symbol_id': implementation})
+        return {'symbol_id': 'symbol:api', 'representations': representations}
+    model = {'symbols': {'symbol:api': {'qualified_name': 'src/openapi.yml::addOwner'},
+                         'symbol:o': {'qualified_name': 'src/Owners.java::Owners.add(Owner)'},
+                         'symbol:v': {'qualified_name': 'src/Vets.java::Vets.add(Vet)'}},
+             'anchors': {'anchor:o': anchor('symbol:o'), 'anchor:v': anchor('symbol:v'),
+                         'anchor:x': anchor(None)}}
+
+    assert _owner(model, 'anchor:o') == 'src/Owners.java::Owners'
+    assert _owner(model, 'anchor:v') == 'src/Vets.java::Vets'
+    # A contract alone shows no owner: every documented operation shares it.
+    assert _owner(model, 'anchor:x') is None
