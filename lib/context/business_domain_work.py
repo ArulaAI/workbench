@@ -1102,7 +1102,7 @@ def _contract_status_conflicts(expanded: dict, model: dict, citable: set) -> Non
                                       f'returns {code}, which the contract does not declare.'),
                                 evidence_ids=evidence,
                                 trace_ids=sorted(activity.get('trace_ids', ())),
-                                semantic_review='supported')
+                                semantic_review='uncertain')
 
 
 # The accesses that establish each kind of authoritative ownership.

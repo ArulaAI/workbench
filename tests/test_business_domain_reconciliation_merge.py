@@ -1010,6 +1010,8 @@ def test_a_status_the_code_returns_and_the_contract_omits_is_stated():
     assert claim['subject_id'] == 'activity:add' and claim['kind'] == 'conflict'
     assert 'POST /owners' in claim['text'] and '201' in claim['text']
     assert claim['evidence_ids'] == ['ev:api', 'ev:code']
+    # A candidate's claims await review like any the answer makes.
+    assert claim['semantic_review'] == 'uncertain'
 
 
 def test_a_status_conflict_a_child_recorded_is_not_stated_again():
