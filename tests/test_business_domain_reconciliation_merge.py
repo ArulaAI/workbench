@@ -885,3 +885,39 @@ def test_one_record_two_slices_word_differently_is_supplied_once():
     verified = {**second, 'verification': 'verified'}
     assert _combine_records(first, verified)['explanation'] == second['explanation']
     assert _combine_records(first, dict(first)) == first
+
+
+def test_concepts_naming_one_java_class_are_supplied_as_one():
+    # Java names a class by package, the symbol table by source file.
+    model = {'symbols': {'symbol:o': {
+        'qualified_name': 'src/main/java/org/acme/model/Owner.java::Owner'}}}
+    context = {collection: {} for collection in SEMANTIC_COLLECTIONS}
+    context['concepts'] = {
+        name: {'id': name, 'qualified_type_names': names, 'symbol_ids': [],
+               'evidence_ids': [], 'claim_ids': []}
+        for name, names in (('concept:1', ['org.acme.model.Owner']),
+                            ('concept:2', ['org.acme.model.Owner']),
+                            ('concept:3', ['src/main/java/org/acme/model/Owner.java::Owner']),
+                            ('concept:4', ['Owner']),
+                            ('concept:5', ['org.acme.dto.OwnerDto']))}
+
+    aliases = _merge_concepts(model, context)
+
+    assert aliases == {'concept:2': 'concept:1', 'concept:3': 'concept:1',
+                       'concept:4': 'concept:1'}
+    assert set(context['concepts']) == {'concept:1', 'concept:5'}
+
+
+def test_a_concept_named_without_a_type_is_the_typed_concept_of_its_name():
+    context = {collection: {} for collection in SEMANTIC_COLLECTIONS}
+    context['concepts'] = {
+        name: {'id': name, 'name': label, 'qualified_type_names': names, 'symbol_ids': [],
+               'evidence_ids': [], 'claim_ids': []}
+        for name, label, names in (('concept:1', 'Visit', ['org.acme.Visit']),
+                                   ('concept:2', 'Visit', []),
+                                   ('concept:3', 'Order', ['a.Order']),
+                                   ('concept:4', 'Order', ['b.Order']),
+                                   ('concept:5', 'Order', []))}
+
+    # Where two typed concepts share the name, the untyped one could be either.
+    assert _merge_concepts({'symbols': {}}, context) == {'concept:2': 'concept:1'}

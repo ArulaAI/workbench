@@ -640,21 +640,45 @@ def _merge_concepts(model: dict, context: dict) -> dict:
     reference to another is rewritten to it. A bare type name resolves only
     when exactly one declared symbol carries it.
     """
+    symbols = [symbol.get('qualified_name') or '' for symbol in model.get('symbols', {}).values()]
+    # A dotted name such as a Java class's is the type its source file
+    # declares, when exactly one file of that package path declares it.
+    located = {}
+    for name in symbols:
+        path, _, declared_name = name.partition('::')
+        if declared_name and '.' not in declared_name:
+            stem = path.rpartition('.')[0] if '.' in path.rpartition('/')[2] else path
+            if stem.endswith('/' + declared_name) or stem == declared_name:
+                located.setdefault(declared_name, []).append((stem, name))
+
+    def full(name):
+        if '::' in name or '.' not in name:
+            return name
+        package_path = name.replace('.', '/')
+        matches = [symbol for stem, symbol in located.get(name.rpartition('.')[2], ())
+                   if stem == package_path or stem.endswith('/' + package_path)]
+        return matches[0] if len(matches) == 1 else name
+
+    def short(name):
+        return name.rpartition('::')[2] if '::' in name else name.rpartition('.')[2]
+
     declared = {}
-    qualified = [symbol.get('qualified_name') or '' for symbol in model.get('symbols', {}).values()]
+    qualified = [name for name in symbols if '::' in name]
     # A type another unit already named in full is declared too, though the
     # symbol table holds no symbol for it, as for a class property.
-    qualified += [name for concept in context['concepts'].values()
-                  for name in concept['qualified_type_names']]
+    qualified += [full(name) for concept in context['concepts'].values()
+                  for name in concept['qualified_type_names']
+                  if '::' in name or '.' in name]
     for name in qualified:
-        if '::' in name:
-            declared.setdefault(name.rpartition('::')[2], set()).add(name)
+        declared.setdefault(short(name), set()).add(name)
 
     def resolve(name):
         if '::' in name:
             return name
         matches = declared.get(name, ())
-        return next(iter(matches)) if len(matches) == 1 else None
+        if len(matches) == 1:
+            return next(iter(matches))
+        return full(name) if '.' in name else None
 
     parent = {}
 
@@ -690,6 +714,19 @@ def _merge_concepts(model: dict, context: dict) -> dict:
                 if one != other:
                     parent[other] = one
         named.setdefault(name, []).append(concept_id)
+    # A concept named without any type is the one typed concept of its name.
+    for name, concept_ids in named.items():
+        typed = {root(concept_id) for concept_id in concept_ids
+                 if context['concepts'][concept_id]['qualified_type_names']}
+        if not name or len(typed) != 1:
+            continue
+        [kept] = typed
+        for concept_id in concept_ids:
+            if not context['concepts'][concept_id]['qualified_type_names']:
+                one, other = sorted((kept, root(concept_id)))
+                if one != other:
+                    parent[other] = one
+                kept = root(kept)
     aliases = {concept_id: root(concept_id) for concept_id in context['concepts']
                if root(concept_id) != concept_id}
     for alias, canonical in sorted(aliases.items()):
