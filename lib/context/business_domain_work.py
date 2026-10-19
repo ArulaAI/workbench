@@ -604,7 +604,7 @@ def reconciliation_scope(model: dict, units, *, scope_id: str,
                     else _combine_records(existing, item))
     aliases = _merge_concepts(model, context)
     for unit in units:
-        _manifest(context, unit, aliases)
+        _manifest(context, unit, aliases, stable=scope_id == ROOT_SCOPE_ID)
     _state_links(model, context, units)
     semantic = [item for collection in SEMANTIC_COLLECTIONS
                 for item in context[collection].values()]
@@ -662,7 +662,7 @@ def coverage_manifest(unit: Unit) -> dict:
     }
 
 
-def _manifest(context: dict, unit: Unit, aliases: dict) -> None:
+def _manifest(context: dict, unit: Unit, aliases: dict, stable: bool = False) -> None:
     """State one unit's coverage as a claim the reconciliation can cite."""
     scope, coverage = unit.scope, unit.coverage
     by_status = {status: sorted(anchor_id for anchor_id, item in coverage.items()
@@ -691,7 +691,11 @@ def _manifest(context: dict, unit: Unit, aliases: dict) -> None:
               f"Excluded or unresolved anchors: {others}. "
               f"Records it contributes: {', '.join(contributed) or 'none'}. "
               f"Typed cross-scope edges: {', '.join(scope['cross_scope_edge_ids']) or 'none'}."),
-        evidence_ids=list(dict.fromkeys(evidence))[:MANIFEST_EVIDENCE],
+        # The root's units are reconciled in this process, in an order that
+        # need not repeat; sorted, the root scope and so its repair
+        # checkpoint are the same in every run.
+        evidence_ids=(sorted(set(evidence)) if stable
+                      else list(dict.fromkeys(evidence)))[:MANIFEST_EVIDENCE],
         trace_ids=sorted(_ids(unit.payload['activities'].values(), 'trace_ids')),
         semantic_review='supported')
 
@@ -1036,7 +1040,7 @@ def expand_reconciliation(scope: dict, payload: dict, model: dict | None = None)
                if scope.get('scope_id') == ROOT_SCOPE_ID else frozenset())
     _supersede_rules(expanded, supplied, revised)
     _merge_duplicate_rules(expanded, scope, revised)
-    _rehome(expanded, supplied, merged)
+    _rehome(expanded, supplied, merged, listed=scope.get('scope_id') == ROOT_SCOPE_ID)
     _supersede_claims(expanded, supplied, returned)
     _drop_orphan_rules(expanded, supplied, returned)
     _drop_replaced_references(expanded, supplied, returned)
@@ -1532,7 +1536,7 @@ def _different_checks(rule: dict, other: dict) -> bool:
     return len(categories) == 2 and bool(sites) and bool(other_sites) and not sites & other_sites
 
 
-def _rehome(expanded: dict, supplied: dict, merged: set) -> None:
+def _rehome(expanded: dict, supplied: dict, merged: set, listed: bool = False) -> None:
     """Give a merged activity what was established about the activities it replaced.
 
     A child activity's information uses and the claims about its behaviour
@@ -1561,12 +1565,20 @@ def _rehome(expanded: dict, supplied: dict, merged: set) -> None:
             expanded['claims'][claim_id] = {**copy.deepcopy(claim), 'subject_id': target}
     stated = {use['activity_id'] for use in expanded['information_uses'].values()}
     seen = {_use_key(use) for use in expanded['information_uses'].values()}
+    # With `listed`, a merged activity the answer returns naming its uses
+    # takes only the child uses it names.
+    chosen = {activity_id: set(activity['information_use_ids'])
+              for activity_id, activity in activities.items()
+              if listed and activity_id not in supplied['activities']
+              and activity.get('information_use_ids')}
     for use_id in sorted(supplied['information_uses']):
         use = supplied['information_uses'][use_id]
         if use['activity_id'] not in merged:
             continue
         target = target_of(use['activity_id'])
         if target is None or target in stated:
+            continue
+        if target in chosen and use_id not in chosen[target]:
             continue
         item = {**copy.deepcopy(use), 'activity_id': target}
         if _use_key(item) in seen:
