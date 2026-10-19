@@ -26,7 +26,7 @@ from collections import Counter
 from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
 
 from .business_domain_schema import DomainError, digest, identifier
-from .business_domain_synthesis import OPERATIONS, _model_ready_context, wire_schema
+from .business_domain_synthesis import OPERATIONS, POLICY, _model_ready_context, wire_schema
 from .business_domain_schema import read_json
 from .business_domain_work import (
     ROOT_SCOPE_ID, _affinity_pack, _edge_users, anchor_scope_id, expand_reconciliation,
@@ -314,6 +314,27 @@ class _Run:
         return [reconciled_unit(scope, expand_reconciliation(scope, payload, self.baseline), units)
                 for scope, payload, (_, _, units) in zip(scopes, payloads, groups)]
 
+    def widen_for_root(self) -> bool:
+        """Allow the one final reconciliation a larger request, once.
+
+        Units no two of which fit one request can only be joined by a request
+        larger than the slicing allowance. Slices and lower reconciliations are
+        planned at that allowance, so widening only here changes none of them,
+        nor any validated answer. The final request may use the policy factor
+        of the allowance, within the provider's context window where known.
+        """
+        synthesis = self.synthesis
+        current = synthesis.effective_request_input_tokens
+        widened = math.floor(current * POLICY['final_reconciliation_input_factor'])
+        if synthesis.provider_context_tokens:
+            widened = min(widened, synthesis.provider_context_tokens)
+        if widened <= current:
+            return False
+        with synthesis.accounting_lock:
+            synthesis.effective_request_input_tokens = widened
+            synthesis.counters['effective_request_input_tokens'] = widened
+        return True
+
     def to_root(self, units):
         """Reconcile `units` level by level until one root covers them all."""
         level = 1
@@ -331,6 +352,16 @@ class _Run:
                 lambda group: self.sized_reconciliation(group, _group_id(group), ROOT_SCOPE_ID),
                 self.synthesis.sequence_fits)
             merged = [group for group in groups if len(group) > 1]
+            if not merged and self.widen_for_root():
+                root = self.sized_reconciliation(units, ROOT_SCOPE_ID)
+                if self.synthesis.sequence_fits(root):
+                    self.add_units(1)
+                    self.progress(
+                        f'Root reconciliation over {len(units)} units with the final '
+                        f'request allowance of '
+                        f'{self.synthesis.effective_request_input_tokens:,} input tokens')
+                    [unit] = self.reconcile([(ROOT_SCOPE_ID, None, units)], 'Root')
+                    return unit
             if not merged:
                 raise DomainError(
                     'PACKET_LIMIT',

@@ -766,3 +766,25 @@ def test_a_validated_reconciliation_is_reused_by_the_next_run(tmp_path):
 
     assert model is not None and status['root_reconciled']
     assert _requests(again, 'reconciliation') == []
+
+
+def test_only_the_final_reconciliation_may_widen_its_request():
+    import threading
+    from types import SimpleNamespace
+    from lib.context.business_domain_hierarchy import _Run
+    from lib.context.business_domain_synthesis import POLICY
+
+    def run(context_tokens):
+        synthesis = SimpleNamespace(effective_request_input_tokens=450000, counters={},
+                                    provider_context_tokens=context_tokens,
+                                    accounting_lock=threading.RLock())
+        return SimpleNamespace(synthesis=synthesis), synthesis
+
+    attempt, synthesis = run(None)
+    assert _Run.widen_for_root(attempt)
+    assert synthesis.effective_request_input_tokens == int(450000 * POLICY['final_reconciliation_input_factor'])
+    # Never past the provider's context window.
+    attempt, synthesis = run(480000)
+    assert _Run.widen_for_root(attempt) and synthesis.effective_request_input_tokens == 480000
+    attempt, synthesis = run(450000)
+    assert not _Run.widen_for_root(attempt)
