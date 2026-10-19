@@ -749,3 +749,20 @@ def test_a_slice_whose_answer_is_too_long_is_split_and_remembered(tmp_path):
                 for anchor in activity['anchor_ids']}) == len(model['anchors'])
     hints = json.loads((root / '.speed/context/business-domain-split-hints.json').read_text())
     assert hints == [provider.overlong]
+
+
+def test_a_validated_reconciliation_is_reused_by_the_next_run(tmp_path):
+    # The candidate cache cannot recognise a validated reconciliation: its
+    # verifier judged the expanded candidate, not the compact answer. The
+    # first run's slices are fresh answers, whose record order the second
+    # run's cached ones need not share, so the third run is the first whose
+    # reconciliation scopes repeat an earlier run's exactly.
+    config = _split_monolith(tmp_path)
+    for _ in range(2):
+        discover(tmp_path, config, provider=ReconcilingProvider())
+    again = ReconcilingProvider()
+
+    model, status = discover(tmp_path, config, provider=again)
+
+    assert model is not None and status['root_reconciled']
+    assert _requests(again, 'reconciliation') == []

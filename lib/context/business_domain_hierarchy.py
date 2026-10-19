@@ -26,7 +26,8 @@ from collections import Counter
 from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
 
 from .business_domain_schema import DomainError, digest, identifier
-from .business_domain_synthesis import _model_ready_context
+from .business_domain_synthesis import OPERATIONS, _model_ready_context, wire_schema
+from .business_domain_schema import read_json
 from .business_domain_work import (
     ROOT_SCOPE_ID, _affinity_pack, _edge_users, anchor_scope_id, expand_reconciliation,
     plan_reconciliation, plan_slices, reconciled_unit, reconciliation_findings,
@@ -237,6 +238,60 @@ class _Run:
             return reconciliation_findings(self.baseline, children, complete)
         return scope, validate, review
 
+    def run_reconciliation(self, scope, validate, review=None):
+        """Reuse a reconciliation an earlier run validated, else run it."""
+        reused = self.validated_reconciliation(scope, validate, review)
+        if reused is not None:
+            self.progress('Reconciliation reused a validated answer from an earlier run')
+            return reused
+        return self.synthesis.run(scope, validate, review=review)
+
+    def validated_reconciliation(self, scope, validate, review):
+        """The compact answer an earlier run validated for this exact scope.
+
+        The candidate cache cannot recognise one: its verifier judged the
+        complete candidate expanded from the answer, never the answer itself.
+        It is reused only when today's expansion of the stored answer is
+        exactly what that verifier passed and it still passes every
+        deterministic check.
+        """
+        synthesis = self.synthesis
+        try:
+            request = synthesis.request_for('synthesize', scope)
+            output_type, _ = OPERATIONS['synthesize']
+            _, provider_schema, _ = synthesis.project_exchange(
+                request, wire_schema(output_type, request['graph']))
+            request_key, response_key, prompt_hash, schema_hash = \
+                synthesis._cache_identity(request, provider_schema)
+            directory = synthesis.root/'.speed/context/business-domain-cache'
+            limit = synthesis.config['max_artifact_bytes']
+            artifact = read_json(directory/(response_key+'.json'), limit)
+            if not artifact or artifact.get('kind') != 'response' or any(
+                    artifact.get(field) != value for field, value in (
+                        ('request_key', request_key), ('prompt_hash', prompt_hash),
+                        ('output_schema_hash', schema_hash),
+                        ('provider_fingerprint', synthesis.provider_hash))):
+                return None
+            response = artifact['response']
+            if (response.get('operation') != 'synthesize'
+                    or response.get('input_fingerprint') != request['input_fingerprint']):
+                return None
+            linked = read_json(directory/(str(artifact.get('verification_response_key'))+'.json'), limit)
+            if not linked or linked['response']['verification_report']['verdict'] != 'pass':
+                return None
+            judged = read_json(directory/(linked['request_key']+'.json'), limit)
+            if not judged:
+                return None
+            candidate = response['candidate']
+            view, complete = review(scope, candidate)
+            if judged['request']['candidate'] != complete or judged['request']['graph'] != view:
+                return None
+            if any(finding['severity'] == 'error' for finding in validate(candidate)):
+                return None
+            return candidate
+        except (DomainError, KeyError, TypeError, OSError):
+            return None
+
     def sized_reconciliation(self, units, scope_id, parent_scope_id=None):
         return self.synthesis._size_graph(reconciliation_scope(
             self.baseline, units, scope_id=scope_id, parent_scope_id=parent_scope_id))
@@ -254,7 +309,8 @@ class _Run:
                     'request allows', scope['scope_id'])
         payloads = self.dispatch(
             [self.reconciliation_job(scope, units)
-             for scope, (_, _, units) in zip(scopes, groups)], label)
+             for scope, (_, _, units) in zip(scopes, groups)], label,
+            runner=self.run_reconciliation)
         return [reconciled_unit(scope, expand_reconciliation(scope, payload, self.baseline), units)
                 for scope, payload, (_, _, units) in zip(scopes, payloads, groups)]
 
