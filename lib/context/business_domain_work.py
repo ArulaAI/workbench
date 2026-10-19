@@ -477,7 +477,7 @@ def slice_unit(scope: dict, payload: dict) -> Unit:
                 'reason': disposition['reason'],
                 'evidence_ids': sorted(disposition['evidence_ids']),
             }
-    return Unit(scope, payload, coverage)
+    return _decode_prose_aliases(Unit(scope, payload, coverage))
 
 
 def reconciled_unit(scope: dict, payload: dict, children) -> Unit:
@@ -496,7 +496,7 @@ def reconciled_unit(scope: dict, payload: dict, children) -> Unit:
                                        'reason': None, 'evidence_ids': []}
             else:
                 coverage.setdefault(anchor_id, copy.deepcopy(item))
-    return Unit(scope, payload, coverage)
+    return _decode_prose_aliases(Unit(scope, payload, coverage))
 
 
 def _ids(records, field) -> set:
@@ -742,18 +742,39 @@ def _merge_concepts(model: dict, context: dict) -> dict:
             concept_id = parent[concept_id]
         return concept_id
 
+    def union(concept_id, other_id):
+        one, other = sorted((root(concept_id), root(other_id)))
+        if one != other:
+            parent[other] = one
+
+    # Concepts naming one type are that type's concept. One naming several
+    # types joins them only where they are already one concept: it does not
+    # make two types it happens to mention the same thing.
+    keys = {concept_id: {key for key in map(resolve, concept['qualified_type_names'])
+                         if key is not None}
+            for concept_id, concept in context['concepts'].items()}
     first = {}
     for concept_id in sorted(context['concepts']):
-        for name in context['concepts'][concept_id]['qualified_type_names']:
-            key = resolve(name)
-            if key is None:
-                continue
-            if key not in first:
-                first[key] = concept_id
-                continue
-            one, other = sorted((root(first[key]), root(concept_id)))
-            if one != other:
-                parent[other] = one
+        if len(keys[concept_id]) != 1:
+            continue
+        [key] = keys[concept_id]
+        if key in first:
+            union(first[key], concept_id)
+        else:
+            first[key] = concept_id
+    same_types = {}
+    for concept_id in sorted(context['concepts']):
+        if len(keys[concept_id]) > 1:
+            group = frozenset(keys[concept_id])
+            if group in same_types:
+                union(same_types[group], concept_id)
+            else:
+                same_types[group] = concept_id
+    for concept_id in sorted(context['concepts']):
+        if len(keys[concept_id]) > 1 and all(key in first for key in keys[concept_id]):
+            roots = {root(first[key]) for key in keys[concept_id]}
+            if len(roots) == 1:
+                union(roots.pop(), concept_id)
     # A concept a unit named without its type is the concept of the same name
     # another unit keeps in the same store.
     stores = {}
@@ -1337,7 +1358,10 @@ def _collect_domain_rules(expanded: dict, returned=frozenset(), supplied=None) -
                 continue
             if activity_id in returned and rule_id in carried:
                 rule['activity_ids'].remove(activity_id)
-            else:
+            elif rule.get('enforcement_status') != 'verified_on_trace':
+                # Enforcement verified on a trace is checked against every
+                # trace of each activity applying the rule; that is the
+                # child's claim to make, not SPEED's.
                 activity['rule_ids'] = [*activity['rule_ids'], rule_id]
     for rule_id, rule in expanded['rules'].items():
         if 'activity_ids' in rule:

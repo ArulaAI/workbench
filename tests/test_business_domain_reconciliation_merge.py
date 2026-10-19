@@ -1060,3 +1060,27 @@ def test_child_prose_citing_its_own_request_aliases_reads_by_name(monkeypatch):
         'See "Pet needs an owner", src/Pets.java:12 and trace the trace of "Add pet"; '
         'a record of child scope scope:child too.')
     assert decoded.payload['activities'] == payload['activities']
+
+
+def test_a_concept_naming_two_classes_does_not_make_them_one():
+    context = {collection: {} for collection in SEMANTIC_COLLECTIONS}
+    context['concepts'] = {
+        name: {'id': name, 'qualified_type_names': names, 'symbol_ids': [],
+               'evidence_ids': [], 'claim_ids': []}
+        for name, names in (('concept:1', ['org.acme.User']),
+                            ('concept:2', ['org.acme.Role']),
+                            ('concept:3', ['org.acme.User', 'org.acme.Role']),
+                            ('concept:4', ['org.acme.User']))}
+
+    assert _merge_concepts({'symbols': {}}, context) == {'concept:4': 'concept:1'}
+
+
+def test_a_rule_verified_on_a_trace_is_not_listed_back_by_speed():
+    scope, answer = _merging_scope()
+    answer['activities']['activity:merged']['rule_ids'] = []
+    answer['rules']['rule:merged'].update(activity_ids=['activity:merged'],
+                                          enforcement_status='verified_on_trace')
+
+    complete = expand_reconciliation(scope, answer)
+
+    assert complete['activities']['activity:merged']['rule_ids'] == []
