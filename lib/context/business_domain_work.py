@@ -613,10 +613,22 @@ def reconciliation_scope(model: dict, units, *, scope_id: str,
                            if key in model['evidence']}
     from .business_domain_synthesis import _reference_manifest
     _reference_manifest(model, context)
-    validate(context, 'GraphContext')
     child_ids = [unit.scope['scope_id'] for unit in units]
     cross = sorted({edge_id for unit in units for edge_id in unit.scope['cross_scope_edge_ids']})
     manifests = [_renamed(coverage_manifest(unit), aliases) for unit in units]
+    # An anchor a child left unrepresented may be named by nothing but its
+    # manifest once a reconciliation drops the records that cited it; the
+    # manifest still references it, so the scope identifies it.
+    for anchor_id in sorted({item['anchor_id'] for manifest in manifests
+                             for status in ('represented', 'unrepresented')
+                             for item in manifest[status]}):
+        if (anchor_id not in context['record_refs'] and anchor_id not in context['anchors']
+                and anchor_id in model.get('anchors', {})):
+            context['record_refs'][anchor_id] = {
+                'id': anchor_id, 'collection': 'anchors',
+                'content_hash': digest(model['anchors'][anchor_id])}
+    context['record_refs'] = dict(sorted(context['record_refs'].items()))
+    validate(context, 'GraphContext')
     scope = record(
         'GraphScope', scope_id=scope_id, scope_kind='reconciliation',
         partition_strategy='reconciliation', estimated_input_tokens=0,
