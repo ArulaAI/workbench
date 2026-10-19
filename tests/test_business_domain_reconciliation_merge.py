@@ -8,7 +8,8 @@ candidate answers it.
 """
 from lib.context.business_domain_synthesis import Synthesis
 from lib.context.business_domain_work import (
-    SEMANTIC_COLLECTIONS, Unit, _combine_records, _merge_concepts, expand_reconciliation,
+    SEMANTIC_COLLECTIONS, Unit, _combine_records, _merge_concepts, _mixed_observation_findings,
+    expand_reconciliation,
     reconciliation_findings, verification_view,
 )
 
@@ -1084,3 +1085,46 @@ def test_a_rule_verified_on_a_trace_is_not_listed_back_by_speed():
     complete = expand_reconciliation(scope, answer)
 
     assert complete['activities']['activity:merged']['rule_ids'] == []
+
+
+def _mistaken_rule():
+    """A returned rule citing an authorization check's observation in place of
+    one of the data constraint's it describes."""
+    constraint = {'id': 'rule:fk', 'name': 'Pet needs an owner', 'category': 'cross_record_constraint',
+                  'observation_ids': ['observation:1', 'observation:2', 'observation:3'],
+                  'enforcement_sites': [{'source_id': 'resource:pets'}]}
+    admin = {'id': 'rule:admin', 'name': 'Listing needs VET_ADMIN', 'category': 'authorization',
+             'observation_ids': ['observation:9'],
+             'enforcement_sites': [{'source_id': 'symbol:list'}]}
+    returned = {**constraint, 'id': 'rule:merged',
+                'observation_ids': ['observation:1', 'observation:2', 'observation:9']}
+    return constraint, admin, returned
+
+
+def test_one_mistaken_observation_does_not_replace_a_different_check():
+    from lib.context.business_domain_work import _supersede_rules
+    constraint, admin, returned = _mistaken_rule()
+    supplied = {'rules': {'rule:fk': constraint, 'rule:admin': admin}}
+    expanded = {collection: {} for collection in SEMANTIC_COLLECTIONS}
+    expanded['rules'] = {'rule:merged': returned, 'rule:fk': constraint, 'rule:admin': admin}
+
+    _supersede_rules(expanded, supplied)
+
+    assert 'rule:admin' in expanded['rules']
+
+
+def test_a_rule_citing_another_rules_observation_instead_of_its_own_is_named():
+    constraint, admin, returned = _mistaken_rule()
+    child = {collection: {} for collection in SEMANTIC_COLLECTIONS}
+    child['rules'] = {'rule:fk': constraint, 'rule:admin': admin}
+    candidate = {collection: {} for collection in SEMANTIC_COLLECTIONS}
+    candidate['rules'] = {'rule:merged': returned, 'rule:fk': constraint, 'rule:admin': admin}
+
+    [finding] = _mixed_observation_findings(candidate, [Unit({'scope_id': 'scope:c'}, child, {})])
+
+    assert finding['code'] == 'MIXED_RULE_OBSERVATIONS'
+    assert {'observation:3', 'observation:9', 'rule:fk', 'rule:admin'} <= set(finding['subject_ids'])
+    # A rule joining two child rules' observations whole is a merge, not a mistake.
+    candidate['rules']['rule:merged']['observation_ids'] = [
+        'observation:1', 'observation:2', 'observation:3', 'observation:9']
+    assert _mixed_observation_findings(candidate, [Unit({'scope_id': 'scope:c'}, child, {})]) == []

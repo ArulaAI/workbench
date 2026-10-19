@@ -1487,7 +1487,8 @@ def _supersede_rules(expanded: dict, supplied: dict) -> None:
         if rule_id in returned or _rule_basis(rule) is None:
             continue
         successor = min((other for other, candidate in returned.items()
-                         if _same_rule(rule, candidate, within=True)),
+                         if _same_rule(rule, candidate, within=True)
+                         and not _different_checks(rule, candidate)),
                         default=None)
         if successor is not None:
             replaced[rule_id] = successor
@@ -1498,6 +1499,18 @@ def _supersede_rules(expanded: dict, supplied: dict) -> None:
     for collection in SEMANTIC_COLLECTIONS:
         for record_id, item in expanded[collection].items():
             expanded[collection][record_id] = _renamed(item, replaced)
+
+
+def _different_checks(rule: dict, other: dict) -> bool:
+    """Whether two rules are plainly different checks, whatever they cite.
+
+    One observation cited by mistake should not make an authorization check
+    part of a data constraint enforced elsewhere.
+    """
+    categories = {rule.get('category'), other.get('category')} - {None, 'unclassified'}
+    sites = {site['source_id'] for site in rule.get('enforcement_sites') or ()}
+    other_sites = {site['source_id'] for site in other.get('enforcement_sites') or ()}
+    return len(categories) == 2 and bool(sites) and bool(other_sites) and not sites & other_sites
 
 
 def _rehome(expanded: dict, supplied: dict, merged: set) -> None:
@@ -1954,7 +1967,8 @@ def reconciliation_findings(model: dict, units, payload: dict) -> list[dict]:
                     'subject_ids': sorted({disposition['subject_id'], *unknown}),
                     'evidence_ids': []})
     return (findings + _link_findings(payload, units) + _merge_findings(model, units, payload)
-            + _rule_findings(payload, units))
+            + _rule_findings(payload, units)
+            + _mixed_observation_findings(payload, units))
 
 
 def _rule_findings(payload: dict, units) -> list[dict]:
@@ -1979,6 +1993,52 @@ def _rule_findings(payload: dict, units) -> list[dict]:
              'subject_ids': sorted(group), 'evidence_ids': []}
             for group in groups
             if len({unit_of.get(rule_id) for rule_id in group}) > 1]
+
+
+def _mixed_observation_findings(payload: dict, units) -> list[dict]:
+    """A returned rule that cites most of one child rule's observations and
+    some of another's instead of the rest.
+
+    A returned rule replaces each child rule whose observations it cites, so
+    one observation cited in place of another replaces the wrong rule and
+    leaves the right one standing. The finding names both observations, which
+    the symptoms the reviewer sees do not.
+    """
+    children = {rule_id: rule for unit in units for rule_id, rule in unit.payload['rules'].items()}
+    cited_by = {}
+    for rule_id, rule in children.items():
+        for observation_id in rule.get('observation_ids') or ():
+            cited_by.setdefault(observation_id, []).append(rule_id)
+    findings = []
+    for rule_id in sorted(set(payload['rules']) - set(children)):
+        observed = set(payload['rules'][rule_id].get('observation_ids') or ())
+        if not observed:
+            continue
+        best = max(sorted(children), default=None, key=lambda child: len(
+            observed & set(children[child].get('observation_ids') or ())))
+        if best is None:
+            continue
+        expected = set(children[best].get('observation_ids') or ())
+        missing, extra = sorted(expected - observed), sorted(observed - expected)
+        if not (expected & observed) or not missing:
+            continue
+        borrowed = sorted({other for observation_id in extra
+                           for other in cited_by.get(observation_id, ()) if other != best})
+        if not borrowed:
+            continue
+        names = '; '.join(f"'{children[other].get('name')}' ({other})" for other in borrowed)
+        findings.append({
+            'code': 'MIXED_RULE_OBSERVATIONS', 'severity': 'error',
+            'message': (f"Rule {rule_id} cites {len(expected & observed)} of the "
+                        f"{len(expected)} observations of child rule '{children[best].get('name')}' "
+                        f"({best}) but not {', '.join(missing)}, and cites {', '.join(extra)}, "
+                        f"which child rule {names} cites. A returned rule replaces every child "
+                        'rule whose observations it cites, so it would replace that rule and '
+                        'leave the one it describes standing; cite exactly the observations of '
+                        'the rule it describes.'),
+            'subject_ids': sorted({rule_id, best, *borrowed, *missing, *extra}),
+            'evidence_ids': []})
+    return findings
 
 
 def _link_findings(payload: dict, units) -> list[dict]:
