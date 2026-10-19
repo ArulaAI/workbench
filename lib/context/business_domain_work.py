@@ -605,7 +605,7 @@ def reconciliation_scope(model: dict, units, *, scope_id: str,
     aliases = _merge_concepts(model, context)
     for unit in units:
         _manifest(context, unit, aliases, stable=scope_id == ROOT_SCOPE_ID)
-    _state_links(model, context, units)
+    _state_links(model, context, units, stable=scope_id == ROOT_SCOPE_ID)
     semantic = [item for collection in SEMANTIC_COLLECTIONS
                 for item in context[collection].values()]
     context['evidence'] = {key: copy.deepcopy(model['evidence'][key])
@@ -934,7 +934,7 @@ def merge_candidates(model: dict, domains: dict, activities: dict, children: dic
     return found
 
 
-def _state_links(model: dict, context: dict, units) -> None:
+def _state_links(model: dict, context: dict, units, stable: bool = False) -> None:
     """State, as claims, how the units connect where no unit could see it."""
     activities = context['activities']
     children = _children_of(units, activities)
@@ -955,7 +955,7 @@ def _state_links(model: dict, context: dict, units) -> None:
             f"{_named(activities, readers)} and written only in other child scopes, by "
             f"{_named(activities, writers)}. Link each reader to a writer with a "
             'uses_information_from relationship, or place them in one domain.'),
-            evidence, model)
+            evidence, model, stable=stable)
     for one, other, shared in merge_candidates(model, context['domains'], activities, children):
         domains = context['domains']
         basis = (f"entry points declared by {', '.join(shared)}" if shared
@@ -966,7 +966,7 @@ def _state_links(model: dict, context: dict, units) -> None:
             'returned domain, or return one of them with an alternative naming the other '
             'and the evidence for keeping them separate.'),
             [*domains[one]['evidence_ids'], *domains[other]['evidence_ids']], model,
-            key=other)
+            key=other, stable=stable)
 
 
 def _named(activities: dict, activity_ids) -> str:
@@ -974,8 +974,11 @@ def _named(activities: dict, activity_ids) -> str:
                      for activity_id in activity_ids)
 
 
-def _speed_claim(context, kind, subject_id, text, evidence, model, key=None) -> None:
+def _speed_claim(context, kind, subject_id, text, evidence, model, key=None,
+                 stable: bool = False) -> None:
     claim_id = identifier('claim', kind, subject_id, key)
+    if stable:
+        evidence = sorted(set(evidence))
     context['claims'][claim_id] = record(
         'Claim', id=claim_id, subject_id=subject_id, kind=kind, text=text,
         evidence_ids=[eid for eid in dict.fromkeys(evidence)
