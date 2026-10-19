@@ -973,3 +973,62 @@ def test_operations_one_contract_documents_are_owned_by_their_implementations():
     assert _owner(model, 'anchor:v') == 'src/Vets.java::Vets'
     # A contract alone shows no owner: every documented operation shares it.
     assert _owner(model, 'anchor:x') is None
+
+
+def _contract_model(expression):
+    def binding(binding_id, name, source, text, evidence):
+        return {'id': binding_id, 'name': name, 'direction': 'output', 'expression': text,
+                'source': {'kind': 'symbol', 'id': source}, 'evidence_ids': [evidence]}
+    return {
+        'anchors': {'anchor:add': {
+            'operation': {'method': 'post', 'path': '/owners'},
+            'representations': [{'id': 'rep:api', 'role': 'contract', 'symbol_id': 'symbol:api'},
+                                {'id': 'rep:code', 'role': 'implementation', 'symbol_id': 'symbol:code'}],
+            'correspondences': [{'state': 'resolved', 'from_representation': 'rep:api',
+                                 'to_representations': ['rep:code']}]}},
+        'bindings': {
+            'binding:200': binding('binding:200', 'response:200', 'symbol:api', 'Created.', 'ev:api'),
+            'binding:ret': binding('binding:ret', 'output@1', 'symbol:code', expression, 'ev:code')}}
+
+
+def _contract_candidate(*claims):
+    candidate = {collection: {} for collection in SEMANTIC_COLLECTIONS}
+    candidate['activities'] = {'activity:add': {'id': 'activity:add', 'anchor_ids': ['anchor:add'],
+                                                'trace_ids': ['trace:add'], 'claim_ids': []}}
+    candidate['claims'] = {claim['id']: claim for claim in claims}
+    return candidate
+
+
+def test_a_status_the_code_returns_and_the_contract_omits_is_stated():
+    from lib.context.business_domain_work import _contract_status_conflicts
+    candidate = _contract_candidate()
+
+    _contract_status_conflicts(candidate, _contract_model(
+        'new ResponseEntity<>(dto, headers, HttpStatus.CREATED)'), {'ev:api', 'ev:code'})
+
+    [claim] = candidate['claims'].values()
+    assert claim['subject_id'] == 'activity:add' and claim['kind'] == 'conflict'
+    assert 'POST /owners' in claim['text'] and '201' in claim['text']
+    assert claim['evidence_ids'] == ['ev:api', 'ev:code']
+
+
+def test_a_status_conflict_a_child_recorded_is_not_stated_again():
+    from lib.context.business_domain_work import _contract_status_conflicts
+    recorded = {'id': 'claim:child', 'subject_id': 'activity:add', 'kind': 'conflict',
+                'text': 'The contract says 200 but the controller returns 201.'}
+    candidate = _contract_candidate(recorded)
+
+    _contract_status_conflicts(candidate, _contract_model('ResponseEntity.created(uri)'),
+                               {'ev:api', 'ev:code'})
+
+    assert list(candidate['claims']) == ['claim:child']
+
+
+def test_declared_or_unknown_statuses_and_uncitable_evidence_state_nothing():
+    from lib.context.business_domain_work import _contract_status_conflicts
+    for expression, citable in (('new ResponseEntity<>(HttpStatus.OK)', {'ev:api', 'ev:code'}),
+                                ('new ResponseEntity<>(HttpStatus.NO_SUCH_NAME)', {'ev:api', 'ev:code'}),
+                                ('new ResponseEntity<>(HttpStatus.CREATED)', {'ev:code'})):
+        candidate = _contract_candidate()
+        _contract_status_conflicts(candidate, _contract_model(expression), citable)
+        assert candidate['claims'] == {}

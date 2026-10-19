@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import re
 from dataclasses import dataclass
 from itertools import combinations
 
@@ -950,12 +951,104 @@ def expand_reconciliation(scope: dict, payload: dict, model: dict | None = None)
         _drop_delegating_owners(expanded, model)
         _attach_rules_to_enforcers(expanded, model)
         _link_direct_calls(expanded, model, set(supplied.get('evidence', {})))
+        _contract_status_conflicts(expanded, model, set(supplied.get('evidence', {})))
     _link_information_flow(expanded, set(supplied.get('evidence', {})))
     _keep_writers(expanded)
     _prune_symbol_memberships(expanded)
     _collect_domain_rules(expanded, returned, supplied)
     _link_claims(expanded)
     return expanded
+
+
+# Spring status names Python's HTTPStatus lacks, and ResponseEntity helpers.
+SPRING_STATUS = {'MOVED_TEMPORARILY': 302, 'PAYLOAD_TOO_LARGE': 413, 'URI_TOO_LONG': 414,
+                 'I_AM_A_TEAPOT': 418, 'CHECKPOINT': 103, 'METHOD_FAILURE': 420,
+                 'DESTINATION_LOCKED': 421, 'INSUFFICIENT_SPACE_ON_RESOURCE': 419}
+RESPONSE_HELPERS = {'ok': 200, 'created': 201, 'accepted': 202, 'noContent': 204,
+                    'badRequest': 400, 'notFound': 404, 'unprocessableEntity': 422,
+                    'internalServerError': 500}
+
+
+def _returned_statuses(expression: str) -> set:
+    from http import HTTPStatus
+    codes = set()
+    for name in re.findall(r'HttpStatus\.([A-Z_]+)', expression or ''):
+        status = SPRING_STATUS.get(name) or getattr(HTTPStatus, name, None)
+        if status is not None:
+            codes.add(str(int(status)))
+    for helper in re.findall(r'ResponseEntity\s*\.\s*(\w+)\s*\(', expression or ''):
+        if helper in RESPONSE_HELPERS:
+            codes.add(str(RESPONSE_HELPERS[helper]))
+    return codes
+
+
+def _contract_status_conflicts(expanded: dict, model: dict, citable: set) -> None:
+    """State where an operation's code returns a status its contract omits.
+
+    Both sides are facts: the contract's declared responses and the statuses
+    the implementing method returns. Slices notice the difference unevenly,
+    and a merge of one that did with one that did not reads as an ignored
+    contradiction, so SPEED states each one, keyed by anchor so it follows
+    whichever activity holds the anchor. Only a status the code returns and
+    the contract omits is stated: a declared status the code never returns
+    may come from an exception handler.
+    """
+    bindings = model.get('bindings', {})
+    by_source = {}
+    for binding in bindings.values():
+        if binding.get('direction') == 'output':
+            by_source.setdefault((binding.get('source') or {}).get('id'), []).append(binding)
+    claims = expanded['claims']
+    for activity_id in sorted(expanded['activities']):
+        activity = expanded['activities'][activity_id]
+        for anchor_id in activity.get('anchor_ids', ()):
+            anchor = model.get('anchors', {}).get(anchor_id) or {}
+            representations = {item['id']: item for item in anchor.get('representations') or ()
+                               if isinstance(item, dict) and 'id' in item}
+            for correspondence in anchor.get('correspondences') or ():
+                contract = representations.get(correspondence.get('from_representation'))
+                if (correspondence.get('state') != 'resolved' or not contract
+                        or contract.get('role') != 'contract'):
+                    continue
+                declared = {binding['name'].split(':')[1]: binding
+                            for binding in by_source.get(contract.get('symbol_id'), ())
+                            if binding.get('name', '').startswith('response:')}
+                if not declared or any(code == 'default' or code.upper().endswith('XX')
+                                       for code in declared):
+                    continue
+                implementations = sorted({
+                    representations[target]['symbol_id']
+                    for target in correspondence.get('to_representations', ())
+                    if representations.get(target, {}).get('role') == 'implementation'
+                    and representations[target].get('symbol_id')})
+                for symbol_id in implementations:
+                    for binding in by_source.get(symbol_id, ()):
+                        for code in sorted(_returned_statuses(binding.get('expression')) - set(declared)):
+                            evidence = sorted({evidence_id for item in (*declared.values(), binding)
+                                               for evidence_id in item.get('evidence_ids', ())
+                                               if evidence_id in citable})
+                            if len(evidence) < 2:
+                                continue
+                            claim_id = identifier('claim', 'contract_status', anchor_id, code)
+                            if claim_id in claims:
+                                claims[claim_id]['subject_id'] = activity_id
+                                continue
+                            if any(claim['subject_id'] == activity_id
+                                   and claim.get('kind') == 'conflict' and code in claim['text']
+                                   for claim in claims.values()):
+                                continue
+                            operation = anchor.get('operation') or {}
+                            name = ' '.join(filter(None, (operation.get('method', '').upper()
+                                                          if operation.get('method') else None,
+                                                          operation.get('path'))))
+                            claims[claim_id] = record(
+                                'Claim', id=claim_id, subject_id=activity_id, kind='conflict',
+                                text=(f'The contract for {name or anchor_id} declares responses '
+                                      f'{", ".join(sorted(declared))}, but the implementation '
+                                      f'returns {code}, which the contract does not declare.'),
+                                evidence_ids=evidence,
+                                trace_ids=sorted(activity.get('trace_ids', ())),
+                                semantic_review='supported')
 
 
 # The accesses that establish each kind of authoritative ownership.
