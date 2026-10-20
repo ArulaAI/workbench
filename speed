@@ -156,6 +156,7 @@ speed_help() {
     echo -e "    --skip-audit                Skip the structural audit before planning"
     echo -e "    --single-pass               Force single-pass planning (skip phase split)"
     echo -e "    --single-call               One Architect call writes the whole plan (no skeleton/enrich split)"
+    echo -e "    --max-tasks N               Plan at most N tasks (or SPEED_PLAN_MAX_TASKS, [plan] max_tasks)"
     echo -e "    --force                     Bypass cache and force re-planning"
     echo ""
     echo -e "${BOLD}RUN OPTIONS${RESET}"

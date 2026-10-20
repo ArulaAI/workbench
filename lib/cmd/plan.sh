@@ -148,6 +148,51 @@ _plan_two_pass() {
     [[ "${single_call:-false}" != "true" && "${SPEED_PLAN_SINGLE_CALL:-}" != "true" ]]
 }
 
+# Task budget instruction for the Architect, or nothing when no budget is set.
+# Reads $max_tasks from cmd_plan scope.
+_plan_task_budget_text() {
+    [[ -z "${max_tasks:-}" ]] && return 0
+    printf '%s' "\n\n## Task Budget\n\nThe plan must have at most ${max_tasks} task(s). This overrides the 15-30 minute task size guideline: group closely related work into one task (a model with the service that uses it, an endpoint with its tests) instead of dropping requirements. Every requirement must still be covered by a task. Tasks that share a file still need a dependency edge. Number tasks from 1."
+}
+
+# Hold the Architect's plan in $parsed_architect to the task budget. A plan
+# over budget gets one consolidation call that merges tasks; a plan still over
+# budget stops here rather than running with more tasks than asked for.
+# Reads $max_tasks, $arch_agent, $arch_schema and the plan_spec_* arrays.
+# WARNING: Do not call inside $(). Uses log_* which write to stdout.
+_plan_enforce_task_budget() {
+    [[ -z "${max_tasks:-}" ]] && return 0
+    local count
+    count=$(echo "$parsed_architect" | jq '.tasks | length')
+    [[ "$count" -le "$max_tasks" ]] && return 0
+
+    log_warn "Architect planned ${count} tasks; the budget is ${max_tasks}. Merging..."
+    local msg="" spec_index
+    for spec_index in "${!plan_spec_paths[@]}"; do
+        msg+="## ${plan_spec_labels[$spec_index]}\n\n${plan_spec_contents[$spec_index]}\n\n"
+    done
+    msg+="## Current Plan (${count} tasks, over budget)\n\n\`\`\`json\n$(echo "$parsed_architect" | jq -c '.tasks')\n\`\`\`"
+    msg+="$(_plan_task_budget_text)"
+    msg+="\n\nMerge the tasks above into at most ${max_tasks}. Keep every requirement, file and acceptance criterion the current tasks cover; combine their descriptions, files_touched and criteria. Renumber IDs from 1 and rewrite depends_on to the new IDs. Output the complete merged plan."
+
+    local merged
+    merged=$(_run_architect_phase "Architect (merge to budget)" "$msg" "$arch_agent" "$arch_schema") || exit 1
+    count=$(echo "$merged" | jq '.tasks | length')
+    if [[ "$count" -gt "$max_tasks" ]]; then
+        echo "$merged" | jq '.' > "${LOGS_DIR}/architect-over-budget.json"
+        log_error "The Architect could not fit the plan into ${max_tasks} task(s) (still ${count})"
+        log_error "Plan: ${LOGS_DIR}/architect-over-budget.json"
+        log_error "Raise --max-tasks, or narrow the spec"
+        exit "$EXIT_GATE_FAILURE"
+    fi
+    # The merge call may leave out validation or concerns; keep the first call's
+    parsed_architect=$(jq -n --argjson a "$parsed_architect" --argjson m "$merged" '
+        $a + $m
+        | .validation = ($m.validation // $a.validation // [])
+        | .cross_cutting_concerns = ($m.cross_cutting_concerns // $a.cross_cutting_concerns // [])')
+    log_success "Merged into ${count} task(s)"
+}
+
 # Architect failure diagnostic (G2: failure is informative)
 # Parses the JSONL event log and classifies the failure mode.
 _diagnose_architect_failure() {
@@ -619,6 +664,17 @@ _repair_coverage_gaps() {
     max_id=$(echo "$parsed_architect" | jq '[.tasks[].id | (tonumber? // 0)] | max // 0')
     start_id=$((max_id + 1))
 
+    # Repair adds tasks, so it must stay inside the task budget
+    local room=""
+    if [[ -n "${max_tasks:-}" ]]; then
+        room=$(( max_tasks - $(echo "$parsed_architect" | jq '.tasks | length') ))
+        if [[ $room -le 0 ]]; then
+            log_warn "Task budget of ${max_tasks} is used up: no task added for ${_cov_critical} gap(s)"
+            log_warn "Raise --max-tasks to cover them, or accept the gaps"
+            return
+        fi
+    fi
+
     local task_summary
     task_summary=$(_plan_task_details "$(echo "$parsed_architect" | jq -c '.tasks // []')")
 
@@ -637,6 +693,8 @@ _repair_coverage_gaps() {
     msg+="IDs start at ${start_id}. Do not recreate existing tasks. "
     msg+="Set depends_on where needed. Only output NEW tasks. "
     msg+="Use the functions, types, fields and error names the existing tasks define.\n"
+    [[ -n "$room" ]] && \
+        msg+="Add at most ${room} task(s): the plan has a budget of ${max_tasks}. Group gaps into one task where they touch the same files.\n"
 
     log_step "Generating task(s) for ${_cov_critical} gap(s)..."
     echo ""
@@ -655,6 +713,10 @@ _repair_coverage_gaps() {
 
     if [[ "$new_count" -eq 0 ]]; then
         log_error "Architect produced 0 new tasks"
+        return
+    fi
+    if [[ -n "$room" && "$new_count" -gt "$room" ]]; then
+        log_error "Architect added ${new_count} task(s); the budget of ${max_tasks} leaves room for ${room}. None added"
         return
     fi
 
@@ -701,6 +763,8 @@ cmd_plan() {
     local skip_audit=false
     local single_pass=false
     local single_call=false
+    local max_tasks=""
+    local audit_estimated_max=0
 
     # Parse options
     while [[ $# -gt 0 ]]; do
@@ -710,9 +774,20 @@ cmd_plan() {
             --skip-audit) skip_audit=true; shift ;;
             --single-pass) single_pass=true; shift ;;
             --single-call) single_call=true; shift ;;
+            --max-tasks) _need_value "$@"; max_tasks="$2"; shift 2 ;;
             *) log_error "Unknown option: $1"; exit 1 ;;
         esac
     done
+
+    # Task budget: --max-tasks, then SPEED_PLAN_MAX_TASKS, then speed.toml [plan] max_tasks
+    max_tasks="${max_tasks:-${SPEED_PLAN_MAX_TASKS:-${TOML_PLAN_MAX_TASKS:-}}}"
+    if [[ -n "$max_tasks" ]] && ! [[ "$max_tasks" =~ ^[1-9][0-9]*$ ]]; then
+        log_error_block \
+            "Invalid task budget: ${max_tasks}" \
+            "--max-tasks (or SPEED_PLAN_MAX_TASKS, [plan] max_tasks) takes a whole number of at least 1" \
+            "Use e.g. speed plan specs/tech/x.md --max-tasks 5"
+        exit $EXIT_CONFIG_ERROR
+    fi
 
     # ── Feature mode: plan every document of one feature ──────────
     # `speed plan --feature NAME` with no file discovers all of the
@@ -1144,6 +1219,7 @@ cmd_plan() {
             if [[ -n "$parsed_audit" ]]; then
                 local estimated_tasks
                 estimated_tasks=$(echo "$parsed_audit" | jq -r '.sizing.estimated_tasks // 0' 2>/dev/null)
+                [[ "$estimated_tasks" -gt "$audit_estimated_max" ]] 2>/dev/null && audit_estimated_max="$estimated_tasks"
                 if [[ "$estimated_tasks" -gt "$ARCHITECT_PHASE_TASK_THRESHOLD" ]] 2>/dev/null; then
                     audit_sizing_rec="split"
                     [[ -z "$audit_sizing_rationale" ]] && \
@@ -1161,6 +1237,18 @@ cmd_plan() {
     if [[ "$single_pass" == "true" && "$audit_sizing_rec" == "split" ]]; then
         log_step "Phase splitting: ${COLOR_DIM}skipped (--single-pass)${RESET}"
         audit_sizing_rec="single"
+    fi
+    # A task budget is planned in one pass: two phases cannot share it
+    if [[ -n "$max_tasks" ]]; then
+        log_step "Task budget: ${COLOR_STEP}at most ${max_tasks} task(s)${RESET}"
+        if [[ "$audit_sizing_rec" == "split" ]]; then
+            log_step "Phase splitting: ${COLOR_DIM}skipped (task budget)${RESET}"
+            audit_sizing_rec="single"
+        fi
+        if [[ "$audit_estimated_max" -gt "$max_tasks" ]]; then
+            log_warn "The audit estimated ~${audit_estimated_max} tasks; fitting them into ${max_tasks} makes each task larger"
+            log_warn "The decomposition gate still fails a task over ${SPEED_TASK_SIZE_FAIL:-6000} lines (SPEED_TASK_SIZE_FAIL)"
+        fi
     fi
     echo ""
 
@@ -1271,7 +1359,7 @@ cmd_plan() {
     # Architect prompts, schemas and models. Prompt changes must not reuse a
     # plan made with the old prompts.
     architect_cache_hash=$({
-        printf '%s:%s:%s:%s:%s\n' "$spec_hash" "$phase_count" "$arch_mode" "${MODEL_PLANNING:-}" "${MODEL_SUPPORT:-}"
+        printf '%s:%s:%s:%s:%s:%s\n' "$spec_hash" "$phase_count" "$arch_mode" "${MODEL_PLANNING:-}" "${MODEL_SUPPORT:-}" "${max_tasks:-}"
         if [[ "$arch_mode" == "two-pass" ]]; then
             cat "${AGENTS_DIR}/architect-skeleton.md" "${AGENTS_DIR}/architect-enrich.md" \
                 "${TEMPLATES_DIR}/architect-skeleton.json" "${TEMPLATES_DIR}/architect-enrich-output.json" 2>/dev/null
@@ -1314,6 +1402,8 @@ cmd_plan() {
         if [[ -n "$architecture_spec_content" ]]; then
             base_message+="\n\n## Architecture Spec (boundaries and quality constraints)\n\n${architecture_spec_content}"
         fi
+
+        base_message+="$(_plan_task_budget_text)"
 
         if [[ "$audit_sizing_rec" == "split" ]]; then
             # ── Multi-phase architect ──────────────────────────────────
@@ -1506,6 +1596,9 @@ cmd_plan() {
 
             parsed_architect=$(_run_architect_phase "Architect" "$base_message" "$arch_agent" "$arch_schema") || exit 1
         fi
+
+        # Before the gate and enrichment, so neither works on tasks that get merged
+        _plan_enforce_task_budget
 
         if [[ "$arch_mode" == "two-pass" ]]; then
             log_success "Skeleton: $(echo "$parsed_architect" | jq '.tasks | length') tasks"

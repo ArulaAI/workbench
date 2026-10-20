@@ -128,6 +128,19 @@ Between the passes, `_plan_gate_skeleton` runs the decomposition gate on the ske
 
 `_run_architect_phase` runs each call with `$ARCHITECT_MAX_TURNS` turns and a timeout scaled to the message size. With `--single-call`, one Opus call uses `agents/architect.md` and `templates/architect-output.json` to write complete tasks.
 
+### Task budget
+
+`speed plan --max-tasks N` caps the plan at N tasks. `SPEED_PLAN_MAX_TASKS` or `max_tasks` under `[plan]` in `speed.toml` set the same cap; the flag wins.
+
+| Step | With a budget |
+|---|---|
+| Phase split | Skipped: the plan is made in one pass so both phases cannot spend the budget twice |
+| Architect prompt | Gets a Task Budget section that overrides the 15-30 minute size guideline and asks for related work to be grouped |
+| Plan over budget | One "merge to budget" call combines tasks; if it is still over, the plan stops and saves it to `architect-over-budget.json` |
+| Coverage repair | Adds only as many tasks as the budget has room for; with no room, the gaps are reported and left |
+
+A small budget makes each task bigger. The decomposition gate still fails any task whose files total `SPEED_TASK_SIZE_FAIL` lines (6000 by default), so a spec that cannot fit into N tasks stops with that error instead of producing oversized tasks. The budget is part of the Architect cache key.
+
 For large specs (audit estimated > threshold tasks), the planning-model pass splits into two phases. Phase 1 plans foundation tasks (data models, core services). Phase 2 receives Phase 1's tasks in full and plans features and integration, with a starting ID offset to prevent collisions.
 
 ### Phase 6: Validation gate

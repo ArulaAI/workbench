@@ -183,6 +183,13 @@ def emit(data: dict) -> None:
                 var_name = f"TOML_SECURITY_{key.upper()}"
                 print(f"{var_name}='{shell_escape(joined)}'")
 
+    # [plan] section
+    plan = data.get("plan", {})
+    if isinstance(plan, dict):
+        val = plan.get("max_tasks")
+        if val is not None:
+            print(f"TOML_PLAN_MAX_TASKS='{shell_escape(str(val))}'")
+
     # [context] section
     context = data.get("context", {})
     if isinstance(context, dict):
