@@ -183,7 +183,7 @@ _invoke_debugger() {
     local title description criteria branch
     title=$(echo "$task_json" | jq -r '.title')
     description=$(echo "$task_json" | jq -r '.description')
-    criteria=$(echo "$task_json" | jq -r '.acceptance_criteria')
+    criteria=$(echo "$task_json" | jq -r "$TASK_CRITERIA_JQ")
     branch=$(echo "$task_json" | jq -r '.branch')
 
     local output_file="${LOGS_DIR}/${task_id}.log"
@@ -693,7 +693,7 @@ cmd_run() {
                 local title description criteria task_model branch
                 title=$(echo "$task_json" | jq -r '.title')
                 description=$(echo "$task_json" | jq -r '.description')
-                criteria=$(echo "$task_json" | jq -r '.acceptance_criteria')
+                criteria=$(echo "$task_json" | jq -r "$TASK_CRITERIA_JQ")
                 task_model=$(echo "$task_json" | jq -r ".agent_model // \"${model}\"")
                 branch=$(echo "$task_json" | jq -r '.branch')
 

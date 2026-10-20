@@ -155,6 +155,7 @@ speed_help() {
     echo -e "    --specs-dir DIR             Directory with related specs for cross-referencing"
     echo -e "    --skip-audit                Skip the structural audit before planning"
     echo -e "    --single-pass               Force single-pass planning (skip phase split)"
+    echo -e "    --single-call               One Architect call writes the whole plan (no skeleton/enrich split)"
     echo -e "    --force                     Bypass cache and force re-planning"
     echo ""
     echo -e "${BOLD}RUN OPTIONS${RESET}"

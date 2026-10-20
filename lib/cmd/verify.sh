@@ -223,7 +223,7 @@ _build_verify_message() {
         id=$(jq -r '.id' "$f")
         title=$(jq -r '.title' "$f")
         desc=$(jq -r '.description' "$f")
-        criteria=$(jq -r '.acceptance_criteria' "$f")
+        criteria=$(jq -r "$TASK_CRITERIA_JQ" "$f")
         deps=$(jq -r '.depends_on | join(", ")' "$f")
         files=$(jq -r '.files_touched // [] | join(", ")' "$f")
 

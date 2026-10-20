@@ -11,6 +11,14 @@ _ensure_jq() {
     fi
 }
 
+# jq filter: a task's acceptance criteria as prompt text. Structured criteria
+# become "- criterion (verify: X)" lines; a legacy string is printed as is.
+TASK_CRITERIA_JQ='.acceptance_criteria
+    | if type == "array" then
+        map(if type == "object" then "- \(.criterion // "") (verify: \(.verify_by // "manual"))" else "- \(.)" end)
+        | join("\n")
+      else (. // "") end'
+
 # Create a task file from parameters
 task_create() {
     local id="$1"

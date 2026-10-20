@@ -63,25 +63,30 @@ The planning pipeline runs in seven phases. Phases 1-4 gather context and run pr
 ```
 speed plan <spec-file>
     │
-    ├─ 1. Pre-plan Guardian gate
+    ├─ 1. Pre-plan Guardian gate                     (cached)
     │      └─ Product Guardian checks spec against vision
-    ├─ 2. Pre-plan Audit gate
+    ├─ 2. Pre-plan Audit gate, one per spec          (cached when it passed)
     │      └─ Spec Auditor checks structural completeness
     ├─ 3. Build Layer 1 context
     │      ├─ Project map (files, directories, languages)
     │      ├─ CSG domain clusters + bridge symbols
     │      ├─ Spec-codebase alignment (confirmed/missing/divergent)
     │      └─ Related specs (TF-IDF scored + compressed)
-    ├─ 4. Assemble architect prompt
-    ├─ 5. Send to Architect agent (Opus)
-    │      └─ Phased if audit estimates > threshold tasks
-    ├─ 6. Validation gate
+    ├─ 4. Assemble architect prompt (stable context first)
+    ├─ 5. Architect                                  (cached)
+    │      ├─ Skeleton pass (Opus): boundaries, files, dependencies
+    │      │     └─ Phased if audit estimates > threshold tasks
+    │      ├─ Decomposition gate on the skeleton (auto-patches bridge deps)
+    │      └─ Enrich pass (Sonnet): criteria, spec refs, rationale, contract
+    ├─ 6. Coverage verifier + validation gate        (coverage cached)
     │      └─ Critical issues block task creation
     └─ 7. Persist tasks + contract + decomposition gate
            ├─ Task JSON files → .speed/features/<feature>/tasks/
            ├─ Contract → .speed/features/<feature>/contract.json
-           └─ Decomposition gate (auto-patches bridge deps)
+           └─ Decomposition gate again (covers coverage-repair tasks)
 ```
+
+`--single-call` (or `SPEED_PLAN_SINGLE_CALL=true`) replaces the skeleton and enrich passes with one Opus call that writes complete tasks.
 
 ### Phase 1: Guardian gate
 
@@ -89,7 +94,9 @@ speed plan <spec-file>
 
 ### Phase 2: Audit gate
 
-Lines 262-311 call `cmd_audit` on the tech spec (and linked PRD if found). The [Spec Auditor](/docs/api/agents/spec-auditor/) checks structural completeness. A `fail` (Level 1 errors) blocks planning. The audit's sizing estimate determines whether the Architect runs single-phase or multi-phase.
+`cmd_plan` calls `cmd_audit` once for each spec it plans. The [Spec Auditor](/docs/api/agents/spec-auditor/) checks structural completeness. A `fail` (Level 1 errors) blocks planning. The audit's sizing estimate determines whether the Architect runs single-phase or multi-phase.
+
+A passing audit is cached. `_plan_audit_cache_key` hashes the spec, the audit prompt, the spec templates, the vision, the model and every file under `specs/` (the audit reads linked and parent specs and the spec list). A failing audit is never reused, so a fixed spec is always audited again.
 
 ### Phase 3: Layer 1 context
 
@@ -106,21 +113,30 @@ Lines 262-311 call `cmd_audit` on the tech spec (and linked PRD if found). The [
 
 ### Phase 4: Prompt assembly
 
-Lines 406-426 concatenate the product spec, tech spec, design spec (if present), codebase context from Phase 3, and related specs into the architect message.
+`_plan_stable_context` puts the blocks that are identical in every Architect call first: shared platform architecture, codebase context from Phase 3, and related specs. The specs follow, then any phase scope. Phase 1 and Phase 2 therefore share a prompt prefix that the provider's prompt cache can reuse.
 
 ### Phase 5: Architect agent
 
-`_run_architect_phase` (`lib/cmd/plan.sh:90-126`) calls `claude_run_json` with the architect agent definition, the assembled message, and the planning-tier model (Opus). The agent has `$ARCHITECT_MAX_TURNS` turns to produce a JSON response matching `templates/architect-output.json`.
+The Architect runs in two passes by default, so the planning model only writes the decisions that need it.
 
-For large specs (audit estimated > threshold tasks), the pipeline splits into two phases. Phase 1 plans foundation tasks (data models, core services). Phase 2 receives Phase 1's task summaries and plans features and integration, with a starting ID offset to prevent collisions (lines 427-533).
+| Pass | Prompt | Schema | Model | Writes |
+|---|---|---|---|---|
+| Skeleton | `agents/architect-skeleton.md` | `templates/architect-skeleton.json` | planning (Opus) | task boundaries, `files_touched`, `depends_on`, `agent_model`, validation, cross-cutting concerns |
+| Enrich | `agents/architect-enrich.md` | `templates/architect-enrich-output.json` | support (Sonnet) | `acceptance_criteria`, `spec_references`, `rationale`, `assumptions`, contract |
+
+Between the passes, `_plan_gate_skeleton` runs the decomposition gate on the skeleton, including the bridge-symbol auto-patch. A structural failure stops the plan before any enrichment is paid for, and the rejected skeleton is saved to `architect-skeleton-rejected.json`. A skeleton that passes is cached, so if enrichment fails, a re-run only repeats the enrich pass. Enrichment receives the specs and the skeleton, not the codebase scan; the skeleton's descriptions carry the function and file names. Tasks the enrich pass skips get one retry, and the plan stops if any task is still missing criteria.
+
+`_run_architect_phase` runs each call with `$ARCHITECT_MAX_TURNS` turns and a timeout scaled to the message size. With `--single-call`, one Opus call uses `agents/architect.md` and `templates/architect-output.json` to write complete tasks.
+
+For large specs (audit estimated > threshold tasks), the planning-model pass splits into two phases. Phase 1 plans foundation tasks (data models, core services). Phase 2 receives Phase 1's tasks in full and plans features and integration, with a starting ID offset to prevent collisions.
 
 ### Phase 6: Validation gate
 
-Lines 539-592 extract the `validation` array from the architect's JSON output. Severity levels: `critical` blocks task creation, `warning` logs but continues, `note` is informational only.
+The coverage verifier checks the plan against the full specs first. Its verdict is cached on the specs, the task list, its prompt and the model, so an unchanged plan does not pay for it again. Then the `validation` array from the Architect's output is reported. Severity levels: `critical` blocks task creation, `warning` logs but continues, `note` is informational only.
 
 ### Phase 7: Persist and verify
 
-Lines 595-800 write task JSON files, contract, and cross-cutting concerns to the feature directory. The decomposition quality gate (`context_decomposition_gate`) then checks task size, cluster alignment, bridge symbol exposure, and file ownership. If the only failures are missing bridge-symbol dependency edges, the pipeline auto-patches the task JSON files and re-runs the gate.
+The task JSON files, contract and cross-cutting concerns are written to the feature directory. Acceptance criteria are stored as `{criterion, verify_by}` objects, so criteria verification can run each one the way the Architect intended. The decomposition quality gate (`_plan_decomposition_gate`) then checks task size, cluster alignment, bridge symbol exposure, and file ownership. If the only failures are missing bridge-symbol dependency edges, the pipeline auto-patches the task JSON files and re-runs the gate.
 
 ## Worked Example
 

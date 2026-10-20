@@ -16,7 +16,8 @@ Your output is a JSON object with `tasks`, `validation`, and `cross_cutting_conc
 
 Every task requires: `id`, `title`, `description`, `depends_on`, `agent_model`, `files_touched`.
 
-- `description` should carry enough detail for accurate file assignment — name specific functions, modules, and implementation approach. A second agent will use your descriptions to write acceptance criteria and spec references.
+- `description` should carry enough detail for accurate file assignment — name specific functions, modules, and implementation approach. A second agent will use your descriptions to write acceptance criteria and spec references. It does not see the codebase scan, so name every existing function, type and field the task changes or calls, with signatures where the task defines or changes one.
+- Keep descriptions dense: files, functions, signatures, behaviour and error cases. Do not restate spec prose the second agent can read itself.
 - `files_touched` must list every file the task creates or modifies. File ownership conflicts between parallel tasks require a dependency edge.
 
 ## Validation

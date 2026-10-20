@@ -134,7 +134,7 @@ cmd_review() {
         local title branch criteria
         title=$(echo "$task_json" | jq -r '.title')
         branch=$(echo "$task_json" | jq -r '.branch')
-        criteria=$(echo "$task_json" | jq -r '.acceptance_criteria')
+        criteria=$(echo "$task_json" | jq -r "$TASK_CRITERIA_JQ")
 
         log_step "Reviewing task ${tid}: ${COLOR_STEP}${title}${RESET}"
 

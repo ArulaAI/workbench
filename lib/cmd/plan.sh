@@ -122,6 +122,32 @@ _plan_cache_read() {
     cat "$(_plan_cache_dir)/${1}.dat"
 }
 
+# Cache key for one spec's audit. The audit reads the spec, its type template,
+# the vision, linked and parent specs and the list of every spec, so the key
+# hashes the whole specs/ tree with the prompt, templates and model. Re-planning
+# unchanged specs no longer re-runs an audit agent per document.
+_plan_audit_cache_key() {
+    local spec_path="$1"
+    {
+        printf 'spec:%s\nmodel:%s\n' "${spec_path#${PROJECT_ROOT}/}" "${MODEL_SUPPORT:-}"
+        cat "$spec_path" 2>/dev/null
+        cat "${AGENTS_DIR}/audit.md" "${PROJECT_ROOT}/${VISION_FILE}" "${AGENT_FILE_PATH:-/dev/null}" 2>/dev/null
+        cat "${TEMPLATES_DIR}"/{prd,rfc,design,architecture,defect}.md 2>/dev/null
+        if [[ -d "${PROJECT_ROOT}/specs" ]]; then
+            find "${PROJECT_ROOT}/specs" -name '*.md' -type f -print0 | sort -z \
+                | xargs -0 shasum -a 256 2>/dev/null | sed "s|${PROJECT_ROOT}/||"
+        fi
+    } | shasum -a 256 | cut -d' ' -f1
+}
+
+# Two-pass planning (default): the planning model writes a skeleton (task
+# boundaries, files, dependencies), the decomposition gate checks it, then the
+# support model enriches it with criteria, spec references and the contract.
+# --single-call or SPEED_PLAN_SINGLE_CALL=true keeps one Architect call.
+_plan_two_pass() {
+    [[ "${single_call:-false}" != "true" && "${SPEED_PLAN_SINGLE_CALL:-}" != "true" ]]
+}
+
 # Architect failure diagnostic (G2: failure is informative)
 # Parses the JSONL event log and classifies the failure mode.
 _diagnose_architect_failure() {
@@ -132,12 +158,19 @@ _diagnose_architect_failure() {
     provider_diagnose_failure "$phase_label" "$raw_log" "$LOGS_DIR"
 }
 
+# Args: label message [agent_file] [schema_file] [model]
+# Defaults to the one-call Architect. The skeleton pass and coverage repair also
+# assign agent_model, so they get the model tiers; enrichment does not.
 _run_architect_phase() {
     local phase_label="$1"
     local message="$2"
+    local agent_file="${3:-${AGENTS_DIR}/architect.md}"
+    local schema_file="${4:-${TEMPLATES_DIR}/architect-output.json}"
+    local model="${5:-$MODEL_PLANNING}"
 
     # Inject model tier names so the architect uses the active provider's vocabulary
-    message+="\n\n## Model Tiers\n\nSupport model: ${MODEL_SUPPORT}\nPlanning model: ${MODEL_PLANNING}\nUse \`${MODEL_SUPPORT}\` as the default \`agent_model\`. Use \`${MODEL_PLANNING}\` only for architecturally complex tasks."
+    [[ "$(basename "$agent_file")" != "architect-enrich.md" ]] && \
+        message+="\n\n## Model Tiers\n\nSupport model: ${MODEL_SUPPORT}\nPlanning model: ${MODEL_PLANNING}\nUse \`${MODEL_SUPPORT}\` as the default \`agent_model\`. Use \`${MODEL_PLANNING}\` only for architecturally complex tasks."
 
     # Scale timeout: base + per-token scaling, with floor and cap
     local msg_chars=${#message}
@@ -154,10 +187,10 @@ _run_architect_phase() {
 
     local output rc=0
     output=$(provider_run_json \
-        "${AGENTS_DIR}/architect.md" \
+        "$agent_file" \
         "$message" \
-        "${TEMPLATES_DIR}/architect-output.json" \
-        "$MODEL_PLANNING" \
+        "$schema_file" \
+        "$model" \
         "$ARCHITECT_MAX_TURNS" \
         "" \
         "$phase_label" \
@@ -193,13 +226,30 @@ _run_coverage_check() {
     _cov_gaps="[]"
     _cov_parsed=""
 
-    log_step "Verifying task coverage against full specs..."
-
     local task_summary
     task_summary=$(echo "$parsed_architect" | jq -c '[.tasks[] | {
         id, title, description, spec_references,
-        acceptance_criteria: [.acceptance_criteria[]? | .criterion]
+        acceptance_criteria: (.acceptance_criteria
+            | if type == "array" then map(if type == "object" then .criterion else . end) else . end)
     }]')
+
+    # The verdict depends only on the specs, the tasks, the prompt and the
+    # model, so an unchanged plan reuses it instead of paying for another read
+    # of every spec. Only a parsed verdict is cached.
+    local cov_key
+    cov_key=$({
+        printf '%s:%s\n' "${spec_hash:-}" "${MODEL_SUPPORT:-}"
+        printf '%s' "$task_summary"
+        cat "${AGENTS_DIR}/coverage-verifier.md" 2>/dev/null
+    } | shasum -a 256 | cut -d' ' -f1)
+    if [[ "${force_plan:-false}" != "true" ]] && _plan_cache_valid "coverage" "$cov_key"; then
+        _cov_parsed=$(_plan_cache_read "coverage")
+        log_step "Coverage: ${COLOR_DIM}cached (specs and tasks unchanged)${RESET}"
+        _plan_coverage_evaluate
+        return
+    fi
+
+    log_step "Verifying task coverage against full specs..."
 
     local msg=""
     [[ -n "$product_spec_content" ]] && msg+="## Product Spec\n\n${product_spec_content}\n\n"
@@ -224,6 +274,13 @@ _run_coverage_check() {
     fi
 
     _cov_parsed=$(parse_agent_json "$output" 2>/dev/null) || return 0
+    _plan_cache_write "coverage" "$cov_key" "$_cov_parsed"
+    _plan_coverage_evaluate
+}
+
+# Set _cov_status, _cov_critical, _cov_minor and _cov_gaps from _cov_parsed and
+# print the gaps. WARNING: Do not call inside $().
+_plan_coverage_evaluate() {
     _cov_status=$(echo "$_cov_parsed" | jq -r '.coverage // "complete"')
 
     [[ "$_cov_status" != "gaps_found" ]] && return
@@ -266,16 +323,270 @@ _plan_unowned_file_impact() {
 # Planned tasks as markdown with full descriptions and acceptance criteria, so a
 # later Architect call (Phase 2, coverage repair) builds on the same interfaces.
 # A one-line summary hid them and the two halves of a phased plan disagreed.
+# Skeleton tasks have no criteria yet, so the block is left out for them.
 _plan_task_details() {
     echo "$1" | jq -r '.[] |
-        "#### Task \(.id): \(.title)\n" +
-        "Depends on: [\((.depends_on // []) | map(tostring) | join(", "))] | Files: \((.files_touched // []) | join(", "))\n\n" +
-        "\(.description // "")\n\n" +
-        "Acceptance criteria:\n" +
         ((.acceptance_criteria // [])
             | if type == "string" then .
-              else map("- " + (if type == "object" then (.criterion // "") else tostring end)) | join("\n") end) +
-        "\n"'
+              else map("- " + (if type == "object" then (.criterion // "") else tostring end)) | join("\n") end) as $criteria |
+        "#### Task \(.id): \(.title)\n" +
+        "Depends on: [\((.depends_on // []) | map(tostring) | join(", "))] | Files: \((.files_touched // []) | join(", "))\n\n" +
+        "\(.description // "")\n" +
+        (if $criteria != "" then "\nAcceptance criteria:\n" + $criteria + "\n" else "" end)'
+}
+
+# Stable context shared by every Architect call of one plan. It goes first in
+# each message so Phase 1 and Phase 2 share a prompt prefix the provider can
+# cache; the spec content that differs per phase follows it.
+_plan_stable_context() {
+    local ctx=""
+    [[ -n "${shared_context_content:-}" ]] && \
+        ctx+="## Shared Platform Architecture (constraints, not feature scope)\n\n${shared_context_content}\n\n"
+    [[ -n "${SPEC_CODEBASE_CONTEXT:-}" ]] && \
+        ctx+="## Codebase Context (ground truth from automated scan)\n\n${SPEC_CODEBASE_CONTEXT}\n\n"
+    [[ -n "${related_specs:-}" ]] && \
+        ctx+="## Related Specs (cross-reference for entity relationships)\n${related_specs}\n\n"
+    printf '%s' "$ctx"
+}
+
+# Run the decomposition gate on the task files in $1, auto-patching missing
+# bridge-symbol dependency edges. Prints warnings and violations.
+# Returns 0 on pass or warn, 1 on fail (report in decomposition-gate.json),
+# 2 when the gate is unavailable.
+# WARNING: Do not call inside $(). Uses log_* which write to stdout.
+_plan_decomposition_gate() {
+    # _plan_task_depends_on reads TASKS_DIR; point it at the directory under check
+    local TASKS_DIR="$1"
+    local decomp_result
+    decomp_result=$(context_decomposition_gate "${TASKS_DIR}" 2>/dev/null) || decomp_result=""
+
+    if [[ -z "$decomp_result" ]]; then
+        log_warn "Decomposition gate unavailable — skipping"
+        return 2
+    fi
+
+    local decomp_overall
+    decomp_overall=$(echo "$decomp_result" | jq -r '.overall // "pass"' 2>/dev/null)
+
+    # ── Bridge symbol auto-patch ──────────────────────────────
+    # If the gate failed, check whether the failures are exclusively
+    # bridge-symbol missing-dependency edges. If so, patch depends_on
+    # in the task JSON files and re-run the gate. Widening a bridge task can
+    # expose new edges, so repeat for a few rounds until the plan settles.
+    local patch_round=0
+    while [[ "$decomp_overall" == "fail" ]] && (( patch_round < 3 )); do
+        ((patch_round++)) || true
+        # Collect all missing bridge deps: affected_task needs depends_on → source_task
+        # Source task = the task that modifies the bridge symbol (from per_task[].task_id)
+        local bridge_patches
+        bridge_patches=$(echo "$decomp_result" | jq -c '
+            [.per_task[]? |
+             . as $pt |
+             .checks[]? |
+             select(.check == "bridge_symbols" and .verdict == "fail") |
+             .missing_dependencies[]? |
+             {affected_task: .affected_task, source_task: $pt.task_id,
+              affected_files: (.affected_files // [])}
+            ] // []' 2>/dev/null) || bridge_patches="[]"
+
+        local patch_count
+        patch_count=$(echo "$bridge_patches" | jq 'length' 2>/dev/null) || patch_count=0
+
+        # Check if there are non-bridge failures
+        local non_bridge_failures
+        non_bridge_failures=$(echo "$decomp_result" | jq '
+            [.per_task[]? | .checks[]? |
+             select(.verdict == "fail" and .check != "bridge_symbols")
+            ] + [.file_ownership | select(.violations | length > 0) | .violations[]?]
+            | length' 2>/dev/null) || non_bridge_failures=0
+
+        if [[ "$patch_count" -gt 0 ]] && [[ "$non_bridge_failures" -eq 0 ]]; then
+            # One patch per edge, applied in a fixed order: edges that point to an
+            # earlier task first, so tasks sharing a file are chained by ID.
+            bridge_patches=$(echo "$bridge_patches" | jq -c '
+                group_by([.affected_task, .source_task])
+                | map(.[0] + {affected_files: (map(.affected_files[]) | unique)})
+                | sort_by([
+                    ((.affected_task | tonumber? // 0) < (.source_task | tonumber? // 0)),
+                    (.source_task | tonumber? // 0),
+                    (.affected_task | tonumber? // 0)
+                  ])')
+            patch_count=$(echo "$bridge_patches" | jq 'length')
+            log_warn "Auto-patching ${patch_count} missing bridge-symbol dependency edge(s)..."
+
+            echo "$bridge_patches" | jq -c '.[]' | while IFS= read -r patch; do
+                local affected_task source_task
+                affected_task=$(echo "$patch" | jq -r '.affected_task')
+                source_task=$(echo "$patch" | jq -r '.source_task')
+                local task_file="${TASKS_DIR}/${affected_task}.json"
+
+                # Never add an edge that closes a loop: if the source already
+                # waits on the affected task, the pair is ordered the other way.
+                # The bridge change then runs last, so it may edit the caller
+                # files to update the call sites the earlier task wrote.
+                if [[ "$affected_task" == "$source_task" ]] || \
+                   _plan_task_depends_on "$source_task" "$affected_task"; then
+                    local source_file="${TASKS_DIR}/${source_task}.json"
+                    local caller_files
+                    caller_files=$(echo "$patch" | jq -c '.affected_files')
+                    if [[ "$affected_task" != "$source_task" ]] && [[ -f "$source_file" ]] && \
+                       [[ "$caller_files" != "[]" ]]; then
+                        local widened
+                        widened=$(jq --argjson add "$caller_files" '
+                            .files_touched = ((.files_touched // []) + ($add - (.files_touched // [])))
+                        ' "$source_file")
+                        echo "$widened" > "$source_file"
+                        echo -e "    ${COLOR_STEP}${SYM_DOT} Task ${source_task}: already runs after ${affected_task}; may now update callers in $(echo "$caller_files" | jq -r 'join(", ")')${RESET}"
+                    else
+                        echo -e "    ${COLOR_DIM}${SYM_DOT} Task ${affected_task} → ${source_task}: skipped (already ordered the other way)${RESET}"
+                    fi
+                    continue
+                fi
+
+                if [[ -f "$task_file" ]]; then
+                    # Add source_task to depends_on if not already present
+                    local updated
+                    updated=$(jq --arg dep "$source_task" '
+                        .depends_on = ((.depends_on // []) + [$dep] | unique)
+                    ' "$task_file")
+                    echo "$updated" > "$task_file"
+                    echo -e "    ${COLOR_STEP}${SYM_DOT} Task ${affected_task}: added depends_on → ${source_task}${RESET}"
+                fi
+            done
+
+            # Re-run the gate after patching
+            log_step "Re-running decomposition gate after auto-patch..."
+            decomp_result=$(context_decomposition_gate "${TASKS_DIR}" 2>/dev/null) || decomp_result=""
+            if [[ -n "$decomp_result" ]]; then
+                decomp_overall=$(echo "$decomp_result" | jq -r '.overall // "pass"' 2>/dev/null)
+            else
+                break
+            fi
+        else
+            break
+        fi
+    done
+
+    # Show per-task warnings
+    local decomp_warnings
+    decomp_warnings=$(echo "$decomp_result" | jq -r '.warnings[]? // empty' 2>/dev/null)
+    if [[ -n "$decomp_warnings" ]]; then
+        while IFS= read -r warn; do
+            [[ -z "$warn" ]] && continue
+            echo -e "    ${COLOR_WARN}${SYM_WARN} ${warn}${RESET}"
+        done <<< "$decomp_warnings"
+    fi
+
+    # Show file ownership violations
+    local ownership_violations
+    ownership_violations=$(echo "$decomp_result" | jq -r '.file_ownership.violations[]? // empty' 2>/dev/null)
+    if [[ -n "$ownership_violations" ]]; then
+        while IFS= read -r v; do
+            [[ -z "$v" ]] && continue
+            echo -e "    ${COLOR_ERROR}${SYM_CROSS} File ownership: ${v}${RESET}"
+        done <<< "$ownership_violations"
+    fi
+
+    if [[ "$decomp_overall" == "fail" ]]; then
+        echo "$decomp_result" | jq '.' > "${LOGS_DIR}/decomposition-gate.json"
+        return 1
+    elif [[ "$decomp_overall" == "warn" ]]; then
+        log_warn "Decomposition quality gate passed with warnings"
+    else
+        log_success "Decomposition quality gate passed"
+    fi
+    return 0
+}
+
+# Gate the skeleton before paying for enrichment: write its tasks to a scratch
+# directory, run the decomposition gate (with bridge auto-patching) and read
+# the patched depends_on and files_touched back into $parsed_architect.
+# Exits when the skeleton fails the gate. WARNING: Do not call inside $().
+_plan_gate_skeleton() {
+    if [[ "${SKIP_DECOMP:-}" == "true" ]]; then
+        return 0
+    fi
+    log_step "Running decomposition gate on the skeleton..."
+    local skel_dir
+    skel_dir=$(mktemp -d)
+    echo "$parsed_architect" | jq -c '.tasks[]' | while IFS= read -r t; do
+        printf '%s\n' "$t" > "${skel_dir}/$(echo "$t" | jq -r '.id').json"
+    done
+
+    local gate_rc=0
+    _plan_decomposition_gate "$skel_dir" || gate_rc=$?
+    if [[ $gate_rc -eq 1 ]]; then
+        echo "$parsed_architect" | jq '.' > "${LOGS_DIR}/architect-skeleton-rejected.json"
+        rm -rf "$skel_dir"
+        log_error "Decomposition quality gate FAILED on the skeleton — enrichment not run"
+        echo -e "Skeleton: ${LOGS_DIR}/architect-skeleton-rejected.json"
+        echo -e "Full report: ${LOGS_DIR}/decomposition-gate.json"
+        echo -e "Fix the spec (or task boundaries it implies) and re-run ${COLOR_STEP}speed plan --force${RESET}"
+        exit 1
+    fi
+
+    local patched
+    patched=$(jq -s 'map({key: (.id | tostring), value: {depends_on, files_touched}}) | from_entries' \
+        "$skel_dir"/*.json 2>/dev/null) || patched="{}"
+    rm -rf "$skel_dir"
+    parsed_architect=$(echo "$parsed_architect" | jq --argjson p "$patched" \
+        '.tasks |= map(. + ($p[.id | tostring] // {}))')
+}
+
+# Enrich the skeleton in $parsed_architect with acceptance criteria, spec
+# references, rationale, assumptions and the contract. The support model does
+# this: the boundaries are already decided. Tasks it skips get one retry.
+# Exits when any task stays unenriched. WARNING: Do not call inside $().
+_plan_enrich_skeleton() {
+    local specs_msg=""
+    local spec_index
+    for spec_index in "${!plan_spec_paths[@]}"; do
+        specs_msg+="## ${plan_spec_labels[$spec_index]}\n\n${plan_spec_contents[$spec_index]}\n\n"
+    done
+
+    local pending enriched='[]' contract='{"entities":[],"relationships":[],"core_queries":[]}'
+    pending=$(echo "$parsed_architect" | jq -c '{tasks: [.tasks[] | {id, title, description, files_touched, depends_on}],
+        cross_cutting_concerns: (.cross_cutting_concerns // [])}')
+
+    local attempt
+    for attempt in 1 2; do
+        local msg="${specs_msg}## Skeleton Plan\n\nEnrich every task below. Use these task IDs exactly.\n\n\`\`\`json\n${pending}\n\`\`\`"
+        local label="Architect (enrich)"
+        [[ $attempt -gt 1 ]] && label="Architect (enrich retry)"
+        log_step "Enriching $(echo "$pending" | jq '.tasks | length') task(s) with ${MODEL_SUPPORT}..."
+
+        local parsed_enrich
+        parsed_enrich=$(_run_architect_phase "$label" "$msg" \
+            "${AGENTS_DIR}/architect-enrich.md" "${TEMPLATES_DIR}/architect-enrich-output.json" \
+            "$MODEL_SUPPORT") || exit 1
+
+        enriched=$(jq -n --argjson a "$enriched" --argjson b "$parsed_enrich" \
+            '$a + [($b.tasks // [])[] | select((.acceptance_criteria // []) | length > 0)
+                   | {id: (.id | tostring), acceptance_criteria, spec_references, rationale, assumptions}]')
+        contract=$(jq -n --argjson a "$contract" --argjson b "$parsed_enrich" '
+            ($b.contract // {}) as $c
+            | {core_question: ($a.core_question // $c.core_question),
+               entities: ($a.entities + ($c.entities // [])),
+               relationships: ($a.relationships + ($c.relationships // [])),
+               core_queries: ($a.core_queries + ($c.core_queries // []))}')
+
+        pending=$(echo "$pending" | jq -c --argjson done "$enriched" \
+            '($done | map(.id)) as $ids | .tasks |= map(select((.id | tostring) as $i | $ids | index($i) | not))')
+        [[ $(echo "$pending" | jq '.tasks | length') -eq 0 ]] && break
+        log_warn "Enrichment skipped task(s): $(echo "$pending" | jq -r '[.tasks[].id] | join(", ")')"
+    done
+
+    if [[ $(echo "$pending" | jq '.tasks | length') -gt 0 ]]; then
+        log_error "Enrichment left task(s) without acceptance criteria: $(echo "$pending" | jq -r '[.tasks[].id] | join(", ")')"
+        log_error "Re-run speed plan (the skeleton is cached), or plan with --single-call"
+        exit 1
+    fi
+
+    parsed_architect=$(echo "$parsed_architect" | jq --argjson e "$enriched" --argjson c "$contract" '
+        ($e | map({key: .id, value: (. | del(.id))}) | from_entries) as $m
+        | .tasks |= map(. + ($m[.id | tostring] // {}))
+        | .contract = $c')
+    log_success "Enriched $(echo "$enriched" | jq 'length') task(s)"
 }
 
 # Decide whether to repair critical coverage gaps (S3.4-TR2): in a terminal,
@@ -314,12 +625,13 @@ _repair_coverage_gaps() {
     local gap_text
     gap_text=$(echo "$_cov_gaps" | jq -r '.[] | "- [\(.severity)] \(.spec): \(.section) — \(.requirement)\n  Explanation: \(.explanation)"')
 
+    # Specs first: they are the same in every repair call, the plan is not
     local msg=""
-    msg+="## Existing Plan\n\n${task_summary}\n\n"
     [[ -n "$product_spec_content" ]] && msg+="## Product Spec\n\n${product_spec_content}\n\n"
     msg+="## Tech Spec\n\n${tech_spec_content}\n\n"
     [[ -n "$design_spec_content" ]] && msg+="## Design Spec\n\n${design_spec_content}\n\n"
     [[ -n "${architecture_spec_content:-}" ]] && msg+="## Architecture Spec\n\n${architecture_spec_content}\n\n"
+    msg+="## Existing Plan\n\n${task_summary}\n\n"
     msg+="## Coverage Gaps\n\n${gap_text}\n\n"
     msg+="## Instructions\n\nAdd task(s) for the gaps above. "
     msg+="IDs start at ${start_id}. Do not recreate existing tasks. "
@@ -329,24 +641,11 @@ _repair_coverage_gaps() {
     log_step "Generating task(s) for ${_cov_critical} gap(s)..."
     echo ""
 
-    local output rc=0
-    output=$(provider_run_json \
-        "${AGENTS_DIR}/architect.md" \
-        "$msg" \
-        "${TEMPLATES_DIR}/architect-output.json" \
-        "$MODEL_PLANNING" \
-        "$ARCHITECT_MAX_TURNS" \
-        "" \
-        "Architect (add-task)") || rc=$?
-
-    if [[ $rc -ne 0 ]]; then
-        log_error "Add-task call failed (exit ${rc})"
-        return
-    fi
-
+    # The one-call Architect writes complete tasks; a few gap tasks are small
+    # enough that a skeleton/enrich split would cost more than it saves.
     local parsed_add
-    parsed_add=$(parse_agent_json "$output") || {
-        log_error "Could not parse add-task output"
+    parsed_add=$(_run_architect_phase "Architect (add-task)" "$msg") || {
+        log_error "Add-task call failed"
         return
     }
 
@@ -401,6 +700,7 @@ cmd_plan() {
     local force_plan=false
     local skip_audit=false
     local single_pass=false
+    local single_call=false
 
     # Parse options
     while [[ $# -gt 0 ]]; do
@@ -409,6 +709,7 @@ cmd_plan() {
             --force) force_plan=true; shift ;;
             --skip-audit) skip_audit=true; shift ;;
             --single-pass) single_pass=true; shift ;;
+            --single-call) single_call=true; shift ;;
             *) log_error "Unknown option: $1"; exit 1 ;;
         esac
     done
@@ -805,8 +1106,18 @@ cmd_plan() {
         done
         local spec_audit_file="${LOGS_DIR}/plan-audit-${spec_type:-spec${spec_index}}-${_audit_stamp}.json"
 
-        local audit_rc=0
-        (AUDIT_OUTPUT_FILE="$spec_audit_file"; cmd_audit "$spec_path") || audit_rc=$?
+        # A passing audit of unchanged inputs is reused; a failing one is not,
+        # so a fixed spec is always audited again.
+        local audit_rc=0 audit_key audit_stage="audit-${spec_index}"
+        audit_key=$(_plan_audit_cache_key "$spec_path")
+        if [[ "$force_plan" != "true" ]] && _plan_cache_valid "$audit_stage" "$audit_key"; then
+            _plan_cache_read "$audit_stage" > "$spec_audit_file"
+            log_step "Audit (${spec_label}): ${COLOR_DIM}cached (spec, linked specs and audit prompt unchanged)${RESET}"
+        else
+            (AUDIT_OUTPUT_FILE="$spec_audit_file"; cmd_audit "$spec_path") || audit_rc=$?
+            [[ $audit_rc -eq 0 && -s "$spec_audit_file" ]] && \
+                _plan_cache_write "$audit_stage" "$audit_key" "$(cat "$spec_audit_file")"
+        fi
 
         case $audit_rc in
             0) ;;
@@ -944,27 +1255,56 @@ cmd_plan() {
     # Include phase count in cache key so re-runs with different sizing don't serve stale results
     local phase_count=1
     [[ "$audit_sizing_rec" == "split" ]] && phase_count=2
+    # Skeleton pass or one-call Architect: the prompt and schema for the
+    # planning-model call(s) below
+    local arch_mode="single-call"
+    local arch_agent="${AGENTS_DIR}/architect.md"
+    local arch_schema="${TEMPLATES_DIR}/architect-output.json"
+    if _plan_two_pass; then
+        arch_mode="two-pass"
+        arch_agent="${AGENTS_DIR}/architect-skeleton.md"
+        arch_schema="${TEMPLATES_DIR}/architect-skeleton.json"
+    fi
+
     local architect_cache_hash
-    # Key on everything the plan depends on: specs, phase count, Architect prompts
-    # and model. Prompt changes must not reuse a plan made with the old prompts.
+    # Key on everything the plan depends on: specs, phase count, planning mode,
+    # Architect prompts, schemas and models. Prompt changes must not reuse a
+    # plan made with the old prompts.
     architect_cache_hash=$({
-        printf '%s:%s:%s:%s\n' "$spec_hash" "$phase_count" "${MODEL_PLANNING:-}" "${MODEL_SUPPORT:-}"
-        cat "${AGENTS_DIR}/architect.md" "${AGENTS_DIR}/architect-skeleton.md" "${AGENTS_DIR}/architect-enrich.md" 2>/dev/null
+        printf '%s:%s:%s:%s:%s\n' "$spec_hash" "$phase_count" "$arch_mode" "${MODEL_PLANNING:-}" "${MODEL_SUPPORT:-}"
+        if [[ "$arch_mode" == "two-pass" ]]; then
+            cat "${AGENTS_DIR}/architect-skeleton.md" "${AGENTS_DIR}/architect-enrich.md" \
+                "${TEMPLATES_DIR}/architect-skeleton.json" "${TEMPLATES_DIR}/architect-enrich-output.json" 2>/dev/null
+        else
+            cat "${AGENTS_DIR}/architect.md" "${TEMPLATES_DIR}/architect-output.json" 2>/dev/null
+        fi
     } | shasum -a 256 | cut -d' ' -f1)
 
     if [[ "$force_plan" != "true" ]] && _plan_cache_valid "architect" "$architect_cache_hash"; then
         parsed_architect=$(_plan_cache_read "architect")
         log_step "Architect: ${COLOR_DIM}cached (specs unchanged)${RESET}"
         echo ""
+    elif [[ "$arch_mode" == "two-pass" && "$force_plan" != "true" ]] && \
+         _plan_cache_valid "architect-skeleton" "$architect_cache_hash"; then
+        # The skeleton passed the gate last time; only enrichment is left
+        parsed_architect=$(_plan_cache_read "architect-skeleton")
+        log_step "Skeleton: ${COLOR_DIM}cached (specs unchanged)${RESET}"
+        _plan_enrich_skeleton
+        _plan_cache_write "architect" "$architect_cache_hash" "$parsed_architect"
+        echo ""
     else
-        # Build base architect message (shared across phases)
-        local base_message=""
+        # Stable context first so every Architect call shares the prefix
+        local stable_context
+        stable_context=$(_plan_stable_context)
+
+        # Build base architect message (single-phase)
+        local base_message="$stable_context"
 
         if [[ -n "$product_spec_content" ]]; then
-            base_message+="## Product Spec (what to build)\n\n${product_spec_content}"
+            base_message+="## Product Spec (what to build)\n\n${product_spec_content}\n\n"
         fi
 
-        base_message+="\n\n## Tech Spec (backend implementation)\n\n${tech_spec_content}"
+        base_message+="## Tech Spec (backend implementation)\n\n${tech_spec_content}"
 
         if [[ -n "$design_spec_content" ]]; then
             base_message+="\n\n## Design Spec (frontend implementation)\n\n${design_spec_content}"
@@ -973,17 +1313,6 @@ cmd_plan() {
         # Feature mode only: empty for single-file plans
         if [[ -n "$architecture_spec_content" ]]; then
             base_message+="\n\n## Architecture Spec (boundaries and quality constraints)\n\n${architecture_spec_content}"
-        fi
-        if [[ -n "$shared_context_content" ]]; then
-            base_message+="\n\n## Shared Platform Architecture (constraints, not feature scope)\n\n${shared_context_content}"
-        fi
-
-        if [[ -n "$SPEC_CODEBASE_CONTEXT" ]]; then
-            base_message+="\n\n## Codebase Context (ground truth from automated scan)\n\n${SPEC_CODEBASE_CONTEXT}"
-        fi
-
-        if [[ -n "$related_specs" ]]; then
-            base_message+="\n\n## Related Specs (cross-reference for entity relationships)\n${related_specs}"
         fi
 
         if [[ "$audit_sizing_rec" == "split" ]]; then
@@ -1064,23 +1393,14 @@ cmd_plan() {
             done
 
             # ── Step 4: Phase 1 message ───────────────────────────────────
-            local phase1_message=""
+            local phase1_message="$stable_context"
             for spec_index in "${!plan_spec_paths[@]}"; do
                 local spec_path="${plan_spec_paths[$spec_index]}"
                 local spec_label="${plan_spec_labels[$spec_index]}"
                 local content="${_phase1_content[$spec_path]:-${plan_spec_contents[$spec_index]}}"
-                phase1_message+="\n\n## ${spec_label}\n\n${content}"
+                phase1_message+="## ${spec_label}\n\n${content}\n\n"
             done
-            if [[ -n "$shared_context_content" ]]; then
-                phase1_message+="\n\n## Shared Platform Architecture (constraints, not feature scope)\n\n${shared_context_content}"
-            fi
-            if [[ -n "$SPEC_CODEBASE_CONTEXT" ]]; then
-                phase1_message+="\n\n## Codebase Context (ground truth from automated scan)\n\n${SPEC_CODEBASE_CONTEXT}"
-            fi
-            if [[ -n "$related_specs" ]]; then
-                phase1_message+="\n\n## Related Specs (cross-reference for entity relationships)\n${related_specs}"
-            fi
-            phase1_message+="\n\n## Phase Scope\n\n"
+            phase1_message+="## Phase Scope\n\n"
             phase1_message+="The audit estimated this spec will produce more than ${ARCHITECT_PHASE_TASK_THRESHOLD} tasks. "
             phase1_message+="You are generating Phase 1 (foundation tasks). "
             phase1_message+="Plan ONLY the foundation and core infrastructure sections.\n\n"
@@ -1099,7 +1419,7 @@ cmd_plan() {
             if [[ -z "$parsed_phase1" ]]; then
                 log_step "Sending to Architect (Phase 1)..."
                 echo ""
-                parsed_phase1=$(_run_architect_phase "Architect (Phase 1)" "$phase1_message") || exit 1
+                parsed_phase1=$(_run_architect_phase "Architect (Phase 1)" "$phase1_message" "$arch_agent" "$arch_schema") || exit 1
                 _plan_cache_write "architect-phase1" "$architect_cache_hash" "$parsed_phase1"
             fi
 
@@ -1119,23 +1439,14 @@ cmd_plan() {
             echo ""
 
             # ── Step 4: Phase 2 message ───────────────────────────────────
-            local phase2_message=""
+            local phase2_message="$stable_context"
             for spec_index in "${!plan_spec_paths[@]}"; do
                 local spec_path="${plan_spec_paths[$spec_index]}"
                 local spec_label="${plan_spec_labels[$spec_index]}"
                 local content="${_phase2_content[$spec_path]:-${plan_spec_contents[$spec_index]}}"
-                phase2_message+="\n\n## ${spec_label}\n\n${content}"
+                phase2_message+="## ${spec_label}\n\n${content}\n\n"
             done
-            if [[ -n "$shared_context_content" ]]; then
-                phase2_message+="\n\n## Shared Platform Architecture (constraints, not feature scope)\n\n${shared_context_content}"
-            fi
-            if [[ -n "$SPEC_CODEBASE_CONTEXT" ]]; then
-                phase2_message+="\n\n## Codebase Context (ground truth from automated scan)\n\n${SPEC_CODEBASE_CONTEXT}"
-            fi
-            if [[ -n "$related_specs" ]]; then
-                phase2_message+="\n\n## Related Specs (cross-reference for entity relationships)\n${related_specs}"
-            fi
-            phase2_message+="\n\n## Phase Scope\n\n"
+            phase2_message+="## Phase Scope\n\n"
             phase2_message+="You are generating Phase 2 (features and integration). "
             phase2_message+="Phase 1 tasks are already planned. Do NOT recreate them.\n\n"
             phase2_message+="Audit sizing rationale:\n${audit_sizing_rationale}\n\n"
@@ -1146,7 +1457,7 @@ cmd_plan() {
             phase2_message+="Focus on: API endpoints, higher-level services, frontend components, integration, tests."
 
             local parsed_phase2
-            parsed_phase2=$(_run_architect_phase "Architect (Phase 2)" "$phase2_message") || exit 1
+            parsed_phase2=$(_run_architect_phase "Architect (Phase 2)" "$phase2_message" "$arch_agent" "$arch_schema") || exit 1
 
             local phase2_tasks
             phase2_tasks=$(echo "$parsed_phase2" | jq -c '.tasks // []')
@@ -1193,7 +1504,15 @@ cmd_plan() {
             log_step "Sending to Architect agent..."
             echo ""
 
-            parsed_architect=$(_run_architect_phase "Architect" "$base_message") || exit 1
+            parsed_architect=$(_run_architect_phase "Architect" "$base_message" "$arch_agent" "$arch_schema") || exit 1
+        fi
+
+        if [[ "$arch_mode" == "two-pass" ]]; then
+            log_success "Skeleton: $(echo "$parsed_architect" | jq '.tasks | length') tasks"
+            _plan_gate_skeleton
+            _plan_cache_write "architect-skeleton" "$architect_cache_hash" "$parsed_architect"
+            _plan_enrich_skeleton
+            echo ""
         fi
 
         # Cache successful architect output
@@ -1371,6 +1690,12 @@ cmd_plan() {
 
         task_create "$id" "$title" "$description" "$criteria" "$depends_on" "$model"
 
+        # Keep structured criteria as an array, so criteria verification gets
+        # each criterion's verify_by instead of one manual string
+        if echo "$task" | jq -e '.acceptance_criteria | type == "array"' >/dev/null 2>&1; then
+            task_update_raw "$id" "acceptance_criteria" "$(echo "$task" | jq -c '.acceptance_criteria')"
+        fi
+
         # Store the current HEAD so diffs use the correct base
         task_update "$id" "base_commit" "$(_git rev-parse HEAD 2>/dev/null)"
 
@@ -1405,156 +1730,23 @@ cmd_plan() {
 
     # ── Decomposition quality gate ────────────────────────────────
     # Validates task size, cross-cluster coordination, bridge symbol
-    # exposure, and file ownership before proceeding.
-    # Bridge symbol auto-patch: if the gate fails only on missing bridge
-    # dependency edges, patch the task files and re-run the gate.
+    # exposure, and file ownership before proceeding. Two-pass plans were
+    # gated as a skeleton already; this run also covers repair-added tasks.
     if [[ "${SKIP_DECOMP:-}" == "true" ]]; then
         log_warn "Decomposition gate skipped (SKIP_DECOMP=true)"
         _log_gate_skip "decomposition" "plan"
     else
-    log_step "Running decomposition quality gate..."
-    local decomp_result
-    decomp_result=$(context_decomposition_gate "${TASKS_DIR}" 2>/dev/null) || decomp_result=""
-
-    if [[ -n "$decomp_result" ]]; then
-        local decomp_overall
-        decomp_overall=$(echo "$decomp_result" | jq -r '.overall // "pass"' 2>/dev/null)
-
-        # ── Bridge symbol auto-patch ──────────────────────────────
-        # If the gate failed, check whether the failures are exclusively
-        # bridge-symbol missing-dependency edges. If so, patch depends_on
-        # in the task JSON files and re-run the gate. Widening a bridge task can
-        # expose new edges, so repeat for a few rounds until the plan settles.
-        local patch_round=0
-        while [[ "$decomp_overall" == "fail" ]] && (( patch_round < 3 )); do
-            ((patch_round++)) || true
-            # Collect all missing bridge deps: affected_task needs depends_on → source_task
-            # Source task = the task that modifies the bridge symbol (from per_task[].task_id)
-            local bridge_patches
-            bridge_patches=$(echo "$decomp_result" | jq -c '
-                [.per_task[]? |
-                 . as $pt |
-                 .checks[]? |
-                 select(.check == "bridge_symbols" and .verdict == "fail") |
-                 .missing_dependencies[]? |
-                 {affected_task: .affected_task, source_task: $pt.task_id,
-                  affected_files: (.affected_files // [])}
-                ] // []' 2>/dev/null) || bridge_patches="[]"
-
-            local patch_count
-            patch_count=$(echo "$bridge_patches" | jq 'length' 2>/dev/null) || patch_count=0
-
-            # Check if there are non-bridge failures
-            local non_bridge_failures
-            non_bridge_failures=$(echo "$decomp_result" | jq '
-                [.per_task[]? | .checks[]? |
-                 select(.verdict == "fail" and .check != "bridge_symbols")
-                ] + [.file_ownership | select(.violations | length > 0) | .violations[]?]
-                | length' 2>/dev/null) || non_bridge_failures=0
-
-            if [[ "$patch_count" -gt 0 ]] && [[ "$non_bridge_failures" -eq 0 ]]; then
-                # One patch per edge, applied in a fixed order: edges that point to an
-                # earlier task first, so tasks sharing a file are chained by ID.
-                bridge_patches=$(echo "$bridge_patches" | jq -c '
-                    group_by([.affected_task, .source_task])
-                    | map(.[0] + {affected_files: (map(.affected_files[]) | unique)})
-                    | sort_by([
-                        ((.affected_task | tonumber? // 0) < (.source_task | tonumber? // 0)),
-                        (.source_task | tonumber? // 0),
-                        (.affected_task | tonumber? // 0)
-                      ])')
-                patch_count=$(echo "$bridge_patches" | jq 'length')
-                log_warn "Auto-patching ${patch_count} missing bridge-symbol dependency edge(s)..."
-
-                echo "$bridge_patches" | jq -c '.[]' | while IFS= read -r patch; do
-                    local affected_task source_task
-                    affected_task=$(echo "$patch" | jq -r '.affected_task')
-                    source_task=$(echo "$patch" | jq -r '.source_task')
-                    local task_file="${TASKS_DIR}/${affected_task}.json"
-
-                    # Never add an edge that closes a loop: if the source already
-                    # waits on the affected task, the pair is ordered the other way.
-                    # The bridge change then runs last, so it may edit the caller
-                    # files to update the call sites the earlier task wrote.
-                    if [[ "$affected_task" == "$source_task" ]] || \
-                       _plan_task_depends_on "$source_task" "$affected_task"; then
-                        local source_file="${TASKS_DIR}/${source_task}.json"
-                        local caller_files
-                        caller_files=$(echo "$patch" | jq -c '.affected_files')
-                        if [[ "$affected_task" != "$source_task" ]] && [[ -f "$source_file" ]] && \
-                           [[ "$caller_files" != "[]" ]]; then
-                            local widened
-                            widened=$(jq --argjson add "$caller_files" '
-                                .files_touched = ((.files_touched // []) + ($add - (.files_touched // [])))
-                            ' "$source_file")
-                            echo "$widened" > "$source_file"
-                            echo -e "    ${COLOR_STEP}${SYM_DOT} Task ${source_task}: already runs after ${affected_task}; may now update callers in $(echo "$caller_files" | jq -r 'join(", ")')${RESET}"
-                        else
-                            echo -e "    ${COLOR_DIM}${SYM_DOT} Task ${affected_task} → ${source_task}: skipped (already ordered the other way)${RESET}"
-                        fi
-                        continue
-                    fi
-
-                    if [[ -f "$task_file" ]]; then
-                        # Add source_task to depends_on if not already present
-                        local updated
-                        updated=$(jq --arg dep "$source_task" '
-                            .depends_on = ((.depends_on // []) + [$dep] | unique)
-                        ' "$task_file")
-                        echo "$updated" > "$task_file"
-                        echo -e "    ${COLOR_STEP}${SYM_DOT} Task ${affected_task}: added depends_on → ${source_task}${RESET}"
-                    fi
-                done
-
-                # Re-run the gate after patching
-                log_step "Re-running decomposition gate after auto-patch..."
-                decomp_result=$(context_decomposition_gate "${TASKS_DIR}" 2>/dev/null) || decomp_result=""
-                if [[ -n "$decomp_result" ]]; then
-                    decomp_overall=$(echo "$decomp_result" | jq -r '.overall // "pass"' 2>/dev/null)
-                else
-                    break
-                fi
-            else
-                break
-            fi
-        done
-
-        # Show per-task warnings
-        local decomp_warnings
-        decomp_warnings=$(echo "$decomp_result" | jq -r '.warnings[]? // empty' 2>/dev/null)
-        if [[ -n "$decomp_warnings" ]]; then
-            while IFS= read -r warn; do
-                [[ -z "$warn" ]] && continue
-                echo -e "    ${COLOR_WARN}${SYM_WARN} ${warn}${RESET}"
-            done <<< "$decomp_warnings"
-        fi
-
-        # Show file ownership violations
-        local ownership_violations
-        ownership_violations=$(echo "$decomp_result" | jq -r '.file_ownership.violations[]? // empty' 2>/dev/null)
-        if [[ -n "$ownership_violations" ]]; then
-            while IFS= read -r v; do
-                [[ -z "$v" ]] && continue
-                echo -e "    ${COLOR_ERROR}${SYM_CROSS} File ownership: ${v}${RESET}"
-            done <<< "$ownership_violations"
-        fi
-
-        if [[ "$decomp_overall" == "fail" ]]; then
+        log_step "Running decomposition quality gate..."
+        local decomp_rc=0
+        _plan_decomposition_gate "${TASKS_DIR}" || decomp_rc=$?
+        if [[ $decomp_rc -eq 1 ]]; then
             log_error "Decomposition quality gate FAILED"
             echo -e "The task plan has structural issues that will cause problems during execution."
             echo -e "Fix the plan and re-run ${COLOR_STEP}speed plan${RESET}"
             echo ""
-            echo "$decomp_result" | jq '.' > "${LOGS_DIR}/decomposition-gate.json"
             log_step "Full report: ${LOGS_DIR}/decomposition-gate.json"
             exit 1
-        elif [[ "$decomp_overall" == "warn" ]]; then
-            log_warn "Decomposition quality gate passed with warnings"
-        else
-            log_success "Decomposition quality gate passed"
         fi
-    else
-        log_warn "Decomposition gate unavailable — skipping"
-    fi
     fi # SKIP_DECOMP
     echo ""
 
