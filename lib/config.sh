@@ -3,10 +3,52 @@
 
 set -euo pipefail
 
+# ── Windows (Git Bash, MSYS2, Cygwin) ────────────────────────────
+# Python and jq here are native Windows programs. They cannot open /c/... or
+# /tmp/... paths written into script text or environment variables, so every
+# root path is kept in C:/... form, which bash accepts too. Windows jq also
+# ends each line with CRLF, and `read` would keep the \r in task IDs.
+SPEED_WINDOWS=false
+case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) command -v cygpath &>/dev/null && SPEED_WINDOWS=true ;;
+esac
+
+# Path in the form native tools can open: C:/... on Windows, unchanged elsewhere
+speed_native_path() {
+    if [[ "$SPEED_WINDOWS" == "true" ]]; then cygpath -m "$1"; else printf '%s\n' "$1"; fi
+}
+
+# Absolute path of directory $1 in native form
+speed_abs_dir() {
+    (cd "$1" && speed_native_path "$(pwd)")
+}
+
+# Python of the virtualenv in $1/.venv, if there is one. Windows venvs keep it
+# in Scripts/python.exe instead of bin/python3.
+speed_venv_python() {
+    local py
+    for py in "$1/.venv/bin/python3" "$1/.venv/Scripts/python.exe"; do
+        [[ -x "$py" ]] && { echo "$py"; return 0; }
+    done
+    return 1
+}
+
+if [[ "$SPEED_WINDOWS" == "true" ]]; then
+    export TMPDIR
+    TMPDIR="$(cygpath -m "${TMPDIR:-/tmp}")"
+    # Windows Python reads files as cp1252 by default; specs are UTF-8
+    export PYTHONUTF8=1
+    # Look at raw bytes: Git Bash's $(...) drops the \r, but `read` keeps it
+    if command -v jq &>/dev/null && [[ "$(printf '1' | command jq . 2>/dev/null | od -An -c)" == *'\r'* ]]; then
+        jq() { command jq -b "$@"; }
+        export -f jq
+    fi
+fi
+
 # ── Paths ────────────────────────────────────────────────────────
-SPEED_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SPEED_DIR="$(speed_abs_dir "$(dirname "${BASH_SOURCE[0]}")/..")"
 export SPEED_DIR    # Available to Python subprocesses
-PROJECT_ROOT="${SPEED_PROJECT_ROOT:-$(pwd)}"
+PROJECT_ROOT="$(speed_native_path "${SPEED_PROJECT_ROOT:-$(pwd)}")"
 LIB_DIR="${SPEED_DIR}/lib"
 AGENTS_DIR="${SPEED_DIR}/agents"
 TEMPLATES_DIR="${SPEED_DIR}/templates"

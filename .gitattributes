@@ -1,0 +1,7 @@
+# SPEED runs under bash on every platform. A CRLF checkout (core.autocrlf=true
+# on Windows) breaks its scripts, so text files always check out with LF.
+* text=auto eol=lf
+
+*.dll binary
+*.so binary
+*.dylib binary

@@ -16,10 +16,10 @@
 _learn_python() {
     if [[ -n "${SPEED_PYTHON:-}" ]]; then
         echo "$SPEED_PYTHON"
-    elif [[ -x "${SPEED_DIR}/.venv/bin/python3" ]]; then
-        echo "${SPEED_DIR}/.venv/bin/python3"
-    elif [[ -x "${SCRIPT_DIR}/.venv/bin/python3" ]]; then
-        echo "${SCRIPT_DIR}/.venv/bin/python3"
+    elif speed_venv_python "${SPEED_DIR}"; then
+        :
+    elif speed_venv_python "${SCRIPT_DIR}"; then
+        :
     else
         echo "python3"
     fi

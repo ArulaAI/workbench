@@ -746,7 +746,7 @@ cmd_plan() {
                     "Pass the file the link points to"
                 exit $EXIT_CONFIG_ERROR
             fi
-            _doc_path="$(cd "$(dirname "$_doc_path")" && pwd)/$(basename "$_doc_path")"
+            _doc_path="$(speed_abs_dir "$(dirname "$_doc_path")")/$(basename "$_doc_path")"
             if [[ "$_doc_path" != "${PROJECT_ROOT}/specs/"* ]] || \
                ! [[ "$_doc_path" =~ /specs/(product|design|tech|architecture)/ ]]; then
                 log_error_block \
@@ -875,7 +875,7 @@ cmd_plan() {
             fi
             [[ -n "$_see_path" ]] || continue
             # Normalise ../ segments so the directory check sees the real location
-            _see_path="$(cd "$(dirname "$_see_path")" && pwd)/$(basename "$_see_path")"
+            _see_path="$(speed_abs_dir "$(dirname "$_see_path")")/$(basename "$_see_path")"
             # The product vision is Guardian input, not this feature's PRD
             [[ "$(basename "$_see_path")" == "overview.md" ]] && continue
             case "$_see_path" in

@@ -82,6 +82,7 @@ _platform_ext() {
     case "$(uname -s)" in
         Darwin) echo "dylib" ;;
         Linux)  echo "so" ;;
+        MINGW*|MSYS*|CYGWIN*) echo "dll" ;;
         *)      echo "so" ;;
     esac
 }
@@ -95,10 +96,10 @@ _resolve_python() {
     [[ -n "$_deps_python" ]] && return 0
     if [[ -n "${SPEED_PYTHON:-}" ]]; then
         _deps_python="$SPEED_PYTHON"
-    elif [[ -x "${SPEED_DIR}/.venv/bin/python3" ]]; then
-        _deps_python="${SPEED_DIR}/.venv/bin/python3"
-    elif [[ -x "${PROJECT_ROOT}/.venv/bin/python3" ]]; then
-        _deps_python="${PROJECT_ROOT}/.venv/bin/python3"
+    elif _deps_python=$(speed_venv_python "${SPEED_DIR}"); then
+        :
+    elif _deps_python=$(speed_venv_python "${PROJECT_ROOT}"); then
+        :
     elif command -v python3 &>/dev/null; then
         _deps_python="$(command -v python3)"
     fi
