@@ -1,9 +1,4 @@
-"""Extract-stage call resolution: exact Java overloads and TSX callback props.
-
-Both only add proof that is in the source. An overload resolves when the
-argument's static type is exactly one candidate's parameter type; a callback
-prop reaches the handlers every rendering of the component passes.
-"""
+"""Tests for call resolution of Java overloads and TSX callback props."""
 import pytest
 
 from lib.context.business_domain_extract import Extractor
@@ -31,7 +26,7 @@ def _call(facts, caller, excerpt):
     return edge
 
 
-# ── Java overloads ───────────────────────────────────────────────────────
+# Java overloads
 
 MAPPER = """package com.example.mapper;
 import com.example.dto.OwnerDto;
@@ -116,7 +111,7 @@ def test_a_wildcard_imported_generated_dto_selects_its_overload(tmp_path):
     assert _name(facts, edge['to_ref']['id']) == 'OwnerMapper.toOwner(OwnerFieldsDto)'
 
 
-# ── TSX callback props ───────────────────────────────────────────────────
+# TSX callback props
 
 FIELD = """import * as React from 'react';
 
@@ -201,7 +196,7 @@ describe('Field', () => {
     assert _name(facts, edge['to_ref']['id']) == 'PageA.onFieldChange'
 
 
-# ── Review regressions ───────────────────────────────────────────────────
+# Edge cases
 
 def test_a_conversion_never_outranks_another_candidate(tmp_path):
     # javac's strict phase picks f(Integer, Bar); f(int, Foo) needs unboxing.
@@ -249,7 +244,7 @@ def test_a_nested_element_inside_an_attribute_keeps_its_own_props(tmp_path):
         'PageA.onFieldChange', 'PageA.other']
 
 
-# ── Java local declarations and implicit/on-demand imports ───────────────
+# Java local declarations and implicit/on-demand imports
 
 ENTITY = """package com.example.model;
 public class BaseEntity { public Integer getId() { return null; } }
@@ -283,7 +278,7 @@ def _calls(facts, name):
 def test_loop_and_resource_variables_have_their_declared_type(tmp_path, declaration):
     facts = _extract(tmp_path, _service(declaration))
     [edge] = _calls(facts, 'getId')
-    # getId is inherited from BaseEntity through Pet's heritage.
+    # Pet inherits getId from BaseEntity.
     assert edge['resolution'] == 'resolved'
     assert _name(facts, edge['to_ref']['id']) == 'BaseEntity.getId()'
 
@@ -337,7 +332,7 @@ def test_several_library_wildcards_leave_the_provider_unnamed(tmp_path):
         'Map<String, Object> params = null; params.put("id", 1);',
         imports='import com.example.model.Pet;\nimport java.util.*;\nimport java.util.concurrent.*;\n'))
     [edge] = _calls(facts, 'put')
-    # External; each on-demand package is a candidate provider.
+    # Each wildcard-imported package is a candidate provider.
     assert edge['to_ref']['kind'] == 'resource'
     assert facts['resources'][edge['to_ref']['id']]['provider'] == (
         'type:java.util.Map|java.util.concurrent.Map')
@@ -356,7 +351,7 @@ def test_only_a_type_name_can_come_from_a_wildcard(tmp_path, body):
 
 
 def test_a_local_wildcard_keeps_an_undeclared_name_unresolved(tmp_path):
-    # com.example.model is the project's; a missing type there is a gap.
+    # com.example.model is a project package, so a missing type there is a gap.
     facts = _extract(tmp_path, _service('Owner owner = null; owner.getName();',
                                         imports='import com.example.model.*;\n'))
     [edge] = _calls(facts, 'getName')
@@ -365,13 +360,13 @@ def test_a_local_wildcard_keeps_an_undeclared_name_unresolved(tmp_path):
 
 
 def test_a_library_wildcard_beside_a_local_one_is_not_enough(tmp_path):
-    # Map could still be a project type the snapshot lacks in com.example.model.
+    # Map might be a project type in com.example.model that the snapshot lacks.
     facts = _extract(tmp_path, _service('Map<String, Object> params = null; params.put("id", 1);'))
     [edge] = _calls(facts, 'put')
     assert edge['resolution'] == 'unresolved' and edge['to_ref'] is None
 
 
-# ── Chained calls: declared and catalogued return types ──────────────────
+# Chained calls: declared and catalogued return types
 
 REPOSITORY = """package com.example.service;
 import jakarta.persistence.EntityManager;
@@ -447,7 +442,7 @@ def test_a_raw_generic_library_type_keeps_the_chain_typed(chains):
 
 
 @pytest.mark.parametrize('name, excerpt', [
-    # TypedQuery<X>.getSingleResult() returns a type parameter: not catalogued.
+    # TypedQuery<X>.getSingleResult() returns a type parameter, which isn't catalogued.
     ('getId', 'getSingleResult().getId()'),
     # An undeclared project method has no return type to follow.
     ('getName', 'pet.unknown().getName()'),
@@ -467,5 +462,5 @@ def test_the_library_signature_catalog_is_well_formed():
         assert re.fullmatch(r'[a-z]\w*(\.\w+)+', owner), owner
         for key, returned in methods.items():
             assert re.fullmatch(r'\w+/(\d+|\*)', key), (owner, key)
-            # Qualified or primitive: never a type parameter or a simple name.
+            # Return types must be qualified names or primitives.
             assert returned in primitives or re.fullmatch(r'[a-z]\w*(\.\w+)+', returned), (owner, key)

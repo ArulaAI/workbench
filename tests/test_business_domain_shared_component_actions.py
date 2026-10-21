@@ -1,10 +1,7 @@
-"""Actions in shared UI components are anchored once per caller route.
+"""Tests that actions in shared UI components get one anchor per caller route.
 
-A component composed by several routed pages shows its action on each of
-those routes, so each route gets its own route-scoped action anchor, evidenced
-by the route and the composition that displays it. Every caller still reaches
-the shared component and its effects through the graph, and the branch each
-caller takes keeps its own endpoint.
+Each caller still reaches the shared component and its effects, and each
+branch keeps its own endpoint.
 """
 import pytest
 
@@ -104,8 +101,7 @@ def _per_route(facts):
 
 
 def test_shared_action_has_one_anchor_per_caller_route(facts):
-    # Was: exactly one OwnerEditor.onSubmit anchor. Now one per route whose
-    # page composes OwnerEditor, and no extra component-scoped anchor.
+    # One anchor per route whose page composes OwnerEditor, and no component-scoped anchor.
     actions = _per_route(facts)
     assert set(actions) == set(CALLER_ROUTES)
     for anchor in actions.values():
@@ -119,7 +115,6 @@ def test_shared_action_has_one_anchor_per_caller_route(facts):
 
 
 def test_shared_action_is_not_dropped(facts):
-    # Unchanged intent, now checked for every per-route anchor.
     for action in _actions(facts, 'OwnerEditor'):
         trace = _trace(facts, action)
         assert {'OwnerEditor.render', 'OwnerEditor.onSubmit'} <= _symbols(facts, trace)
@@ -134,10 +129,9 @@ def test_every_caller_route_reaches_the_shared_component_and_shared_effects(fact
     for route in CALLER_ROUTES:
         trace = _route_trace(facts, route)
         assert 'OwnerEditor.render' in _symbols(facts, trace)
-        # The route's own action and its page meet at the shared component.
         action_trace = _trace(facts, actions[route])
         assert _symbols(facts, trace) & _symbols(facts, action_trace) >= {'OwnerEditor.render'}
-        # One effect record, attached to every caller that reaches it.
+        # A single effect record shared by every caller that reaches it.
         assert trace['id'] in effect['trace_ids']
     assert len([item for item in facts['effects'].values()
                 if item['origin_ref'] == effect['origin_ref']
@@ -156,8 +150,7 @@ def test_each_caller_branch_keeps_its_own_endpoint(facts):
 
 
 def test_shared_action_is_scoped_to_each_caller_route(facts):
-    # Was: identity and scope named OwnerEditor.render and the path was None.
-    # Now each anchor's identity, scope and operation path are its route.
+    # Each anchor's identity, scope and operation path use its route.
     for route, action in _per_route(facts).items():
         representation = _registration(action)
         assert representation['identity_key'].startswith(f'ui:client:action:{route}:onClick:')
@@ -167,15 +160,13 @@ def test_shared_action_is_scoped_to_each_caller_route(facts):
 
 
 def test_shared_action_anchor_never_takes_another_caller_route(facts):
-    # Was: no caller route appeared in the single anchor. Now each anchor names
-    # exactly its own route and no component-scoped identity remains.
     for route, action in _per_route(facts).items():
         representation = _registration(action)
         for other in CALLER_ROUTES:
             if other != route:
                 assert f':{other}:' not in representation['identity_key']
         assert 'OwnerEditor.render' not in representation['identity_key']
-    # The contrast is unchanged: a directly routed component is route-scoped.
+    # A directly routed component is still route-scoped.
     [direct] = _actions(facts, 'VisitEditor')
     assert _registration(direct)['identity_key'].startswith(
         'ui:client:action:/visits/new:onClick:')

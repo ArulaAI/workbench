@@ -1,8 +1,4 @@
-"""Evidence-packet interpretation, schema normalization and validated caching.
-
-All stages operate on language-independent records. No repository, framework,
-business entity or expected domain name is a classification input here.
-"""
+"""Run provider synthesis over evidence packets, normalize the output and cache validated results."""
 from __future__ import annotations
 import copy
 from collections import Counter
@@ -65,7 +61,7 @@ PROVIDER_PROJECTION_VERSION = 1
 
 
 def allowed_evidence_ids(packet):
-    """Return the single authoritative provider-visible evidence catalog."""
+    """Return the evidence IDs the provider may cite."""
     identifiers = set(packet['context']['evidence'])
     identifiers.update(
         key for key, reference in packet['context']['record_refs'].items()
@@ -130,11 +126,10 @@ def _packet_reference_gaps(packet, identifiers):
 
 
 class ProviderProjection:
-    """Lossless local codec for the provider boundary only.
+    """Compact, lossless encoding of a packet for the provider.
 
-    The provider receives every interpretation-bearing value. Repeated storage
-    metadata is retained in this local sidecar and restored before the exact
-    round-trip proof; it never changes the canonical packet or persisted graph.
+    Storage metadata the provider doesn't need is kept in a local sidecar and
+    restored on decode. The canonical packet is never changed.
     """
     FORMAT = 'speed-domain-wire'
     VERSION = PROVIDER_PROJECTION_VERSION
@@ -159,7 +154,7 @@ class ProviderProjection:
         self.canonical_ids = {alias: ident for ident, alias in self.aliases.items()}
         aliased = self._rewrite(semantic, self.aliases)
         self.wire_packet = self._pack(aliased)
-        # Fail closed at construction, before sizing or provider dispatch.
+        # Check the round trip now, before sizing or dispatch.
         self.decode_packet(self.wire_packet)
 
     def _semantic_packet(self, packet):
@@ -182,9 +177,8 @@ class ProviderProjection:
                 omitted['locator'] = locator_omitted
             if omitted:
                 sidecar['evidence'][evidence_id] = omitted
-        # GraphContext retains both canonical indexes and embedded anchor
-        # records. The wire sends the embedded association as IDs and keeps
-        # each interpretation-bearing record once in the top-level index.
+        # Send embedded anchor records as IDs; the full records are already in
+        # the top-level indexes.
         if ('anchor_representations' in context
                 and 'anchor_correspondences' in context):
             for anchor in context.get('anchors', {}).values():
@@ -368,10 +362,9 @@ class ProviderProjection:
         return self._rewrite(copy.deepcopy(schema), self.aliases)
 
     def extend_aliases(self, *values, registry=None):
-        """Alias request-owned records that are not part of the graph.
+        """Alias request-owned records that aren't in the graph.
 
-        With a run-level registry a record keeps its alias in every request of
-        the run, so aliases the provider wrote into prose keep naming it.
+        With a run-level registry, a record keeps the same alias across requests.
         """
         identifiers = set()
         for value in values:
@@ -394,14 +387,11 @@ class ProviderProjection:
 
 
 class AliasRegistry:
-    """Run-level ``_ref:N`` numbers for records that are not graph records.
+    """Run-level ``_ref:N`` numbers for records outside the graph.
 
-    Candidate record IDs are content-derived, so sorting them anew for every
-    request renumbers records whenever a repair adds or re-identifies one.
-    The provider cites these numbers in prose, which normalization cannot
-    rewrite, so a citation would silently move to another record.  Numbers
-    here are handed out once, never reused, and move with a record only
-    through ``inherit``.
+    The provider cites these numbers in prose, which normalization can't rewrite,
+    so a number has to keep pointing at the same record across repairs. Numbers
+    are never reused and only move to a new ID through ``inherit``.
     """
 
     def __init__(self):
@@ -503,7 +493,7 @@ def agent_instructions():
 
 
 def input_token_estimate(request, schema):
-    """Local tokenizer estimate with explicit framing and uncertainty allowance."""
+    """Estimate input tokens locally, with a safety margin and framing overhead."""
     import tiktoken
     encoding = tiktoken.get_encoding(POLICY['input_token_encoding'])
     text = canonical({'request':request,'output_schema':schema}).decode('utf-8')
@@ -512,7 +502,7 @@ def input_token_estimate(request, schema):
 
 
 def projected_input_token_estimate(request, schema):
-    """Exact token count of the deterministic final wire plus framing."""
+    """Count tokens for the final wire request plus framing."""
     import tiktoken
     encoding = tiktoken.get_encoding(POLICY['input_token_encoding'])
     text = canonical({'request': request, 'output_schema': schema}).decode('utf-8')
@@ -521,13 +511,13 @@ def projected_input_token_estimate(request, schema):
 
 
 def semantic_request_identity_input(request):
-    """Remove only transport-attempt fields from stable semantic identity."""
+    """Drop per-attempt fields (request_id, deadline_at) from a request."""
     return {key: copy.deepcopy(value) for key, value in request.items()
             if key not in ('request_id', 'deadline_at')}
 
 
 def strict_conditional_variants(schema):
-    """Compile finite canonical if/then rules into strict-output anyOf."""
+    """Compile if/then rules into anyOf variants for strict-output providers."""
     rules = schema.get('allOf', [])
     if not rules:
         return copy.deepcopy(schema)
@@ -627,10 +617,9 @@ def strict_conditional_variants(schema):
 
 
 def wire_schema(type_name: str, packet=None) -> dict:
-    """Lossless map-to-record-array codec for strict-output providers.
+    """Return the provider schema for *type_name*, with ID-keyed maps as arrays.
 
-    Canonical artifacts keep ID-keyed maps. The wire uses arrays because
-    strict structured-output APIs cannot express arbitrary object keys.
+    Strict structured-output APIs can't express arbitrary object keys.
     """
     needed = set()
     def convert(schema, definition=None):
@@ -644,8 +633,8 @@ def wire_schema(type_name: str, packet=None) -> dict:
         result = {}
         for key,value in schema.items():
             if key == 'uniqueItems':
-                # Enforced by the canonical validator after decoding; this
-                # keyword is unsupported by strict-output transports.
+                # Strict-output transports don't support this keyword; the canonical
+                # validator checks it after decoding.
                 continue
             if key == 'properties':
                 result[key] = {name:convert(child) for name,child in value.items()}
@@ -668,9 +657,8 @@ def wire_schema(type_name: str, packet=None) -> dict:
     if definitions:
         _constrain_provider_record_ids(definitions)
         result['$defs'] = definitions
-    # Semantic providers propose records; only the review workflow may assign
-    # a human review state.  Encode that write boundary in the provider schema
-    # instead of spending a repair request on a value the runtime must reject.
+    # Only the review workflow may set a review state, so keep it out of the
+    # provider schema instead of rejecting it later.
     for name in ('Activity','Ownership','Domain'):
         definition = definitions.get(name)
         if definition and 'review_state' in definition.get('properties',{}):
@@ -678,8 +666,7 @@ def wire_schema(type_name: str, packet=None) -> dict:
     claim = definitions.get('Claim')
     if claim:
         claim['properties']['semantic_review']['enum'] = ['uncertain']
-    # An InformationUse is a resource-backed read/write assertion. Local form
-    # state or a concept without a trace-reachable resource is not such a use.
+    # An InformationUse must be backed by a resource reachable from a trace.
     information_use = definitions.get('InformationUse')
     if information_use:
         information_use['properties']['resource_ids']['minItems'] = 1
@@ -752,13 +739,9 @@ def wire_schema(type_name: str, packet=None) -> dict:
 
 
 def _constrain_scope_subjects(schema, type_name, packet):
-    """Name a scope's required subjects in the schema that must cover them.
+    """Restrict a scope's subject fields to the subjects it must cover.
 
-    A verifier must check, and a candidate must dispose of, exactly the
-    subjects `required_scope_subjects` names; which correspondences qualify
-    is a rule the provider would otherwise have to reconstruct. The subjects
-    become the only admissible values. Completeness is not a schema count: a
-    missing subject stays a deterministic finding the repair chain receives.
+    Missing subjects aren't caught here; they come back as findings for repair.
     """
     if 'scope_kind' not in packet:
         return
@@ -830,7 +813,7 @@ def _set_record_id_pattern(shape, pattern):
 
 
 def _constrain_provider_record_ids(definitions):
-    """Constrain provider-created IDs using the normalization prefix owner."""
+    """Constrain provider-created IDs to the expected prefix for each record type."""
     for record_type, prefix in ID_PREFIX_BY_TYPE.items():
         definition = definitions.get(record_type)
         if definition is not None:
@@ -1127,18 +1110,12 @@ def _normalize_payload(payload, aliases, output_type):
 
 
 def _derive_deterministic_fields(payload, graph):
-    """Replace provider hints with the values SPEED derives from the graph.
+    """Overwrite provider-supplied fields that can be derived from the graph.
 
-    Acceptance overwrites an activity's bindings, effects and information
-    uses, and an information use's traces, bindings and effects, with exact
-    projections of the accepted traces; a rule cannot claim enforcement
-    verified on a trace that is not resolved; and an information use cannot be
-    resolved while its operation facts are not. Applying the same derivations
-    here, before semantic identities are allocated, means the provider is never
-    asked (or judged by Verify) for what the graph already determines, and a
-    record's identity does not change because one response copied these lists
-    more completely than another. Nothing the provider chose semantically is
-    altered: membership, traces, concepts, rules, text and support stay its own.
+    Activity and information-use traces, bindings and effects are recomputed from
+    the accepted traces, and rule/use resolution is capped by trace and
+    operation-fact resolution. Doing this before IDs are allocated keeps record
+    identity stable. The provider's semantic choices are left alone.
     """
     if not isinstance(payload.get('activities'), dict):
         return payload
@@ -1156,9 +1133,7 @@ def _derive_deterministic_fields(payload, graph):
             continue
         for field, identifiers in activity_closure(model, activity).items():
             activity[field] = sorted(identifiers)
-        # Trace resolution is authoritative: a rule an incompletely traced
-        # activity applies cannot be verified on that trace. This is the same
-        # support ceiling single-activity acceptance applies.
+        # A rule on an incompletely traced activity can't be verified on that trace.
         if any(traces[trace_id]['resolution'] != 'resolved'
                for trace_id in activity['trace_ids']):
             for rule_id in activity.get('rule_ids', []):
@@ -1172,16 +1147,12 @@ def _derive_deterministic_fields(payload, graph):
         try:
             closure = information_use_closure(model, use)
         except DomainError:
-            # An ungrounded use is left exactly as proposed; acceptance and
-            # Verify report it.
+            # Leave ungrounded uses as they are; acceptance and Verify report them.
             continue
         for field in ('trace_ids', 'binding_ids', 'effect_ids'):
             use[field] = sorted(closure[field])
-        # Operation-fact resolution is authoritative: a use whose edges or
-        # effects are not resolved (persistence writes stay unresolved until
-        # completion is proven) cannot itself be resolved.  This is the
-        # ceiling reference validation enforces; claims below it stay as they
-        # are.
+        # A use can't be resolved while any of its edges or effects are unresolved
+        # (e.g. persistence writes not yet proven complete).
         if use.get('resolution') == 'resolved':
             facts = ([model['edges'][edge_id] for edge_id in sorted(closure['edge_ids'])]
                      + [model['effects'][effect_id]
@@ -1262,7 +1233,7 @@ def derive_identity_changes(previous, replacement):
 
 
 def normalize_repair_payload(payload, graph, previous, expected_parent_hash):
-    """Normalize a complete replacement and derive its exact identity ledger."""
+    """Normalize a repair candidate and derive its identity changes."""
     if payload['parent_candidate_hash'] != expected_parent_hash:
         finding = validation_finding(
             'INVALID_REPAIR_PARENT',
@@ -1286,8 +1257,7 @@ def normalize_repair_payload(payload, graph, previous, expected_parent_hash):
 def _model_ready_context(model: dict, subject_ids: list[str]) -> dict:
     stage = 'activity'
     context = record('PacketContext')
-    # Capability gaps are deterministic graph facts, not provider-side
-    # assumptions.  Every complete scope receives them with its obligations.
+    # Capability gaps come from the graph and go to every complete scope.
     context['capabilities'] = copy.deepcopy(model.get('capabilities', []))
     if stage == 'activity':
         anchor_ids = set(subject_ids)
@@ -1302,9 +1272,8 @@ def _model_ready_context(model: dict, subject_ids: list[str]) -> dict:
             edge_id for trace in context['traces'].values()
             for edge_id in trace['edge_ids']}
         context['edges'] = {k:v for k,v in model['edges'].items() if k in edge_ids}
-        # Tests that exercise traced behavior and documentation describing a
-        # selected anchor are evidence about it (trace step 4). Tracing never
-        # follows those edges, so the traces alone would omit them.
+        # Tracing doesn't follow test or documentation edges, so add tests that
+        # exercise traced code and docs that describe a selected anchor.
         traced = {s for t in context['traces'].values() for s in t['symbol_ids']}
         attached = {k: v for k, v in model['edges'].items() if v['to_ref'] and (
             (v['kind'] == 'tests_behavior' and v['to_ref']['id'] in traced)
@@ -1338,12 +1307,11 @@ def _model_ready_context(model: dict, subject_ids: list[str]) -> dict:
             for correspondence in anchor.get('correspondences', [])
             for eid in correspondence['evidence_ids'])
         evidence.update(eid for edge in context['edges'].values() for eid in edge['evidence_ids'])
-        # A test's own span holds its assertions; the edge cites only the call.
+        # The test's span has its assertions; the edge only cites the call.
         evidence.update(eid for symbol_id in test_symbols
                         for eid in model['symbols'][symbol_id]['evidence_ids'])
         evidence.update(eid for obligation in context['trace_obligations'].values() for eid in obligation['evidence_ids'])
-        # Include observations nested in the traced source spans, with exact
-        # excerpt evidence even when it differs from the enclosing symbol span.
+        # Include rule observations nested in traced spans, with their own excerpts.
         spans = [model['evidence'][eid]['locator'] for eid in evidence]
         for key, observation in model['rule_observations'].items():
             for eid in observation['evidence_ids']:
@@ -1365,15 +1333,13 @@ def _model_ready_context(model: dict, subject_ids: list[str]) -> dict:
         concept_ids.update(v['concept_id'] for v in context['information_uses'].values())
         concept_ids.update(cid for rule in context['rules'].values() for cid in rule['concept_ids'])
         context['concepts'] = {k:copy.deepcopy(v) for k,v in model['concepts'].items() if k in concept_ids}
-        # Grouping proposes boundaries from interpreted behaviors. Referenced
-        # evidence remains hash-identified; the later review receives excerpts.
+        # Grouping only needs evidence hashes; review gets the excerpts later.
         evidence = set()
     else:
         context['claims'] = {k:copy.deepcopy(v) for k,v in model['claims'].items()
                              if k in subject_ids}
-        # Verification input is the claim and its evidence, never a prior
-        # verifier verdict. This keeps the semantic checkpoint stable when a
-        # verified candidate is revalidated under changed execution code.
+        # Drop prior verdicts so the request (and its checkpoint) stays the same
+        # when a verified candidate is revalidated.
         for claim in context['claims'].values():
             claim['semantic_review'] = 'uncertain'
         evidence = {eid for claim in context['claims'].values() for eid in claim['evidence_ids']}
@@ -1429,10 +1395,9 @@ def _model_ready_context(model: dict, subject_ids: list[str]) -> dict:
 
 
 def _reference_manifest(model,context):
-    """Explicit hashes identify referenced records omitted from this packet.
+    """Add hashed refs for referenced records that aren't in the packet.
 
-    They establish identity only, never proof of content the model has not
-    received. Interpretation cannot promote them to source observations.
+    The hashes identify records only; they aren't evidence of their content.
     """
     index = {}
     def collect(value,collection):
@@ -1473,7 +1438,7 @@ def _reference_manifest(model,context):
 
 
 def fit_packet(packet, max_bytes):
-    """Admit a complete scope; limits cannot erase graph or evidence records."""
+    """Return the packet if it fits in *max_bytes*, else raise PACKET_LIMIT."""
     if len(canonical(packet)) <= max_bytes:
         return packet
     raise DomainError('PACKET_LIMIT','Complete graph scope exceeds request allowance; previous publication and validated work are preserved')
@@ -1484,11 +1449,9 @@ def _as_returned(graph, candidate):
 
 
 def _repair_limit(graph):
-    """Repairs one scope's candidate may receive.
+    """Return the repair limit for a scope.
 
-    A reconciliation joins validated children, and its review finds what no
-    child could see; it converges over more rounds than a scope built from the
-    graph, so it has its own configured limit.
+    Reconciliations usually need more rounds, so they have their own limit.
     """
     if graph.get('scope_kind') == 'reconciliation':
         return POLICY['reconciliation_repair_limit']
@@ -1497,7 +1460,7 @@ def _repair_limit(graph):
 
 @dataclass(frozen=True)
 class RepairState:
-    """Where a repair chain stands: the rejected candidate and its rejection."""
+    """Repair chain state: the rejected candidate and why it was rejected."""
     candidate: dict
     findings: list
     report: dict
@@ -1509,7 +1472,7 @@ SHUTDOWN = threading.Event()
 
 
 def _descendants(pid):
-    """Every process started, directly or not, by `pid`."""
+    """Return all descendant PIDs of `pid`."""
     table = subprocess.run(['ps', '-Ao', 'pid=,ppid='], capture_output=True,
                            text=True, check=False).stdout
     children = {}
@@ -1526,12 +1489,11 @@ def _descendants(pid):
 
 
 def _terminate_tree(process, grace=2.0):
-    """End a provider call and everything it started.
+    """Kill a provider call and all of its descendants.
 
-    Its process group is not enough: `timeout` and other wrappers start
-    process groups of their own, and their children outlive a group signal.
-    The whole tree is read before anything is signalled, because a process
-    whose parent dies is re-parented and can no longer be found from it.
+    Killing the process group isn't enough because wrappers like `timeout` start
+    their own groups. The tree is collected before signalling, since orphaned
+    children get re-parented and can't be found afterwards.
     """
     victims = [process.pid, *_descendants(process.pid)]
 
@@ -1565,8 +1527,7 @@ def _any_alive(pids):
 
 
 def request_shutdown():
-    """Stop every running synthesis: each provider call ends and its process
-    group is killed within one poll, whichever thread made it."""
+    """Stop all running syntheses and kill their provider process groups."""
     SHUTDOWN.set()
 
 
@@ -1574,12 +1535,10 @@ USAGE_FIELDS = ('inputTokens', 'outputTokens', 'peakInputTokens', 'peakOutputTok
 
 
 def _reported_usage(path):
-    """Token usage the provider reported for one request, or none.
+    """Return the token usage the provider reported for a request, or None.
 
-    Totals cover every model turn the request took and are charged to the
-    build budget; peaks are the largest single turn, which is what a
-    per-request limit bounds. A provider that reports nothing leaves its
-    reservations in force.
+    Totals cover all model turns and count against the build budget. Peaks are
+    the largest single turn, which is what the per-request limit applies to.
     """
     try:
         value = json.loads(path.read_text())
@@ -1620,8 +1579,8 @@ class Synthesis:
                 else:
                     self.project_instructions = instruction_path.read_text(encoding='utf-8')
             speed_root = AGENTS.parent
-            # How long a call may run decides neither what it asks nor what a
-            # valid answer is, so it does not invalidate validated responses.
+            # Timeouts don't change the request or the answer, so they shouldn't
+            # invalidate cached responses.
             semantic_config = {key: value for key, value in self.agent_config.items()
                                if key not in ('agent_timeout', 'kill_grace')}
             self.provider_hash = digest({'config':semantic_config,
@@ -1682,7 +1641,7 @@ class Synthesis:
             raise
 
     def _speed_call_unlogged(self, action, *args, timeout=30, env=None):
-        """Call digest's command-owned provider entry point."""
+        """Call the provider bridge script (lib/cmd/domains.sh)."""
         if self.is_cancelled():
             raise DomainError('CANCELLED','Discovery cancelled')
         bridge = AGENTS.parent/'lib/cmd/domains.sh'
@@ -1707,8 +1666,8 @@ class Synthesis:
                     except subprocess.TimeoutExpired:pass
                 if process.returncode:
                     errors.seek(0)
-                    # Drain bridge stderr, but never persist native output. It
-                    # may contain credentials, prompts or response bodies.
+                    # Drain stderr but never store it; it may contain credentials, prompts or
+                    # response bodies.
                     errors.read(self.config['max_artifact_bytes'])
                     output.seek(0)
                     raw_failure = output.read(self.config['max_artifact_bytes']+1)
@@ -1783,13 +1742,13 @@ class Synthesis:
         return exc.code in POLICY['transient_retry_codes']
 
     def _can_recover_provider_failure(self, exc):
-        """Retry transient failures, or confirm one failure after proven health."""
+        """Return True for retryable failures, or any provider failure after a recovery."""
         return (self._is_provider_failure(exc) and
                 (self._is_retryable_provider_failure(exc)
                  or self.provider_generation > 0))
 
     def _provider_failure_signature(self, exc):
-        """Stable build-local identity; variable prose and log paths are excluded."""
+        """Identify a failure by provider, category and native status, not message text."""
         failure = exc.provider_failure
         if failure is None:
             category, native_status = exc.code, None
@@ -1798,7 +1757,7 @@ class Synthesis:
         return self.provider_hash, category, native_status
 
     def _latch_provider_failure(self, cause, blocked_by=None):
-        """Open the existing build-scoped gate. Caller holds provider_gate."""
+        """Mark the provider as failed for this build. Caller holds provider_gate."""
         signature = self._provider_failure_signature(cause)
         repeated = (self.provider_recovery_signature is not None and
                     signature == self.provider_recovery_signature)
@@ -1806,9 +1765,8 @@ class Synthesis:
                   'terminal provider failure' if blocked_by is None else
                   f'provider recovery blocked by {blocked_by.code}')
         failure = copy.deepcopy(cause.provider_failure)
-        # Keep the normalized native/request policy in the provider envelope.
-        # The wrapping DomainError is the build-scoped decision and is not
-        # retryable inside this attempt.
+        # Keep the provider failure details; the wrapping error is a build-level
+        # decision and isn't retryable.
         self.provider_failure = DomainError(
             'PROVIDER_UNAVAILABLE', f'{reason} ({cause.code}): {cause}',
             retryable=False, provider_failure=failure)
@@ -1818,12 +1776,12 @@ class Synthesis:
         self.provider_gate.notify_all()
 
     def _begin_provider_recovery(self, exc):
-        """Give one worker ownership of the existing probe/recovery gate."""
+        """Make this worker the owner of the provider recovery probe."""
         owner = threading.get_ident()
         failure_generation = getattr(exc, '_provider_generation', self.provider_generation)
         if failure_generation < self.provider_generation:
-            # This response was dispatched before a successful recovery. Its
-            # work may replay once, but it cannot close a second recovery gate.
+            # Dispatched before the last recovery: it may retry once but can't start
+            # another recovery.
             return
         if self.provider_probe_owner is None:
             self.provider_healthy = False
@@ -1879,19 +1837,16 @@ class Synthesis:
         return request
 
     def alias_registry(self, graph):
-        """The run's alias registry for one graph scope."""
+        """Return the alias registry for a graph scope."""
         with self.alias_registries_lock:
             return self.alias_registries.setdefault(
                 graph['scope_id'], AliasRegistry())
 
     def _inherit_aliases(self, graph, projection, provider_ids, candidate):
-        """Carry each re-identified record's alias to its new identity.
+        """Move each re-identified record's alias to its new ID.
 
-        The provider continues a supplied record either under its exact
-        ``_ref:N`` alias, which decodes to the previous canonical ID, or as
-        ``<kind>:N`` with that alias's number.  When normalization gives the
-        continued record a new content-derived ID and the previous one is
-        gone, the new identity keeps the number the provider cited.
+        When normalization gives a continued record a new ID and the old one is gone,
+        the new ID keeps the ``_ref:N`` number the provider cited.
         """
         registry = self.alias_registry(graph)
         present = set(_candidate_records(candidate))
@@ -1910,7 +1865,7 @@ class Synthesis:
         return inherited
 
     def project_exchange(self, request, schema, projection=None):
-        """Create the sole compact provider representation."""
+        """Build the compact request and schema sent to the provider."""
         projection = projection or ProviderProjection(request['graph'])
         projection.extend_aliases(
             request['candidate'], request['deterministic_findings'],
@@ -1937,24 +1892,21 @@ class Synthesis:
         return projected_input_token_estimate(request, schema)
 
     def _projected_provider(self):
-        """Whether dispatch sends the compact projected wire to this provider."""
+        """Return whether this provider accepts the compact projected wire."""
         return (self.provider is None
                 or getattr(self.provider, 'accepts_projected_wire', False))
 
     def _size_graph(self, graph):
-        """Size a scope as dispatch will measure its synthesis request.
+        """Estimate a scope's synthesis request size the same way dispatch does.
 
-        A provider that receives the projected wire is charged for the
-        projection; any other provider receives, and is charged for, the
-        canonical request. Sizing with the same measure keeps a scope that
-        planning admits from being refused at dispatch.
+        Using the same measure means a scope admitted at planning isn't rejected at
+        dispatch.
         """
         graph = copy.deepcopy(graph)
         estimates = []
         for _ in range(2):
-            # The estimate becomes part of the scope, and so of every cache
-            # key derived from it: measure only the stable semantic request,
-            # never its per-attempt ID or deadline.
+            # The estimate is part of the scope and its cache keys, so leave out
+            # per-attempt fields like the request ID and deadline.
             request = semantic_request_identity_input(
                 self.request_for('synthesize', graph))
             schema = wire_schema('CandidatePayload', graph)
@@ -1967,17 +1919,17 @@ class Synthesis:
         return graph
 
     def graph_scope(self, model):
-        """Build and size the mandatory whole-graph-first request."""
+        """Build and size the whole-graph request, which always runs first."""
         selected = _model_ready_context(
             model, sorted(model.get('anchors', {})))
         return self._size_graph(whole_graph_scope(model, selected))
 
     def run(self, graph: dict, validate_candidate, review=None) -> dict:
-        """Synthesize, verify and run the bounded semantic repair chain.
+        """Synthesize, verify and repair a candidate for one scope.
 
-        `review(graph, candidate)` returns the scope and candidate verification
-        sees: for a reconciliation, the complete candidate expanded from its
-        compact answer. Without it a candidate is verified as returned.
+        `review(graph, candidate)` returns what verification should see, e.g. the
+        expanded candidate for a reconciliation. Without it the candidate is verified
+        as returned.
         """
         review = review or _as_returned
         owner = threading.get_ident() not in self.completion_reservations
@@ -1995,8 +1947,7 @@ class Synthesis:
                     self.recorder.progress(
                         'semantic', f'Resuming an interrupted repair chain after '
                         f'{resumed.attempts} repair round(s)')
-                # The chain is sized by its scope, as a fresh one is, not by
-                # the larger repair request that now comes first.
+                # Reserve based on the scope size, not the larger repair request.
                 with self.accounting_lock:
                     self._reserve_completion(graph['estimated_input_tokens'],
                                              graph.get('scope_kind'))
@@ -2048,8 +1999,7 @@ class Synthesis:
                         for kind in ('input', 'output'):
                             self.completion_protected[kind] -= reservation[kind]
                     self.provider_gate.notify_all()
-            # Keep ownership across the probe's bounded retry, but release it
-            # on every exit (including local validation failures/cancellation).
+            # Hold the gate across the probe's retry and release it on every exit.
             with self.provider_gate:
                 if self.provider_probe_owner == threading.get_ident():
                     self.provider_probe_owner = None
@@ -2101,21 +2051,12 @@ class Synthesis:
     @classmethod
     def _restore_out_of_scope_revisions(cls, previous, repaired,
                                         identity_changes, findings, report):
-        """Keep the previous content of records a repair revised unasked.
+        """Undo unrequested edits to records outside the findings' closure.
 
-        A repair returns a complete replacement, and may reword records no
-        finding named. A record revised under its own identity outside the
-        findings' dependency closure is put back exactly as it was, so the
-        unrequested edit never lands and the round is not spent rejecting it.
-
-        The previous body may reference records the same repair retired, for
-        example claims it rewrote under new identities. Those dependencies are
-        restored with it, transitively, when they too lie outside the closure,
-        so a restoration never leaves a dangling reference. When a dependency
-        was retired inside the closure, as a finding asked, the record is not
-        restored and its revision stays for the regression guard to judge.
-        Records retired, added or re-identified outside the closure that no
-        restored record needs are not restored here and remain regressions.
+        Revised records outside the closure are restored, along with any retired
+        records they reference (transitively) that are also outside it. If a needed
+        dependency was retired inside the closure, the record stays revised and is
+        left to the regression check.
         """
         named = {
             subject_id
@@ -2142,7 +2083,7 @@ class Synthesis:
                     yield from references(item)
 
         def requirement(record_id, chosen):
-            """The records restoring one record needs, or None if it cannot be."""
+            """Return the records needed to restore *record_id*, or None if it can't be."""
             needed, pending = {record_id}, [record_id]
             while pending:
                 for reference in references(before[pending.pop()][1]):
@@ -2196,11 +2137,10 @@ class Synthesis:
 
     @staticmethod
     def _ignored_findings(before, after, findings, report):
-        """The subjects a repair left untouched, when it changed nothing else.
+        """Return the named subjects if a repair ignored its findings, else [].
 
-        A repair acts on its findings when it changes a record one names, or
-        any record other than a claim. Rewording unrelated claims alone is no
-        repair. Returns the named subjects in that case, otherwise nothing.
+        A repair counts as acting on its findings if it changes a named record or any
+        non-claim record. Rewording unrelated claims doesn't count.
         """
         named = {subject_id
                  for finding in [*(findings or []),
@@ -2220,7 +2160,7 @@ class Synthesis:
 
     @staticmethod
     def _finding_signature(findings, report):
-        """Stable rejection identity used to detect a stalled repair."""
+        """Return a signature of the rejection, used to detect a stalled repair."""
         return digest({
             'deterministic': sorted(
                 (finding['code'], tuple(sorted(finding['subject_ids'])))
@@ -2266,19 +2206,15 @@ class Synthesis:
 
     def _repair_chain(self, graph, synthesis_request, validate_candidate, state,
                       review=None):
-        """Repair until verification passes, from `state` onward.
+        """Run repair rounds until verification passes, starting from `state`.
 
-        After every rejected round the chain is checkpointed under the
-        synthesis request, so an interrupted chain resumes on the next refresh
-        with the repairs it has left. A chain that succeeds, stalls on the same
-        defects or exhausts its repairs leaves no checkpoint.
+        Each rejected round is checkpointed under the synthesis request so an
+        interrupted chain can resume. The checkpoint is removed when the chain
+        succeeds, stalls or runs out of repairs.
 
-        A repair that leaves every named record and every record other than
-        claims as it was did not act on its findings: it is not verified, and
-        the next round receives the same findings with that stated. A
-        reconciliation answers with its changes only, so every record it
-        returns is its own decision and none is restored or judged a
-        regression.
+        A repair that ignores its findings isn't verified; the next round gets the
+        same findings again. Reconciliation answers contain only changes, so nothing
+        is restored or treated as a regression for them.
         """
         review = review or _as_returned
         compact = graph['scope_kind'] == 'reconciliation'
@@ -2298,9 +2234,8 @@ class Synthesis:
                 if not (exc.repair_kind == 'semantic' and exc.findings
                         and exc.rejected_candidate is not None):
                     raise
-                # Identity/canonicalization defects are themselves repairable.
-                # The structurally valid raw candidate becomes the exact input
-                # to the next round; it is never verified, cached or published.
+                # Identity defects can be repaired too. The raw candidate feeds the next
+                # round but is never verified, cached or published.
                 repaired = exc.rejected_candidate
                 repaired_findings = exc.findings
                 repaired_report = report
@@ -2376,7 +2311,7 @@ class Synthesis:
             self._checkpoint(synthesis_request, RepairState(
                 candidate, findings, report, repair_attempt, tuple(sorted(seen))))
         self._commit_candidate_response(repair_request, verification_key)
-        # The unchanged synthesis request keys the validated result.
+        # Cache the result under the original synthesis request.
         self._commit_or_store_repaired_synthesis(
             synthesis_request, repaired, verification_key)
         self._discard_checkpoint(synthesis_request)
@@ -2405,11 +2340,10 @@ class Synthesis:
         self._checkpoint_path(request).unlink(missing_ok=True)
 
     def _resumed_state(self, request):
-        """The checkpointed repair state of `request`, if it can resume.
+        """Return the checkpointed repair state for `request`, if it can resume.
 
-        A checkpoint resumes only for the same request, provider projection,
-        provider and agent instructions, and only while repairs remain; any
-        other is discarded.
+        The checkpoint must match the request, projection, provider and agent
+        instructions, and have repairs left. Otherwise it's discarded.
         """
         path = self._checkpoint_path(request)
         artifact = read_json(path, self.config['max_artifact_bytes'])
@@ -2432,7 +2366,7 @@ class Synthesis:
                            tuple(artifact['attempted_signatures']))
 
     def _reserve_completion(self, estimated_input, scope_kind=None):
-        """Protect the complete bounded synthesis/verification repair chain."""
+        """Reserve budget for the full synthesis, verification and repair sequence."""
         owner = threading.get_ident()
         if owner not in self.completion_reservations:
             return
@@ -2474,23 +2408,18 @@ class Synthesis:
                                        self.completion_protected[kind])
 
     def _completion_request_fits(self, estimated_input, scope_kind=None):
-        """Require room to resend a candidate plus verifier report for repair.
+        """Return whether a review or repair request for this scope fits.
 
-        A request needs the scope, the candidate it reviews or repairs and
-        the response allowance. The response allowance covers the provider's
-        reasoning as well as its answer; only the answer comes back as a
-        candidate, so the candidate is reserved at what a scope of this size
-        yields. A reconciliation is reviewed as its complete expanded model
-        and keeps the full allowance. Every request is measured exactly again
-        before dispatch, so an unexpectedly large candidate fails that request
-        rather than overrunning it.
+        It needs room for the scope, the candidate and the response allowance. The
+        candidate reserve is sized from the scope, except for reconciliations, which
+        get the full allowance. Requests are measured again at dispatch.
         """
         output = self.effective_request_output_tokens
         return (estimated_input + output + self._candidate_reserve(estimated_input, scope_kind)
                 <= self.effective_request_input_tokens)
 
     def _candidate_reserve(self, estimated_input, scope_kind=None):
-        """Input room for the candidate a scope's review or repair carries."""
+        """Return the input tokens to reserve for the candidate in a review or repair."""
         output = self.effective_request_output_tokens
         if scope_kind == 'reconciliation':
             return output
@@ -2498,22 +2427,14 @@ class Synthesis:
                                math.ceil(estimated_input * POLICY['candidate_reserve_fraction'])))
 
     def sequence_fits(self, graph):
-        """Whether one sized scope's complete semantic sequence can run.
+        """Return whether a scope's full semantic sequence fits the limits.
 
-        The sequence is synthesis, independent verification, one repair and
-        reverification: every request must fit the request allowance, and the
-        whole sequence the build budget, as `_reserve_completion` reserves it
-        for a first scope. Mode selection asks this before dispatching
-        anything; dispatch still enforces every limit itself.
+        The sequence is synthesize, verify, repair and verify again.
         """
         return self.sequence_limit(graph) is None
 
     def sequence_limit(self, graph):
-        """The limit one sized scope's complete sequence exceeds, or None.
-
-        `max_request_input_tokens` when a single request is too large,
-        otherwise the build budget setting the sequence would exhaust.
-        """
+        """Return the name of the limit a scope's sequence would exceed, or None."""
         estimated = graph['estimated_input_tokens']
         output = self.effective_request_output_tokens
         if not self._completion_request_fits(estimated, graph.get('scope_kind')):
@@ -2534,7 +2455,7 @@ class Synthesis:
             self.completion_protected[kind] -= consumed
 
     def _await_provider_gate(self):
-        """Pause dispatch while one real request probes or recovers health."""
+        """Wait while another request probes or recovers provider health."""
         owner = threading.get_ident()
         with self.provider_gate:
             while True:
@@ -2791,16 +2712,15 @@ class Synthesis:
 
     @staticmethod
     def _outcome_summary(operation, payload):
-        """Return safe progress text, severity and structured outcome details."""
+        """Return progress text, severity and details that are safe to log."""
         if operation == 'verify':
             finding_count = len(payload['findings'])
             blocking_count = sum(
                 finding['severity'] == 'blocking'
                 for finding in payload['findings'])
             verdict = payload['verdict']
-            # Categories, severities and subject IDs are schema-constrained
-            # values; a finding's free-text message is provider output and is
-            # never logged.
+            # Log only schema-constrained values; finding messages are provider text
+            # and are never logged.
             categories = Counter(
                 finding['category'] for finding in payload['findings']
                 if finding['severity'] == 'blocking')
@@ -3098,8 +3018,8 @@ class Synthesis:
                         self.counters['input_tokens_reserved'] += adjustment
                     else:
                         self.output_reserved += adjustment
-                    # A request may take several model turns; its limit bounds
-                    # each turn, so a reported peak is what must fit.
+                    # The per-request limit applies to each model turn, so check the reported
+                    # peak.
                     peak = actual.get('peak'+kind.capitalize()+'Tokens', tokens)
                     exceeded |= peak > (
                         request_input_limit if kind == 'input'

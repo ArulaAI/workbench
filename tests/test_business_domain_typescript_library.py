@@ -1,11 +1,4 @@
-"""Business-domain discovery on a TypeScript library with no framework.
-
-A payments library exposes its behaviour as exported classes. Discovery must
-anchor their public methods, follow those operations into the domain code they
-call, and observe the guards that encode business rules. When nothing can be
-anchored it must stop before any model call instead of publishing an empty
-model.
-"""
+"""Tests for business-domain discovery on a framework-free TypeScript library."""
 import json
 
 import pytest
@@ -119,7 +112,7 @@ def _trace_reach(facts, anchor_name):
     return {_name(facts, symbol_id) for symbol_id in trace['symbol_ids']}
 
 
-# ── Library entry points ────────────────────────────────────────────────
+# Library entry points
 
 def test_public_methods_of_exported_classes_are_resolved_library_anchors(tmp_path):
     facts = _facts(_library(tmp_path))
@@ -167,15 +160,14 @@ def test_test_sources_never_contribute_library_anchors(tmp_path):
     assert 'ServiceSpec.checksCapture' not in _anchors(_facts(tmp_path))
 
 
-# ── Traces into supporting domain logic ─────────────────────────────────
+# Traces into supporting domain logic
 
 def test_operation_trace_reaches_ledger_risk_and_money_logic(tmp_path):
     facts = _facts(_library(tmp_path))
 
     reached = _trace_reach(facts, 'PaymentsService.capture')
 
-    # Imported with an explicit `.ts` extension, a `new`-initialised field, a
-    # typed field and a private method of the same class.
+    # Reached via a `.ts` import, a `new`-initialised field, a typed field and a private method.
     assert {'minor', 'Ledger.post', 'RiskRules.evaluate', 'PaymentsService.fee'} <= reached
 
 
@@ -223,7 +215,7 @@ def test_relative_script_imports_resolve_with_or_without_an_extension(specifier)
         'src/money.ts::minor'
 
 
-# ── Rule observations ───────────────────────────────────────────────────
+# Rule observations
 
 def test_library_guards_are_rule_observations(tmp_path):
     facts = _facts(_library(tmp_path))
@@ -251,7 +243,7 @@ def test_angular_component_conditions_are_not_api_observations(tmp_path):
                 if item['native_expression'] == '(count > 0)']
 
 
-# ── No usable entry points ──────────────────────────────────────────────
+# No usable entry points
 
 def _helpers_only(root):
     (root / 'src').mkdir(parents=True, exist_ok=True)
@@ -304,7 +296,7 @@ def test_library_discovery_publishes_through_the_provider(tmp_path):
     assert model['coverage']['anchors_total'] == 4
 
 
-# ── Cache reuse and invalidation ────────────────────────────────────────
+# Cache reuse and invalidation
 
 def test_unchanged_library_reuses_the_verified_result_and_a_change_does_not(tmp_path):
     provider = PassingProvider()
@@ -324,7 +316,7 @@ def test_unchanged_library_reuses_the_verified_result_and_a_change_does_not(tmp_
     assert third['coverage']['anchors_total'] == 5
 
 
-# ── CLI outcome reporting ───────────────────────────────────────────────
+# CLI outcome reporting
 
 def _cli_with(monkeypatch, provider):
     from lib.context import business_domain_cli
@@ -382,7 +374,7 @@ def test_cli_no_entry_points_exits_nonzero_without_publishing(tmp_path, monkeypa
     assert provider.calls == 0
 
 
-# ── Configuration ───────────────────────────────────────────────────────
+# Configuration
 
 def test_facts_only_needs_no_speed_toml(tmp_path, capsys):
     _library(tmp_path)

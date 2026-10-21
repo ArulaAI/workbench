@@ -1,4 +1,4 @@
-"""Public discovery lifecycle tests for the whole-graph protocol."""
+"""Discovery lifecycle tests for the whole-graph protocol."""
 from lib.context.business_domain_schema import read_json
 from lib.context.business_domains import discover, load, paths
 from tests.business_domains.provider_fixture import PassingProvider, write_service
@@ -55,7 +55,7 @@ def test_failed_refresh_preserves_last_verified_publication(tmp_path):
     assert status['error']['code'] == 'PROVIDER_UNAVAILABLE'
 
 
-# ── F1: fatal source-ownership faults and supersession keep publication ──
+# fatal source-ownership faults and supersession keep publication
 
 import pytest
 
@@ -122,7 +122,7 @@ def test_artifact_contract_states_the_attempt_boundary():
             'published build ID, baseline or history') in contract
 
 
-# ── G2: entry-point gaps make a published run partial and are listed ─────
+# entry-point gaps make a published run partial and are listed
 
 def _publish(root, extra=None):
     root.mkdir(parents=True, exist_ok=True)
@@ -140,15 +140,13 @@ def test_an_entry_point_gap_publishes_partial_and_lists_the_gaps(tmp_path):
     gapped, status = _publish(tmp_path / 'gapped', {
         'src/OrdersApi.cs': 'app.MapGet("/orders", () => Results.Ok());\n'})
     assert clean is not None and gapped is not None
-    # The fixture's rules adapter is partial on its own; set that aside so the
-    # entry-point gap is the only difference between the two publications.
+    # Ignore the rules adapter's own partial status so only the entry-point gap differs.
     def without_capability_gaps(model):
         return publication_status({**model, 'capabilities': []}, status['external_freshness'])
     assert not clean['coverage'].get('entrypoint_gaps')
     assert without_capability_gaps(clean) == 'complete'
     assert without_capability_gaps(gapped) == 'partial'
     assert gapped['status'] == 'partial'
-    # The published model and the status artifact both list every gap.
     gaps = gapped['coverage']['entrypoint_gaps']
     assert {gap['code'] for gap in gaps} == {'ENTRYPOINT_DETECTION_UNAVAILABLE',
                                              'ENTRYPOINT_LIKELY_MISSED'}

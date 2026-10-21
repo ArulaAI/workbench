@@ -1,6 +1,6 @@
-"""Language-independent evidence inventory, normalization and bounded tracing.
+"""Source inventory, normalization and tracing for business-domain facts.
 
-All syntax and framework recognition lives behind the source adapter contract.
+Language and framework handling lives in the source adapters.
 """
 from __future__ import annotations
 import json
@@ -32,45 +32,37 @@ from .business_domain_schema import (DEFAULTS, DomainError, account_artifact_byt
 from .utils import is_credential_path
 
 IGNORED = set(CATALOG['ignored_directories'])
-# Structural, test and documentation edges describe a symbol; tracing does not
-# follow them, so they cannot show that a path continues past that symbol.
+# Tracing doesn't follow these edges, so they never show a path continuing.
 NON_TRAVERSAL_EDGES = frozenset({'implements', 'inherits', 'has_field',
     'accepts_type', 'returns_type', 'tests_behavior', 'documents_behavior',
     'exposes_endpoint'})
-# Which unsatisfied obligations are known boundaries rather than gaps.
 TRACE_BOUNDARIES = MappingProxyType(json.loads(
     (Path(__file__).parent / 'data' / 'trace_boundaries.json').read_text()))
-# Sections cited per documentation link; enough to show where an operation is
-# described without copying a whole specification into the graph.
+# Max sections cited per documentation link.
 MAX_DOCUMENT_SECTIONS = 3
 _MARKDOWN_HEADING = re.compile(r'^(#{1,6})[ \t]+\S', re.MULTILINE)
 
 
 def _markdown_sections(text):
-    """``[(start, end)]`` for each heading's own text, up to the next heading.
-
-    Text before the first heading is its own section. A citation therefore
-    covers the passage that mentions something, never a whole chapter of
-    subsections.
-    """
+    """Return (start, end) spans for each heading's own text, up to the next heading."""
     starts = [found.start() for found in _MARKDOWN_HEADING.finditer(text)]
     bounds = ([0] if not starts or starts[0] > 0 else []) + starts + [len(text)]
     return [(start, end) for start, end in zip(bounds, bounds[1:]) if start < end]
 
 
 def _section_at(sections, position, length):
-    """The section containing *position*, or the whole text."""
+    """Return the section containing position, or the whole text."""
     return next(((start, end) for start, end in sections if start <= position < end),
                 (0, length))
 
 
 def _known_provider(language, provider):
-    """Whether the trace-boundary catalog lists *provider* as a library of *language*."""
+    """Return True if the boundary catalog lists provider as a library for language."""
     known = TRACE_BOUNDARIES['known_libraries'].get(language or '')
     if not known or not provider or ':' not in provider:
         return False
     kind, names = provider.split(':', 1)
-    # ``a|b`` lists candidate providers: known only when every one is.
+    # "a|b" lists candidates; all of them must be known.
     candidates = names.split('|')
     if kind == 'global':
         return bool(known.get('ambient'))
@@ -84,11 +76,9 @@ def _known_provider(language, provider):
 
 
 def trace_boundary(obligation, edge, codes, resource):
-    """The boundary kind of one unsatisfied obligation, or None when it is a gap.
+    """Return the boundary kind for an unsatisfied obligation, or None for a gap.
 
-    *codes* are the adapter diagnostic codes attached to the obligation's edge
-    and *resource* is the edge's target resource, if any. Only catalogued
-    evidence makes a boundary; anything else stays a gap.
+    Only catalogued diagnostic codes or resources count as boundaries.
     """
     if obligation['status'] == 'satisfied':
         return None
@@ -109,13 +99,7 @@ def trace_boundary(obligation, edge, codes, resource):
 
 
 def _conditional_alternatives(selections):
-    """Selections that are each taken under a declared condition, or [].
-
-    A declaration whose every selects_implementation relationship names one
-    target under an evidenced activation condition (a profile, a property) is
-    a set of conditional paths, not an unknown choice. Each must name its
-    target: an ambiguous or unnamed selection keeps the choice a gap.
-    """
+    """Return the selections if every one is conditional and names a target, else []."""
     if len(selections) < 2 or any(not edge['condition'] or not edge['to_ref']
                                   or edge['resolution'] == 'ambiguous'
                                   for edge in selections):
@@ -152,8 +136,7 @@ class SourceInventory:
     routes: tuple[SourceRoute, ...]
     retained_bytes: Mapping[str, bytes]
     diagnostics: tuple[dict, ...]
-    # Bytes of ignored paths that the entry-point marker catalog searches.
-    # They are never decoded into Sources or analyzed.
+    # Raw bytes of ignored paths, searched by the entry-point marker catalog only.
     marker_bytes: Mapping[str, bytes] = MappingProxyType({})
 
 
@@ -165,7 +148,7 @@ def _entrypoint_catalog():
 
 
 def _read_contained(root: Path, relative: str, limit: int) -> bytes | None:
-    """Bytes of one contained regular file within *limit*, else None."""
+    """Read a regular file inside the root, or return None if it exceeds limit."""
     path = root / relative
     if (path.is_symlink() or not path.is_file()
             or not path.resolve().is_relative_to(root)):
@@ -206,7 +189,7 @@ class SourceExecution:
 
 
 def _route(path: str, classification: PathClassification) -> SourceRoute:
-    """The installed disposition of one path, decided before any byte is read."""
+    """Return the routing disposition for a path."""
     matches = []
     for rule in registry.source_dispositions():
         patterns = rule.get('_path_patterns', ())
@@ -219,8 +202,8 @@ def _route(path: str, classification: PathClassification) -> SourceRoute:
                 and rule['category'] != classification.category:
             continue
         matches.append(rule)
-    # A rule naming the path outranks one that only matches its category or
-    # language, so `.vscode/icon.svg` is developer tooling, not just an asset.
+    # Rules that name the path win over category or language rules,
+    # e.g. .vscode/icon.svg is tooling, not an asset.
     if any(rule.get('_path_patterns') for rule in matches):
         matches = [rule for rule in matches if rule.get('_path_patterns')]
     if not matches:
@@ -235,7 +218,6 @@ def _route(path: str, classification: PathClassification) -> SourceRoute:
     }
     matched_ids = tuple(sorted(rule['id'] for rule in matches))
     if len(signatures) > 1 and {rule['disposition'] for rule in matches} == {'ignore'}:
-        # Rules that all ignore a path agree on what happens to it.
         owner = min(rule['id'] for rule in matches)
         return SourceRoute(classification, matched_ids, 'ignore',
             next(rule['owner'] for rule in matches if rule['id'] == owner), (), 'routed')
@@ -247,7 +229,7 @@ def _route(path: str, classification: PathClassification) -> SourceRoute:
 
 
 def scan_inventory(root: Path, config: dict) -> SourceInventory:
-    """Classify and route every path, and read retained bytes; nothing is decoded."""
+    """Classify and route every path and read the bytes of retained ones."""
     root = root.resolve()
     routes = tuple(_route(path, registry.classify_path(path))
         for path in source_paths(root))
@@ -295,10 +277,9 @@ def scan_inventory(root: Path, config: dict) -> SourceInventory:
 
 
 def inventory(scan: SourceInventory, config: dict) -> DecodedSourceInventory:
-    """Decode retained bytes into Sources without rereading or selecting owners.
+    """Decode retained bytes into Sources.
 
-    Only an explicitly routed decoder is loaded here; everything else is
-    strict UTF-8.
+    Only explicitly routed decoders are used; everything else must be UTF-8.
     """
     routes = {route.classification.path: route for route in scan.routes}
     sources = []
@@ -344,8 +325,7 @@ def inventory(scan: SourceInventory, config: dict) -> DecodedSourceInventory:
                     if module is None:
                         decoder_load_failures.add(module_key)
             if failure:
-                # A reversible one-character-per-byte view, kept only as
-                # failure evidence; it is never parsed.
+                # Latin-1 view kept only as failure evidence; never parsed.
                 decoded = DecodedSource(raw.decode('iso-8859-1'),
                     'failure-evidence-iso-8859-1', len(raw))
             if module is not None:
@@ -375,7 +355,7 @@ def inventory(scan: SourceInventory, config: dict) -> DecodedSourceInventory:
 
 
 def select_source(source: Source, route: SourceRoute) -> SourceSelection:
-    """The one final primary-owner decision for a retained source."""
+    """Pick the primary owner for a retained source."""
     if route.disposition in {'ignore', 'reference_only'}:
         return SourceSelection(route, None, (), 'ignored')
     candidates = descriptor_for_route(source, route)
@@ -394,7 +374,7 @@ def load_selection(source: Source, selection: SourceSelection,
         provisional_decoder: ModuleType | None = None,
         module_cache: dict[tuple[str, str, str], ModuleType] | None = None
         ) -> SourceExecution:
-    """Load the selected owner once and run its per-source extract hook."""
+    """Load the selected owner and run its extract hook on the source."""
     execution = SourceExecution(source, selection)
     if selection.route.disposition in {'ignore', 'reference_only'}:
         return execution
@@ -440,7 +420,7 @@ def load_selection(source: Source, selection: SourceSelection,
 
 
 def source_fingerprint(scan: SourceInventory) -> str:
-    """Routing decisions for every path plus raw-byte hashes of retained paths."""
+    """Hash routing decisions and the raw bytes of retained paths."""
     marker_bytes = ({'marker_bytes': {path: digest(raw)
         for path, raw in sorted(scan.marker_bytes.items())}}
         if scan.marker_bytes else {})
@@ -464,9 +444,8 @@ def source_fingerprint(scan: SourceInventory) -> str:
     })
 
 
-# One sensitive-name predicate decides every redaction below.
-# A sensitive word is a whole name segment: delimited by `.`, `_`, `-` or a
-# camelCase boundary (dbPassword, clientSecret), never a fragment (tokenizer).
+# A sensitive word must be a whole name segment, split on ".", "_", "-" or
+# camelCase (dbPassword, clientSecret), so "tokenizer" does not match.
 _SENSITIVE_NAME_RE = re.compile(
     r'(?:^|[._-]|(?<=[a-z0-9])(?=[A-Z]))'
     r'(?i:password|passwd|secret|credential|token|api[_-]?key|access[_-]?token)'
@@ -608,7 +587,7 @@ def _redact_json_members(text):
 
 
 def redacted(text: str) -> str:
-    """Remove every value assigned to a sensitive name, through its line end."""
+    """Strip values assigned to sensitive names, up to the end of the line."""
     text = _redact_json_members(text)
     text = _JSON_ASSIGNMENT_RE.sub(_redact_json_assignment, text)
     text = _ASSIGNMENT_RE.sub(_redact_assignment, text)
@@ -621,7 +600,7 @@ def redact_named_value(name, value):
 
 
 def redact_values(value):
-    """Apply the same credential filter to normalized expressions as excerpts."""
+    """Redact sensitive values in normalized expressions."""
     if isinstance(value, str):
         return redacted(value)
     if isinstance(value, list):
@@ -674,7 +653,7 @@ _FORMAT_DIAGNOSTIC_CODES = frozenset({'JAVA_PROPERTIES_SYNTAX_INVALID',
 
 
 def _validate_endpoint_request(unit: Unit, request: dict) -> None:
-    """Reject a loose adapter request record at the common boundary."""
+    """Validate an adapter's endpoint request record."""
     expected = {'position', 'end', 'method', 'method_reason', 'url', 'url_reason',
                 'conditions', 'evidence_spans'}
     if not isinstance(request, dict) or set(request) != expected:
@@ -699,7 +678,7 @@ def _validate_endpoint_request(unit: Unit, request: dict) -> None:
 
 
 def _request_path(path: str) -> str:
-    """The path of a request URL without its query string or fragment."""
+    """Return the URL path without query string or fragment."""
     depth = 0
     for index, character in enumerate(path):
         if character == '{':
@@ -715,7 +694,7 @@ _PATH_VARIABLE = re.compile(r'\{[^{}]*\}')
 
 
 def _segment_match(client: str, server: str) -> str | None:
-    """'exact', 'possible' (a runtime value could match) or None."""
+    """Return 'exact', 'possible' (a runtime value could match) or None."""
     if _PATH_VARIABLE.fullmatch(server):
         return 'possible' if ':' in server else 'exact'
     if '{' in client:
@@ -743,12 +722,7 @@ def _path_match(client: str, server: str) -> str | None:
 
 
 def _same_origin_endpoint(facts: dict, request: dict) -> str | None:
-    """The one endpoint anchor a root-relative request reaches, or None.
-
-    ``fetch('/api/owners')`` has no origin to match a declared server base, but
-    the call's operation already resolves to its endpoint by method and route.
-    An unresolved ``routes_to`` edge would only add a spurious obligation.
-    """
+    """Return the single endpoint anchor a root-relative request reaches, or None."""
     url = request['url']
     if not request['method'] or not url or not url.startswith('/') or url.startswith('//'):
         return None
@@ -758,16 +732,15 @@ def _same_origin_endpoint(facts: dict, request: dict) -> str | None:
 
 
 def _route_request(request: dict, bases: list[dict], served: list) -> dict | None:
-    """The server endpoint(s) one client request reaches, or why none does."""
+    """Return the endpoint(s) a client request reaches, or the reason none does."""
     method, url = request['method'], request['url']
     if url is None:
-        # The destination is dynamic; the call's own operation edge records it.
+        # Dynamic destination; the operation edge already covers it.
         return None
 
     def outcome(resolution, reason=None, target=None, candidates=(),
                 evidence_ids=(), evidence_spans=(), conditions=(), notes=(), request_path=None):
-        # ``key`` names the edge; ``request_path`` (the path below whichever
-        # base was applied) only lets variants of one request find each other.
+        # request_path only groups variants of the same request.
         return {'resolution': resolution, 'reason': reason, 'target': target,
                 'candidates': tuple(candidates), 'evidence_ids': tuple(evidence_ids),
                 'evidence_spans': tuple(evidence_spans), 'conditions': tuple(conditions),
@@ -820,8 +793,7 @@ def _route_request(request: dict, bases: list[dict], served: list) -> dict | Non
                 matches.append((base, representation, matched))
     used = {id(base): base for base, _, _ in matches} or {id(base): base for base in under}
     evidence_spans = [span for base in used.values() for span in base['evidence_spans']]
-    # Each answering base is an alternative: one that always applies makes the
-    # route unconditional, and distinct conditions hold in either case.
+    # One unconditional base makes the route unconditional.
     alternatives = sorted({base['condition'] for base in used.values()},
                           key=lambda condition: condition or '')
     conditions = ([] if not alternatives or None in alternatives else
@@ -844,9 +816,8 @@ def _route_request(request: dict, bases: list[dict], served: list) -> dict | Non
     endpoints = ', '.join(sorted({f"{representation['operation']['method']} "
                                   f"{representation['operation']['path']}"
                                   for _, representation, _ in matches}))
-    # A runtime value standing where an endpoint has a literal segment matches
-    # only if it happens to equal that literal. Such a match widens the
-    # candidates but never establishes a route on its own.
+    # A runtime value only matches a literal segment by chance, so it adds a
+    # candidate but never resolves the route alone.
     if not any(matched == 'exact' for _, _, matched in matches):
         return outcome('unresolved', f'{method} {path} reaches {endpoints} only if a runtime '
                        'value equals a literal path segment, which the source does not '
@@ -863,7 +834,7 @@ def _route_request(request: dict, bases: list[dict], served: list) -> dict | Non
 
 
 def _route_condition(alternatives: list[list]) -> str | None:
-    """Render the branch choices under which a request takes one route."""
+    """Describe the branch conditions under which a request takes a route."""
     rendered = [[test if taken else f'!({test})' for test, taken in conditions]
                 for conditions in alternatives]
     if not rendered or any(not item for item in rendered):
@@ -884,7 +855,7 @@ def _route_condition(alternatives: list[list]) -> str | None:
 
 
 def _merged_descriptor(descriptors) -> dict:
-    """One owner view over the descriptors that share an installed module."""
+    """Merge descriptors that share an installed module."""
     descriptors = list(descriptors)
     return {**descriptors[0], 'diagnostic_codes': sorted({code
         for descriptor in descriptors
@@ -913,9 +884,9 @@ class Extractor:
         self.facts['warnings']=self.diagnostics
         self.units: list[Unit]=[]
         self.anchor_units: dict[int, tuple[str, str]] = {}
-        # Evidence id of a root-relative request -> the endpoint anchor it reaches.
+        # Evidence id of a root-relative request -> endpoint anchor.
         self.same_origin_requests: dict[str, str] = {}
-        # Edge id -> adapter diagnostic codes of the semantic result behind it.
+        # Edge id -> adapter diagnostic codes.
         self.edge_codes: dict[str, set[str]] = {}
         self.snapshot_objects: dict[str,dict]={}
         self.external_freshness = 'not_applicable'
@@ -924,7 +895,7 @@ class Extractor:
         self.previous_snapshots = previous.get('source_snapshots', {}) if previous else {}
 
     def _owner(self, source: Source):
-        """The primary owner loaded for *source*, or None; never reselected."""
+        """Return the primary owner loaded for source, or None."""
         execution = self.executions_by_source_id.get(source.resource_id)
         return (execution.loaded_owner
                 if execution is not None and execution.state == 'resolved' else None)
@@ -1068,7 +1039,7 @@ class Extractor:
                 evidence_ids=[evidence_id],**binding)
 
     def _execute_installed_owners(self):
-        """Select, load and run every installed owner exactly once per source."""
+        """Select, load and run each installed owner once per source."""
         primary_groups = {}
         for source in self.sources:
             route = self.routes[source.path]
@@ -1097,8 +1068,7 @@ class Extractor:
             if (route.disposition == 'analyze'
                     and execution.state == 'resolved'
                     and execution.loaded_owner is not None):
-                # Several descriptors may share one module; it prepares its
-                # sources once, as one group.
+                # Descriptors can share a module; prepare its sources once.
                 group = primary_groups.setdefault(id(execution.loaded_owner),
                     (execution.loaded_owner, {}, []))
                 group[1][descriptor['id']] = descriptor
@@ -1106,8 +1076,6 @@ class Extractor:
 
         self._run_supporting_consumers()
 
-        # Resolve cross-file semantics through installed provider hooks. Core
-        # orchestration does not inspect language or framework identities.
         selected_modules = []
         for module, descriptors, sources in sorted(primary_groups.values(),
                 key=lambda item: (getattr(item[0], 'PREPARE_PHASE', 100),
@@ -1154,9 +1122,7 @@ class Extractor:
                     *(item['name'] for item in package['dependencies'])})
             descriptors = tuple(enricher_descriptors(source, evidence))
             self.enricher_descriptors_by_source_id[source.resource_id] = descriptors
-            # Several descriptors can name one module (Spring Web, Data and
-            # beans all run spring_semantic); the module still gets each source
-            # once.
+            # e.g. Spring Web, Data and beans all use spring_semantic.
             modules = {}
             for descriptor in descriptors:
                 try:
@@ -1178,9 +1144,7 @@ class Extractor:
                 key=lambda item: getattr(item[0], '__name__', type(item[0]).__name__)):
             selected_modules.append((module, sources))
             owner = _merged_descriptor(descriptors.values())
-            # Repository configuration (properties, YAML) has no units of its
-            # own; an enricher that interprets it reads it here, before it
-            # prepares the sources it was selected for.
+            # Config files (properties, YAML) have no units, so enrichers read them here.
             configure = getattr(module, 'configure', None)
             if configure:
                 configure(sources, self.sources)
@@ -1236,7 +1200,7 @@ class Extractor:
         return source
 
     def _project_adapter_diagnostic(self, descriptor, diagnostic, source=None):
-        """Project one adapter, consumer or enricher diagnostic with exact evidence."""
+        """Convert an adapter, consumer or enricher diagnostic into a warning."""
         source = self._validate_adapter_diagnostic(
             descriptor, diagnostic, source)
         span = diagnostic['span']
@@ -1248,7 +1212,7 @@ class Extractor:
             evidence_ids=[evidence_id]))
 
     def _run_supporting_consumers(self):
-        """Run each supporting owner once over its group; apply only valid results."""
+        """Run each supporting consumer once over its group and apply valid results."""
         grouped = {}
         for execution in self.executions_by_source_id.values():
             if execution.selection.route.disposition == 'supporting' \
@@ -1333,7 +1297,7 @@ class Extractor:
                 source.supporting_inputs = MappingProxyType(current)
 
     def _supporting_assignment_plan(self, owner_id, records, primary_sources):
-        """The deepest compatible record of each kind for every primary source."""
+        """Return the deepest compatible supporting record of each kind per source."""
         del owner_id
         by_kind = {}
         for item in records:
@@ -1361,7 +1325,7 @@ class Extractor:
         return tuple(plan)
 
     def _blocking_source_diagnostic(self, execution):
-        """The one blocking diagnostic, Resource state and coverage entry of a source."""
+        """Return the blocking diagnostic, resource state and coverage entry for a source."""
         selection, route, source = (execution.selection,
             execution.selection.route, execution.source)
         cause = execution.cause
@@ -1391,7 +1355,7 @@ class Extractor:
             unsupported.append(source.resource_id)
 
     def _finalize_source_resources(self):
-        """Settle each selected source's own Resource; ignored sources have none."""
+        """Set the final Resource state for each selected source."""
         unit_evidence = {}
         for unit in self.units:
             if unit.evidence_id:
@@ -1436,10 +1400,7 @@ class Extractor:
         self._capabilities()
         self._traces()
         self._entrypoint_coverage()
-        # Resources gather evidence, interactions their bindings, and the
-        # extraction gathers warnings, as units are visited, in an order that
-        # can differ between processes;
-        # facts, and every scope and cache key built from them, must not.
+        # Visit order can vary between processes; sort so facts and cache keys are stable.
         for resource in self.facts['resources'].values():
             resource['evidence_ids'] = sorted(set(resource['evidence_ids']))
         for trace in self.facts['traces'].values():
@@ -1480,7 +1441,7 @@ class Extractor:
         return self.facts,self.units
 
     def _anchor_correspondences(self) -> None:
-        """Materialize adapter-provided identity evidence without source rules."""
+        """Record adapter-provided anchor identity evidence."""
         entries = []
         for unit in self.units:
             owned = self.anchor_units.get(id(unit))
@@ -1532,7 +1493,7 @@ class Extractor:
                 ambiguous_groups.add(frozenset({source_representation['id'], *target_ids}))
 
         def contextual_target(source, unit):
-            """Retain a supporting implementation without promoting its body."""
+            """Keep a supporting implementation without promoting its body."""
             source_anchor, source_representation = source
             representation_id = identifier('anchor_representation',
                 source_representation['id'], unit.qualified, 'implementation')
@@ -1555,8 +1516,7 @@ class Extractor:
             source_anchor['representations'].append(representation)
             return source_anchor, representation
 
-        # Exact semantic links (for example, SQL contract/body selection) take
-        # precedence over protocol-key and unresolved-candidate grouping.
+        # Exact links (e.g. SQL contract/body) take precedence over key-based grouping.
         for unit, _, representation in entries:
             declared_targets = getattr(unit, 'anchor_correspondence_units', [])
             targets = [(by_unit[id(target)] if id(target) in by_unit else
@@ -1627,7 +1587,7 @@ class Extractor:
                 if resolved else 'No exact implementation correspondence is available.')
 
     def _capabilities(self) -> None:
-        """Project the stored selections' capabilities; nothing is reselected."""
+        """Build capability records from the stored selections."""
         capabilities = {}
         for source in self.sources:
             route = self.routes[source.path]
@@ -1676,11 +1636,9 @@ class Extractor:
             for key in sorted(capabilities)]
 
     def _entrypoint_coverage(self) -> None:
-        """Report every entry-point gap: language gaps, likely misses, silent zero.
+        """Report entry-point gaps: unsupported languages, likely misses, and zero counts.
 
-        Which languages can host entry points, and which markers denote one,
-        come from data/entrypoint_markers.toml; whether a language's selected
-        adapters detect entry points comes from their declared capabilities.
+        Markers come from data/entrypoint_markers.toml.
         """
         catalog = _entrypoint_catalog()
         gaps = []
@@ -1729,15 +1687,12 @@ class Extractor:
                 text=text, source_hash=digest(raw),
                 resource_id=identifier('resource', relative),
                 original_byte_length=len(raw))
-        # A byte-order mark is encoding, not content; dropping it keeps
-        # offsets on the same lines and lets `^` match the first line.
+        # Drop a BOM so offsets line up and ^ matches the first line.
         bom = {path: source.text.startswith('\ufeff')
                for path, source in texts.items()}
         hits = scan_markers(catalog, ((path, source.text[1:] if bom[path]
             else source.text) for path, source in texts.items()),
             CATALOG['test_path_pattern'])
-        # Entry points by declared operation, so a marker whose method and
-        # route equal one already known (from a contract, say) is not missed.
         operations = {}
         for anchor in self.facts['anchors'].values():
             operation = anchor.get('operation') or {}
@@ -1748,9 +1703,8 @@ class Extractor:
         for hit in hits:
             if covered(hit, spans):
                 continue
-            # A marker declaring the same operation as a known entry point (from
-            # its contract, say) is still missed: the code implementing it was
-            # not detected. The message names the matching entry point.
+            # Still a miss even if a contract declares the same operation: the
+            # implementation wasn't detected.
             body = (texts[hit.path].text[1:] if bom[hit.path] else texts[hit.path].text)
             known = matching_entry_point(hit, body, operations)
             matched += bool(known)
@@ -1783,16 +1737,14 @@ class Extractor:
                 evidence_ids=evidence_ids))
 
     def _documentation_edges(self) -> None:
-        """Link authored documentation to exact operations or its service scope."""
+        """Link documentation to the operations it mentions, or to its service scope."""
         service_by_scope = {resource['name']: resource['id']
             for resource in self.facts['resources'].values()
             if resource['kind'] == 'service'}
         for source in self.sources:
             if source.language != 'markdown' or not source.text.strip():
                 continue
-            # An operation is documented where its name or route appears as a
-            # whole word: `net` in "network" or `void` in "avoid" mentions
-            # nothing. Each link cites the sections that mention it.
+            # Match names and routes as whole words so "net" doesn't hit "network".
             targets = {}
             sections = _markdown_sections(source.text)
             for anchor in self.facts['anchors'].values():
@@ -1826,18 +1778,10 @@ class Extractor:
                 self.facts['coverage']['edges_resolved'] += 1
 
     def _endpoint_links(self) -> None:
-        """Link each client request to the server endpoint that answers it.
+        """Link each client request to the server endpoint that handles it.
 
-        Adapters state both halves. A client adapter states each request as its
-        source composes it: method, full URL, the branch choices selecting it,
-        and evidence. A server adapter states where its endpoints are served: a
-        port and base path per service, or per contract. Matching is exact. The
-        request must fall under a declared base, its method must be the
-        endpoint's, and its path must have the endpoint's segments, literal for
-        literal. A match is a ``routes_to`` edge from the requesting symbol to
-        the endpoint's handler, which traversal follows like any call; several
-        matches stay ambiguous, and a request no base or endpoint answers stays
-        unresolved with its reason.
+        Matching is exact on base path, method and path segments. Multiple matches
+        are ambiguous; no match leaves the request unresolved with a reason.
         """
         bases = []
         for module, sources in getattr(self, 'selected_modules', []):
@@ -1855,8 +1799,7 @@ class Extractor:
                 if (not representation['symbol_id'] or not operation.get('method')
                         or not operation.get('path')):
                     continue
-                # A contract answers only for an operation no source handler
-                # implements; otherwise the handler is what runs.
+                # Use the contract only when no handler implements the operation.
                 if representation['role'] == 'contract' and handled:
                     continue
                 service = self.facts['resources'].get(operation['service_resource_id']) or {}
@@ -1889,9 +1832,8 @@ class Extractor:
         members = group['members']
         reason = outcome['reason']
         if outcome['resolution'] == 'unresolved' and outcome['request_path']:
-            # The same request (same call, method and path below its base)
-            # resolved under another configuration: this variant is scoped to
-            # its own configuration, not a statement about the request.
+            # Same request already resolved under another configuration; this variant
+            # only applies to its own configuration.
             method = key[0]
             siblings = sorted({self.facts['symbols'][other['outcome']['target']]['qualified_name']
                                .split('::', 1)[-1]
@@ -1931,10 +1873,9 @@ class Extractor:
                 subject_ids=[edge_id], evidence_ids=request_evidence))
 
     def _canonicalize_anchors(self) -> None:
-        """Reconcile adapter-established identities before traces are scheduled."""
+        """Reconcile anchor identities before tracing."""
         replacements = reconcile_anchors(self.facts)
-        # Reconciliation rebuilds containers while rewriting identifiers. Keep
-        # subsequent adapter/snapshot diagnostics attached to the artifact.
+        # Reconciliation rebuilds containers; keep later diagnostics attached.
         self.diagnostics = self.facts['warnings']
         for unit in self.units:
             if unit.anchor_id:
@@ -1946,13 +1887,12 @@ class Extractor:
         return self.facts['resources'][ref['id']]['name']
 
     def _traces(self) -> None:
-        """Evaluate mechanical traversal and semantic completion independently."""
+        """Build traces, tracking traversal and semantic completion separately."""
         outgoing: dict[str, list[dict]] = {}
         for edge in self.facts['edges'].values():
             outgoing.setdefault(edge['from_ref']['id'], []).append(edge)
         units_by_symbol = {unit.symbol_id: unit for unit in self.units}
-        # Every adapter code an edge carries: its semantic result's and the
-        # projection gaps reported against it.
+        # Adapter codes from the semantic result plus projection gaps.
         edge_codes = {edge_id: set(codes) for edge_id, codes in self.edge_codes.items()}
         for warning in self.facts['warnings']:
             for subject in warning.get('subject_ids') or ():
@@ -1987,11 +1927,9 @@ class Extractor:
             def require_capabilities(unit, demonstrated=frozenset()):
                 for capability in unit.required_capabilities or ():
                     statuses = unit.source.capability_statuses.get(capability, set())
-                    # A capability this run exercised for this symbol is present,
-                    # whatever the adapter owning the declaring file declares. An
-                    # endpoint is anchored where it is declared, so a contract in
-                    # openapi.yml would otherwise be judged by the YAML reader for
-                    # work the Java enricher did.
+                    # Count a capability this run used for the symbol even if the declaring
+                    # file's adapter doesn't declare it (e.g. an endpoint in openapi.yml
+                    # handled by the Java enricher).
                     available = (bool(statuses & {'supported', 'partial'})
                                  or capability in demonstrated)
                     require('capability', unit.symbol_id, 'satisfied' if available else 'unresolved',
@@ -2002,11 +1940,9 @@ class Extractor:
                     if not available:
                         frontier.add(unit.symbol_id); reasons.add('capability_gap')
 
-            # Implementation selection is a normalized obligation.  An
-            # implementation may satisfy it itself only when its adapter has
-            # positively identified a valid executable terminal.  Contracts
-            # select through normalized relationships, including the reverse
-            # direction of implementation-to-contract declarations.
+            # An implementation can satisfy its own selection only if its adapter
+            # marked it a valid terminal. Contracts select through relationships,
+            # in either direction.
             selection_status = None
             selection_targets: list[str] = []
             selection_reason = ''
@@ -2040,13 +1976,11 @@ class Extractor:
                          and units_by_symbol[target].trace_role == 'implementation'
                          and units_by_symbol[target].executable_body]
                 uncertain = any(edge['resolution'] != 'resolved' for edge in selection_edges)
-                # Every selection names an implementation outside the analyzed
-                # source: the entry point ends at that external boundary.
+                # All selections point outside the analyzed source.
                 external = [edge for edge in selection_edges
                             if edge['kind'] == 'selects_implementation' and edge['to_ref']
                             and edge['to_ref']['kind'] != 'symbol']
-                # Every implementation is a selection taken under its own
-                # condition (a profile, say): one conditional path each.
+                # Every selection is conditional (e.g. a profile).
                 alternatives = _conditional_alternatives(
                     [edge for edge in selection_edges if edge['kind'] == 'selects_implementation'])
                 chosen = {edge['to_ref']['id'] for edge in alternatives}
@@ -2092,9 +2026,7 @@ class Extractor:
                     if role == 'external_boundary' else
                     'The adapter did not authorize this declaration as an executable implementation terminal.')
 
-            # Capability obligations are answered after the relationships they
-            # govern have been attempted, so an exercised capability can settle
-            # its own question.
+            # Checked after relationships so an exercised capability can satisfy itself.
             require_capabilities(start, demonstrated=(
                 frozenset({'relationship_resolution'})
                 if selection_status == 'satisfied' else frozenset()))
@@ -2125,9 +2057,7 @@ class Extractor:
                         obligation_kind = 'call_target'
                     if (edge['kind'] == 'selects_implementation' and edge['to_ref']
                             and edge['to_ref']['kind'] != 'symbol'):
-                        # The selected implementation is a resource outside the
-                        # analyzed source, so the selection ends at an external
-                        # boundary.
+                        # Selected implementation is outside the analyzed source.
                         require('implementation_selection', symbol, 'external',
                                 'EXTERNAL_IMPLEMENTATION_UNAVAILABLE',
                                 edge['reason'] or 'The selected implementation is outside the analyzed source.',
@@ -2139,8 +2069,6 @@ class Extractor:
                                   else 'ambiguous' if edge['resolution']=='ambiguous' else 'unresolved')
                         code, reason = 'UNRESOLVED_TARGET', edge['resolution']
                         if edge['kind'] == 'selects_implementation':
-                            # An unsettled selection is an implementation-selection
-                            # obligation wherever the trace meets it.
                             obligation_kind = 'implementation_selection'
                             code, reason = (('IMPLEMENTATION_AMBIGUOUS', 'implementation_ambiguous')
                                             if status == 'ambiguous' else
@@ -2179,11 +2107,8 @@ class Extractor:
                         frontier.add(target); reasons.add('depth_limit'); continue
                     queue.append((target, depth + 1))
 
-            # A client HTTP request always leaves the client process, so it stays
-            # an external boundary. Once the trace is walked, its reason says
-            # where it goes: answered in the analyzed source through a resolved
-            # routes_to edge of this trace that carries the same request, answered
-            # by the one endpoint a root-relative URL reaches, or neither.
+            # Client HTTP requests are always an external boundary. The reason notes
+            # whether a routes_to edge or a root-relative endpoint answers it.
             routed = [self.facts['edges'][edge_id] for edge_id in sorted(edges)
                       if self.facts['edges'][edge_id]['kind'] == 'routes_to'
                       and self.facts['edges'][edge_id]['resolution'] == 'resolved']
@@ -2213,13 +2138,9 @@ class Extractor:
             for symbol in sorted(seen - {start.symbol_id}):
                 require_capabilities(units_by_symbol[symbol])
 
-            # Implementation selection is required of every declaration the
-            # trace reaches, not only of its entry point: a call that lands on
-            # a contract has not reached the code that runs until one of the
-            # contract's selects_implementation relationships has been followed.
-            # An ambiguous, unresolved or external selection was already
-            # recorded as the traversal met it; a contract with no selection at
-            # all is recorded here, whatever structural edges it carries.
+            # Every contract the trace reaches needs an implementation selection, not
+            # just the entry point. Ambiguous/unresolved/external selections were
+            # recorded during traversal; contracts with none are recorded here.
             for symbol in sorted(seen - {start.symbol_id}):
                 unit = units_by_symbol[symbol]
                 if 'implementation_selection' not in (unit.required_relationships or ()):
@@ -2271,8 +2192,7 @@ class Extractor:
                     reason_code, selection_reason, edge=selection_edge_id,
                     targets=selection_targets)
             if selection_status != 'satisfied':
-                # An external selection stops at its edge; its target is a
-                # resource, not a traversable symbol.
+                # External selections stop here; the target is a resource.
                 frontier.update([selection_edge_id] if selection_edge_id
                                 else [anchor['symbol_id']] if selection_status == 'conditional'
                                 else selection_targets or [anchor['symbol_id']])
@@ -2280,10 +2200,7 @@ class Extractor:
                             else 'conditional_implementation' if selection_status == 'conditional'
                             else 'external_boundary' if selection_status == 'external'
                             else 'implementation_not_reached')
-            # A leaf is judged by the relationships traversal can follow from it.
-            # Structural edges such as accepts_type describe the declaration and
-            # cannot make it a terminal. Declarations that require implementation
-            # selection were judged by that obligation above.
+            # Structural edges like accepts_type don't make a declaration a terminal.
             for symbol in sorted(seen):
                 unit = units_by_symbol[symbol]
                 traversed = [edge for edge in outgoing.get(symbol, [])
@@ -2299,16 +2216,14 @@ class Extractor:
                 | {eid for edge_id in edges
                    for eid in self.facts['edges'][edge_id]['evidence_ids']})
             incomplete = any(self.facts['trace_obligations'][oid]['status'] != 'satisfied' for oid in obligations)
-            # A conditional selection is never ambiguous: each alternative is a
-            # path under its condition. The trace is still not resolved,
-            # because which condition holds is decided at runtime.
+            # Conditional selections aren't ambiguous, but the trace stays unresolved
+            # since the condition is decided at runtime.
             hard_incomplete = any(self.facts['trace_obligations'][oid]['status'] in {
                 'unresolved', 'external', 'limit_reached', 'conditional'} for oid in obligations)
             has_ambiguity = any(self.facts['trace_obligations'][oid]['status'] == 'ambiguous'
                                 for oid in obligations)
             resolution = 'unresolved' if hard_incomplete else 'ambiguous' if has_ambiguity else 'resolved'
-            # Completion keeps resolution as it is and says whether what stops
-            # the trace is a known boundary, with its assumption, or a gap.
+            # Mark the stopping point as a known boundary or a gap.
             assumptions, gaps = [], 0
             for oid in sorted(set(obligations)):
                 obligation = self.facts['trace_obligations'][oid]
@@ -2335,8 +2250,7 @@ class Extractor:
                 traversal_complete=traversal_complete, resolution=resolution,
                 completion=completion, assumptions=assumptions,
                 reason='Trace has unsatisfied implementation, capability or traversal obligations.' if incomplete else None)
-            # The canonical representation's unit owns the anchor's display and
-            # registration fields; fall back only for symbol-id collisions.
+            # Prefer the canonical representation's unit; fall back on symbol-id collisions.
             unit = (start if start.anchor_id == anchor['id']
                     else units_by_anchor[anchor['id']][0])
             owner = self._owner(unit.source)
@@ -2481,14 +2395,9 @@ class Extractor:
                 ).normalized()
                 source.semantic_results.append(semantic)
                 edge_id = identifier('edge',origin.symbol_id,relation['kind'],relation['start'],relation['end'])
-                # Relations are keyed by origin, kind and span, and one span can
-                # carry several relations of a kind: ``class C implements A, B``
-                # is evidenced by the whole declaration. A relation naming a
-                # different target than the one already holding the key gets
-                # its own edge rather than replacing it; a repeated relation to
-                # the same target still replaces itself. The reason tells apart
-                # only relations with nothing else to name: an explanation added
-                # to a targeted relation must not change its identity.
+                # One span can carry several relations of a kind (class C implements A, B).
+                # A different target gets its own edge; the same target replaces the
+                # existing one. The reason is only part of the key for untargeted relations.
                 named = target.symbol_id if target else semantic['target_id']
                 target_key = (named, tuple(candidates),
                               None if named or candidates else relation.get('reason'))
@@ -2586,7 +2495,7 @@ class Extractor:
                 self._hydrate_operation(unit, redact_values(observed))
 
     def _hydrate_operation(self, unit: Unit, raw: dict) -> None:
-        """Atomically project one normalized operation into canonical facts."""
+        """Add one normalized operation to the facts."""
         observed = normalize_operation_observation(unit, raw)
         position, end = observed['position'], observed['end']
         origin = observed['origin_ref']
@@ -2692,7 +2601,7 @@ class Extractor:
 
 
 def extraction_measurements(facts: dict) -> dict:
-    """Summarize normalized extraction without invoking semantic synthesis."""
+    """Summarize extraction results."""
     traces = list(facts['traces'].values())
     obligations = list(facts['trace_obligations'].values())
     languages_by_path = {
@@ -2710,8 +2619,7 @@ def extraction_measurements(facts: dict) -> dict:
             return 'unknown'
         return languages_by_path.get(symbol['file'], 'unknown')
 
-    # Relationships that are not resolved: where they come from, how many
-    # stop at a catalogued boundary, and how many no trace reaches at all.
+    # Unresolved relationships: by source, at a catalogued boundary, or off-trace.
     edge_codes = {}
     for warning in facts.get('warnings', []):
         for subject in warning.get('subject_ids') or ():
@@ -2729,8 +2637,7 @@ def extraction_measurements(facts: dict) -> dict:
     def at_boundary(edge):
         if edge_codes.get(edge['id']):
             return edge_codes[edge['id']] <= boundary_codes
-        # A call into a catalogued library or platform carries no warning;
-        # its target resource names the provider.
+        # Calls into catalogued libraries have no warning; the resource names the provider.
         target = edge.get('to_ref') or {}
         resource = (facts['resources'].get(target.get('id'))
                     if target.get('kind') == 'resource' else None)
@@ -2750,8 +2657,7 @@ def extraction_measurements(facts: dict) -> dict:
         language = obligation_language(obligation)
         unresolved_by_language[language] = \
             unresolved_by_language.get(language, 0) + 1
-    # The same call site is an obligation of every trace that reaches it, so
-    # sites are counted once, by edge (or by obligation when it has none).
+    # Count each call site once, by edge (or by obligation if it has no edge).
     unresolved_sites = {}
     for obligation in unresolved_calls:
         unresolved_sites.setdefault(obligation.get('edge_id') or obligation['id'],

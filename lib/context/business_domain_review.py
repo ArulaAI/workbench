@@ -1,4 +1,4 @@
-"""Deterministic, optimistic-concurrency review of canonical domain records."""
+"""Apply and replay user review decisions on the domain model."""
 from __future__ import annotations
 import copy
 import uuid
@@ -35,7 +35,7 @@ def _recount(model, domain):
 
 
 def apply_decision(model, decision):
-    """Apply to a private candidate. No provider calls and no source scanning."""
+    """Apply a review decision to the model in place and return the resulting domain ids."""
     operation = _operation(decision['operation']); kind = operation['operation']
     target_ids = operation.get('domain_ids',[operation.get('domain_id')])
     if any(did not in model['domains'] for did in target_ids):
@@ -76,8 +76,7 @@ def apply_decision(model, decision):
         retired_claims = {cid for cid,c in model['claims'].items() if c['subject_id'] in target_ids}
         for cid in retired_claims:
             del model['claims'][cid]
-        # Retired claims remain in immutable model history. Remove references
-        # from the current projection rather than retargeting their meaning.
+        # Drop references to retired claims; history keeps the originals.
         def remove_retired(value):
             if isinstance(value,dict):
                 for key,child in value.items():
@@ -142,10 +141,10 @@ def _review_evidence(root, model, decision):
 
 
 def replay(root, model, overrides, previous=None):
-    """Replay committed decisions after a crash or discovery refresh.
+    """Replay saved decisions newer than the model's override revision.
 
-    Missing targets become explicit review conflicts. Human acceptance is
-    invalidated when the supporting source excerpts changed.
+    Decisions that no longer apply are recorded as REVIEW_CONFLICT warnings.
+    An accept goes back to needs_review if its supporting evidence changed.
     """
     validate(overrides,'OverridesArtifact')
     def support_hashes(artifact,domain):
@@ -204,8 +203,7 @@ def review(root, expected_build_id, operation, explanation, author):
         candidate['fingerprint']['value'] = digest({k:v for k,v in candidate['fingerprint'].items() if k!='value'})
         validate(candidate,'DomainArtifact');validate_references(candidate);validate(overrides,'OverridesArtifact')
         atomic_write(root/'.speed/context/business-domain-history'/f'{model["build_id"]}.json',model)
-        # Commit intent first. A subsequent explicit refresh can replay a
-        # committed revision if a crash interrupts projection publication.
+        # Write overrides first so a crash before the model write can be replayed.
         atomic_write(locations['overrides'],overrides)
         atomic_write(locations['model'],candidate)
         if status:

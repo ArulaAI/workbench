@@ -1,4 +1,4 @@
-"""F-02 SQL dialect capability discovery conformance."""
+"""Tests for SQL dialect detection and adapter selection."""
 from pathlib import Path
 
 from lib.context.business_domain_adapters import adapter_for, descriptor

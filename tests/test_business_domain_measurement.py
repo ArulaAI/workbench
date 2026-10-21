@@ -51,7 +51,7 @@ def test_one_call_site_reached_by_several_traces_is_one_unresolved_site():
             obligation('c', 'edge:shared'), obligation('a', 'edge:own'))},
     }
     calls = extraction_measurements(facts)['call_targets']
-    # Every trace still counts its own obligation; a site counts once.
+    # Each trace counts separately; each call site counts once.
     assert (calls['unresolved'], calls['unresolved_sites']) == (4, 2)
     assert calls['unresolved_sites_by_language'] == {'typescript': 2}
 
@@ -111,7 +111,7 @@ def test_measurement_command_is_json_and_does_not_publish_a_model(tmp_path):
     assert not (tmp_path / '.speed/context/repository-digest.json').exists()
 
 
-# ── Entry points, screen actions and generated declarations ──────────────
+# Entry points, screen actions and generated declarations
 
 def _anchor(anchor_id, kind, registration, resolution='resolved', path=None, reason=None):
     representations = [{'registration': registration}] if registration else []
@@ -170,7 +170,7 @@ def test_each_screen_action_states_its_label_or_why_it_has_none():
     assert by_route['/owners/new']['state'] == 'labeled'
     assert (by_route['/e']['state'], by_route['/e']['candidates']) == (
         'ambiguous', ['Add Owner', 'Update Owner'])
-    # No route: the declaring file stands in, and the label is kept with its reason.
+    # With no route, the file path is used and the label keeps its reason.
     assert by_route['web/Login.cshtml']['state'] == 'labeled_unresolved'
     assert by_route['web/Login.cshtml']['reason'] == 'Form submission action is not statically determined'
     assert (by_route['/notes']['state'], by_route['/notes']['reason']) == (

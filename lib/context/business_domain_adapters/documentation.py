@@ -1,4 +1,4 @@
-"""Repository documentation adapter with no executable-content handling."""
+"""Adapter for documentation files: one module unit per non-empty file."""
 from .base import Unit
 
 

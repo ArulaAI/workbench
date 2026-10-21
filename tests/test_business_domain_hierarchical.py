@@ -1,15 +1,7 @@
-"""Hierarchical business-domain discovery for repositories too large for one request.
+"""Tests for hierarchical discovery on repositories too large for one request.
 
-The tech spec ("Large-repository hierarchical mode", BD-14, BD-40) selects
-hierarchical mode when a scope's complete synthesis, verification, repair and
-reverification sequence does not fit one request. The fixtures here are small
-and `max_request_input_tokens` is lowered to the allowance that forces each
-partition; see tests/business_domains/oversized_fixture.py.
-
-The first section holds the foundation: fixtures, calibration and the fit rule
-that selects the mode. The second holds BD-40's acceptance behaviour. Each of
-those tests is a strict expected failure until the phase named in its marker
-implemented it; every marker has now come off.
+The fixtures are small, so max_request_input_tokens is lowered to force each
+split. See tests/business_domains/oversized_fixture.py.
 """
 import copy
 import json
@@ -44,14 +36,14 @@ def _synthesis(root, config=None):
     return synthesis, synthesis.graph_scope(copy.deepcopy(model))
 
 
-# ── Foundation: fixtures ───────────────────────────────────────────────
+# Fixtures
 
 def test_the_monolith_has_entry_points_that_share_one_helper_module(tmp_path):
     facts = _facts(write_monolith(tmp_path, entry_points=8))
 
     assert len(facts['anchors']) == 8
     assert all(anchor['resolution'] == 'resolved' for anchor in facts['anchors'].values())
-    # Every entry point's trace reaches the shared helpers: overlapping shared code.
+    # Every trace reaches the shared helpers.
     assert all({'normalise', 'audit'} <= _names(facts, trace)
                for trace in facts['traces'].values())
 
@@ -73,7 +65,7 @@ def test_the_monorepo_has_one_deployable_boundary_per_service(tmp_path):
     assert len(facts['anchors']) == 9
 
 
-# ── Foundation: calibration and the fit rule ───────────────────────────
+# Calibration and the fit rule
 
 def test_calibration_finds_an_allowance_that_splits_the_monolith(tmp_path):
     calibration = calibrate(write_monolith(tmp_path, entry_points=8))
@@ -105,8 +97,8 @@ def test_the_fit_rule_also_honours_the_build_budget(tmp_path):
     synthesis, graph = _synthesis(root)
     budget = 4 * graph['estimated_input_tokens'] + 4 * synthesis.effective_request_output_tokens
 
-    # The request cap may not exceed the build cap, so both are lowered; each
-    # request still fits, but four of them do not fit the build.
+    # The request cap can't exceed the build cap, so lower both. One request
+    # fits, four don't.
     tight, _ = _synthesis(root, {'business_domains': {
         'max_build_input_tokens': budget - 1, 'max_request_input_tokens': budget - 1}})
 
@@ -114,7 +106,7 @@ def test_the_fit_rule_also_honours_the_build_budget(tmp_path):
     assert not tight.sequence_fits(graph)
 
 
-# ── Foundation: what must not change ───────────────────────────────────
+# Small repositories
 
 def test_a_repository_that_fits_still_runs_as_one_whole_graph_scope(tmp_path):
     write_service(tmp_path)
@@ -126,14 +118,13 @@ def test_a_repository_that_fits_still_runs_as_one_whole_graph_scope(tmp_path):
     assert status['limits']['semantic_units_total'] == 1
 
 
-# ── BD-40 acceptance ───────────────────────────────────────────────────
+# Acceptance
 
 def _split_monolith(root, entry_points=8, concurrency=None):
     write_monolith(root, entry_points=entry_points)
     config = force_split(calibrate(root).splitting_allowance())
     if concurrency is not None:
-        # An interruption after N synthesis requests names N validated slices
-        # only when slices run one at a time.
+        # Run slices one at a time so N requests before an interruption means N slices.
         config['business_domains']['provider_concurrency'] = concurrency
     return config
 
@@ -158,8 +149,7 @@ def test_an_oversized_monolith_publishes_through_entry_point_bundles(tmp_path):
     assert status['execution_mode'] == 'hierarchical' and status['root_reconciled']
     assert len(slices) >= 2
     assert {graph['partition_strategy'] for graph in slices} == {'entrypoint_bundle'}
-    # Every canonical anchor is in exactly one bundle, and the root reconciles
-    # every bundle.
+    # Each anchor is in exactly one bundle and the root covers every bundle.
     bundled = [anchor for graph in slices for anchor in graph['canonical_anchor_ids']]
     assert sorted(bundled) == sorted(model['anchors'])
     assert sorted(root['child_scope_ids']) == sorted(graph['scope_id'] for graph in slices)
@@ -185,7 +175,7 @@ def test_unfinished_slice_work_never_publishes(tmp_path):
 
     model, status = discover(tmp_path, config, provider=provider)
 
-    # One bundle validated before the interruption; none of it is published.
+    # One bundle was validated before the interruption but nothing is published.
     assert status['execution_mode'] == 'hierarchical'
     assert len(_requests(provider, 'slice')) >= 1
     assert model is None and load(tmp_path)[0] is None
@@ -206,8 +196,7 @@ def test_a_slice_carries_the_shared_code_its_entry_points_reach(tmp_path):
         names = {symbol['qualified_name'].split('::')[-1]
                  for symbol in graph['context']['symbols'].values()}
         assert {'normalise', 'audit'} <= names
-        # Shared code is overlap, not a boundary: its edges are declared
-        # cross-scope so reconciliation can recognise the shared records.
+        # Shared code edges are marked cross-scope so reconciliation can match them.
         assert graph['cross_scope_edge_ids']
 
 
@@ -220,7 +209,7 @@ def test_the_partition_is_deterministic(tmp_path):
         providers.append(ReconcilingProvider())
         discover(root, config, provider=providers[-1])
 
-    # Slices run concurrently, so requests arrive in any order; the plan does not.
+    # Slices run concurrently, so compare sorted plans.
     plans = [sorted((graph['partition_strategy'], graph['canonical_anchor_ids'])
                     for graph in _requests(provider, 'slice')) for provider in providers]
     assert len(plans[0]) >= 2 and plans[0] == plans[1]
@@ -242,7 +231,7 @@ def test_a_single_oversized_trace_is_cut_into_execution_segments(tmp_path):
             for obligation in graph['context']['trace_obligations'].values()
             if obligation['kind'] == 'execution_segment']
     assert cuts and all(graph['cross_scope_edge_ids'] for graph in segments)
-    # Segments cannot dispose of the anchor; only the root does.
+    # Only the root can dispose of the anchor.
     [anchor_id] = model['anchors']
     represented = {anchor for activity in model['activities'].values()
                    for anchor in activity['anchor_ids']}
@@ -252,15 +241,14 @@ def test_a_single_oversized_trace_is_cut_into_execution_segments(tmp_path):
 def test_an_interrupted_run_resumes_from_its_validated_slices(tmp_path):
     config = _split_monolith(tmp_path, concurrency=1)
     discover(tmp_path, config, provider=InterruptingProvider(allowed=1))
-    # The same provider, no longer interrupted: cached responses are keyed by
-    # the provider, so a different one would rightly start afresh.
+    # Same provider class, since cached responses are keyed by provider.
     resumed = InterruptingProvider(allowed=100)
 
     model, status = discover(tmp_path, config, provider=resumed)
 
     total_slices = status['limits']['semantic_units_total'] - 1
     assert model is not None and status['root_reconciled']
-    # The slice validated before the interruption is reused, not re-requested.
+    # The slice validated before the interruption is reused.
     assert len(_requests(resumed, 'slice')) == total_slices - 1
 
 
@@ -293,7 +281,7 @@ def test_a_monorepo_is_sliced_by_application_boundary_first(tmp_path):
     assert set(services) == {'billing', 'catalog', 'shipping'}
 
 
-# ── Phase 2 details: the root, the budget and the provider boundary ────
+# Root reconciliation, budget and provider wire
 
 class _Capture(ReconcilingProvider):
     """Record every scope sent for synthesis."""
@@ -318,11 +306,10 @@ def test_the_root_carries_semantic_records_not_the_raw_graph(tmp_path):
     [root] = [graph for graph in provider.scopes if graph['scope_kind'] == 'reconciliation']
     slices = [graph for graph in provider.scopes if graph['scope_kind'] == 'slice']
     context = root['context']
-    # Raw graph records stay identity-only references...
+    # Raw graph records are passed as references only.
     assert not context['traces'] and not context['edges'] and not context['bindings']
     assert {ref['collection'] for ref in context['record_refs'].values()} >= {'traces', 'anchors'}
-    # ...while every slice's activities arrive, one per anchor it held, with the
-    # excerpts they cite.
+    # Each slice's activities are included, one per anchor, with cited evidence.
     held = sorted(anchor for graph in slices for anchor in graph['canonical_anchor_ids'])
     assert sorted(anchor for activity in context['activities'].values()
                   for anchor in activity['anchor_ids']) == held
@@ -346,14 +333,13 @@ def test_each_child_has_its_own_coverage_manifest_and_citations(tmp_path):
     for graph in slices:
         manifest = manifests[graph['scope_id']]
         assert all(anchor_id in manifest['text'] for anchor_id in graph['canonical_anchor_ids'])
-        # A manifest cites its own child's evidence, never another child's.
+        # A manifest only cites evidence from its own child.
         assert set(manifest['evidence_ids']) <= set(graph['context']['evidence'])
 
 
 def test_the_build_budget_is_reserved_for_the_root_before_any_request(tmp_path):
     config = _split_monolith(tmp_path)
-    # Each bundle's own sequence fits four requests' worth of budget; the
-    # bundles plus the root's reserved allowance do not.
+    # Each bundle fits in four requests' worth of budget, but not all bundles plus the root.
     config['business_domains']['max_build_input_tokens'] = (
         config['business_domains']['max_request_input_tokens'] * 4)
     provider = ReconcilingProvider()
@@ -369,8 +355,7 @@ def test_the_build_budget_is_reserved_for_the_root_before_any_request(tmp_path):
 def test_the_reservation_covers_every_slice_and_the_complete_root(tmp_path):
     config = _split_monolith(tmp_path)
     output = ReconcilingProvider.provider_max_output_tokens
-    # Two slices' synthesis and verification plus the root's four requests,
-    # less one token: the run must not start.
+    # Two slices x (synthesis + verification) + four root requests, minus one token.
     config['business_domains'].update(max_request_output_tokens=output,
                                       max_build_output_tokens=(2 * 2 + 4) * output - 1)
 
@@ -446,8 +431,7 @@ def test_slices_and_the_root_cross_the_projected_provider_wire(tmp_path):
 
     discover(tmp_path, config, provider=provider)
 
-    # The CLI provider receives the compact projection, which must close every
-    # reference and round-trip exactly; construction proves both.
+    # ProviderProjection raises if references don't close or round-trip.
     kinds = set()
     for graph in provider.scopes:
         ProviderProjection(graph)
@@ -465,15 +449,13 @@ def test_published_coverage_counts_every_anchor(tmp_path):
     assert status['coverage'] == model['coverage']
 
 
-# ── Phase 3: recursion and durable repair ──────────────────────────────
+# Multi-level reconciliation and repair checkpoints
 
 def test_a_root_too_large_for_one_request_is_reconciled_in_levels(tmp_path):
     root = write_monolith(tmp_path, entry_points=16)
     calibration = calibrate(root)
-    # Room for one entry point per bundle: sixteen bundles, whose records
-    # together exceed one reconciliation request.
+    # One entry point per bundle; 16 bundles won't fit in one reconciliation request.
     config = force_split(calibration.allowance(max(calibration.anchors.values())) + 400)
-    # Sixteen slices' synthesis and verification, the root and its levels.
     config['business_domains']['max_build_output_tokens'] = 1_000_000
     provider = _Capture()
 
@@ -510,8 +492,7 @@ def test_an_interrupted_repair_chain_resumes_where_it_stopped(tmp_path):
 
     assert failed['phase'] in {'failed', 'unavailable'}
     assert model is not None and status['phase'] in {'complete', 'partial'}
-    # The candidate and its rejection were kept: the chain continues with a
-    # repair, not a fresh synthesis.
+    # The saved candidate and rejection mean the run resumes with a repair.
     assert [request['operation'] for request in resumed.requests][0] == 'repair'
     assert not any(request['operation'] == 'synthesize' for request in resumed.requests)
     assert not checkpoint.exists() and not _pending(tmp_path)
@@ -577,7 +558,7 @@ def test_the_provider_schema_names_exactly_the_subjects_a_scope_requires(tmp_pat
 
 
 
-# ── Phase 4: application boundaries ────────────────────────────────────
+# Application boundaries
 
 def _services(model, graph):
     return {model['symbols'][model['anchors'][anchor]['symbol_id']]['file'].split('/')[1]
@@ -652,7 +633,7 @@ def test_the_root_receives_a_structured_manifest_for_every_child(tmp_path):
                                for record_id in root['context'][collection]}
 
 
-# ── Compact reconciliation ─────────────────────────────────────────────
+# Compact reconciliation
 
 def test_the_root_answers_with_changes_and_keeps_the_rest_by_id(tmp_path):
     config = _split_monolith(tmp_path)
@@ -662,12 +643,11 @@ def test_the_root_answers_with_changes_and_keeps_the_rest_by_id(tmp_path):
 
     [root] = [graph for graph in provider.scopes if graph['scope_kind'] == 'reconciliation']
     root_answer = provider._reconcile(root, set())
-    # One activity per anchor in every slice: nothing to merge, everything kept.
+    # One activity per anchor, so nothing is merged.
     assert root_answer['activities'] == {}
     kept = {record_id for disposition in root_answer['dispositions']
             for record_id in disposition['incorporated_record_ids']}
     assert kept == set(root['context']['activities'])
-    # The published model holds every kept activity with the claims it rests on.
     assert len(model['activities']) == len(model['anchors'])
     assert all(set(activity['claim_ids']) <= set(model['claims'])
                for activity in model['activities'].values())
@@ -700,8 +680,7 @@ def test_expansion_carries_kept_records_and_drops_merged_ones():
     complete = expand_reconciliation(scope, answer)
 
     assert set(complete['activities']) == {'activity:kept', 'activity:merged'}
-    # The merged activity states no claims of its own, so the claims about the
-    # parts it replaced now describe it.
+    # The merged activity has no claims, so it inherits the claims of its parts.
     assert {claim_id: claim['subject_id'] for claim_id, claim in complete['claims'].items()} == {
         'claim:kept': 'activity:kept', 'claim:part1': 'activity:merged',
         'claim:part2': 'activity:merged'}
@@ -720,7 +699,7 @@ def test_segments_reconcile_into_one_activity_per_anchor(tmp_path):
 
 
 class _OverlongOnceProvider(ReconcilingProvider):
-    """Answers the first multi-entry-point slice beyond the response allowance."""
+    """Report an over-limit response for the first multi-anchor slice."""
 
     def __init__(self):
         super().__init__()
@@ -752,11 +731,8 @@ def test_a_slice_whose_answer_is_too_long_is_split_and_remembered(tmp_path):
 
 
 def test_a_validated_reconciliation_is_reused_by_the_next_run(tmp_path):
-    # The candidate cache cannot recognise a validated reconciliation: its
-    # verifier judged the expanded candidate, not the compact answer. The
-    # first run's slices are fresh answers, whose record order the second
-    # run's cached ones need not share, so the third run is the first whose
-    # reconciliation scopes repeat an earlier run's exactly.
+    # Record order can differ between fresh and cached slice answers, so the
+    # third run is the first whose reconciliation scopes match a previous run.
     config = _split_monolith(tmp_path)
     for _ in range(2):
         discover(tmp_path, config, provider=ReconcilingProvider())
@@ -784,7 +760,7 @@ def test_only_the_final_reconciliation_may_widen_its_request():
     assert _Run.widen_for_root(attempt)
     assert synthesis.effective_request_input_tokens == max(
         int(450000 * POLICY['final_reconciliation_input_factor']), 800000)
-    # Never past the provider's context window.
+    # Capped at the provider's context window.
     attempt, synthesis = run(480000)
     assert _Run.widen_for_root(attempt) and synthesis.effective_request_input_tokens == 480000
     attempt, synthesis = run(450000)

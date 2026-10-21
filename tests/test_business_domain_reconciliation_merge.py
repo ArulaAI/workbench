@@ -1,11 +1,4 @@
-"""How a reconciliation joins its children into one model.
-
-SPEED does the bookkeeping of a merge: child groupings stay unless the answer
-changes them, a returned domain takes over its activities, retired domains
-hand their ownerships on, and relationships follow their activities. Where
-children connect in ways none could see, SPEED states it and checks that the
-candidate answers it.
-"""
+"""Tests for merging child scopes in a reconciliation."""
 import copy
 
 from lib.context.business_domain_synthesis import Synthesis
@@ -83,17 +76,15 @@ def test_a_returned_domain_retires_the_child_domains_it_takes_over():
 
     complete = expand_reconciliation(scope, answer)
 
-    # Both child domains whose activities it took are retired with the claims
-    # about them; the untouched one stays.
+    # Merged child domains and their claims are retired; the untouched one stays.
     assert set(complete['domains']) == {'domain:merged', 'domain:three'}
     assert 'claim:two' not in complete['claims'] and 'claim:three' in complete['claims']
-    # Their ownerships of the concept moved to the merged domain and combined,
-    # the stronger kind standing.
+    # Ownerships move to the merged domain and keep the stronger kind.
     [ownership] = complete['ownerships'].values()
     assert ownership['domain_id'] == 'domain:merged' and ownership['kind'] == 'creates'
     assert set(ownership['activity_ids']) == {'activity:a', 'activity:b'}
     assert complete['domains']['domain:merged']['ownership_ids'] == [ownership['id']]
-    # Relationships follow their activities into their current domains.
+    # Relationships follow their activities.
     ends = {relationship_id: (item['from_domain_id'], item['to_domain_id'])
             for relationship_id, item in complete['relationships'].items()}
     assert ends == {'relationship:ab': ('domain:merged', 'domain:merged'),
@@ -123,7 +114,7 @@ def test_verification_sees_only_the_child_records_the_candidate_replaced():
 
     assert set(view['context']['domains']) == {'domain:one', 'domain:two'}
     assert view['context']['activities'] == {}
-    # The retired domains still name their activities, which stay identifiable.
+    # Retired domains still reference their activities.
     assert {'activity:a', 'activity:b'} <= set(view['context']['record_refs'])
     assert set(scope['context']['domains']) == {'domain:one', 'domain:two', 'domain:three'}
 
@@ -159,8 +150,7 @@ def test_concepts_naming_one_code_type_are_supplied_as_one():
 
     aliases = _merge_concepts(model, context)
 
-    # A bare name resolves to the one declared type carrying it; an array of
-    # a type is not that type.
+    # A bare name matches the declared type; an array of it does not.
     assert aliases == {'concept:2': 'concept:1'}
     assert set(context['concepts']) == {'concept:1', 'concept:3'}
     assert context['concepts']['concept:1']['evidence_ids'] == ['ev:1', 'ev:2']
@@ -867,13 +857,12 @@ def test_entry_points_sharing_code_are_packed_together():
     groups = [group for group, _ in _affinity_pack(
         code, build, lambda built: len(built) <= 2, lambda anchor: code[anchor])]
 
-    # In canonical order 1 and 2 would share a slice; by shared code, 1 joins 3.
+    # 1 and 3 share code, so they group together.
     assert groups == [['anchor:1', 'anchor:3'], ['anchor:2', 'anchor:4']]
 
 
 def test_one_record_two_slices_word_differently_is_supplied_once():
-    # An ID comes from what identifies a record, so slices that reach the same
-    # relationship give it the same ID whatever words they explain it in.
+    # IDs come from identifying fields, not wording.
     first = {'id': 'rule_relationship:x', 'from_observation_id': 'observation:a',
              'to_observation_id': 'observation:b', 'kind': 'equivalent',
              'explanation': 'Both checks decide insert versus update.',
@@ -891,7 +880,7 @@ def test_one_record_two_slices_word_differently_is_supplied_once():
 
 
 def test_concepts_naming_one_java_class_are_supplied_as_one():
-    # Java names a class by package, the symbol table by source file.
+    # Java names classes by package, symbols by file path.
     model = {'symbols': {'symbol:o': {
         'qualified_name': 'src/main/java/org/acme/model/Owner.java::Owner'}}}
     context = {collection: {} for collection in SEMANTIC_COLLECTIONS}
@@ -922,7 +911,7 @@ def test_a_concept_named_without_a_type_is_the_typed_concept_of_its_name():
                                    ('concept:4', 'Order', ['b.Order']),
                                    ('concept:5', 'Order', []))}
 
-    # Where two typed concepts share the name, the untyped one could be either.
+    # Two typed concepts share the name, so the untyped one is ambiguous.
     assert _merge_concepts({'symbols': {}}, context) == {'concept:2': 'concept:1'}
 
 
@@ -974,7 +963,7 @@ def test_operations_one_contract_documents_are_owned_by_their_implementations():
 
     assert _owner(model, 'anchor:o') == 'src/Owners.java::Owners'
     assert _owner(model, 'anchor:v') == 'src/Vets.java::Vets'
-    # A contract alone shows no owner: every documented operation shares it.
+    # A contract alone does not identify an owner.
     assert _owner(model, 'anchor:x') is None
 
 
@@ -1013,7 +1002,6 @@ def test_a_status_the_code_returns_and_the_contract_omits_is_stated():
     assert claim['subject_id'] == 'activity:add' and claim['kind'] == 'conflict'
     assert 'POST /owners' in claim['text'] and '201' in claim['text']
     assert claim['evidence_ids'] == ['ev:api', 'ev:code']
-    # A candidate's claims await review like any the answer makes.
     assert claim['semantic_review'] == 'uncertain'
 
 
@@ -1040,8 +1028,7 @@ def test_declared_or_unknown_statuses_and_uncitable_evidence_state_nothing():
 
 
 def test_child_prose_citing_its_own_request_aliases_reads_by_name(monkeypatch):
-    # A child's answer cites records by the aliases of its own request; in the
-    # parent request the same alias would name a different record.
+    # Child aliases mean different records in the parent request.
     from lib.context import business_domain_synthesis
     from lib.context.business_domain_work import _decode_prose_aliases
 
@@ -1090,8 +1077,7 @@ def test_a_rule_verified_on_a_trace_is_not_listed_back_by_speed():
 
 
 def _mistaken_rule():
-    """A returned rule citing an authorization check's observation in place of
-    one of the data constraint's it describes."""
+    """Return a rule that cites an authorization observation instead of a constraint one."""
     constraint = {'id': 'rule:fk', 'name': 'Pet needs an owner', 'category': 'cross_record_constraint',
                   'observation_ids': ['observation:1', 'observation:2', 'observation:3'],
                   'enforcement_sites': [{'source_id': 'resource:pets'}]}
@@ -1126,7 +1112,7 @@ def test_a_rule_citing_another_rules_observation_instead_of_its_own_is_named():
 
     assert finding['code'] == 'MIXED_RULE_OBSERVATIONS'
     assert {'observation:3', 'observation:9', 'rule:fk', 'rule:admin'} <= set(finding['subject_ids'])
-    # A rule joining two child rules' observations whole is a merge, not a mistake.
+    # Taking all observations of both rules counts as a merge.
     candidate['rules']['rule:merged']['observation_ids'] = [
         'observation:1', 'observation:2', 'observation:3', 'observation:9']
     assert _mixed_observation_findings(candidate, [Unit({'scope_id': 'scope:c'}, child, {})]) == []

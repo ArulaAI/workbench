@@ -1,8 +1,7 @@
-"""Declarative API contracts, parsed without imports or external retrieval.
+"""Adapter for declarative API contracts (OpenAPI-style YAML/JSON documents).
 
-Document syntax stays behind the adapter boundary. Recognized contract keys
-and operations come from the profile catalog; schema references are retained
-as declarations and never treated as proof of runtime implementation.
+Contract keys come from document_profiles.json. Schema references are kept as
+declarations only; they are not evidence of an implementation.
 """
 import json
 from pathlib import Path
@@ -125,10 +124,9 @@ def resources(unit):
 
 
 def endpoint_bases(sources, all_sources=None):
-    """Where each contract declares its operations are served.
+    """Return the server base URLs each contract declares.
 
-    An operation path is relative to the contract's server URL. A relative or
-    templated server URL has no fixed origin, so it declares no base.
+    Relative or templated server URLs are skipped since they have no fixed origin.
     """
     bases = []
     for source in sources:

@@ -1,9 +1,4 @@
-"""The --facts-only report and the terminal summary rendered from it.
-
-The report counts what the facts record and never reclassifies: every call
-site on a trace is in this repository, at a named platform or library, or
-open, and the parts add up to the whole.
-"""
+"""Tests for the --facts-only report and its terminal summary."""
 import json
 import subprocess
 from pathlib import Path

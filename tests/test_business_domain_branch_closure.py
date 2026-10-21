@@ -1,9 +1,8 @@
-"""Activities that share one UI trace own only their own request branch.
+"""Tests that activities sharing a UI trace only own their own request branch.
 
-A miniature of the PetClinic editor shape: one submit handler sends POST for a
-new owner and PUT for an existing one, chosen by ``owner.isNew``.  Only the
-POST branch reaches a database write.  A second handler sends POST and GET one
-after the other, so both requests are its own work.
+Fixture: a PetClinic-style editor whose submit handler sends POST for a new
+owner and PUT for an existing one (``owner.isNew``); only POST writes to the
+database. A second handler sends POST then GET, so both requests are its own.
 """
 import uuid
 
@@ -204,7 +203,7 @@ def test_conditional_branch_effect_belongs_only_to_the_branch_that_reaches_it(tm
             assert set(activity[field]) == expected
             if field != 'information_use_ids':
                 assert sorted(proposed[field]) == sorted(expected)
-    # The create branch owns the write through the shared trace alone.
+    # The create branch reaches the write through the shared trace alone.
     assert write in activity_closure(model, {**create, 'trace_ids': [shared]})['effect_ids']
 
 
@@ -218,6 +217,5 @@ def test_sequential_requests_keep_the_work_of_every_request(tmp_path):
     activity = {'id': 'activity:list', 'anchor_ids': [quick_add['id'], listing['id']],
                 'trace_ids': [trace]}
 
-    # The submit always POSTs before it GETs: claiming the GET endpoint does
-    # not make the POST an alternative branch.
+    # POST always runs before GET, so claiming the GET endpoint doesn't make POST a separate branch.
     assert write in activity_closure(model, activity)['effect_ids']

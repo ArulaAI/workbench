@@ -1,4 +1,4 @@
-"""Evidence-activated Spring endpoint enricher for normalized Java units."""
+"""Spring enricher for Java units: endpoints, bean selection and persistence."""
 from __future__ import annotations
 
 import json
@@ -16,21 +16,15 @@ _MAPPING_METHODS = {
     "GetMapping": "GET", "PostMapping": "POST", "PutMapping": "PUT",
     "PatchMapping": "PATCH", "DeleteMapping": "DELETE",
 }
-# Annotations on outbound HTTP client interfaces. Their mappings describe the
-# remote endpoint being called, not an endpoint this service exposes.
+# Outbound HTTP clients; their mappings describe the remote endpoint.
 _CLIENT_ANNOTATIONS = frozenset({"FeignClient", "HttpExchange"})
-# A route evidenced only through a constant or expression. It must not
-# collapse into the empty route, which would claim a different endpoint.
+# Placeholder for a route we could not evaluate, so it is not mistaken for "".
 _DYNAMIC_ROUTE = "\0dynamic"
 _STRING_LITERAL = r'"(?:[^"\\]|\\.)*"'
 
 
 def _paths(text):
-    """Return the route values of a mapping annotation.
-
-    Only ``value``/``path`` or the first positional argument carry routes;
-    ``produces``, ``consumes``, ``params``, ``headers`` and ``name`` do not.
-    """
+    """Return the routes from a mapping annotation's value/path or first positional argument."""
     args = text[text.find("(") + 1:text.rfind(")")] if "(" in text else ""
     named = re.search(r"\b(?:value|path)\s*=\s*(\{[^}]*\}|" + _STRING_LITERAL + r"|[^,)]+)", args)
     if named:
@@ -44,10 +38,8 @@ def _paths(text):
     return [literal[1:-1] for literal in re.findall(_STRING_LITERAL, args)] or [""]
 
 
-# Compile-time String constants (JLS 15.29) used as mapping routes. Only string
-# literals, ``+`` concatenation, parentheses and names of ``static final``
-# String fields (or interface constants) declared in the analyzed sources are
-# evaluated. Anything else keeps the route dynamic.
+# Compile-time String constants (JLS 15.29): literals, +, parentheses and
+# static final String fields from the analyzed sources. Anything else is dynamic.
 _CONSTANT_TOKEN = re.compile(r'\s*(?:(' + _STRING_LITERAL + r')|([A-Za-z_$][\w$]*)|([+().]))')
 _STRING_TYPES = frozenset({"String", "java.lang.String"})
 _STATIC_IMPORT = re.compile(r'^\s*import\s+static\s+([\w$.]+?)(\.\*)?\s*;', re.MULTILINE)
@@ -56,13 +48,10 @@ _UNKNOWN = "unknown"
 
 
 class _Constants:
-    """Closed-world evaluator for String constants named in mapping annotations.
+    """Resolve String constants used in mapping annotations.
 
-    A name resolves only when Java's own lookup order (fields of the scope's
-    types and their supertypes, single static imports, static imports on
-    demand) selects exactly one constant declared in the analyzed sources.
-    A non-constant field, an absent supertype or import, or a cycle that
-    could shadow or supply the name keeps the expression unevaluated.
+    A name resolves only if Java's lookup order finds exactly one constant in
+    the analyzed sources; anything missing or ambiguous leaves it unevaluated.
     """
 
     def __init__(self, sources):
@@ -91,13 +80,13 @@ class _Constants:
                 else:
                     singles[found.group(1).rsplit(".", 1)[-1]] = found.group(1)
             self.static_imports[id(source)] = (singles, wildcards)
-        # A fully qualified name declared twice cannot select one declaration.
+        # Skip names declared more than once.
         self.unique = {name: entries[0] for name, entries in by_fq.items()
                        if len(entries) == 1}
 
     @staticmethod
     def _declared(source, entry):
-        """``{field: (initializer, start, end) | None}``; None marks a non-constant field."""
+        """Return ``{field: (initializer, start, end) | None}``; None means not a constant."""
         body = entry["node"].child_by_field_name("body")
         fields = {}
         if body is None:
@@ -120,10 +109,10 @@ class _Constants:
         return fields
 
     def route(self, entry, expression, member):
-        """``(value, declaration spans)`` of a route expression, or None.
+        """Return ``(value, declaration spans)`` for a route expression, or None.
 
-        *member* is False for an annotation on the type declaration itself:
-        the type's own members are not in scope there.
+        Pass member=False for a type-level annotation, where the type's own
+        members are not in scope.
         """
         chain = ([entry] if member else []) + self.enclosing.get(id(entry), [])
         return self._evaluate(expression, entry["unit"].source, chain, frozenset())
@@ -204,7 +193,7 @@ class _Constants:
         return result
 
     def _member(self, entry, name, seen):
-        """A declared or inherited field: ``(entry, name)``, ``_UNKNOWN`` or None."""
+        """Look up a declared or inherited field: ``(entry, name)``, ``_UNKNOWN`` or None."""
         fields = self.fields.get(id(entry), {})
         if name in fields:
             return (entry, name) if fields[name] is not None else _UNKNOWN
@@ -246,7 +235,7 @@ class _Constants:
         return matches[0] if len(matches) == 1 else None
 
     def _types(self, parts, source, chain):
-        """Declarations a written type name selects within the analyzed sources."""
+        """Return the declarations a written type name refers to."""
         candidates = []
         written = ".".join(parts)
         if written in self.unique:
@@ -274,11 +263,7 @@ class _Constants:
 
 
 def _resolve_route_constants(units):
-    """Evaluate mapping routes written through compile-time String constants.
-
-    The evaluated routes and the constant declarations they used are kept on
-    the parsed annotation, so every mapping consumer sees the same value.
-    """
+    """Evaluate mapping routes built from String constants and store them on the annotation."""
     sources = {id(unit.source): unit.source for unit in units
                if unit.source.language == "java"
                and getattr(unit.source, "semantic", {}).get("types")}
@@ -409,9 +394,8 @@ def _link_contract(contract, implementation):
             "Multiple concrete methods implement this interface contract.")
 
 
-# Spring property conditions. A literal @ConditionalOnProperty links to the
-# repository declarations of its key; which declaration takes effect when
-# deployed is never decided here.
+# @ConditionalOnProperty links to the declarations of its key. We do not pick
+# which one applies at deploy time.
 _CONDITIONAL_ON_PROPERTY_FQN = (
     'org.springframework.boot.autoconfigure.condition.ConditionalOnProperty')
 _CONDITIONAL_ON_PROPERTY_PACKAGE = (
@@ -579,9 +563,8 @@ def _prepare_property_conditions(sources, units):
                 candidates = tuple(unit for unit in declarations
                     if _relaxed(unit.configuration.key) == _relaxed(key)
                     and unit.configuration.environment in allowed)
-                # Spring's relaxed binding matches app.featureEnabled to
-                # app.feature-enabled. The binding is named by the declared key,
-                # so declarations spelled differently keep the exact one only.
+                # Relaxed binding matches app.featureEnabled to app.feature-enabled.
+                # If spellings differ, keep only the exact match.
                 spellings = {unit.configuration.key for unit in candidates}
                 if len(spellings) > 1:
                     candidates = tuple(unit for unit in candidates
@@ -744,9 +727,7 @@ def prepare(sources, units, diagnostics=None):
                         "resolution": "resolved", "reason": None}
                     contract_relations = getattr(
                         contract["unit"].source, "semantic_relations", [])
-                    # The Java adapter already selects implementations for every
-                    # interface method, as one relation per declaration that may
-                    # name this method as its target or among its candidates.
+                    # The Java adapter may already have a relation for this method.
                     if not any(existing["source"] is reverse["source"] and
                                existing["kind"] == reverse["kind"] and
                                (existing["target"] is reverse["target"] or any(
@@ -777,13 +758,12 @@ def prepare(sources, units, diagnostics=None):
     return pending
 
 
-# Spring Data repository interfaces: a project interface extending one of
-# these is implemented by a proxy Spring Data creates at runtime.
+# Interfaces extending these are implemented by a Spring Data proxy at runtime.
 _SPRING_DATA_PACKAGE = "org.springframework.data."
 
 
 def _spring_data_base(source, entry):
-    """``(qualified name, written name)`` of the Spring Data repository type *entry* extends."""
+    """Return ``(qualified name, written name)`` of the Spring Data type *entry* extends."""
     if entry["kind"] != "interface_declaration":
         return None
     for name in entry["bases"]:
@@ -796,7 +776,7 @@ def _spring_data_base(source, entry):
 
 
 def _heritage_span(entry, simple):
-    """The span naming *simple* in *entry*'s ``extends`` clause, or the whole declaration."""
+    """Return the span of *simple* in the extends clause, or the whole declaration."""
     unit = entry["unit"]
     text = unit.source.text[unit.start:unit.end]
     match = re.search(r"\bextends\b[^{]*?\b" + re.escape(simple) + r"\b", text)
@@ -807,7 +787,7 @@ def _heritage_span(entry, simple):
 
 
 def _selection(declaration):
-    """The Java adapter's source-implementation relation for *declaration*, if any."""
+    """Return the Java adapter's implementation relation for *declaration*, if any."""
     return next((relation for relation in getattr(declaration.source, "semantic_relations", [])
                  if relation["source"] is declaration
                  and relation["kind"] == "selects_implementation"
@@ -821,7 +801,7 @@ def _selected(relation):
 
 
 def _add_source_candidates(declaration, additions, evidence_spans, diagnostics):
-    """Join *additions* to *declaration*'s source implementations, keeping every candidate."""
+    """Add *additions* to the implementation candidates of *declaration*."""
     relation = _selection(declaration)
     current = _selected(relation)
     merged = sorted({id(unit): unit for unit in current + additions}.values(),
@@ -853,18 +833,10 @@ def _add_source_candidates(declaration, additions, evidence_spans, diagnostics):
 
 
 def _spring_data_implementations(sources, diagnostics):
-    """Represent what a Spring Data repository proxy implements, without choosing it.
+    """Add the Spring Data proxy as an implementation candidate for repository methods.
 
-    A project interface extending a Spring Data repository type is implemented
-    at runtime. Each abstract method it declares or inherits from a project
-    interface gains an external implementation candidate: a resource standing
-    for the generated proxy, kept beside, never instead of, the source classes
-    that also implement the method. Spring Data routes a method to a custom
-    fragment instead when one of the repository's parent interfaces has an
-    implementation named ``<Fragment>Impl`` or ``<Repository>Impl``, its default
-    naming; that implementation is real source, so it joins the method's
-    ordinary candidates and no external candidate is added. Which candidate is
-    active is a matter of configuration and is not decided here.
+    Methods backed by a ``<Fragment>Impl`` or ``<Repository>Impl`` class get that
+    class as a candidate instead of the proxy.
     """
     for source in sources:
         for entry in getattr(source, "semantic", {}).get("types", []):
@@ -873,8 +845,7 @@ def _spring_data_implementations(sources, diagnostics):
                 continue
             qualified_base, simple_base = base
             heritage = _heritage_span(entry, simple_base)
-            # The repository and every project interface it inherits, through the
-            # Java adapter's resolved heritage relations.
+            # Collect the repository and the project interfaces it inherits.
             interfaces, queue = [entry], [entry]
             while queue and len(interfaces) <= 32:
                 current = queue.pop(0)
@@ -931,9 +902,7 @@ def _spring_data_implementations(sources, diagnostics):
                     "subject_ids": [source.resource_id], "evidence_ids": []})
 
 
-# Spring's own words for what makes a class a bean and how one bean is
-# preferred, narrowed or switched on. Each is evidence about a candidate; none
-# decides which candidate runs.
+# Bean annotations recorded as evidence on candidates.
 _SPRING_STEREOTYPES = {
     "org.springframework.stereotype.Component": "@Component",
     "org.springframework.stereotype.Service": "@Service",
@@ -948,8 +917,7 @@ _SPRING_SELECTORS = {
     "org.springframework.beans.factory.annotation.Qualifier",
     "org.springframework.context.annotation.Profile",
 }
-# ``@Qualifier("name") Type variable`` on a field or a constructor/method
-# parameter: the type a bean is requested by and the name it is narrowed to.
+# Matches ``@Qualifier("name") Type variable`` on a field or parameter.
 _INJECTION_QUALIFIER = re.compile(
     r'@(?:[\w.]+\.)?Qualifier\s*\(\s*(?:value\s*=\s*)?"([^"]*)"\s*\)\s*'
     r'(?:(?:private|protected|public|final|static|transient|volatile)\s+)*'
@@ -959,7 +927,7 @@ _NO_PROOF = ("Spring evidence; the active bean set and profile are runtime "
 
 
 def _spring_label(source, annotation):
-    """The written form of a Spring annotation SPEED reports, or None."""
+    """Return the display form of a reported Spring annotation, or None."""
     qualified = java_semantic._annotation_type(source, annotation)
     if qualified in _SPRING_STEREOTYPES:
         return _SPRING_STEREOTYPES[qualified]
@@ -969,7 +937,7 @@ def _spring_label(source, annotation):
 
 
 def _resolve_written(source, written):
-    """The qualified name a written type refers to in *source*: in full, imported, or same package."""
+    """Resolve a written type name in *source* to its qualified name."""
     written = re.sub(r"<.*>", "", written)
     if "." in written:
         return written
@@ -978,16 +946,10 @@ def _resolve_written(source, written):
 
 
 def _spring_selection_evidence(sources, units):
-    """Explain each implementation candidate in Spring's terms, without choosing one.
+    """Attach Spring bean annotations to implementation candidates as evidence.
 
-    For every candidate of a ``selects_implementation`` relation, the class's
-    Spring stereotype, ``@Primary``, ``@Qualifier`` and ``@Profile``, and any
-    ``@Bean`` method that returns a new instance of it, are attached as evidence
-    spans and, on an unsettled selection, named in its reason. Qualifiers
-    written at injection points that request the declaring type are recorded
-    the same way. A candidate with none of this is kept and said to have none:
-    a class can be created with ``new``. Configuration files are not read, and
-    nothing here changes a relation's targets, candidates or resolution.
+    Records stereotypes, @Primary, @Qualifier, @Profile and @Bean factory
+    methods. Does not change a relation's targets or resolution.
     """
     test_path = re.compile(CATALOG["test_path_pattern"])
     java_sources = sorted({id(unit.source): unit.source for unit in units
@@ -1070,18 +1032,9 @@ def _spring_selection_evidence(sources, units):
             relation["reason"] = f"{relation['reason']} {_NO_PROOF}: " + "; ".join(parts) + "."
 
 
-# Where Spring Boot serves the endpoints of a service. The application
-# configuration on the main classpath names the port and the servlet context
-# path. Its documents layer in Spring Boot's order: the classpath root before
-# config/, YAML before Properties in one location, profile-specific files
-# after the others, and later documents of one file after earlier ones. A
-# document applies unconditionally unless its file is profile-specific or it
-# activates on a profile (``spring.config.activate.on-profile``). Each
-# activation that changes the port or context path is a separate base that
-# applies only under it, and the default base then applies only while none of
-# those does. A declared ``spring.profiles.active`` is named on the bases it
-# selects but never assumed, because a runtime override can change it.
-# Without any declaration, Spring Boot listens on 8080 at the root context.
+# Server port and context path from application config, layered in Spring
+# Boot's order. Profile-specific values become separate conditional bases.
+# Defaults to port 8080 at the root context.
 _BOOT_CONFIGURATION = re.compile(
     r"(?:^|/)src/main/resources/(config/)?application(?:-([^/]+?))?\.(properties|ya?ml)$")
 _SERVER_PORT = "server.port"
@@ -1090,7 +1043,7 @@ _BOOT_DEFAULT_PORT = 8080
 
 
 def _relaxed(key):
-    """Spring Boot's relaxed binding: case, dashes and underscores do not count."""
+    """Normalize a property key for relaxed binding (ignore case, dashes, underscores)."""
     return key.strip().lower().replace("-", "").replace("_", "")
 
 
@@ -1100,7 +1053,7 @@ _LEGACY_ON_PROFILE = _relaxed("spring.profiles")
 
 
 def _boot_properties(source):
-    """The documents of a Properties file; ``#---`` or ``!---`` separates them."""
+    """Split a Properties file into documents on ``#---`` or ``!---``."""
     documents, values, offset = [], {}, 0
     for line in source.text.splitlines(keepends=True):
         content = line.rstrip("\r\n")
@@ -1148,7 +1101,7 @@ def _boot_yaml(source):
 
 
 def _activation(profile, values):
-    """The condition under which one configuration document applies, or None."""
+    """Return the condition a config document applies under, or None."""
     terms = [f"Spring profile {profile} is active"] if profile else []
     for key in sorted(values):
         if key not in (_ON_PROFILE, _LEGACY_ON_PROFILE) and not key.startswith(_ACTIVATION):
@@ -1166,7 +1119,7 @@ def _activation(profile, values):
 
 
 def _boot_layers(all_sources, scopes):
-    """Each scope's configuration documents as ``(condition, values)``, lowest precedence first."""
+    """Return each scope's config documents as ``(condition, values)``, lowest precedence first."""
     layers = {}
     for source in all_sources:
         found = _BOOT_CONFIGURATION.search(source.path)
@@ -1197,7 +1150,7 @@ def _served_at(values):
 
 
 def endpoint_bases(sources, all_sources):
-    """Server bases of every service scope this enricher was selected for."""
+    """Return the server bases for each selected service scope."""
     scopes = sorted({source.service_scope for source in sources})
     layers = _boot_layers(all_sources, set(scopes))
     bases = []
@@ -1243,20 +1196,8 @@ def endpoint_bases(sources, all_sources):
             })
     return bases
 
-# Persistence
-#
-# What a repository operation reads or writes, and which implementation runs
-# under the profiles the project declares. Each statement the source spells
-# out (Spring JDBC SQL, SimpleJdbcInsert, EntityManager calls, JPQL, @Query)
-# becomes a data read or write on the table its text or its entity's @Table
-# names; a table name the schema does not declare stays unresolved. The
-# declared ``spring.profiles.active`` conditions an additional implementation
-# selection when it activates exactly one candidate; the static selection and
-# every inactive candidate are kept, and the condition names the property
-# because a runtime override can change it. A repository method the active
-# Spring Data proxy implements at runtime reads or writes its domain type's
-# table by Spring Data's contract; the SQL it generates is not in source and
-# that operation stays unresolved.
+# Persistence: table reads/writes from JDBC SQL, SimpleJdbcInsert,
+# EntityManager, JPQL and @Query. Unknown tables stay unresolved.
 
 _PROFILES_ACTIVE = "spring.profiles.active"
 _JDBC_TEMPLATES = {"JdbcTemplate", "NamedParameterJdbcTemplate", "JdbcOperations",
@@ -1288,7 +1229,7 @@ def configure(sources, all_sources):
 
 
 def _java_mask(text):
-    """*text* with comments and the contents of literals blanked, length preserved."""
+    """Blank out comments and literal contents in *text*, keeping its length."""
     out, index = list(text), 0
     while index < len(text):
         if text.startswith("//", index):
@@ -1349,7 +1290,7 @@ def _top_level(masked, start, end, separator):
 
 
 def _string_value(text, masked, start, end):
-    """The string a Java expression spells, runtime pieces as ``:p`` parameters."""
+    """Return the string a Java expression builds, with runtime parts as ``:p``."""
     parts, literal = [], False
     for left, right in _top_level(masked, start, end, "+"):
         piece = text[left:right].strip()
@@ -1365,7 +1306,7 @@ def _string_value(text, masked, start, end):
 
 
 def _type_name(written):
-    """The simple element type a declared type names, unwrapping one collection."""
+    """Return the simple element type name, unwrapping one collection."""
     written = (written or "").strip()
     generic = re.search(r"<\s*([\w.]+)\s*>", written)
     return (generic.group(1) if generic else re.sub(r"<.*", "", written)).rsplit(".", 1)[-1]
@@ -1383,7 +1324,7 @@ def _java_types(units):
 
 
 def _entities(types):
-    """JPA entities by entity name, each with its declared table and evidence span."""
+    """Return JPA entities by name with their table and span."""
     entities = {}
     for source, entry in types:
         annotations = {item["name"]: item for item in entry["annotations"]}
@@ -1409,9 +1350,8 @@ def _table_resource(name, known, entity=None):
                        "runtime naming strategy.")}
 
 
-# The trusted sqlglot parser, verified and loaded once per process. A missing or
-# mismatched install leaves SQL statements unparsed and is reported, rather than
-# aborting extraction.
+# sqlglot is loaded once. If it is missing or the wrong version, SQL is left
+# unparsed and reported instead of failing extraction.
 _SQL_PARSER = {}
 
 
@@ -1425,7 +1365,7 @@ def _sql_parser():
 
 
 def _sql_accesses(sql, known):
-    """``(kind, resource)`` pairs one SQL statement reads and writes, or None."""
+    """Return ``(kind, resource)`` pairs a SQL statement reads and writes, or None."""
     sqlglot = _sql_parser()
     if sqlglot is None:
         _SQL_PARSER["skipped"] = _SQL_PARSER.get("skipped", 0) + 1
@@ -1451,7 +1391,7 @@ def _sql_accesses(sql, known):
 
 
 def _jpql_accesses(jpql, entities, known):
-    """``(kind, resource)`` pairs a JPQL statement reads and writes, or None."""
+    """Return ``(kind, resource)`` pairs a JPQL statement reads and writes, or None."""
     statement = jpql.strip().lower()
     if statement.startswith(("update", "delete")):
         writes = True
@@ -1495,7 +1435,7 @@ def _operation(unit, position, end, kind, resource, protocol, gaps=(), condition
 
 
 def _statement_operations(source, entry, method, entities, known):
-    """Persistence statements one method body spells out."""
+    """Return the persistence statements in a method body."""
     unit = method["unit"]
     text = unit.text
     masked = _java_mask(text)
@@ -1551,7 +1491,7 @@ def _statement_operations(source, entry, method, entities, known):
 
 
 def _query_operations(source, method, entities, known):
-    """The operation a repository method's ``@Query`` declares."""
+    """Return the operation declared by a repository method's ``@Query``."""
     annotation = next((item for item in method["annotations"] if item["name"] == "Query"), None)
     if annotation is None or not source.semantic["imports"].get("Query", "").startswith(
             "org.springframework.data."):
@@ -1571,7 +1511,7 @@ def _query_operations(source, method, entities, known):
 
 
 def _profile_guard(entry):
-    """The profiles a type's @Profile names, () when unconditional, None when not decidable."""
+    """Return a type's @Profile names, () if unconditional, None if unknown."""
     annotation = next((item for item in entry["annotations"] if item["name"] == "Profile"), None)
     if annotation is None:
         return (), None
@@ -1589,7 +1529,7 @@ def _active(values, profiles):
 
 
 def _spring_data_routes(types):
-    """Per repository declaration, how Spring Data serves it: redeclared or by its proxy."""
+    """Return, per repository declaration, whether Spring Data serves it by redeclaration or proxy."""
     by_unit = {id(entry["unit"]): entry for _, entry in types}
     routes = {}
     for source, entry in types:
@@ -1717,18 +1657,12 @@ def _persistence(sources, units, diagnostics=None):
 
 
 def _profile_alternatives(units, diagnostics):
-    """Record a choice every candidate of which @Profile gates as conditional paths.
+    """Split an ambiguous selection into one conditional selection per @Profile.
 
-    When each candidate implementation of a declaration, and the Spring Data
-    proxy if one implements it too, names the profiles it runs under, which one
-    runs is a matter of configuration, not an unknown: the ambiguous selection
-    becomes one selection per alternative, each carrying its @Profile as its
-    condition. Nothing is chosen; every alternative stays a path. A candidate
-    without a decidable @Profile, or a truncated candidate list, keeps the
-    choice ambiguous.
+    Applies only when every candidate has a known @Profile and the list is not
+    truncated; otherwise the selection stays ambiguous.
     """
-    # The choice lives on the declaring interface, which need not be a source
-    # Spring was selected for.
+    # The declaring interface may be in a source Spring was not selected for.
     sources = sorted({id(unit.source): unit.source for unit in units
                       if unit.source.language == "java"
                       and getattr(unit.source, "semantic", None)}.values(),
@@ -1776,9 +1710,8 @@ def _profile_alternatives(units, diagnostics):
                     "resolution": "resolved", "outcome": "exact", "reason": None,
                     "condition": condition,
                     "evidence_spans": [(unit.source, unit.start, unit.end), span]})
-            # Every earlier report of this choice as ambiguous is withdrawn: it
-            # is a configuration choice. Reports name the declaration followed
-            # by ';' or, once Spring Data fragments joined, ','.
+            # Drop the earlier ambiguity diagnostics. They end with ';' or, with
+            # Spring Data fragments, ','.
             named = tuple(f" implement {declaration.semantic_identity}{mark}" for mark in ";,")
             diagnostics[:] = [item for item in diagnostics
                               if not (item.get("code") == "JAVA_IMPLEMENTATION_AMBIGUOUS"

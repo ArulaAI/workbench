@@ -944,8 +944,8 @@ def test_nonpassing_repaired_candidate_is_not_cached(tmp_path):
     assert responses
     assert all('"operation":"verify"' in path.read_text()
                for path in responses)
-    # The second repair returns the candidate unchanged: it is not verified,
-    # and the third is told so; ignoring it again stalls the chain.
+    # The second repair returns the same candidate, so it isn't verified and
+    # the third repair is told so.
     repairs = [request for request in provider.requests
                if request['operation'] == 'repair']
     assert len(repairs) == 3
@@ -1263,7 +1263,7 @@ def test_semantic_outcome_summary_exposes_verdict_and_record_counts():
                           'subject_ids': sorted(graph['canonical_anchor_ids'])}],
         },
     }
-    # The finding's free text is provider output and never reaches the log.
+    # Provider-written finding text must not be logged.
     assert 'A required activity is missing.' not in repr(verification)
     assert synthesis == {
         'summary': '1 activities, 0 rules, 0 domains',
@@ -1278,12 +1278,10 @@ def test_semantic_outcome_summary_exposes_verdict_and_record_counts():
     }
 
 
-# Deterministic closure fields and repair scope
+# Closure fields and repair scope
 #
-# An activity's bindings and effects, an information use's traces, bindings
-# and effects, and the support ceiling of a rule on an unresolved trace are
-# derived from the graph. They are set before identities are allocated, so a
-# provider is never judged on them and an identity never moves because of them.
+# Bindings, effects, traces and the rule support ceiling are derived from the
+# graph before ids are allocated, so they never affect identity.
 
 def closure_graph():
     graph = graph_scope(anchor_count=1)
@@ -1374,8 +1372,8 @@ def test_information_use_closure_fields_are_derived_and_ungrounded_uses_are_kept
     use, = normalize_ids(closure_candidate(graph), graph)['information_uses'].values()
     assert (use['trace_ids'], use['binding_ids'], use['effect_ids']) == (
         ['trace:fixture'], ['binding:in'], ['effect:write'])
-    # A use naming a resource its activity never reaches is left as proposed,
-    # for acceptance and Verify to reject.
+    # A use citing a resource its activity never reaches is kept as-is;
+    # acceptance and verify reject it later.
     graph['context']['resources']['resource:pets'] = record(
         'Resource', id='resource:pets', kind='table', name='pets',
         evidence_ids=['ev:fixture'], resolution='resolved')
@@ -1422,7 +1420,7 @@ def test_repair_still_rejects_out_of_scope_changes_it_cannot_restore():
     previous = normalize_ids(shared_anchor_candidate(graph), graph)
     named, unnamed = sorted(previous['activities'])
     replacement = copy.deepcopy(previous)
-    # Re-identifying an unnamed activity is not a same-identity revision.
+    # Changing an unnamed activity's anchors gives it a new id.
     replacement['activities'][unnamed]['anchor_ids'] = []
     replacement = normalize_ids(replacement, graph)
     changes = normalize_repair_payload(record(
@@ -1439,10 +1437,9 @@ def test_repair_still_rejects_out_of_scope_changes_it_cannot_restore():
 
 # Branch-scoped closure
 #
-# One UI action can route the same submit to different endpoints under
-# different conditions (PetEditor: POST for a new pet, PUT for an existing
-# one).  An activity that claims one branch's endpoint anchor owns that
-# branch's work only; the sibling branch belongs to the activity claiming it.
+# One submit can route to different endpoints by condition (e.g. POST for a
+# new pet, PUT for an existing one). An activity claiming one branch's anchor
+# only owns that branch's work.
 
 def ref(kind, identifier):
     return {'kind': kind, 'id': identifier}
@@ -1512,7 +1509,7 @@ def test_activity_closure_keeps_the_whole_trace_without_a_branch_claim():
     assert activity_closure(model, forked_activity())['effect_ids'] == everything
     assert activity_closure(
         model, forked_activity('anchor:post', 'anchor:put'))['effect_ids'] == everything
-    # Models without anchor records keep the trace-wide closure.
+    # Without anchor records the closure covers the whole trace.
     assert activity_closure({**model, 'anchors': {}},
                             forked_activity('anchor:put'))['effect_ids'] == everything
 
@@ -1550,7 +1547,7 @@ def test_normalization_scopes_shared_trace_effects_to_the_claimed_branch():
             to_ref={'kind': 'symbol', 'id': f'symbol:{name}'},
             condition='pet.isNew' if name == 'create' else '!(pet.isNew)',
             evidence_ids=['ev:fixture'], resolution='resolved')
-    # The write moves behind the create branch.
+    # Put the write behind the create branch.
     context['edges']['edge:write']['from_ref'] = {'kind': 'symbol', 'id': 'symbol:create'}
     context['traces']['trace:fixture'].update(
         symbol_ids=['symbol:handler', 'symbol:create', 'symbol:update'],
@@ -1575,7 +1572,7 @@ def test_routes_without_exclusive_conditions_are_not_sibling_branches():
         model = forked_model()
         model['edges']['edge:post']['condition'] = post
         model['edges']['edge:put']['condition'] = put
-        # Both requests may run in one submit, so the save stays this activity's work.
+        # Both requests can run in one submit, so the write stays with this activity.
         assert activity_closure(model, forked_activity('anchor:put'))['effect_ids'] == everything
 
 

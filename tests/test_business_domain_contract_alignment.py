@@ -1,4 +1,4 @@
-"""The runtime contract may not drift farther from the normative contract."""
+"""Tests that the runtime contract matches the normative contract."""
 import json
 import subprocess
 import sys

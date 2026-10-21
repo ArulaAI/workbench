@@ -1,4 +1,4 @@
-"""Normalize installed package.json supporting inputs without I/O."""
+"""Parse package.json supporting inputs."""
 import json
 from dataclasses import dataclass
 from pathlib import PurePosixPath
@@ -32,10 +32,9 @@ def _object_section(data, name, text, strict):
 
 def parse_package_json(text: str, sections=('engines', 'dependencies',
         'devDependencies'), strict=True) -> PackageManifest:
-    """Read engines and dependency constraints; scripts are never read.
+    """Parse engines and dependency constraints from package.json text.
 
-    Strict parsing rejects a malformed selected section. Tolerant parsing keeps
-    the other sections and represents a nonstring constraint as null.
+    With strict=False, non-string constraints become None instead of raising.
     """
     try:
         data = json.loads(text)

@@ -1,4 +1,4 @@
-"""Trusted MySQL adapter boundary using the shared normalized SQL owner."""
+"""MySQL adapter; delegates to the shared SQL adapter with the mysql dialect."""
 
 from .sql import *  # noqa: F401,F403
 from . import sql as _sql

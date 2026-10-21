@@ -1,12 +1,6 @@
-"""In-process state in TypeScript: collections a class member or module keeps.
+"""Tests for TypeScript in-memory stores (Map, Set, array members and module state).
 
-A Map, Set or array held by a class member, a module-level binding, or a
-member of a declared record is where such code keeps its data. Changing it is
-a data write and reading it a data read, on one `memory_store` resource named
-by where the collection is declared. A write completes in process memory, a
-boundary the trace states; it does not leave the trace incomplete. A
-collection nothing changes is reference data, and one a parameter or a fresh
-local holds is not shared state; calls on either stay platform calls.
+Collections that are never written, parameters and fresh locals stay platform calls.
 """
 from lib.context.business_domain_extract import Extractor
 from lib.context.business_domain_schema import information_use_closure, settings

@@ -1,10 +1,4 @@
-"""Repair rounds keep what the provider cited and what the graph determines.
-
-Three deterministic behaviours are covered: ``_ref:N`` aliases keep naming the
-same record across requests, restoring an unrequested revision also restores
-the retired records it references, and an information use is never resolved
-while its operation facts are unresolved.
-"""
+"""Tests for alias stability, information-use resolution caps and restoration across repair rounds."""
 import copy
 
 from lib.context.business_domain_schema import record
@@ -17,7 +11,7 @@ from tests.test_business_domain_candidate_protocol import (
 )
 
 
-# R1: run-level aliases
+# Run-level aliases
 
 def _concepts(graph, *names):
     concepts = [record('Concept', id=f'concept:{name.lower()}', name=name,
@@ -67,9 +61,9 @@ def test_records_keep_their_alias_when_the_candidate_grows(tmp_path):
 
     for record_id in first['concepts']:
         assert after.aliases[record_id] == before.aliases[record_id]
-    # A new record gets a fresh number above every number already handed out.
+    # New records get a number above all existing ones.
     assert _number(after, new_id) > max(_number(before, rid) for rid in first['concepts'])
-    # Without the registry the same growth renumbers the existing records.
+    # Without the registry, existing records get renumbered.
     unregistered = ProviderProjection(graph)
     unregistered.extend_aliases(grown)
     assert any(unregistered.aliases[rid] != before.aliases[rid] for rid in first['concepts'])
@@ -104,8 +98,7 @@ def test_reidentified_record_inherits_the_alias_the_provider_kept(tmp_path):
     veterinarian = _concept_id(revised, 'Veterinarian')
     owner_number = _number(request, owner)
 
-    # The provider continues Owner as concept:<its number> and Vet under its
-    # exact alias, which decodes to the previous canonical ID.
+    # Owner is referenced by its alias number, Vet by its previous canonical ID.
     inherited = runner._inherit_aliases(graph, request, {
         f'concept:{owner_number}': pet_owner, vet: veterinarian}, revised)
     after = _project(runner, graph, revised)
@@ -124,7 +117,7 @@ def test_alias_is_not_inherited_by_another_kind_or_while_its_owner_remains(tmp_p
     number = _number(request, owner)
     grown, new_id = _with_concept_first(graph, first, 'Visit')
 
-    # Owner is still present, and a rule cannot continue a concept.
+    # Owner still exists, and a rule alias can't continue a concept.
     assert runner._inherit_aliases(graph, request, {
         f'concept:{number}': new_id, f'rule:{number}': 'rule:other'}, grown) == []
     assert _project(runner, graph, grown).aliases[owner] == request.aliases[owner]
@@ -159,7 +152,7 @@ def test_registry_numbers_start_after_graph_aliases_and_never_repeat():
     assert registry.assign(['a', 'a2'], 10) == {'a': 13, 'a2': 10}
 
 
-# R2: information-use resolution ceiling
+# Information-use resolution cap
 
 def _normalized_use(graph, resolution, reason=None):
     candidate = closure_candidate(graph)
@@ -175,7 +168,7 @@ def test_resolved_use_over_unresolved_write_facts_is_capped_with_a_reason():
     assert use['resolution'] == 'unresolved'
     assert use['reason'] == ('The operation facts of this use are unresolved: '
                              'Commit is not established.')
-    # Resolution is not identity: the capped use keeps its ID.
+    # Capping resolution doesn't change the ID.
     assert use_id == _normalized_use(graph, 'unresolved', 'Provider reason.')[0]
 
 
@@ -197,7 +190,7 @@ def test_resolution_is_never_upgraded_and_provider_reasons_are_kept():
     assert _normalized_use(graph, 'resolved', 'Provider reason.')[1]['reason'] == 'Provider reason.'
 
 
-# R3: referentially closed restoration
+# Restoration of referenced records
 
 def _candidate(**collections):
     return {name: copy.deepcopy(records) for name, records in collections.items()}
@@ -220,7 +213,7 @@ def _dangling(candidate):
 
 
 def test_restoring_a_concept_restores_the_claims_its_old_body_cites():
-    """A repair rewrote a concept's claim under a new ID that no finding asked for."""
+    """The repair replaced a claim that no finding asked to change."""
     previous = _candidate(
         activities={'activity:a': {'id': 'activity:a', 'name': 'Named'}},
         concepts={'concept:owner': {'id': 'concept:owner', 'claim_ids': ['claim:old']}},
@@ -275,7 +268,7 @@ def test_in_scope_changes_are_not_restored():
         claims={'claim:new': {'id': 'claim:new', 'subject_id': 'concept:owner',
                               'text': 'Corrected as asked.'}})
 
-    # The finding names the old claim: replacing it is the requested change.
+    # The finding names the old claim, so replacing it was requested.
     restored_candidate, restored, regressions = _restore(previous, repaired, 'claim:old')
 
     assert restored == []
@@ -293,6 +286,6 @@ def test_regression_guard_still_rejects_unneeded_out_of_scope_retirements():
 
     restored_candidate, restored, regressions = _restore(previous, repaired, 'activity:a')
 
-    # Nothing restored needs the rule, so its retirement stays a regression.
+    # Nothing restored references the rule, so dropping it is a regression.
     assert restored == []
     assert regressions == ['rule:unrelated']

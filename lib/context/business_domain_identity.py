@@ -1,4 +1,4 @@
-"""Conservative domain and entry-point identity, never display names."""
+"""Canonical anchor identity and domain identity across runs."""
 import json
 import copy
 from pathlib import Path
@@ -10,7 +10,7 @@ ENTRYPOINT_ROLES = frozenset({'registration', 'exposure', 'contract'})
 
 
 def _anchor_defaults(anchor):
-    """Permit legacy producers while making their missing decision explicit."""
+    """Fill in anchor fields older producers may omit."""
     anchor.setdefault('canonical_anchor_id', None)
     anchor.setdefault('eligibility', 'unresolved')
     anchor.setdefault('representations', [])
@@ -25,7 +25,7 @@ def _eligible_representations(anchor):
 
 
 def _canonical_identity(representations):
-    """Choose an adapter-established entry-point identity without source ordering."""
+    """Return the single identity key for the highest-priority role, or None."""
     for role in ('registration', 'exposure', 'contract'):
         identities = {item['identity_key'] for item in representations if item['role'] == role}
         if len(identities) == 1:
@@ -36,7 +36,7 @@ def _canonical_identity(representations):
 
 
 def _canonical_representation(representations):
-    """Return the stable representation that owns canonical display fields."""
+    """Return the representation whose fields the canonical anchor uses, or None."""
     for role in ('registration', 'exposure', 'contract'):
         candidates = sorted(
             (item for item in representations if item['role'] == role),
@@ -51,7 +51,7 @@ def _canonical_representation(representations):
 
 
 def update_anchor_coverage(model):
-    """Recalculate source-representation and canonical-anchor inventory."""
+    """Recompute anchor and representation counts in the coverage section."""
     anchors = model.get('anchors', {})
     coverage = model.get('coverage')
     if coverage is None:
@@ -84,12 +84,9 @@ def update_anchor_coverage(model):
 
 
 def reconcile_anchors(model):
-    """Canonicalize representations connected by explicit resolved correspondence.
+    """Merge anchors linked by resolved one-to-one correspondences.
 
-    Adapters own registration, exposure and implementation semantics.  This pass
-    deliberately does not compare names, routes, languages, frameworks or source
-    order.  A resolved one-to-one correspondence is the only evidence that lets
-    a supporting representation join an eligible entry point.
+    Returns a map of old anchor id to canonical id.
     """
     anchors = model.get('anchors', {})
     for anchor in anchors.values():
@@ -100,9 +97,8 @@ def reconcile_anchors(model):
         for representation in anchor['representations']:
             representation_owners.setdefault(representation['id'], []).append(anchor_id)
 
-    # Resolved one-to-one correspondences form representation components.  The
-    # component is merged only when it has one unambiguous canonical identity;
-    # ambiguous/unresolved/review-required proposals never establish identity.
+    # Only resolved one-to-one correspondences link anchors; a linked group is
+    # merged only if it has one unambiguous identity key.
     adjacency = {anchor_id: set() for anchor_id in anchors}
     for anchor_id, anchor in anchors.items():
         for correspondence in anchor['correspondences']:

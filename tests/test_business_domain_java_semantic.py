@@ -1,4 +1,4 @@
-"""Java/Spring semantic adapter conformance and PetClinic regressions."""
+"""Tests for the Java/Spring semantic adapter."""
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -216,8 +216,7 @@ def test_maven_generated_interface_links_openapi_contract_to_controller(tmp_path
               public String getPet(int id) { return "pet"; }
             }
         """,
-        # Deliberately sorts after the Java source: build metadata preparation
-        # must be phase ordered rather than dependent on inventory path order.
+        # Sorts after the Java source so the test doesn't depend on path order.
         "z/pom.xml": """
           <project><build><plugins><plugin>
             <artifactId>openapi-generator-maven-plugin</artifactId>
@@ -403,11 +402,10 @@ def test_spring_inherited_anchor_retains_implementation_terminal_contract():
                 "implementation", (), ("entrypoint_detection",), True)
 
 
-# Phase 2A: an import the snapshot does not declare is a missing project type
-# only under the project's own namespaces; anything else is a dependency.
+# Missing imports: project namespaces are unresolved, everything else external.
 
 def _heritage(facts, kind):
-    """(origin, resolved target or the reason naming the parent, target kind) per edge."""
+    """Return (origin, target or reason, target kind) for each edge of *kind*."""
     return {(source.rsplit("::", 1)[-1],
              target if edge["to_ref"] and edge["to_ref"]["kind"] == "symbol" else edge["reason"],
              edge["to_ref"]["kind"] if edge["to_ref"] else None)
@@ -486,9 +484,8 @@ def test_build_coordinates_and_generated_packages_are_project_namespaces(tmp_pat
                 ("external" if edge["to_ref"] else "unresolved")
                 for _, _, edge in _edge_names(facts, "implements")}
 
-    # The project's parent package (org.acme.app) does not cover org.acme.billing;
-    # the Maven groupId does. Generated packages are the project's even outside
-    # its own coordinates. The <parent> groupId (Spring Boot) never is.
+    # org.acme.billing is covered by the Maven groupId, not the package root.
+    # Generated packages count as local; the <parent> groupId does not.
     assert classified(without_build) == {
         "Invoice": "external", "OrdersApi": "external",
         "OrderDto": "external", "SpringApplication": "external"}
@@ -547,9 +544,7 @@ def test_petclinic_spring_data_repository_parent_is_external(tmp_path):
                    and "Repository" in warning["message"] for warning in facts["warnings"])
 
 
-# Phase 2B: generic signature matching. A descendant's heritage supplies type
-# arguments that are substituted for the declaring type's variables before the
-# erased parameter lists are compared.
+# Generic signature matching after type-argument substitution.
 
 _ENTITIES = {
     "BaseEntity.java": "class BaseEntity {}\n",
@@ -644,8 +639,8 @@ def test_bounded_variable_erases_to_its_bound(tmp_path, heritage, parameter, exp
 
 
 def test_method_level_type_variable_follows_override_rules(tmp_path):
-    # <V> V convert(V) and the erased Object convert(Object) both override
-    # <U> U convert(U); Owner convert(Owner) does not.
+    # <V> V convert(V) and Object convert(Object) override <U> U convert(U);
+    # Owner convert(Owner) does not.
     assert _selected(tmp_path, {
         "Converter.java": "interface Converter { <U> U convert(U value); }\n",
         "GenericConverter.java": """
@@ -694,7 +689,7 @@ def test_implementation_inherited_from_a_generic_superclass(tmp_path):
     }, "Repository.save(T)") == ["BaseRepository.save(X)"]
 
 
-# Phase 2C: implementations outside the analyzed source.
+# Implementations outside the analyzed source.
 
 _PROCESSOR_POM = """<project xmlns="http://maven.apache.org/POM/4.0.0">
   <groupId>org.acme</groupId><artifactId>shop</artifactId>
@@ -721,7 +716,7 @@ _MAPPER_TYPES = {
 
 
 def _selections_from(facts, declaration):
-    """[(resolution, target kind, target name or candidates, edge)] for one declaration."""
+    """Return (resolution, target kind, target or candidates, edge) for a declaration."""
     symbols = facts["symbols"]
     name_of = lambda symbol: symbols[symbol]["qualified_name"].split("::")[-1]
     rows = []
@@ -750,7 +745,7 @@ def test_mapstruct_mapper_with_processor_is_a_generated_implementation(tmp_path)
     excerpts = [facts["evidence"][item]["excerpt"] for item in edge["evidence_ids"]]
     assert any(excerpt.startswith("@Mapper") for excerpt in excerpts)
     assert any("mapstruct-processor" in excerpt for excerpt in excerpts)
-    # A default method has its own body: MapStruct does not implement it.
+    # Default methods have a body, so MapStruct doesn't generate them.
     assert not any(kind == "resource" for _, kind, _, _ in _selections_from(facts, "OwnerMapper.label(Owner)"))
     assert "JAVA_GENERATED_IMPLEMENTATION" in [warning["code"] for warning in facts["warnings"]]
 
@@ -807,7 +802,7 @@ def test_spring_data_repository_methods_gain_an_external_runtime_implementation(
         assert (resolution, kind) == ("unresolved", "resource")
         assert "Spring Data implements" in edge["reason"]
         assert "org.springframework.data.repository.Repository" in edge["reason"]
-        # The evidence names the Spring Data parent in the extends clause.
+        # Evidence points at the Spring Data parent in the extends clause.
         assert "Repository" in [facts["evidence"][item]["excerpt"] for item in edge["evidence_ids"]]
     assert "SPRING_DATA_RUNTIME_IMPLEMENTATION" in [warning["code"] for warning in facts["warnings"]]
 
@@ -834,8 +829,7 @@ def test_spring_data_candidate_sits_beside_source_implementations_without_narrow
         """,
     }))
 
-    # Every alternative names its @Profile, so the choice is configuration:
-    # one conditional selection per alternative, the proxy's included.
+    # Every alternative has @Profile, so each one (and the proxy) gets a conditional selection.
     rows = _selections_from(facts, "OwnerRepository.save(Owner)")
     assert [(resolution, kind) for resolution, kind, _, _ in rows] == [
         ("resolved", "symbol"), ("resolved", "symbol"), ("unresolved", "resource")]
@@ -906,7 +900,7 @@ def test_spring_data_fragment_is_a_source_implementation(tmp_path, implementatio
     assert [(resolution, kind, target) for resolution, kind, target, _ in
             _selections_from(facts, "PetRepository.delete(Pet)")] == [
         ("resolved", "symbol", f"{implementation_name}.delete(Pet)")]
-    # Methods no fragment provides are still the runtime proxy's.
+    # Methods not provided by a fragment stay with the runtime proxy.
     assert [(resolution, kind) for resolution, kind, _, _ in
             _selections_from(facts, "PetRepository.save(Pet)")] == [("unresolved", "resource")]
 
@@ -944,8 +938,7 @@ def test_fragment_and_source_implementations_stay_ambiguous(tmp_path):
     assert "repository fragment" in rows[0][3]["reason"]
 
 
-# Phase 2D: Spring evidence on implementation candidates. Evidence explains a
-# selection; it never resolves one.
+# Spring evidence on implementation candidates. Evidence never resolves a selection.
 
 _APP = "src/org/acme/app"
 _ORDER_TYPES = {
@@ -970,10 +963,8 @@ def _order_selection(tmp_path, *files):
     for item in files:
         merged.update(item)
     facts = _extract(tmp_path, merged)
-    # The static selection: a declared profile may add a separate conditioned
-    # selection beside it, but never changes this one. When every candidate
-    # names its @Profile the selection is one conditional path per candidate,
-    # and the first (Jdbc) stands for them.
+    # Unconditioned selection. Profiles add separate conditioned rows; if every
+    # candidate has @Profile, the first (Jdbc) is used here.
     rows = [row for row in _selections_from(facts, "OrderRepository.save(Order)")
             if row[3]["condition"] is None
             or row[3]["condition"].startswith("@Profile(")][:1]
@@ -1064,9 +1055,8 @@ def test_profile_is_evidence_and_configuration_is_not_proof(tmp_path):
     assert resolution == "resolved" and target == "JdbcOrderRepository.save(Order)"
     assert edge["condition"].startswith('@Profile("jdbc") on JdbcOrderRepository')
     assert '@Profile("jdbc")' in excerpts
-    # The declared profile conditions its alternative; the property is a
-    # default a runtime override can change, so it is a condition, not proof,
-    # and the other alternative stays a path.
+    # The property default can be overridden at runtime, so the other
+    # alternative stays a path.
     facts = _extract(tmp_path, {**_ORDER_TYPES,
         **_candidate("JpaOrderRepository", '@Profile("jpa")', imports),
         **_candidate("JdbcOrderRepository", '@Profile("jdbc")', imports),
@@ -1120,8 +1110,8 @@ def test_spring_evidence_is_deterministic(tmp_path):
 
 
 def test_spring_evidence_does_not_change_selection_edge_identity(tmp_path):
-    # OwnerRepository.save has an ambiguous source edge and an external Spring
-    # Data edge on the same declaration span; evidence must not rename either.
+    # Ambiguous source edge and external Spring Data edge share a span;
+    # evidence must not change either edge's ID.
     def implementations(annotated):
         return {f"{_SPRING_DATA}/{name}OwnerRepository.java": f"""
             package org.acme.repository;
@@ -1145,8 +1135,7 @@ def test_spring_evidence_does_not_change_selection_edge_identity(tmp_path):
     assert len(plain) == 2 and plain == explained
 
 
-# Inherited methods: a call resolves against the receiver type and, nearest
-# first, the project supertypes it inherits from.
+# Inherited methods: calls resolve against the receiver type, then its supertypes.
 
 def _call_targets(facts, caller):
     return sorted((right, edge["resolution"]) for left, right, edge in _edge_names(facts, "calls")
@@ -1256,8 +1245,7 @@ def test_a_method_no_project_type_declares_stays_unresolved(tmp_path):
 
 
 def test_annotated_superclass_is_recognised_and_its_methods_inherited(tmp_path):
-    # PetClinic's shape: @MappedSuperclass ends in "class", which once named the
-    # base class after the next word ("public"), leaving it out of the hierarchy.
+    # "@MappedSuperclass" ends in "class"; it must not be read as the class keyword.
     facts = _extract(tmp_path, {
         "src/model/BaseEntity.java": """
             package model;
@@ -1281,7 +1269,7 @@ def test_annotated_superclass_is_recognised_and_its_methods_inherited(tmp_path):
     assert _call_targets(facts, "Use.id") == [("src/model/BaseEntity.java::BaseEntity.getId()", "resolved")]
 
 
-# ── F1: Spring property conditions link to repository declarations ──────
+# Spring property conditions on repository declarations
 
 import json as _json
 

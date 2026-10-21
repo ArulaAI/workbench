@@ -1,20 +1,15 @@
 #!/usr/bin/env bash
-# domains.sh — Business-domain discovery
+# domains.sh: business-domain discovery
 #
 # speed discover domains [--facts-only | --status | --cancel] [--json]
 #
-# Two roles:
-#   1. `_discover_domains`, the `speed discover domains` handler. It calls
-#      lib/context/business_domain_cli.py, which owns extraction, locking,
-#      synthesis and publication, and renders its one JSON result.
-#   2. Internal provider entry point for business-domain synthesis and
-#      verification (lib/context/business_domain_synthesis.py). Python
-#      invokes this script as `domains.sh config|retry-model|agent ...`; the
-#      shared provider layer (lib/provider.sh) owns provider selection,
-#      authentication, permissions and native failure normalization.
+# Sourced: provides _discover_domains, which runs lib/context/business_domain_cli.py
+# and renders its JSON result.
+# Executed: `domains.sh config|retry-model|agent ...` is the provider entry point
+# called by lib/context/business_domain_synthesis.py.
 #
-# Repository content in results is arbitrary UTF-8, so results are routed
-# through a temp file and read with jq, never captured into a variable.
+# Results can contain arbitrary UTF-8, so they go through a temp file and jq
+# rather than a shell variable.
 
 _domains_render_progress() {
     local line payload level message
@@ -36,10 +31,7 @@ _domains_render_progress() {
     done
 }
 
-# The --facts-only summary. It leads with the answer a reader wants first
-# (was every entry point followed to an end this tool can name?), then shows
-# where each call on a trace went, the evidence gathered, and anything not
-# analyzed. Every number comes from the result's report; nothing here counts.
+# Render the --facts-only summary from the result's report.
 _domains_render_facts() {
     local ok="" warn="" dim="" bold="" accent="" reset=""
     if [[ -n "${RESET:-}" ]]; then
@@ -73,7 +65,7 @@ _domains_render_facts() {
         | ($r.calls // {}) as $calls
         | (.trace_blockers // []) as $blockers
 
-        # ── Headline ────────────────────────────────────────────────────
+        # Headline
         | (if $r.repository then "  " + $bold + $r.repository + $reset else empty end),
           (if $r then "  " + $dim
                 + ([($r.files // [])[:5][] | "\(.files) \(.language)"] | join(" · "))
@@ -94,7 +86,7 @@ _domains_render_facts() {
                 + $reset end),
           "",
 
-        # ── Traces ──────────────────────────────────────────────────────
+        # Traces
           (if $entries > 0
            then heading("Entry points") + ($entries | tostring) + "   " + $dim
                 + ([.entry_points[] | "\(.kind) \(.resolved)/\(.total)"] | join(" · "))
@@ -105,7 +97,7 @@ _domains_render_facts() {
           row("bounded"; $t.bounded; "ends only at boundaries the facts name"),
           row("open"; $t.incomplete; if $t.incomplete > 0 then "stops at a call with no known target" else "" end),
 
-        # ── Where traces stop: shown when a reader has something to act on ─
+        # Where traces end
           (if ($t.incomplete > 0 and ($blockers | length) > 0)
               or ([$blockers[] | select(.class == "boundary")] | length) > 1
            then "",
@@ -120,7 +112,7 @@ _domains_render_facts() {
                  then "    " + $dim + "A trace can appear in several rows." + $reset else empty end)
            else empty end),
 
-        # ── Calls on traces ─────────────────────────────────────────────
+        # Calls on traces
           (if $calls.sites != null
            then "",
                 heading("Calls on traces") + plural($calls.sites; "site"),
@@ -139,7 +131,7 @@ _domains_render_facts() {
                       (if $r.open_sites_more > 0 then "      " + $dim + "+\($r.open_sites_more) more" + $reset else empty end)
                  else empty end)
            else
-             # A result without a report (an older producer): the trace counts.
+             # Older results have no report; fall back to measurements.
              (.measurements.call_targets as $c
               | if $c.unresolved_sites != null
                 then "",
@@ -153,7 +145,7 @@ _domains_render_facts() {
                 else empty end)
            end),
 
-        # ── Data on traces ──────────────────────────────────────────────
+        # Data on traces
           (($r.data // {stores: 0}) as $d
            | if $d.stores > 0
              then "",
@@ -168,7 +160,7 @@ _domains_render_facts() {
                   (if $d.more > 0 then "    " + $dim + "+\($d.more) more" + $reset else empty end)
              else empty end),
 
-        # ── Evidence ────────────────────────────────────────────────────
+        # Evidence
           (if $r.evidence
            then "",
                 heading("Evidence") + ([
@@ -179,7 +171,7 @@ _domains_render_facts() {
                   ] | if length == 0 then "none" else join(" · ") end)
            else empty end),
 
-        # ── Screen actions and generated declarations (when present) ────
+        # Screen actions and generated declarations (when present)
           (if (.screen_actions // []) | length > 0
            then "",
                 title("Screen actions"),
@@ -200,7 +192,7 @@ _domains_render_facts() {
                    + (if .calls > 0 then "; \(.calls) call\(if .calls == 1 then " resolves" else "s resolve" end) to them" else "" end))
            else empty end),
 
-        # ── Relationships ───────────────────────────────────────────────
+        # Relationships
           "",
           ($r.relationships // {resolved: .coverage.edges_resolved, open: .coverage.edges_unresolved}) as $rel
           | heading("Relationships") + "\($rel.resolved) resolved · \($rel.open) unresolved",
@@ -211,7 +203,7 @@ _domains_render_facts() {
                   | "    " + ("" | rpad(14)) + (.[0] | lpad(4)) + "   " + $dim + .[1] + $reset
              else empty end),
 
-        # ── Not analysed ────────────────────────────────────────────────
+        # Not analysed
           ($r.unanalyzed // {files: 0}) as $u
           | (if $u.files > 0
              then "",
@@ -227,7 +219,7 @@ _domains_render_facts() {
                     + $reset
              else empty end),
 
-        # ── Warnings and entry-point coverage ───────────────────────────
+        # Warnings and entry-point coverage
           "",
           heading("Warnings") + (.warnings | length | tostring),
           ((.warning_counts // [.warnings | group_by(.code)[] | {code: .[0].code, count: length}])[]
@@ -385,7 +377,7 @@ _domains_retry_model() {
     fi
 }
 
-# Sourcing the module defines functions without bootstrapping.
+# Only bootstrap when executed directly, not when sourced.
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
     source "${SCRIPT_DIR}/lib/config.sh"

@@ -1,4 +1,4 @@
-"""F-07 SQL registration, visibility, and trigger identity coverage."""
+"""Tests for SQL entry point registration, visibility and trigger identity."""
 from pathlib import Path
 
 import pytest

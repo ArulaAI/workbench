@@ -1,4 +1,4 @@
-"""F-07 production acceptance: evidenced entry-point eligibility."""
+"""Acceptance tests for entry-point eligibility."""
 from __future__ import annotations
 
 import ast

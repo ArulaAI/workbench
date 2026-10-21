@@ -1,7 +1,7 @@
-"""Trace completion: complete, bounded by known boundaries, or incomplete.
+"""Tests for trace completion: complete, bounded or incomplete.
 
-Resolution is unchanged; completion says whether what stops a trace is a
-catalogued boundary, recorded as an assumption with its evidence, or a gap.
+A trace is bounded when everything that stops it is a known boundary,
+recorded as an assumption with evidence.
 """
 import copy
 
@@ -24,32 +24,32 @@ def _edge(kind='calls', to_ref=None):
 RESOURCE = {'kind': 'resource', 'id': 'resource:r'}
 
 
-# ── Classification ───────────────────────────────────────────────────────
+# Classification
 
 @pytest.mark.parametrize('obligation, edge, codes, resource, expected', [
-    # Runtime-generated implementations whose behavior follows from declarations.
+    # Implementations generated at runtime from declarations.
     (_obligation('implementation_selection', 'external'), _edge('selects_implementation', RESOURCE),
      {'SPRING_DATA_RUNTIME_IMPLEMENTATION'}, None, 'generated_implementation'),
     (_obligation('data_target', 'unresolved'), _edge('reads_data', RESOURCE),
      {'SPRING_DATA_GENERATED_QUERY'}, None, 'generated_implementation'),
-    # Completion decided by the caller or container.
+    # Transaction completion is up to the caller or container.
     (_obligation('data_target', 'unresolved'), _edge('writes_data', RESOURCE),
      {'SQL_COMPLETION_UNRESOLVED', 'SQL_TRANSACTION_SCOPE_UNRESOLVED'}, None,
      'transaction_completion'),
-    # A real gap beside a boundary keeps the obligation a gap.
+    # Any real gap alongside a boundary keeps it a gap.
     (_obligation('data_target', 'unresolved'), _edge('writes_data', RESOURCE),
      {'SQL_COMPLETION_UNRESOLVED', 'SQL_OPERATION_PARSE_GAP'}, None, None),
     (_obligation('data_target', 'unresolved'), _edge('writes_data', None),
      {'SQL_COMPLETION_UNRESOLVED'}, None, None),
     (_obligation('data_target', 'unresolved'), _edge('writes_data', RESOURCE), set(), None, None),
-    # Known library or platform APIs, per language.
+    # Known library or platform APIs for the matching language.
     (_obligation('external_boundary', 'external'), _edge('calls', RESOURCE), {'JAVA_EXTERNAL_CALL'},
      {'language': 'java', 'provider': 'type:java.util.List'}, 'library_call'),
     (_obligation('external_boundary', 'external'), _edge('calls', RESOURCE), {'JS_EXTERNAL_CALL'},
      {'language': 'tsx', 'provider': 'module:react-router/lib/browserHistory'}, 'library_call'),
     (_obligation('external_boundary', 'external'), _edge('calls', RESOURCE), {'RULES_AMBIENT_CALL'},
      {'language': 'typescript', 'provider': 'global:console'}, 'library_call'),
-    # An unknown library stays a gap, and so does a known name in another language.
+    # Unknown library, or known name in the wrong language, is a gap.
     (_obligation('external_boundary', 'external'), _edge('calls', RESOURCE), {'JS_EXTERNAL_CALL'},
      {'language': 'tsx', 'provider': 'module:left-pad'}, None),
     (_obligation('external_boundary', 'external'), _edge('calls', RESOURCE), {'JAVA_EXTERNAL_CALL'},
@@ -58,20 +58,20 @@ RESOURCE = {'kind': 'resource', 'id': 'resource:r'}
      {'language': 'sql', 'provider': 'type:java.util.List'}, None),
     (_obligation('external_boundary', 'external'), _edge('calls', RESOURCE), {'JAVA_EXTERNAL_CALL'},
      {'language': 'java', 'provider': None}, None),
-    # Candidate providers: known only when every candidate is catalogued.
+    # Multiple candidate providers only count if all are catalogued.
     (_obligation('external_boundary', 'external'), _edge('calls', RESOURCE), {'JAVA_EXTERNAL_CALL'},
      {'language': 'java', 'provider': 'type:java.util.Collections|jakarta.persistence.Collections'},
      'library_call'),
     (_obligation('external_boundary', 'external'), _edge('calls', RESOURCE), {'JAVA_EXTERNAL_CALL'},
      {'language': 'java', 'provider': 'type:java.util.Collections|com.acme.Collections'}, None),
-    # HTTP: reaching an endpoint anchored here is a boundary; nowhere known is a gap.
+    # HTTP calls to an endpoint in this repo are a boundary; unknown targets are gaps.
     (_obligation('external_boundary', 'external', 'ROUTED_REQUEST'),
      _edge('invokes_endpoint', RESOURCE), set(), None, 'endpoint_in_repo'),
     (_obligation('external_boundary', 'external', 'SAME_ORIGIN_REQUEST'),
      _edge('invokes_endpoint', RESOURCE), set(), None, 'endpoint_in_repo'),
     (_obligation('external_boundary', 'external'), _edge('invokes_endpoint', RESOURCE),
      set(), None, None),
-    # Profile- or configuration-selected alternatives.
+    # Alternatives selected by profile or config.
     (_obligation('implementation_selection', 'conditional', 'CONDITIONAL_IMPLEMENTATION'),
      None, set(), None, 'config_selected'),
     # Real gaps.
@@ -88,7 +88,7 @@ def test_each_obligation_is_a_boundary_or_a_gap(obligation, edge, codes, resourc
     assert trace_boundary(obligation, edge, codes, resource) == expected
 
 
-# ── Extraction ───────────────────────────────────────────────────────────
+# Extraction
 
 CONTROLLER = """package com.example.web;
 import java.util.List;
@@ -134,7 +134,7 @@ def test_a_trace_with_every_obligation_satisfied_is_complete(facts):
 
 def test_a_known_library_call_bounds_the_trace_and_states_its_assumption(facts):
     trace = _trace(facts, '/names/empty')
-    # Resolution is never improved by a boundary.
+    # A boundary does not change resolution.
     assert trace['resolution'] == 'unresolved'
     assert trace['completion'] == 'bounded'
     [assumption] = trace['assumptions']
@@ -179,7 +179,7 @@ def test_synthesis_context_carries_the_assumptions(facts):
     trace = _trace(context, '/names/empty')
     assert trace['completion'] == 'bounded'
     assert [item['kind'] for item in trace['assumptions']] == ['library_call']
-    # The evidence an assumption cites travels with it.
+    # Evidence cited by an assumption is included in the context.
     assert set(trace['assumptions'][0]['evidence_ids']) <= set(context['evidence'])
 
 
@@ -197,7 +197,7 @@ def test_a_segment_packet_keeps_only_the_assumptions_it_carries(facts):
                                     else 'incomplete')
 
 
-# ── Profile-selected implementations ─────────────────────────────────────
+# Profile-selected implementations
 
 REPOSITORY = {
     'src/main/java/com/example/repo/Owner.java': 'package com.example.repo;\npublic class Owner {}\n',
@@ -228,15 +228,14 @@ def test_profile_alternatives_are_conditional_paths_not_an_ambiguous_choice(tmp_
     validate_references(facts)
     trace = _trace(facts, '/owners')
     names = {facts['symbols'][sid]['qualified_name'].split('::')[-1] for sid in trace['symbol_ids']}
-    # Every alternative is followed.
+    # Both alternatives are followed.
     assert {'JdbcOwnerRepository.save(Owner)', 'JpaOwnerRepository.save(Owner)'} <= names
     [choice] = [facts['trace_obligations'][oid] for oid in trace['obligation_ids']
                 if facts['trace_obligations'][oid]['reason_code'] == 'CONDITIONAL_IMPLEMENTATION']
     assert choice['status'] == 'conditional' and choice['boundary'] == 'config_selected'
     assert '@Profile("jdbc") on JdbcOwnerRepository' in choice['reason']
     assert '@Profile("jpa") on JpaOwnerRepository' in choice['reason']
-    # Nothing is chosen: the trace is bounded, never resolved.
-    # Not ambiguous, and not resolved either: which condition holds is runtime.
+    # The active profile is only known at runtime, so the trace is bounded.
     assert (trace['resolution'], trace['completion']) == ('unresolved', 'bounded')
     assert not [oid for oid in trace['obligation_ids']
                 if facts['trace_obligations'][oid]['status'] == 'ambiguous']
@@ -273,7 +272,7 @@ def test_a_profile_choice_at_the_entry_point_is_conditional_not_ambiguous(tmp_pa
         path.write_text(text)
     facts, _ = Extractor(tmp_path, DEFAULTS).extract()
     validate_references(facts)
-    # The interface's registration is the entry point that must choose.
+    # The interface registration is the entry point that picks an implementation.
     anchor = next(anchor for anchor in facts['anchors'].values()
                   if anchor['operation'].get('path') == '/orders'
                   and any(item['role'] == 'registration' for item in anchor['representations']))

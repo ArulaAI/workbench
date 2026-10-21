@@ -1,4 +1,4 @@
-"""Language-neutral source adapter records and semantic result contract."""
+"""Shared records and result types used by every source adapter."""
 from __future__ import annotations
 import re
 from dataclasses import dataclass, field
@@ -35,13 +35,7 @@ OPERATION_COMPLETION = frozenset({
 
 @dataclass(frozen=True)
 class SemanticResult:
-    """One adapter-neutral semantic decision with its complete evidence.
-
-    Adapters may use any parser or resolver internally, but they return this
-    shape before the core projects the result into edges, anchors or
-    diagnostics.  In particular, ``external`` and ``unsupported`` cannot be
-    confused with an unresolved local name.
-    """
+    """A single semantic resolution result returned by an adapter, with evidence."""
 
     capability: str
     outcome: str
@@ -52,9 +46,8 @@ class SemanticResult:
     diagnostic_code: str | None = None
     reason: str | None = None
     contract_version: int = SEMANTIC_CONTRACT_VERSION
-    # Who answers an external outcome, as ``type:<qualified type>``,
-    # ``module:<module>`` or ``global:<name>``: the key the trace-boundary
-    # catalog matches a library call against. Not part of the normalized shape.
+    # Provider of an external outcome: ``type:<name>``, ``module:<name>`` or
+    # ``global:<name>``. Used for trace-boundary catalog lookups; not normalized.
     provider: str | None = None
 
     def __post_init__(self) -> None:
@@ -82,7 +75,7 @@ class SemanticResult:
             raise ValueError('Unresolved and unsupported results require a diagnostic without a target')
 
     def normalized(self) -> dict:
-        """Return the stable JSON shape shared by every adapter language."""
+        """Return the JSON shape shared by all adapters."""
         return {
             'contract_version': self.contract_version,
             'capability': self.capability,
@@ -185,8 +178,7 @@ class Unit:
     required_capabilities: tuple[str, ...] | None = None
     valid_terminal: bool | None = None
     configuration: ConfigurationDeclaration | None = None
-    # Further spans the symbol itself rests on, beyond its own span: for a type
-    # a build tool generates, the configuration and schema it is generated from.
+    # Extra spans the symbol depends on, e.g. the config/schema a generated type comes from.
     supporting_evidence_spans: list[tuple[Source, int, int]] = field(default_factory=list)
 
     @property
@@ -195,7 +187,7 @@ class Unit:
 
 
 def declare_trace_contract(unit: Unit, role: str | None = None) -> None:
-    """Attach one language-neutral semantic completion contract to a symbol."""
+    """Attach a trace contract role to a symbol."""
     role = role or ('implementation' if unit.executable_body else 'declaration')
     if role not in TRACE_ROLES:
         raise ValueError('Unsupported normalized trace role')
@@ -209,7 +201,7 @@ def declare_trace_contract(unit: Unit, role: str | None = None) -> None:
 
 
 def http_identity(source: Source, method: str | None, route: str | None) -> str | None:
-    """Return an exact service-scoped HTTP identity, never a display-name key."""
+    """Return the service-scoped HTTP identity for a method and route."""
     if not method or not route:
         return None
     scope = source.service_scope.strip() if source.service_scope else 'repository'
@@ -217,12 +209,7 @@ def http_identity(source: Source, method: str | None, route: str | None) -> str 
 
 
 def library_identity(source: Source, qualified: str | None) -> str | None:
-    """Return the exact identity of an exported library operation.
-
-    A public method of an exported class is invoked by importing its module
-    and calling it, so its declaring module and qualified name are its whole
-    identity; nothing has to be resolved at runtime.
-    """
+    """Return the identity of an exported library operation (module + qualified name)."""
     if not qualified:
         return None
     scope = source.service_scope.strip() if source.service_scope else 'repository'
@@ -230,11 +217,10 @@ def library_identity(source: Source, qualified: str | None) -> str | None:
 
 
 def http_url_parts(url: str) -> tuple[str, str, int, str] | None:
-    """Scheme, host, port and path of an absolute HTTP(S) URL template.
+    """Return (scheme, host, port, path) for an absolute HTTP(S) URL.
 
-    The port is the written one or the scheme's default. A URL whose host or
-    port is itself a runtime value, or that is relative, has no fixed origin
-    and returns None.
+    The port defaults to the scheme's default. Returns None for relative URLs
+    or when the host or port is templated.
     """
     found = re.fullmatch(r'([A-Za-z][A-Za-z0-9+.-]*)://([^/?#]*)(.*)', url, re.DOTALL)
     if not found:
@@ -254,17 +240,16 @@ def http_url_parts(url: str) -> tuple[str, str, int, str] | None:
 
 
 def http_base_path(path: str | None) -> str:
-    """A server base path as ``/segment/...`` with no trailing slash; root is ''."""
+    """Normalize a base path to ``/a/b`` with no trailing slash; root becomes ''."""
     trimmed = (path or '').strip().strip('/')
     return '/' + trimmed if trimmed else ''
 
 
 def http_route_key(identity_key: str | None) -> str | None:
-    """Return a scope-free ``METHOD:/route`` key for an HTTP identity.
+    """Return a ``METHOD:/route`` key for an HTTP identity, without the scope.
 
-    A caller and the endpoint it calls normally live in different service
-    scopes, and spell the same route differently: path-parameter names,
-    ``:id`` placeholders, trailing slashes, query strings and absolute hosts.
+    Normalizes path-parameter names, ``:id`` placeholders, trailing slashes,
+    query strings and absolute hosts so callers and endpoints can be matched.
     """
     if not identity_key or not identity_key.startswith('http:'):
         return None
@@ -282,10 +267,10 @@ def resolve_anchor_identity(
     facts: dict,
     identity_key: str | None,
 ) -> tuple[str | None, str, str | None]:
-    """Resolve one operation identity against canonical anchors.
+    """Resolve an operation identity to an anchor.
 
-    An exact identity wins.  Otherwise an HTTP call may match by method and
-    normalized route in any service scope, but only when one anchor matches.
+    Exact matches win. Otherwise an HTTP call matches by method and normalized
+    route across scopes, but only if exactly one anchor matches.
     """
     if not identity_key:
         return None, 'unresolved', 'The call has no exact target identity.'
@@ -326,7 +311,7 @@ def declare_anchor_representation(
     eligibility: str,
     visibility: str,
 ) -> None:
-    """Attach the language-neutral representation decision owned by an adapter."""
+    """Attach an anchor representation to a unit."""
     if role not in ANCHOR_REPRESENTATION_ROLES:
         raise ValueError('Unsupported anchor representation role')
     if eligibility not in ANCHOR_ELIGIBILITY:
@@ -356,7 +341,7 @@ def declare_anchor_registration(
     reason: str | None,
     evidence_spans: list[tuple[Source, int, int]] | None = None,
 ) -> None:
-    """Attach one technology-neutral evidenced entry-point registration."""
+    """Attach an entry-point registration with its evidence to a unit."""
     candidates = sorted(set(candidate_targets))
     if (not kind or resolution not in {'resolved', 'ambiguous', 'unresolved'}
             or len(candidates) > MAX_SEMANTIC_CANDIDATES):
@@ -399,11 +384,7 @@ def declare_operation_observation(
     resolution: str,
     reason: str | None,
 ) -> dict:
-    """Build the single versioned operation shape consumed by the core.
-
-    Parsing remains adapter-owned.  This boundary makes every adapter state
-    the exact span, origin, capability and provenance before common hydration.
-    """
+    """Build a versioned operation observation from adapter output."""
     if not unit.symbol_id:
         raise ValueError('Operation observation requires a normalized origin symbol')
     if (type(position) is not int or type(end) is not int
@@ -550,7 +531,7 @@ def declare_operation_observation(
 
 
 def normalize_operation_observation(unit: Unit, value: dict) -> dict:
-    """Reject loose/unversioned adapter output at the common boundary."""
+    """Validate an operation observation and reject unversioned output."""
     if not isinstance(value, dict):
         raise ValueError('Adapter operation output must be a normalized object')
     expected = {

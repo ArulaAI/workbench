@@ -1,4 +1,4 @@
-"""Regression tests for evidence boundaries, not label/count snapshots."""
+"""Regression tests for business-domain fact extraction."""
 from pathlib import Path
 
 import pytest
@@ -134,7 +134,7 @@ contract_version=1
 entrypoints="partial"
 ''')
     isolated = LanguageRegistry(data)
-    # Nothing partially validated is published; every query raises the cause.
+    # A partially valid registry is not loaded; every query raises.
     assert str(isolated.load_error) == 'registry_value_invalid'
     with pytest.raises(RegistryConfigurationError):
         isolated.classify('.py')
@@ -790,15 +790,13 @@ class Repository { void save() { } }
     assert 'Repository.save' in target['qualified_name']
 
 
-# ── F1: source routing, selection and coverage ───────────────────────────
+# source routing, selection and coverage
 
 import json as _json
 from lib.context import business_domain_extract as _core
 from lib.context.business_domain_schema import validate_source_warning_coverage
 
-# The 26 paths that previously produced SOURCE_CAPABILITY_UNAVAILABLE in the
-# Petclinic baseline, plus the Latin-1 message bundle that failed earlier with
-# SOURCE_ENCODING.
+# PetClinic paths that need a source capability, plus a Latin-1 message bundle.
 F1_DISPOSITIONS = {
     'src/main/resources/application.properties': 'analyze',
     'src/main/resources/application-hsqldb.properties': 'analyze',
@@ -852,8 +850,7 @@ def _f1_repository(root):
     return root
 
 
-# Entry-point coverage (G2) reports every zero-entry-point run; these tests
-# are about source-capability warnings, so they read the other warnings.
+# Entry-point coverage warnings are filtered out; these tests check source-capability warnings.
 _ENTRYPOINT_CODES = {'ENTRYPOINT_DETECTION_UNAVAILABLE', 'ENTRYPOINT_LIKELY_MISSED',
                      'ENTRYPOINT_NONE_DETECTED'}
 
@@ -1072,7 +1069,7 @@ def test_primary_prepare_failure_aborts_the_attempt(tmp_path, monkeypatch):
      'must be unique'),
 ])
 def test_warning_and_coverage_bijection_is_enforced(tmp_path, mutate, message):
-    # CSS is now an ignored stylesheet; TOML still has no installed owner.
+    # CSS is ignored; TOML has no adapter.
     facts, _ = _validated(_write(tmp_path, {'tool.pl': 'print 1;\n', 'b.toml': 'a = 1\n'}))
     resource_id = identifier('resource', 'b.toml')
     facts['coverage']['unsupported_source_ids'].remove(resource_id)
@@ -1124,7 +1121,7 @@ def _write(root, files):
     return root
 
 
-# ── Review regressions: routing precedence and redaction ─────────────────
+# Routing precedence and redaction
 
 @pytest.mark.parametrize('path', ['.vscode/icon.svg', '.vscode/project.code-snippets',
                                   '.vscode/logo.png'])

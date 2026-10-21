@@ -1,4 +1,4 @@
-"""Section 4 frontend-reader acceptance tests."""
+"""Acceptance tests for the frontend readers."""
 from lib.context.business_domain_adapters import descriptor, enricher_descriptors
 from lib.context.business_domain_extract import Extractor
 from lib.context.business_domain_schema import DEFAULTS, validate_references
@@ -72,7 +72,7 @@ def test_html_form_identity_is_its_submission_not_its_file(tmp_path):
 
     forms = {anchor['representations'][0]['identity_key']: anchor
              for anchor in _form_anchors(facts)}
-    # The same submission written in two files is one entry point.
+    # The same submission in two files counts as one entry point.
     assert set(forms) == {'ui:repository:form:POST:/owners:Add Owner',
                           'ui:repository:form:GET:/owners/find:Find'}
     create = forms['ui:repository:form:POST:/owners:Add Owner']

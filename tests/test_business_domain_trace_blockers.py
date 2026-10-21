@@ -1,8 +1,4 @@
-"""The facts-only trace-blocker report counts unique traces per category.
-
-It reads the obligations each trace already records and never changes how a
-trace is resolved.
-"""
+"""Tests for the facts-only trace-blocker report."""
 import json
 import os
 import subprocess
@@ -18,7 +14,7 @@ SPEED_ROOT = Path(__file__).parents[1]
 
 
 def _facts(traces, edges=(), warnings=()):
-    """Minimal facts: ``traces`` maps trace ID to (kind, status, edge kind) tuples."""
+    """Build minimal facts; ``traces`` maps trace ID to (kind, status, edge_id) tuples."""
     facts = {'traces': {}, 'trace_obligations': {}, 'edges': {},
              'warnings': list(warnings)}
     for edge_id, kind in edges:
@@ -129,7 +125,7 @@ def test_terminal_output_lists_blockers_with_the_overlap_note(petclinic_shaped, 
         cwd=SPEED_ROOT, capture_output=True, text=True, check=True).stdout.splitlines()
     traces = result['measurements']['traces']
     ended = traces['complete'] + traces['bounded']
-    # The headline answers first: how many entry points reached a known end.
+    # Headline: entry points that reached a known end.
     assert any(line.startswith(f"  ▲ {ended} of {traces['total']} entry points traced")
                for line in rendered)
     rows = {line.split()[0]: line.split()[1] for line in rendered
@@ -139,7 +135,7 @@ def test_terminal_output_lists_blockers_with_the_overlap_note(petclinic_shaped, 
     boundaries = [item for item in result['trace_blockers'] if item['class'] == 'boundary']
     gaps = [item for item in result['trace_blockers'] if item['class'] == 'gap']
     heading = rendered.index('  Where traces end')
-    # Each blocker is one row, tagged boundary or gap; boundaries come first.
+    # One row per blocker, tagged boundary or gap, boundaries first.
     tagged = {}
     for index, line in enumerate(rendered[heading + 1:], heading + 1):
         if not line:
@@ -180,7 +176,7 @@ def test_petclinic_blockers_cover_every_unresolved_trace():
     facts = json.loads(PETCLINIC.read_text())
     traces = extraction_measurements(facts)['traces']
     blockers = trace_blockers(facts)
-    # 52 traces before per-route actions; each shared action now has one per screen.
+    # Each shared screen action gets one trace per screen.
     assert (traces['resolved'], traces['total']) == (2, 54)
     assert traces['complete'] == traces['resolved']
     boundaries = {item['category'] for item in blockers if item['class'] == 'boundary'}

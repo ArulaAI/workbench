@@ -1,10 +1,7 @@
-"""Receivers whose type TypeScript source declares away from the call.
+"""Tests for resolving TypeScript call receivers from declared types.
 
-A call is a platform call only when the source declares its receiver as a type
-the language provides. These tests cover receivers whose declaration is one or
-more steps away (a member of an aliased type, a method's return type, a local
-assigned from a typed expression, a type guard) and the cases that must stay
-unresolved because nothing is declared.
+Covers types declared indirectly (aliases, return types, typed locals, type
+guards) and receivers with no declared type, which must stay unresolved.
 """
 from lib.context.business_domain_extract import Extractor
 from lib.context.business_domain_schema import settings
@@ -141,7 +138,7 @@ def _facts(root, files):
 
 
 def _calls(facts, caller):
-    """(written call, reason) for each call edge from *caller*."""
+    """Return (call text, reason, edge) for each call edge from caller."""
     found = []
     for edge in facts['edges'].values():
         if edge['kind'] != 'calls':
@@ -154,7 +151,7 @@ def _calls(facts, caller):
 
 
 def _data(facts, caller):
-    """(kind, store name) for each data edge from *caller*."""
+    """Return (kind, store name) for each data edge from caller."""
     found = set()
     for edge in facts['edges'].values():
         name = facts['symbols'][edge['from_ref']['id']]['qualified_name'].split('::', 1)[1]
@@ -164,8 +161,7 @@ def _data(facts, caller):
 
 
 def _reason(facts, caller, written):
-    """The reason of the call whose source is *written*, or that starts with
-    it when no call is written exactly so."""
+    """Return the reason for the call matching written, falling back to a prefix match."""
     calls = _calls(facts, caller)
     reasons = ([reason for call, reason, _ in calls if call == written]
                or [reason for call, reason, _ in calls if call.startswith(written + '(')])
@@ -179,7 +175,7 @@ def _platform(facts, caller, written, provider):
     return reason
 
 
-# ── Declared one or more steps away ─────────────────────────────────────
+# Declared one or more steps away
 
 def test_a_member_of_an_object_literal_is_typed_by_its_as_assertion(tmp_path):
     facts = _facts(tmp_path, {'src/types.ts': TYPES, 'src/service.ts': SERVICE})
@@ -201,7 +197,7 @@ def test_a_member_is_typed_through_a_method_return_type_and_an_alias(tmp_path):
 
     reason = _platform(facts, 'Service.capture', 'payment.captures.reduce', 'Array')
 
-    # The derivation reads from the receiver down, each step citing its line.
+    # Steps are listed from the receiver down.
     steps = reason.split('Declared by: ')[1]
     assert steps.index('payment = this.require(id)') < steps.index('Service.require(): Payment')
     assert steps.index('Service.require(): Payment') < steps.index('captures: Capture[] (src/types.ts:5)')
@@ -250,7 +246,7 @@ def test_a_declared_class_member_resolves_a_call_into_this_repository(tmp_path):
     assert target.split('::', 1) == ['src/ledger.ts', 'Ledger.net']
 
 
-# ── Type guards the platform declares ───────────────────────────────────
+# Type guards the platform declares
 
 def test_a_type_guard_narrows_inside_the_branch_it_protects(tmp_path):
     facts = _facts(tmp_path, {'src/guards.ts': GUARDS})
@@ -268,7 +264,7 @@ def test_a_negated_or_disjoint_guard_does_not_narrow(tmp_path):
     assert _reason(facts, 'either', 'value.map') == 'Call target map: 0 source candidates'
 
 
-# ── Nothing declared: the call stays unresolved ─────────────────────────
+# Nothing declared, so the call stays unresolved
 
 def test_any_unknown_and_untyped_receivers_stay_unresolved(tmp_path):
     facts = _facts(tmp_path, {'src/loose.ts': UNDECLARED})

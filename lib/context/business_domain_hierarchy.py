@@ -1,21 +1,7 @@
-"""Hierarchical business-domain synthesis: slices, then reconciliation to a root.
+"""Hierarchical domain synthesis for graphs too large for one request.
 
-Selected when the complete graph's synthesis, verification, repair and
-reverification sequence does not fit one request (tech spec, "Large-repository
-hierarchical mode"). The plan is fixed before anything is dispatched:
-
-    1. Slice by application boundary; pack a boundary too large for one
-       request into entry-point bundles, and cut any anchor too large alone
-       into execution segments.
-    2. Reserve the build budget for every slice and the root.
-    3. Synthesize, verify and repair every slice, `provider_concurrency` at a
-       time, under the same contracts as a whole graph.
-    4. Reconcile each cut anchor's segments into that anchor, then all units
-       into one root, in as many levels as one request's size requires.
-
-Every validated response is cached under its exact request and every scope's
-identity derives from its own content, so a refresh after an interruption
-reuses all completed work. Nothing here publishes.
+Slices the graph, synthesizes each slice, then reconciles the results up to a
+single root. Responses are cached, so an interrupted run can resume.
 """
 from __future__ import annotations
 
@@ -38,7 +24,7 @@ SPLIT_HINTS = '.speed/context/business-domain-split-hints.json'
 
 
 def _split_hints(synthesis) -> set:
-    """Bundles a past run found too large for one answer."""
+    """Return scope ids of bundles an earlier run had to split."""
     try:
         return set(json.loads((synthesis.root / SPLIT_HINTS).read_text()))
     except (OSError, ValueError):
@@ -53,11 +39,7 @@ def _remember_split(synthesis, scope_id: str) -> None:
 
 
 def split_bundle(baseline: dict, synthesis, scope: dict) -> list[dict]:
-    """Two sized bundles over a bundle's entry points, grouped by shared code.
-
-    A bundle whose answer exceeds the response allowance is halved; its entry
-    points keep the bundles' grouping by the code their traces share.
-    """
+    """Split a bundle into two, grouping entry points by shared code."""
     users = _edge_users(baseline)
     owned = {}
     for edge_id, anchors in users.items():
@@ -80,7 +62,7 @@ def split_bundle(baseline: dict, synthesis, scope: dict) -> list[dict]:
 
 
 def plan(baseline: dict, synthesis) -> list[dict]:
-    """Sized slices covering every canonical anchor."""
+    """Return sized slices covering every canonical anchor."""
     def bundle(anchor_ids, cross_scope_edge_ids, strategy):
         selected = _model_ready_context(baseline, anchor_ids)
         return synthesis._size_graph(slice_scope(
@@ -107,15 +89,10 @@ def plan(baseline: dict, synthesis) -> list[dict]:
 
 
 def reserve(slices: list[dict], synthesis) -> None:
-    """Fail before dispatch unless the slices and the root fit the build budget.
+    """Raise BUILD_BUDGET if the slices and root won't fit the token budget.
 
-    As the spec requires, the root's complete synthesis, verification, repair
-    and reverification is reserved before any slice is dispatched, together
-    with every slice's synthesis and verification; repairs are admitted as
-    they arise. Requests are charged at their full output allowance, the most
-    a provider that reports no usage can be charged. The root is charged at
-    the largest size one request admits, known exactly only once the slices
-    return.
+    Each request is charged at its full output allowance, and the root at the
+    largest input one request allows, since its real size isn't known yet.
     """
     output = synthesis.effective_request_output_tokens
     root = synthesis.effective_request_input_tokens - 2 * output
@@ -137,7 +114,7 @@ FINAL_REQUEST_CEILING = 800000
 
 
 class _Run:
-    """One hierarchical attempt: dispatch, progress and unit accounting."""
+    """State for one hierarchical run."""
 
     def __init__(self, baseline, synthesis, accept, status, heartbeat, recorder):
         self.baseline = baseline
@@ -165,11 +142,10 @@ class _Run:
                                                 - limits['semantic_units_validated'])
 
     def dispatch(self, jobs, label, runner=None):
-        """Run `(scope, validate, review)` jobs concurrently; results in job order.
+        """Run (scope, validate, review) jobs concurrently and return results in order.
 
-        On the first failure no further job starts; running jobs finish so
-        their validated responses are cached, then the earliest failure in
-        job order is raised.
+        After the first failure, pending jobs are cancelled and running ones
+        finish (so their responses get cached) before the error is raised.
         """
         results = {}
 
@@ -199,11 +175,10 @@ class _Run:
         return [results[index] for index in range(len(jobs))]
 
     def run_slice(self, scope, validate, review=None):
-        """A slice's validated `(scope, payload)` pairs.
+        """Run a slice and return its (scope, payload) pairs.
 
-        A bundle whose answer exceeds the response allowance is halved and
-        each half run in its place; the bundle is remembered so the next run
-        plans the halves from the start.
+        A bundle that hits PROVIDER_BUDGET is split in two and recorded so the
+        next run plans the split up front.
         """
         try:
             return [(scope, self.synthesis.run(scope, validate, review=review))]
@@ -226,11 +201,7 @@ class _Run:
         return scope, lambda candidate: self.accept(scope, candidate), None
 
     def reconciliation_job(self, scope, children):
-        """A reconciliation job: its answer is expanded before it is judged.
-
-        Validation and verification both see the complete candidate SPEED
-        publishes, never the compact answer it was built from.
-        """
+        """Build a reconciliation job that validates the expanded candidate."""
         def review(graph, candidate):
             complete = expand_reconciliation(graph, candidate, self.baseline)
             return verification_view(graph, complete), complete
@@ -242,7 +213,7 @@ class _Run:
         return scope, validate, review
 
     def run_reconciliation(self, scope, validate, review=None):
-        """Reuse a reconciliation an earlier run validated, else run it."""
+        """Reuse a previously validated reconciliation if there is one."""
         reused = self.validated_reconciliation(scope, validate, review)
         if reused is not None:
             self.progress('Reconciliation reused a validated answer from an earlier run')
@@ -250,13 +221,10 @@ class _Run:
         return self.synthesis.run(scope, validate, review=review)
 
     def validated_reconciliation(self, scope, validate, review):
-        """The compact answer an earlier run validated for this exact scope.
+        """Return a cached reconciliation answer for this scope, or None.
 
-        The candidate cache cannot recognise one: its verifier judged the
-        complete candidate expanded from the answer, never the answer itself.
-        It is reused only when today's expansion of the stored answer is
-        exactly what that verifier passed and it still passes every
-        deterministic check.
+        The verifier saw the expanded candidate, so the cached answer is only
+        reused if it expands to the same thing and still passes validation.
         """
         synthesis = self.synthesis
         try:
@@ -300,7 +268,7 @@ class _Run:
             self.baseline, units, scope_id=scope_id, parent_scope_id=parent_scope_id))
 
     def reconcile(self, groups, label):
-        """Reconcile each `(scope_id, parent_id, units)` group; one unit each."""
+        """Reconcile each (scope_id, parent_id, units) group into one unit."""
         scopes = [self.sized_reconciliation(units, scope_id, parent_id)
                   for scope_id, parent_id, units in groups]
         for scope in scopes:
@@ -318,19 +286,14 @@ class _Run:
                 for scope, payload, (_, _, units) in zip(scopes, payloads, groups)]
 
     def widen_for_root(self) -> bool:
-        """Allow the one final reconciliation a larger request, once.
+        """Raise the input limit for the final root reconciliation.
 
-        Units no two of which fit one request can only be joined by a request
-        larger than the slicing allowance. Slices and lower reconciliations are
-        planned at that allowance, so widening only here changes none of them,
-        nor any validated answer. The final request may use the policy factor
-        of the allowance, within the provider's context window where known.
+        Returns False if the limit can't grow. Only used when no two units fit
+        in one request at the normal limit.
         """
         synthesis = self.synthesis
         current = synthesis.effective_request_input_tokens
-        # A repair carries the scope, the candidate and the provider's own
-        # earlier attempt, so the final request gets generous room, still
-        # within the provider's context window where known.
+        # Repairs resend the scope, candidate and prior attempt, so leave room.
         widened = max(math.floor(current * POLICY['final_reconciliation_input_factor']),
                       min(FINAL_REQUEST_CEILING,
                           synthesis.provider_context_tokens or FINAL_REQUEST_CEILING))
@@ -344,7 +307,7 @@ class _Run:
         return True
 
     def to_root(self, units):
-        """Reconcile `units` level by level until one root covers them all."""
+        """Reconcile units level by level until a single root remains."""
         level = 1
         while True:
             if len(units) == 1 and units[0].scope['scope_kind'] == 'reconciliation':
@@ -404,10 +367,8 @@ def _group_id(units) -> str:
 def run(baseline: dict, synthesis, accept, *, status, heartbeat, recorder=None):
     """Synthesize every slice and reconcile them to a root.
 
-    `accept(scope, candidate)` validates one candidate against its scope and
-    raises a `DomainError` with findings when it is invalid; the repair chain
-    receives them exactly as it does for a whole graph. Returns the root scope,
-    its payload and the root unit, whose coverage disposes of every anchor.
+    accept(scope, candidate) should raise DomainError when a candidate is
+    invalid. Returns (root scope, root payload, root unit).
     """
     slices = plan(baseline, synthesis)
     reserve(slices, synthesis)

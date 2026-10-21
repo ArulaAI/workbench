@@ -1,4 +1,4 @@
-"""F-04 semantic trace completion conformance."""
+"""Tests for semantic trace completion."""
 from types import SimpleNamespace
 
 import pytest
@@ -267,9 +267,8 @@ def finish():
                for item in obligations)
 
 
-# Interface -> implementation dispatch reached mid-trace. The entry point is a
-# concrete controller method; the declaration its call lands on is selected
-# through the Java adapter's selects_implementation relationships.
+# Interface -> implementation dispatch in the middle of a trace, selected via
+# the Java adapter's selects_implementation edges.
 
 _ORDER = "class Order {}\n"
 _CONTROLLER = """
@@ -354,8 +353,7 @@ def test_multiple_implementations_keep_every_candidate_and_make_the_trace_ambigu
 @pytest.mark.parametrize("declaration", ["void save(Order order);", "Order save(Order order);"])
 def test_interface_without_implementation_cannot_resolve_through_structural_edges(
         tmp_path, declaration):
-    # The declaration's accepts_type / returns_type edges to Order used to make
-    # it look like a finished leaf, which marked the whole trace resolved.
+    # Type edges to Order must not make the declaration look like a leaf.
     facts, trace, obligations, reached, selections, name_of = _dispatch_trace(tmp_path, {
         "OrderService.java": f"interface OrderService {{ {declaration} }}\n",
     })
@@ -502,14 +500,14 @@ def test_every_parent_of_a_type_keeps_its_own_heritage_edge(tmp_path):
                        name_of(edge["to_ref"]["id"]) if edge["to_ref"] else None, edge["resolution"])
                       for edge in facts["edges"].values() if edge["kind"] in {"implements", "inherits"})
 
-    # Both parents survive, and a type argument (Owner) is never a parent.
+    # Both parents are kept; the type argument (Owner) is not a parent.
     assert heritage == [
         ("implements", "C", "A", "resolved"), ("implements", "C", "B", "resolved"),
         ("inherits", "D", "A", "resolved"), ("inherits", "D", "B", "resolved")]
 
 
-# Phase 2C: a selection reached mid-trace, in each semantic shape, from an
-# adapter that names no language or framework.
+# mid-trace selection in each semantic shape, using a language-agnostic
+# adapter.
 
 def _mid_trace_selection(tmp_path, monkeypatch, shape):
     state = {"bodies": []}

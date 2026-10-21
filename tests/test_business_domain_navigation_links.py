@@ -1,8 +1,7 @@
-"""React Router navigation links a router call to what the new location runs.
+"""Tests for React Router navigation edges.
 
-Reuses the miniature PetClinic of the endpoint-link tests and adds the
-search-page shape: a route component whose button pushes its own route with a
-new query, and whose ``componentWillReceiveProps`` loads the owners again.
+Builds on the endpoint-link PetClinic fixture and adds a search page that
+pushes its own route and reloads in componentWillReceiveProps.
 """
 from tests.test_business_domain_endpoint_links import (
     BACKEND, CLIENT, _action_trace, _extract, _name, _trace, _trace_names)

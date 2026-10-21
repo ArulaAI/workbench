@@ -1,4 +1,4 @@
-"""Deterministic Java Properties source adapter."""
+"""Source adapter for Java .properties files."""
 from __future__ import annotations
 
 import re

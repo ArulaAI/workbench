@@ -1,8 +1,4 @@
-"""Versioned business-domain contracts, safe artifact IO and configuration.
-
-Domain records are a language-independent interpretation. This module never
-executes target code or invokes a semantic provider.
-"""
+"""Business-domain schema validation, artifact IO and configuration."""
 from __future__ import annotations
 
 import copy
@@ -45,8 +41,7 @@ class DomainError(ValueError):
         self.code, self.field = code, field
         self.retryable = retryable
         self.provider_failure = copy.deepcopy(provider_failure)
-        # Repair context is intentionally process-local. Public status errors
-        # must never persist an untrusted provider response.
+        # Kept in memory only; status files must not store provider responses.
         self.findings = copy.deepcopy(findings or [])
         self.rejected_candidate = copy.deepcopy(rejected_candidate)
         self.repair_kind = repair_kind
@@ -110,7 +105,7 @@ def _default(schema: dict) -> Any:
 
 
 def record(type_name: str, **values: Any) -> dict:
-    """Construct required nullable/empty fields; validate at the boundary."""
+    """Build a record with all required fields, defaulting to None or empty."""
     if type_name in ('Anchor', 'Edge') and values.get('resolution') not in DEFINITIONS[type_name]['properties']['resolution']['enum']:
         raise DomainError('INVALID_ARTIFACT', f'{type_name}: producer must supply explicit resolution', 'resolution')
     result = _default(DEFINITIONS[type_name])
@@ -160,7 +155,7 @@ def limits(config: dict) -> dict:
 
 
 def account_artifact_bytes(value: dict) -> int:
-    """Record the exact self-inclusive canonical size of a limited artifact."""
+    """Store the artifact's canonical size, including the size field itself."""
     while True:
         measured = len(canonical(value))
         if value['limits']['artifact_bytes'] == measured:
@@ -170,7 +165,7 @@ def account_artifact_bytes(value: dict) -> int:
 
 def validation_findings(value: Any, schema: dict, label: str,
                         code: str = 'INVALID_ARTIFACT') -> list[dict]:
-    """Return every schema failure in the normative repair finding shape."""
+    """Return all schema failures as repair findings."""
     errors = sorted(
         Draft202012Validator(schema, format_checker=FormatChecker()).iter_errors(value),
         key=lambda error: (tuple(str(part) for part in error.absolute_path),
@@ -191,14 +186,14 @@ def validation_findings(value: Any, schema: dict, label: str,
 
 def validation_finding(code: str, message: str, *, subject_ids=(),
                        evidence_ids=()) -> dict:
-    """Build one deterministic finding without leaking arbitrary values."""
+    """Build one finding without including raw values."""
     return {'code': code, 'severity': 'error', 'message': message,
             'subject_ids': sorted(set(subject_ids)),
             'evidence_ids': sorted(set(evidence_ids))}
 
 
 def reject_findings(findings: list[dict]) -> None:
-    """Raise one repairable error carrying every independently found defect."""
+    """Raise a repairable error carrying all findings."""
     if findings:
         first = findings[0]
         raise DomainError(first['code'], first['message'], findings=findings,
@@ -206,7 +201,7 @@ def reject_findings(findings: list[dict]) -> None:
 
 
 def required_scope_subjects(graph: dict) -> dict[str, str]:
-    """Return every subject synthesis and verification must account for."""
+    """Return the subjects a candidate must account for."""
     if graph['scope_kind'] == 'reconciliation':
         return {subject_id: 'child_scope'
                 for subject_id in graph['child_scope_ids']}
@@ -226,7 +221,7 @@ def required_scope_subjects(graph: dict) -> dict[str, str]:
 
 
 def candidate_scope_findings(graph: dict, candidate: dict) -> list[dict]:
-    """Return all mechanically provable scope/disposition failures."""
+    """Return scope and disposition failures."""
     findings = []
     required = required_scope_subjects(graph)
     if candidate['scope_id'] != graph['scope_id']:
@@ -256,8 +251,7 @@ def candidate_scope_findings(graph: dict, candidate: dict) -> list[dict]:
     memberships = {}
     scope_anchors = set(graph['canonical_anchor_ids'])
     if graph['scope_kind'] == 'reconciliation':
-        # A reconciliation scope names no anchors of its own; its children
-        # supplied theirs with the records that represent them.
+        # Reconciliation scopes have no anchors of their own; use the children's.
         scope_anchors = {record_id for record_id, reference in
                          graph['context']['record_refs'].items()
                          if reference['collection'] == 'anchors'}
@@ -317,7 +311,7 @@ def candidate_scope_findings(graph: dict, candidate: dict) -> list[dict]:
 
 
 def verification_report_findings(graph: dict, report: dict) -> list[dict]:
-    """Return deterministic verifier-envelope and coverage failures."""
+    """Return verification report envelope and coverage failures."""
     findings = []
     if report['scope_id'] != graph['scope_id']:
         findings.append(validation_finding(
@@ -392,10 +386,9 @@ def _symbol_reach(starts: set[str], edges: list[dict]) -> set[str]:
 
 
 def _condition_terms(condition: str | None) -> set[str]:
-    """Split a rendered route condition into its top-level conjuncts.
+    """Split a route condition into its top-level conjuncts.
 
-    Extraction renders a taken branch test as ``test`` and an untaken one as
-    ``!(test)``, joined by `` && ``; grouped alternatives stay parenthesized.
+    Conditions look like ``a && !(b)``; grouped alternatives stay parenthesized.
     """
     terms, depth, quote, start, index = [], 0, None, 0, 0
     text = condition or ''
@@ -417,7 +410,7 @@ def _condition_terms(condition: str | None) -> set[str]:
 
 
 def _exclusive_conditions(first: str | None, second: str | None) -> bool:
-    """Whether one condition requires a branch test the other requires untaken."""
+    """Return True if one condition negates a branch test the other requires."""
     left, right = _condition_terms(first), _condition_terms(second)
     return (any(f'!({term})' in right for term in left)
             or any(f'!({term})' in left for term in right))
@@ -425,15 +418,10 @@ def _exclusive_conditions(first: str | None, second: str | None) -> bool:
 
 def _activity_trace_exclusions(model: dict, activity: dict,
                                trace_id: str) -> tuple[set[str], set[str]]:
-    """Return the edges and symbols of a shared trace outside the activity's branch.
+    """Return edges and symbols of a shared trace on branches the activity does not take.
 
-    A trace forks where one symbol routes requests to different targets under
-    mutually exclusive branch conditions.  When the activity claims an anchor
-    for some of those targets, a route whose condition excludes every claimed
-    route belongs to another activity: it, and the work reachable only
-    through it, are not part of this activity's operation.  Routes without
-    such a proven alternative (sequential requests, missing or equal
-    conditions) and traces without a known anchor symbol keep the whole trace.
+    A route is excluded only when its condition rules out every route the
+    activity claims; otherwise the whole trace is kept.
     """
     trace = model['traces'][trace_id]
     roots = _anchor_symbol_ids(model, trace['anchor_id'])
@@ -472,7 +460,7 @@ def _activity_trace_exclusions(model: dict, activity: dict,
 
 
 def activity_closure(model: dict, activity: dict) -> dict[str, set[str]]:
-    """Canonical operation membership for hydration and integrity validation."""
+    """Return the symbols and edges that make up an activity's operation."""
     traces = set(activity['trace_ids'])
     excluded = {tid: _activity_trace_exclusions(model, activity, tid) for tid in traces}
     symbols = {sid for tid in traces for sid in model['traces'][tid]['symbol_ids']
@@ -496,7 +484,7 @@ def activity_closure(model: dict, activity: dict) -> dict[str, set[str]]:
 
 
 def implementation_symbol_memberships(model: dict, activity_ids) -> list[dict]:
-    """Derive domain symbols only from satisfied implementation selections."""
+    """Return domain symbols reached through resolved implementation selections."""
     memberships = []
     for activity_id in sorted(set(activity_ids)):
         for trace_id in model['activities'][activity_id]['trace_ids']:
@@ -518,7 +506,7 @@ def implementation_symbol_memberships(model: dict, activity_ids) -> list[dict]:
 
 
 def information_use_closure(model: dict, use: dict) -> dict[str, set[str]]:
-    """Deterministic graph closure for a provider-selected resource use."""
+    """Return the graph closure for a resource use chosen by the provider."""
     activity = model['activities'].get(use['activity_id'])
     if not activity or use['concept_id'] not in activity['concept_ids']:
         raise DomainError('INVALID_REFERENCE', 'Information use must belong to its activity and concept')
@@ -564,7 +552,7 @@ _BLOCKING_SOURCE_CODES = {
 
 
 def validate_source_warning_coverage(facts: dict) -> None:
-    """Unsupported repository files and blocking source warnings correspond 1:1."""
+    """Check unsupported files and blocking source warnings match one to one."""
     resources = facts.get('resources', {})
     all_unsupported = facts.get('coverage', {}).get(
         'unsupported_source_ids', [])
@@ -587,8 +575,7 @@ def validate_source_warning_coverage(facts: dict) -> None:
     if Counter(unsupported) != Counter(warning_subjects):
         raise DomainError('INVALID_ARTIFACT',
             'Unsupported repository sources and blocking warnings must correspond exactly')
-    # Entry-point gaps (G2) obey the same rule: every structured coverage
-    # entry has exactly one warning with its code and message, and back.
+    # Each entry-point gap needs exactly one matching warning, and vice versa.
     gaps = facts.get('coverage', {}).get('entrypoint_gaps', [])
     if any(ENTRYPOINT_GAP_CODES.get(gap.get('kind')) != gap.get('code')
            for gap in gaps):
@@ -611,9 +598,8 @@ def validate_references(model: dict) -> None:
                 raise DomainError('INVALID_REFERENCE', 'Duplicate record ID or mismatched map key')
             records[key] = item
             kinds[key] = kind
-    # Anchor representations and correspondences are embedded so a canonical
-    # anchor remains a self-contained serialization unit.  They are still
-    # first-class records for closure and uniqueness validation.
+    # Representations and correspondences live inside anchors but are still
+    # checked as records.
     representation_ids = set()
     correspondence_ids = set()
     for anchor in model.get('anchors', {}).values():
@@ -912,7 +898,7 @@ def read_json(path: Path, max_bytes: int = 25000000) -> dict | None:
 
 def quarantine_file(path: Path, directory: Path,
                     max_bytes: int = 25000000) -> Path | None:
-    """Atomically remove an invalid authority while retaining its exact bytes."""
+    """Move an invalid artifact aside atomically, keeping its bytes."""
     if not path.exists():
         return None
     if (path.is_symlink() or any(parent.is_symlink() for parent in path.parents)
@@ -943,7 +929,7 @@ _POST_LEGACY_STATUS_LIMIT_FIELDS = frozenset({
 
 
 def _migrate_legacy_status_limits(value: dict) -> dict | None:
-    """Translate the one pre-accounting Limits shape without widening other artifacts."""
+    """Convert the legacy Limits shape to the current one."""
     legacy = value.get('limits')
     if value.get('schema_version') != 1 or not isinstance(legacy, dict):
         return None
@@ -981,7 +967,7 @@ def _migrate_legacy_status_limits(value: dict) -> dict | None:
 
 
 def read_status(path: Path, max_bytes: int = 25000000) -> dict | None:
-    """Read a status, migrating only the recognized legacy Limits payload."""
+    """Read a status file, migrating legacy Limits if present."""
     value = read_json(path, max_bytes)
     if value is None:
         return None
@@ -997,7 +983,7 @@ def read_status(path: Path, max_bytes: int = 25000000) -> dict | None:
 
 
 def validate_evidence(root: Path, model: dict, max_bytes: int = 25000000) -> None:
-    """Verify stored excerpt provenance without rescanning the repository."""
+    """Check stored evidence excerpts against their saved snapshots."""
     root = root.resolve()
     blobs = {}
     for evidence in model['evidence'].values():

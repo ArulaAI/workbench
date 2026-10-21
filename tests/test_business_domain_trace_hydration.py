@@ -1,4 +1,4 @@
-"""Focused trace-obligation and operation-hydration regressions."""
+"""Tests for trace obligations created from extracted operations."""
 from types import SimpleNamespace
 
 import pytest

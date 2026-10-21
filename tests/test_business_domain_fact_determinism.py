@@ -1,9 +1,7 @@
-"""Facts are the same whichever process extracts them.
+"""Check that extracted facts do not depend on the process.
 
-Every scope, and every cache key derived from a scope, is built from the
-facts. A fact whose content depends on the process, such as the order a set
-happens to iterate in, gives an unchanged repository new scopes on every run
-and discards its validated work.
+Scopes and cache keys are built from facts, so any nondeterminism would
+invalidate cached work on every run.
 """
 import json
 import os
@@ -63,8 +61,7 @@ def test_extraction_does_not_depend_on_the_process_hash_seed(tmp_path):
     source = tmp_path / 'src/payments.ts'
     source.parent.mkdir(parents=True)
     source.write_text(SERVICE)
-    # One store several functions of a module write: the evidence it gathers
-    # comes from each, in whatever order the functions are visited.
+    # Several functions write one store, so evidence order depends on visit order.
     (tmp_path / 'src/obs.ts').write_text(SINKS)
 
     runs = [_extract(tmp_path, seed) for seed in (1, 2, 3, 4, 5, 6)]

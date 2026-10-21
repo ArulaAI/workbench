@@ -1,10 +1,4 @@
-"""What a provider call reports, and how it ends when discovery stops.
-
-A provider that reports its token usage is charged what each request used,
-not the full allowance reserved for it. A discovery told to stop ends every
-provider call it started, in every thread, and kills its process group, so no
-provider keeps running after the process that would read its answer is gone.
-"""
+"""Tests for provider token accounting and shutdown of provider processes."""
 import json
 import os
 import subprocess
@@ -86,8 +80,7 @@ def _alive(pid):
 
 
 def test_a_shutdown_ends_every_process_the_provider_call_started(synthesis, monkeypatch, tmp_path):
-    # A wrapper like `timeout` puts its child in a process group of its own,
-    # out of reach of a signal to the call's group.
+    # `timeout` moves its child into its own process group.
     marker = tmp_path / 'grandchild.pid'
     real_popen = subprocess.Popen
     started = {}
@@ -148,8 +141,7 @@ def _discover_with(tmp_path, usage):
 
 
 def test_a_request_is_charged_its_total_and_bounded_by_its_largest_turn(tmp_path):
-    # Three turns of 5,000 output tokens: 15,000 spent, each turn within the
-    # 8,000-token request allowance.
+    # Three turns of 5,000 output tokens, each under the 8,000 limit.
     model, status = _discover_with(tmp_path, {
         'inputTokens': 30_000, 'outputTokens': 15_000,
         'peakInputTokens': 10_000, 'peakOutputTokens': 5_000})

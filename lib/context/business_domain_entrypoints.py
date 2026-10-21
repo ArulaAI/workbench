@@ -1,8 +1,6 @@
-"""Entry-point coverage: language gaps and likely missed entry-point markers.
+"""Entry-point coverage: unsupported languages and likely missed entry points.
 
-Everything framework- or language-specific lives in
-``data/entrypoint_markers.toml`` and in the adapter capability declarations of
-``data/extraction.toml``. This module only applies them.
+Framework patterns live in data/entrypoint_markers.toml and data/extraction.toml.
 """
 from __future__ import annotations
 
@@ -38,9 +36,8 @@ class Marker:
     name: str
     kind: str
     pattern: re.Pattern
-    # Optional: read the HTTP method and route the marker declares
-    # (named groups ``method`` and ``path``), and the route-group prefix a
-    # file declares (named group ``prefix``).
+    # Optional. operation uses named groups method and path; prefix uses a
+    # named group prefix for a file's route-group prefix.
     operation: re.Pattern | None = None
     prefix: re.Pattern | None = None
 
@@ -66,7 +63,7 @@ class MarkerCatalog:
         return self.display_names.get(language, language)
 
     def scans(self, path: str) -> bool:
-        """Whether any framework searches this repository-relative path."""
+        """Return True if any framework scans this repo-relative path."""
         return any(pattern.fullmatch(path) for framework in self.frameworks
                    for pattern in framework.paths)
 
@@ -92,7 +89,7 @@ def _compile(values, cause):
 
 
 def parse_catalog(raw: Mapping) -> MarkerCatalog:
-    """Validate one catalog document; reject anything it does not define."""
+    """Validate a raw catalog document and build a MarkerCatalog."""
     if set(raw) - {'version', 'kinds', 'coverage', 'display_names', 'frameworks'} \
             or raw.get('version') != 1:
         raise MarkerCatalogError('entrypoint_catalog_invalid')
@@ -167,9 +164,9 @@ def load_catalog(path: Path = CATALOG_PATH) -> MarkerCatalog:
 
 def scan_markers(catalog: MarkerCatalog, files: Iterable[tuple[str, str]],
                  test_path_pattern: str | None = None) -> list[MarkerHit]:
-    """Every catalog marker hit in *files* ((path, text) pairs), in order.
+    """Return marker hits in files, given as (path, text) pairs.
 
-    Hits of one framework never overlap; test paths are not searched.
+    Hits from the same framework never overlap. Test paths are skipped.
     """
     test_path = re.compile(test_path_pattern) if test_path_pattern else None
     hits = []
@@ -197,17 +194,16 @@ def scan_markers(catalog: MarkerCatalog, files: Iterable[tuple[str, str]],
 
 
 def route_key(path: str) -> str:
-    """A route with parameter constraints and optional markers removed."""
+    """Normalize a route by dropping parameter constraints and optional markers."""
     path = re.sub(r"\{([^{}:?=]+)[^{}]*\}", r"{\1}", path.strip())
     return "/" + "/".join(part for part in path.split("/") if part)
 
 
 def declared_operations(hit: MarkerHit, text: str) -> list[tuple[str, str]]:
-    """The ``(METHOD, route)`` pairs the marker at *hit* may declare.
+    """Return the (METHOD, route) pairs the marker at hit may declare.
 
-    Without a route-group prefix the route is as written. With exactly one
-    distinct prefix in the file it may also be prefixed; several distinct
-    prefixes leave the prefixed form unknown.
+    If the file has exactly one route-group prefix, the prefixed route is
+    included as well. With several prefixes it is left out.
     """
     marker = hit.marker
     if marker.operation is None:
@@ -226,21 +222,21 @@ def declared_operations(hit: MarkerHit, text: str) -> list[tuple[str, str]]:
 
 def matching_entry_point(hit: MarkerHit, text: str,
                          operations: Mapping[tuple[str, str], list[str]]) -> str | None:
-    """The one existing entry point whose method and route the marker declares."""
+    """Return the single entry point matching the marker's method and route, or None."""
     found = {anchor for key in declared_operations(hit, text)
              for anchor in operations.get(key, ())}
     return found.pop() if len(found) == 1 else None
 
 
 def covered(hit: MarkerHit, spans: Mapping[str, list[tuple[int, int]]]) -> bool:
-    """An anchor span in the hit's file intersects the hit's lines."""
+    """Return True if an anchor span in the hit's file overlaps the hit's lines."""
     return any(start <= hit.end_line and hit.start_line <= end
                for start, end in spans.get(hit.path, ()))
 
 
 def gap_record(kind: str, message: str, *, language=None, files=None,
                hit: MarkerHit | None = None) -> dict:
-    """One structured coverage entry; its diagnostic carries the same code and message."""
+    """Build a coverage gap record."""
     marker = hit.marker if hit else None
     return {
         'kind': kind, 'code': GAP_CODES[kind], 'message': message,

@@ -1,11 +1,7 @@
-"""Generated DTOs resolve to the model the generator writes from a committed schema.
+"""Tests for resolving OpenAPI-generated DTOs against committed schemas.
 
-A Maven OpenAPI generator writes model classes at build time; the snapshot
-never contains them. When the configured model package, affixes and a literal
-input spec map a name onto a committed schema exactly, the class is built from
-that schema and a relation to it resolves; its symbol cites the generator
-configuration and the schema. A generated name with no matching schema stays
-unresolved, its reason naming the generated type. Nothing is invented.
+A generated class is only built when the model package, name affixes and a
+literal inputSpec map it onto a committed schema. Otherwise it stays unresolved.
 """
 import pytest
 

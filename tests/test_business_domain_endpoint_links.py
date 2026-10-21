@@ -1,9 +1,8 @@
-"""Client HTTP requests link to the server endpoints that answer them.
+"""Tests linking client HTTP requests to server endpoints.
 
-A miniature of the PetClinic shape: a Spring controller under a context path,
-an OpenAPI contract with one operation no controller implements, and a React
-client whose requests go through ``url(path)`` and ``submitForm(method, path)``
-helpers with build-time base URLs from two webpack configurations.
+Fixture is a small PetClinic: a Spring controller, an OpenAPI contract with one
+unimplemented operation, and a React client using ``url(path)`` and
+``submitForm(method, path)`` with base URLs from two webpack configs.
 """
 from lib.context.business_domain_extract import Extractor
 from lib.context.business_domain_schema import DEFAULTS, validate_references
@@ -196,7 +195,7 @@ def _extract(root, files):
 
 
 def _project(root, calls=None, extra=None):
-    """The fixture, with optional client request functions in Calls.tsx."""
+    """Build the fixture, optionally adding request functions in Calls.tsx."""
     files = {**BACKEND, **CLIENT, **(extra or {})}
     if calls:
         files['client/src/Calls.tsx'] = (
@@ -230,7 +229,7 @@ def _trace(facts, identity):
 
 
 def _action_trace(facts, handler):
-    """The trace of the UI action whose registered callback is handler."""
+    """Return the trace of the UI action whose callback is handler."""
     return next(trace for trace in facts['traces'].values()
                 if any((item['registration'] or {}).get('kind') == 'action'
                        and (item['registration'] or {}).get('target') == handler
@@ -515,8 +514,7 @@ def test_backend_traces_are_unchanged_by_client_links(tmp_path):
 def test_root_relative_request_that_resolves_by_route_adds_no_routes_to_edge(tmp_path):
     facts = _project(tmp_path, calls="""export function sameOrigin() { return fetch('/api/vets'); }
 """)
-    # The call's operation already reaches GET /api/vets by method and route;
-    # an unresolved routes_to edge would only add an obligation.
+    # The operation already matches GET /api/vets, so no routes_to edge is needed.
     assert _routes(facts, 'sameOrigin') == []
 
 
@@ -531,9 +529,8 @@ export function otherHost() { return fetch('//cdn.example.com/api/vets'); }
 
 
 def test_routes_do_not_depend_on_which_caller_is_walked_first(tmp_path):
-    # c1 is walked first and reaches save at the call-depth limit, where save's
-    # own call to submitForm is not followed. save's request must still be found
-    # when save itself is linked.
+    # c1 reaches save at the call-depth limit; save's own request must still
+    # be found when save is linked directly.
     facts = _project(tmp_path, calls="""export function c1() { return c2(); }
 export function c2() { return c3(); }
 export function c3() { return c4(); }
@@ -569,9 +566,8 @@ def test_a_source_two_spring_descriptors_select_is_prepared_once(tmp_path, monke
     assert len(prepared) == len(set(prepared))
 
 
-# How traces end. A client HTTP request always stays an external boundary, so
-# trace resolution is unchanged; its obligation and the trace's stop reasons
-# say whether the analyzed source answers it.
+# Client HTTP requests stay external boundaries; the obligation and stop
+# reasons show whether a local endpoint answers them.
 
 def _request_obligations(facts, trace):
     obligations = [facts['trace_obligations'][key] for key in trace['obligation_ids']]
@@ -594,8 +590,7 @@ def test_routed_request_says_where_it_is_answered_and_stays_external(tmp_path):
     assert 'OwnerController.addOwner()' in request['reason']
     assert 'OwnerController.updateOwner(int)' in request['reason']
     assert 'routed_request' in trace['stop_reasons']
-    # The production build sends the same request to a server nothing declares;
-    # that route stays an unresolved obligation and the trace stays unresolved.
+    # The production base URL points at an undeclared server, so it stays unresolved.
     assert _route_obligations(facts, trace, 'unresolved')
     assert trace['resolution'] == 'unresolved'
 

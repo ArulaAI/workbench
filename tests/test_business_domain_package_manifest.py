@@ -1,4 +1,4 @@
-"""package.json as a supporting input owned by one named consumer (F1)."""
+"""Tests that package.json is a supporting input owned by one named consumer."""
 import pytest
 
 from lib.context.business_domain_adapters import package_manifest

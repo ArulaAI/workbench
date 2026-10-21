@@ -1,4 +1,4 @@
-"""Opt-in real-provider contract check; never imported by the test runner."""
+"""Manual check against a real provider. Not collected by the test runner."""
 import argparse
 import copy
 import json

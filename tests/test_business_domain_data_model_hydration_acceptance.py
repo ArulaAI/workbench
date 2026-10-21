@@ -1,4 +1,4 @@
-"""F-08 acceptance: normalized operations hydrate one canonical model."""
+"""Acceptance tests: normalized operations hydrate one canonical data model."""
 from __future__ import annotations
 
 import ast

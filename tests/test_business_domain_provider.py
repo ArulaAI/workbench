@@ -1,4 +1,4 @@
-"""Discovery calls the existing SPEED invoker using local CLI fixtures."""
+"""Provider invocation tests, run against local CLI fixtures."""
 import ast
 import copy
 import time
@@ -413,7 +413,7 @@ def test_failed_recovery_preserves_provider_cause_and_stops_later_packets(tmp_pa
         assert 'PROVIDER_FAILED' in str(error.value)
     assert len(attempts) == 2
     assert synthesis.counters['retries'] == 1
-    assert synthesis.is_cancelled()  # Active transports receive the shutdown signal.
+    assert synthesis.is_cancelled()  # Active transports get the shutdown signal.
     assert not synthesis.cancelled()  # Provider failure is not user cancellation.
 
 
@@ -487,7 +487,7 @@ def test_domains_timeout_model_selection(current_model, retry_count, expected):
 
 
 def scripted_synthesis(tmp_path, monkeypatch, provider, failures=()):
-    """Real shell adapters with local canned responses, never a live provider."""
+    """Build a Synthesis that uses the real shell adapters with canned responses."""
     from tests.test_business_domain_candidate_protocol import ProtocolProvider
     from lib.context.discovery_logging import DiscoveryRecorder
 
@@ -596,7 +596,7 @@ def test_timeout_escalation_is_charged_verified_and_logged(
             request['model'] for request in calls]
         assert any('escalating to fixture-planning' in event['message']
                    for event in progress)
-        # Candidate cache publication must retain the actual escalated request.
+        # The cached candidate must record the escalated request.
         cached = [
             json.loads(path.read_text()) for path in
             (tmp_path/'.speed/context/business-domain-cache').glob('*.json')]

@@ -1,11 +1,4 @@
-"""Activities of one anchor that derive identical lists divide one behaviour.
-
-SPEED derives an activity's inputs, outputs and effects from the traces it
-selects. Activities of one anchor whose derived lists are identical cannot be
-told apart, and no repair of those lists can separate them. Acceptance reports
-the split before verification, so repair merges the activities instead of a
-verifier rejecting the derived lists round after round.
-"""
+"""Tests for activities of one anchor that split a single behaviour."""
 from lib.context.business_domains import discover
 from tests.business_domains.oversized_fixture import SplittingProvider, write_monolith
 

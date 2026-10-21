@@ -1,7 +1,5 @@
-"""Trusted PostgreSQL/PLpgSQL adapter boundary."""
+"""PostgreSQL/PLpgSQL adapter built on the generic SQL adapter."""
 
-# Dialect-specific behavior remains adapter-owned while normalized projection
-# is shared with the SQL implementation.
 from .sql import *  # noqa: F401,F403
 from . import sql as _sql
 

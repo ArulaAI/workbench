@@ -1,9 +1,4 @@
-"""Evidence quality of business-domain discovery on TypeScript code.
-
-Calls on values whose type the source declares are classified, not left as
-gaps; members of exported objects resolve; tests that exercise production code
-link to it; and budget or deadline failures name the setting to change.
-"""
+"""Tests for business-domain evidence extracted from TypeScript code."""
 import pytest
 
 from lib.context.business_domain_extract import Extractor
@@ -120,12 +115,12 @@ def _name(facts, symbol_id):
 
 
 def _base(name):
-    """A qualified name without the position suffix same-named peers carry."""
+    """Strip the position suffix added to same-named symbols."""
     return name.split(':', 1)[0]
 
 
 def _data(facts, caller):
-    """Each data edge from *caller*: (kind, store name)."""
+    """Return (kind, store name) for each data edge from *caller*."""
     return {(edge['kind'], facts['resources'][edge['to_ref']['id']]['name'])
             for edge in facts['edges'].values()
             if edge['kind'] in {'reads_data', 'writes_data'}
@@ -133,20 +128,19 @@ def _data(facts, caller):
 
 
 def _calls(facts, caller):
-    """Each call edge from *caller*: (callee name, resolution, reason)."""
+    """Return (excerpt, resolution, reason, to_ref) for each call edge from *caller*."""
     return [(edge['evidence_ids'] and facts['evidence'][edge['evidence_ids'][0]]['excerpt'],
              edge['resolution'], edge['reason'], edge['to_ref'])
             for edge in facts['edges'].values()
             if edge['kind'] == 'calls' and _name(facts, edge['from_ref']['id']) == caller]
 
 
-# ── Calls on declared platform types ────────────────────────────────────
+# Calls on declared platform types
 
 def test_writes_to_declared_map_and_array_members_are_writes_to_their_store(tmp_path):
     facts = _facts(_write(tmp_path, {'src/store.ts': STORE}))
 
-    # A collection a class member holds is the state the class keeps: changing
-    # it is a data write to that member, not a library call.
+    # Mutating a member collection counts as a data write to that member.
     assert _data(facts, 'Store.put') == {('writes_data', 'src/store.ts::Store.items'),
                                          ('writes_data', 'src/store.ts::Store.history'),
                                          ('writes_data', 'src/store.ts::Store.entries')}
@@ -179,7 +173,7 @@ def test_a_module_constant_map_is_a_platform_boundary_unless_shadowed(tmp_path):
     assert _data(facts, 'shadowed') == set()
 
 
-# ── Members of exported objects ─────────────────────────────────────────
+# Members of exported objects
 
 def test_functions_of_an_exported_object_are_owned_by_it(tmp_path):
     facts = _facts(_write(tmp_path, {'src/obs.ts': OBS}))
@@ -197,7 +191,7 @@ def test_a_call_through_an_imported_object_resolves_to_its_member(tmp_path):
                for _, resolution, _, to_ref in _calls(facts, 'Service.run')
                if resolution == 'resolved'}
 
-    # `log.info` is the object's member, not the same-named top-level `info`.
+    # `log.info` should resolve to the member, not the top-level `info`.
     assert targets == {'log.info', 'log.error'}
 
 
@@ -214,7 +208,7 @@ def test_a_receiver_call_never_takes_a_same_file_name_match(tmp_path):
                    and _name(facts, to_ref['id']) == 'Gateway.run' for _, _, _, to_ref in calls)
 
 
-# ── Tests linked to the behaviour they exercise ─────────────────────────
+# Tests linked to the behaviour they exercise
 
 def _tested(facts):
     return {(_name(facts, edge['from_ref']['id']), _name(facts, edge['to_ref']['id']))
@@ -253,7 +247,7 @@ def test_test_cases_never_become_anchors(tmp_path):
     assert anchored == {'Service.run', 'Gateway.run'}
 
 
-# ── Actionable budget and deadline failures ─────────────────────────────
+# Actionable budget and deadline failures
 
 def test_a_budget_failure_names_the_exhausted_budget_and_its_setting():
     from lib.context.business_domain_synthesis import _budget_error
@@ -273,7 +267,7 @@ def test_a_deadline_failure_names_its_setting(setting):
     assert setting in DEADLINE_EXCEEDED
 
 
-# ── Documentation linked to the operations it describes ────────────────
+# Documentation linked to the operations it describes
 
 LEDGER = '''export class Ledger {
   net(): number { return 0; }
@@ -295,7 +289,7 @@ The ledger's net balance is zero after every operation. Call post once per pair.
 
 
 def _documented(facts, path='docs/ledger.md'):
-    """Operation name -> the cited line ranges of *path*."""
+    """Map operation name to the cited line ranges in *path*."""
     names = {anchor['id']: anchor['operation']['name'] for anchor in facts['anchors'].values()}
     resources = facts['resources']
     links = {}
@@ -314,8 +308,7 @@ def test_documentation_links_only_whole_word_mentions(tmp_path):
 
     links = _documented(facts)
 
-    # "Network" and "reposted" contain net and post; only the Balance section
-    # names them as words.
+    # "Network" and "reposted" contain "net" and "post" but only as substrings.
     assert set(links) == {'net', 'post'}
     assert links['net'] == links['post'] == [(9, 11)]
 
@@ -327,7 +320,7 @@ def test_documentation_cites_the_section_not_the_whole_file(tmp_path):
         assert all(end - start + 1 < SPEC.count('\n') for start, end in ranges)
 
 
-# ── Inputs of declared callables ────────────────────────────────────────
+# Inputs of declared callables
 
 PAYMENTS = '''export class Payments {
   capture(paymentId: string, amount?: number, retries = 0): number {
@@ -363,7 +356,7 @@ def test_inline_callback_parameters_are_not_inputs(tmp_path):
     assert not names & {'sum', 'value'}
 
 
-# ── Tests and documentation reach the model ─────────────────────────────
+# Tests and documentation reach the model
 
 def test_the_synthesis_context_carries_tests_and_documentation(tmp_path):
     from lib.context.business_domain_synthesis import _model_ready_context
@@ -380,7 +373,7 @@ def test_the_synthesis_context_carries_tests_and_documentation(tmp_path):
     tests = {_name(model, symbol_id) for symbol_id in context['symbols']
              if model['symbols'][symbol_id]['file'].startswith('test/')}
     assert 'a service runs' in tests
-    # The test's own span, which holds its assertions, is citable evidence.
+    # The test's span, including its assertions, can be cited as evidence.
     test_case = next(symbol for symbol in model['symbols'].values()
                      if _name(model, symbol['id']) == 'a service runs')
     assert set(test_case['evidence_ids']) <= set(context['evidence']) | set(

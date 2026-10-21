@@ -1,10 +1,4 @@
-"""G2: missing entry-point detection is always reported.
-
-Per language, a recognized source language whose selected adapters declare no
-entry-point detection gets one coverage entry. Per signal, every catalog
-marker that did not become an anchor is a likely missed entry point with file
-and line. Gaps keep publication partial. The catalog lives in data.
-"""
+"""Tests for entry-point coverage gaps: undetected languages and likely missed markers."""
 import copy
 import json
 import subprocess
@@ -50,7 +44,7 @@ def hits(path, text):
             for hit in scan_markers(CATALOG, [(path, text)])]
 
 
-# ── Catalog markers: one positive fixture per marker, plus exclusions ──
+# Catalog markers: one positive fixture per marker, plus exclusions
 
 MINIMAL_API = '''var api = app.MapGroup("api/orders");
 api.MapGet("/", GetOrders);
@@ -289,7 +283,7 @@ def test_rules_adapter_entrypoint_languages_match_its_rule_catalogs():
         'entrypoint_detection'] == 'partial'
 
 
-# ── Extraction: per-language gaps, likely misses, silent zero, noise ──
+# Extraction: per-language gaps, likely misses, silent zero, noise
 
 def test_language_without_entrypoint_detection_gets_exactly_one_entry(tmp_path):
     facts = extract(tmp_path, {
@@ -489,7 +483,7 @@ def test_terminal_summary_lists_entrypoint_coverage(tmp_path):
         ['bash', '-c', f'source lib/cmd/domains.sh; _domains_render_facts "{payload}"'],
         cwd=SPEED_ROOT, capture_output=True, text=True, check=True).stdout.splitlines()
     start = rendered.index('Entry-point coverage:')
-    # The warnings block (a total, then one row per code) ends just before it.
+    # Warnings block (total, then one row per code) ends just before it.
     header = next(index for index, line in enumerate(rendered) if line.startswith('  Warnings'))
     assert rendered[header] == f"  Warnings          {len(facts['warnings'])}"
     rows = rendered[header + 1:start - 1]
@@ -503,7 +497,7 @@ def test_terminal_summary_lists_entrypoint_coverage(tmp_path):
     assert rendered[-2:] == ['Facts written to:', '.speed/context/business-domain-facts.json']
 
 
-# ── A marker whose method and route equal a known entry point ────────────
+# Markers whose method and route match a known entry point
 
 ORDERS_CONTRACT = """openapi: 3.0.1
 info: {title: Orders, version: '1'}
@@ -527,8 +521,7 @@ def test_a_route_known_from_its_contract_is_still_missed_and_says_so(tmp_path):
             'api.MapGet("/{id:int}", GetOrder);\n'      # matches GET /api/orders/{id}
             'api.MapPost("/", CreateOrder);\n'          # matches POST /api/orders
             'api.MapDelete("/{id:int}", DeleteOrder);\n')})  # no such entry point
-    # Every route is missed (its C# implementation is undetected); the two
-    # a contract also declares say so.
+    # C# routes are all missed; the two also in the contract mention it.
     missed = {gap['line']: gap['message'] for gap in gaps(facts, 'likely_missed')}
     assert sorted(missed) == [2, 3, 4]
     assert missed[2].endswith('also declared as GET /api/orders/{id} by a known entry point')

@@ -1,11 +1,4 @@
-"""Where Spring Boot serves a service's endpoints, per configuration and profile.
-
-Bases are read from the main classpath's application configuration. Documents
-layer in Spring Boot's precedence order, a profile that moves the port or
-context path is a conditioned base, and the default base then applies only
-while no such profile is active. A declared ``spring.profiles.active`` is
-named, never assumed.
-"""
+"""Tests for Spring Boot endpoint bases (port and context path) per profile."""
 from types import SimpleNamespace
 
 import pytest
@@ -44,8 +37,7 @@ def test_profile_that_moves_the_port_conditions_the_default_base():
     })
     assert _served(bases) == {(9966, '', f'!({PROD})'), (9000, '', PROD)}
     default, prod = bases
-    # The declaration is named on both bases but is not proof: a runtime
-    # override can still select either.
+    # A runtime override can still pick either base, so both labels mention it.
     assert 'spring.profiles.active=prod' in prod['label']
     assert 'selects this profile' in prod['label']
     assert 'selects an overriding profile' in default['label']
@@ -142,7 +134,7 @@ def test_declared_active_profile_reads_only_unconditional_documents():
     assert sources[0].spring_declared_profiles[0] == 'jpa'
 
 
-# ── Routing through several bases ───────────────────────────────────────────
+# Routing through several bases
 
 SERVED = [({'operation': {'method': 'GET', 'path': '/api/vets'}, 'role': 'implementation',
             'symbol_id': 'symbol:vets', 'evidence_ids': ['ev:vets'], 'source_id': None}, 'svc')]

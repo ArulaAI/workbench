@@ -1,4 +1,4 @@
-"""Whole-graph provider fixtures shared by public discovery tests."""
+"""Provider fixtures shared by the discovery tests."""
 import copy
 
 from lib.context.business_domain_schema import (
@@ -33,7 +33,7 @@ def write_service(root):
 
 
 class PassingProvider:
-    """Produce one evidenced domain and pass independent verification."""
+    """Return one evidenced domain and pass verification."""
 
     model = 'fixture'
     provider_context_tokens = 200_000

@@ -1,4 +1,4 @@
-"""tsconfig/typings as supporting inputs and the one shared alias resolver (F1)."""
+"""Tests for tsconfig/typings parsing and TypeScript path alias resolution."""
 import pytest
 
 from lib.context.business_domain_adapters import typescript_module_resolution
@@ -31,7 +31,7 @@ def _aliases(paths):
         '{"compilerOptions": {"paths": %s}}' % paths, 'tsconfig')['aliases']
 
 
-# ── Parser and resolver ──────────────────────────────────────────────────
+# Parser and resolver
 
 def test_tsconfig_and_typings_normalize():
     parsed = parse_typescript_module_resolution(
@@ -95,7 +95,7 @@ def test_target_escaping_the_repository_is_rejected_by_the_consumer():
         (0, len(escaping.text)))
 
 
-# ── Extraction ───────────────────────────────────────────────────────────
+# Extraction
 
 API = 'export function send() { return 1; }\n'
 
@@ -177,7 +177,7 @@ def test_malformed_configuration_is_a_format_diagnostic(tmp_path):
     assert facts['coverage']['unsupported_source_ids'] == []
 
 
-# ── Review regressions ───────────────────────────────────────────────────
+# Edge cases
 
 def test_a_catch_all_alias_leaves_relative_and_package_imports_alone(tmp_path):
     facts, units = _extract(tmp_path, {

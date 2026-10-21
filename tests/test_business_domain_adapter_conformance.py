@@ -1,4 +1,4 @@
-"""Conformance checks for the installed source-adapter boundary."""
+"""Tests that installed source adapters follow the adapter contract."""
 from pathlib import Path
 from shutil import copytree
 
@@ -81,8 +81,7 @@ def test_incomplete_descriptor_is_rejected_without_losing_languages(tmp_path):
 
     registry = LanguageRegistry(data)
 
-    # An invalid descriptor publishes nothing; the normalized cause is kept
-    # for the attempt status instead of degrading to an empty adapter set.
+    # A bad descriptor loads no adapters but keeps the error code for status.
     assert str(registry.load_error) == "registry_value_invalid"
     assert registry.source_adapter_error == "registry_value_invalid"
     with pytest.raises(RegistryConfigurationError):

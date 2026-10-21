@@ -1,4 +1,4 @@
-"""F-06 production acceptance: canonical entry-point identity and aliases."""
+"""Acceptance tests for canonical anchor identity and aliases."""
 from __future__ import annotations
 
 import copy

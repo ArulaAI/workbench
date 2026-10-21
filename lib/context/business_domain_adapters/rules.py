@@ -1,7 +1,6 @@
-"""Normalize existing declarative extraction matches into evidence records.
+"""Turn declarative rule matches into evidence records.
 
-This adapter does not recognize language keywords, decorators or frameworks.
-Those decisions belong to the existing rules/{language} catalog.
+Language and framework knowledge lives in the rules/{language} catalog.
 """
 import copy
 import re
@@ -35,9 +34,9 @@ HTTP_METHODS = frozenset({'GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTI
 
 
 def _call_arguments(text, opening):
-    """Split the call whose ``(`` is at *opening* into top-level argument texts.
+    """Split the call at *opening* into top-level arguments.
 
-    Returns ``(arguments, end)``; *end* is None when the call never closes.
+    Returns ``(arguments, end)``; *end* is None if the call never closes.
     """
     arguments, depth, quote, escaped, begin = [], 0, None, False, opening + 1
     for index in range(opening, len(text)):
@@ -78,11 +77,7 @@ def _string_literal(value):
 
 
 def _route_decorator(text, receiver, name, route):
-    """Return the ``@receiver.name(...)`` decorator that registers *route*.
-
-    A decorated definition also holds other decorators and the function
-    body, so route keywords are read from this call only.
-    """
+    """Return the ``@receiver.name(...)`` decorator that registers *route*."""
     pattern = rf'@\s*{re.escape(receiver)}\s*\.\s*{re.escape(name)}\s*\('
     calls = []
     for found in re.finditer(pattern, text):
@@ -94,11 +89,9 @@ def _route_decorator(text, receiver, name, route):
 
 
 def _declared_route_method(text):
-    """Select the HTTP method of a generic route registration such as Flask's.
+    """Return the HTTP method of a Flask-style ``route(...)`` call, or None.
 
-    ``route('/x')`` defaults to GET.  A literal ``methods=[...]`` naming one
-    method selects it; several methods, or a non-literal list, select none.
-    Only the call's own top-level keywords count.
+    Defaults to GET; ``methods=[...]`` must be a literal list with one method.
     """
     opening = (text or '').find('(')
     arguments, end = _call_arguments(text, opening) if opening >= 0 else ([], None)
@@ -120,8 +113,7 @@ _MAX_ROUTER_DEPTH = 8
 def _fastapi_binding(text, name):
     """Return ``(kind, arguments)`` for *name* bound to ``FastAPI()``/``APIRouter()``.
 
-    A name bound in this source to neither returns ``(None, None)``; a name
-    bound more than once, or to an unclosed call, returns ``(kind, None)``.
+    Returns ``(None, None)`` if unbound, ``(kind, None)`` if bound more than once.
     """
     bindings = list(re.finditer(
         rf'(?m)^[ \t]*{re.escape(name)}\s*(?::[^=\n]+)?=\s*(?:fastapi\s*\.\s*)?'
@@ -133,12 +125,9 @@ def _fastapi_binding(text, name):
 
 
 def _mounted_route(text, receiver, route, depth=0):
-    """Compose FastAPI ``APIRouter`` and ``include_router`` prefixes onto *route*.
+    """Apply ``APIRouter`` and ``include_router`` prefixes to *route*.
 
-    Returns ``(route, reason)``.  Receivers that are not FastAPI objects bound
-    in this source keep their route.  A router route is only resolved when its
-    own prefix and every ``include_router`` of it in this source are literal
-    and agree; a router included nowhere here has an unknown mount prefix.
+    Returns ``(route, reason)``. All prefixes must be literal and agree.
     """
     kind, arguments = _fastapi_binding(text, receiver)
     if kind in (None, 'FastAPI'):
@@ -173,11 +162,7 @@ def _mounted_route(text, receiver, route, depth=0):
 
 
 def _literal_request_method(request):
-    """Return the HTTP method of a literal fetch options object, else None.
-
-    A literal object without ``method`` means GET.  Spread or computed
-    options cannot be read statically.
-    """
+    """Return the method of a literal fetch options object (GET if absent), else None."""
     text = (request or '').strip()
     if not (text.startswith('{') and text.endswith('}')) or '...' in text:
         return None
@@ -227,9 +212,7 @@ def extract(source):
             continue
         units.append(Unit(source, name, '', start, end, kind,anchor_kind=definition.anchor_kind,
                           executable_body=definition.executable_body))
-    # Rules may select both a decorated declaration and its wrapped body.
-    # They denote one symbol when name/end coincide; retain the evidence span
-    # that also contains the declaration metadata.
+    # Drop a wrapped body when the decorated declaration was also matched.
     units = [u for u in units if not any(v.name == u.name and v.end == u.end
               and v.start < u.start for v in units)]
     for unit in units:
@@ -237,8 +220,7 @@ def extract(source):
                             and (u.start, u.end) != (unit.start, unit.end)], key=lambda u: u.end-u.start)
         unit.owner = enclosing[0].name if enclosing else None
         unit.qualified = source.path+'::'+'.'.join(filter(None, [unit.owner, unit.name]))
-        # Position disambiguates anonymous/overloaded declarations; body content
-        # never contributes a business label.
+        # Suffix an index to disambiguate overloads and anonymous declarations.
         peers = [u for u in units if u.name == unit.name]
         if len(peers) > 1:
             unit.qualified += ':'+str(sorted(peers, key=lambda u:u.start).index(unit))
@@ -279,8 +261,7 @@ def extract(source):
             if unit.anchor_kind == 'http' and unit.method and unit.route:
                 unit.anchor_resolution = 'resolved'
                 unit.anchor_reason = None
-            # The catalog rule itself establishes a library anchor: it matches
-            # only a public method of a class its module exports.
+            # Library rules only match public methods of exported classes.
             if unit.anchor_kind == 'library':
                 unit.anchor_resolution = 'resolved'
                 unit.anchor_reason = None
@@ -329,8 +310,7 @@ def extract(source):
             label_match = re.search(metadata['label_pattern'], match.text)
             label = label_match.group(1).strip() if label_match else None
             label = label or None
-        # A label written as an expression is kept with its offset; only a
-        # language adapter can say which values it takes.
+        # Keep expression labels for the language adapter to evaluate.
         label_expression = None
         if label is None and metadata.get('label_expression_pattern'):
             found = re.search(metadata['label_expression_pattern'], source.text[start:end])
@@ -367,7 +347,7 @@ def extract(source):
 
 
 def _implementation_target(unit, units):
-    """Select the executable component body behind an exact symbol target."""
+    """Return a class component's render method, or the unit itself."""
     if unit.kind != 'class':
         return unit
     renders = [candidate for candidate in units
@@ -377,7 +357,7 @@ def _implementation_target(unit, units):
 
 
 def _import_bindings(source):
-    """Map every identifier this file imports to the module it came from."""
+    """Map each imported identifier to its module."""
     bindings = {}
     for reference in source.references:
         if reference.kind != 'import':
@@ -386,10 +366,7 @@ def _import_bindings(source):
         if not module:
             continue
         for symbol in reference.symbols:
-            # One import statement matches several declarative patterns, and a
-            # clause may rename what it binds. The bound name is the one a call
-            # site can reach, so `browserHistory as history` binds `history`
-            # and `* as React` binds `React`.
+            # Use the bound name: `browserHistory as history` binds `history`.
             for clause in symbol.strip().strip('{}').split(','):
                 bound = clause.strip().rsplit(' as ', 1)[-1].strip()
                 if re.fullmatch(r'[A-Za-z_$][\w$]*', bound):
@@ -398,12 +375,10 @@ def _import_bindings(source):
 
 
 def _receiver_root(reference):
-    """Return the identifier a call is rooted at, or None if it is an expression.
+    """Return the identifier a call is rooted at, or None for an expression.
 
-    A rule may elide an implicit receiver so lexical scoping still reaches a
-    sibling declaration, but the written text keeps it. Reading the root from
-    that text is what stops `this.location()` being taken for a call on the
-    ambient `location`.
+    Read from the written text so `this.location()` is not mistaken for the
+    global `location`.
     """
     if reference.receiver:
         head = reference.receiver
@@ -416,14 +391,9 @@ def _receiver_root(reference):
 
 
 def _ambient_boundaries(source, resolve_name):
-    """Index the calls reached through a name the language binds, not this tree.
+    """Index calls rooted at a language global that is not declared or imported.
 
-    A root the canonical resolver cannot place, that this file does not import,
-    and that the language binds ambiently, is a platform call: no repository
-    declares it because no repository ever declares one. Any other unplaceable
-    root is a local binding this extractor does not see -- a parameter, a
-    destructured prop, a lambda argument -- and stays unresolved, because an
-    unknown receiver is not evidence of a boundary.
+    Other unresolved roots (parameters, props, lambda args) stay unresolved.
     """
     ambient = registry.ambient_globals(source.language)
     if not ambient:
@@ -450,12 +420,10 @@ _MAX_COMPOSITION_DEPTH = 8
 
 
 def _route_contexts(owner, route_context):
-    """Every route displaying *owner*, with the composition chain that shows it.
+    """Return ``[(route_registration, chain)]`` for every route that renders *owner*.
 
-    Returns ``[(route_registration, chain)]``. A chain lists the ``(origin,
-    start, end)`` composition usages from the routed page down to the usage
-    that renders *owner*; a directly routed owner has an empty chain. Only
-    resolved composition counts, and a usage in a test source never does.
+    A chain is the ``(origin, start, end)`` usages from the routed page down to
+    *owner*; empty when *owner* is routed directly. Test sources are skipped.
     """
     found = []
 
@@ -476,7 +444,7 @@ def _route_contexts(owner, route_context):
 
 
 def _route_copy(unit, path):
-    """One action registration per route that displays its shared component."""
+    """Copy an action registration for one route."""
     action = copy.copy(unit)
     action.qualified = f'{unit.qualified}@{path if path is not None else "dynamic-route"}'
     action.anchor_correspondence_units = []
@@ -486,15 +454,14 @@ def _route_copy(unit, path):
 
 
 def _place_action(unit, target, owner, path, contexts):
-    """Scope an action to the route that displays it and declare it."""
+    """Scope an action to its route and declare it."""
     unit.route = path
     unit.anchor_route_contexts = contexts
     unit.anchor_action_target = target
     scope = unit.route or (owner.qualified if owner else unit.source.path)
     unit.anchor_identity_key = (f'ui:{unit.source.service_scope}:action:'
         f'{scope}:{unit.method}:{unit.start}:{unit.end}')
-    # A route reached through composition is evidenced by the route
-    # registration and every usage between its page and this component.
+    # Composed routes cite the route registration and each usage in the chain.
     unit.anchor_placement_evidence_spans = [] if not any(chain for _, chain in contexts) else [
         item for route, chain in contexts
         for item in [(route.source, route.start, route.end)] + [
@@ -519,12 +486,10 @@ def _place_action(unit, target, owner, path, contexts):
 
 
 def declare_action(unit):
-    """Declare a placed action registration from its target and label state.
+    """Declare a placed action registration from its target and label.
 
-    A language adapter that evaluates a label expression records
-    ``anchor_label`` (one value), ``anchor_label_candidates`` (several it
-    cannot choose between) or ``anchor_label_reason`` (why no literal value
-    exists), with the spans that evidence it, and declares again.
+    Language adapters may set ``anchor_label``, ``anchor_label_candidates`` or
+    ``anchor_label_reason`` and call this again.
     """
     target = unit.anchor_action_target
     label = unit.anchor_label
@@ -555,7 +520,7 @@ def declare_action(unit):
 
 
 def prepare(sources, units, diagnostics=None):
-    """Resolve normalized UI registrations/composition through the CSG owner."""
+    """Resolve call targets, UI routes, composition and actions."""
     relevant = [unit for unit in units if unit.source in sources]
     resolvable = [unit for unit in relevant
                   if not getattr(unit, 'anchor_registration_kind', None)]
@@ -566,15 +531,11 @@ def prepare(sources, units, diagnostics=None):
         for source in sources}
     by_id = {unit.qualified: unit for unit in resolvable}
 
-    # Reuse the canonical CSG resolver for exact lexical/import call links.
-    # The connection phase still owns edge materialization; this adapter-owned
-    # index only supplies the evidenced target selected by that resolver.
+    # Use the CSG resolver to index exact lexical/import call targets.
     for source in sources:
         source.resolved_call_targets = {}
-        # `log.info(...)` calls a member of the object `log` names. The object
-        # resolves like any other name; its member is the unit it owns. This
-        # index is kept apart from resolved_call_targets, whose name-only
-        # matches never apply to a call made through a receiver.
+        # Member calls like `log.info(...)` are indexed separately, since
+        # name-only matches must not apply to receiver calls.
         source.resolved_member_targets = {}
         for reference in source.references:
             if reference.kind != 'call' or not reference.callee_name:
@@ -594,9 +555,6 @@ def prepare(sources, units, diagnostics=None):
                            and unit.name == reference.callee_name]
                 if len(members) == 1:
                     source.resolved_member_targets[(start, reference.callee_name)] = members[0]
-        # The same canonical resolver answers the complementary question: a root
-        # it cannot place, that the file never imports, and that the language
-        # binds ambiently, ends the path rather than breaking it.
         source.ambient_call_boundaries = _ambient_boundaries(
             source, lambda name: resolve_source_reference(
                 name, source.path, nodes, extractions))
@@ -700,8 +658,7 @@ def prepare(sources, units, diagnostics=None):
             reason = None if target else (
                 'Child component is dynamic, ambiguous, or not resolved through source/import evidence.')
             if target is not None:
-                # Every place the child is rendered, so a language adapter can
-                # follow the props each usage passes.
+                # Record usages so language adapters can follow passed props.
                 usages = getattr(target, 'jsx_usages', None)
                 if usages is None:
                     usages = target.jsx_usages = []
@@ -712,8 +669,7 @@ def prepare(sources, units, diagnostics=None):
                 'kind': match.attributes['edge_kind'], 'start': start, 'end': end,
                 'resolution': 'resolved' if target else 'unresolved', 'reason': reason})
 
-    # Composition is known before actions are placed: an action in a shared
-    # component is displayed on every route whose page composes it.
+    # A shared component's actions are placed on every route that composes it.
     for unit in registrations:
         if unit.anchor_registration_kind != 'action':
             continue
@@ -781,10 +737,9 @@ _SCOPING_KINDS = frozenset({'function', 'method', 'class'})
 
 
 def receiver_types(unit, receiver):
-    """Types the rule catalog declares for *receiver* where *unit* calls it."""
+    """Return the declared types of *receiver* as seen from *unit*."""
     declared_types = set()
-    # A chain split across lines keeps its line breaks in the receiver text:
-    # `this.entries\n      .filter(...)` is called on `this.entries`.
+    # Normalize chains split across lines.
     receiver = re.sub(r'\s*\.\s*', '.', (receiver or '').strip())
     # A call made on what a factory returns: `gw().authorise(...)`.
     called = re.fullmatch(r'([A-Za-z_$][\w$]*)\(\s*\)', receiver)
@@ -795,15 +750,13 @@ def receiver_types(unit, receiver):
         if match.output_type != 'receiver_binding' or metadata.get('binds') in {
                 'factory', 'shadow'}:
             continue
-        # A class member is written through its receiver (`this.ledger`),
-        # while its declaration names only the member (`ledger`).
+        # Members are declared as `ledger` but used as `this.ledger`.
         bound = capture(match,metadata.get('receiver_var'))
         if not bound or metadata.get('receiver_prefix','')+bound != receiver:
             continue
         start,end = span(unit.source,match)
         if metadata.get('scope') == 'module':
-            # A top-level declaration is visible in the whole file unless the
-            # calling unit declares a parameter or local of the same name.
+            # Skip if shadowed by a parameter or local in the calling unit.
             if any(u.start <= start and end <= u.end and u.kind in _SCOPING_KINDS
                    for u in unit.source.units) or _declares(unit, bound):
                 continue
@@ -811,8 +764,7 @@ def receiver_types(unit, receiver):
             enclosing = sorted((u for u in unit.source.units if u.start <= start and end <= u.end
                                 and u.kind in metadata.get('scope_kinds', [u.kind])),
                                key=lambda u:u.end-u.start)
-            # A binding belongs to its nearest declaration. A sibling method's
-            # parameter is not visible merely because both share an outer class.
+            # The binding must be in scope of the caller, not a sibling method.
             if not enclosing or not (enclosing[0].start <= unit.start and unit.end <= enclosing[0].end):
                 continue
         if metadata.get('factory_var'):
@@ -826,7 +778,7 @@ def receiver_types(unit, receiver):
 
 
 def _declares(unit, name):
-    """True when *unit* declares a parameter or local called *name*."""
+    """Return True if *unit* declares a parameter or local called *name*."""
     return any(match.output_type == 'receiver_binding'
                and match.attributes.get('binds') == 'shadow'
                and capture(match, match.attributes.get('receiver_var')) == name
@@ -835,7 +787,7 @@ def _declares(unit, name):
 
 
 def _factory_types(source, factory):
-    """Classes a top-level factory in *source* constructs, by its name."""
+    """Return the classes a top-level factory in *source* constructs."""
     return {capture(match, match.attributes.get('type_var'))
             for match in source.rule_outputs
             if match.output_type == 'receiver_binding'
@@ -845,9 +797,7 @@ def _factory_types(source, factory):
 
 
 def lexical_candidates(unit, receiver, name, available):
-    """Candidates proven by lexical scope or a declared receiver type."""
-    # Only lexical calls are proven here. Receiver/type/import binding is a
-    # separate capability; a globally unique name does not prove a call target.
+    """Return candidates found by lexical scope or declared receiver type."""
     if receiver:
         declared_types = receiver_types(unit, receiver)
         return [c for c in available if c.owner in declared_types]
@@ -878,12 +828,7 @@ def candidates(unit, receiver, name, available, position=None):
 
 
 def resolve_call(unit, receiver, name, candidates, position, evidence_id=None):
-    """Separate a platform call from a call this repository fails to answer.
-
-    Lexical candidates still decide every call the repository does answer; the
-    boundary index is consulted only after they come back empty, so this can
-    never override a proven target.
-    """
+    """Resolve a call from candidates, falling back to platform calls when none match."""
     evidence = (evidence_id or unit.evidence_id,)
     if len(candidates) == 1:
         return SemanticResult(capability='callable_resolution', outcome='exact',
@@ -905,9 +850,7 @@ def resolve_call(unit, receiver, name, candidates, position, evidence_id=None):
                                  unit.source.language, root, name),
             evidence_ids=evidence, diagnostic_code='RULES_AMBIENT_CALL',
             reason=reason, provider=f'global:{root}')
-    # A receiver declared as a type the language provides (`new Map()`, an
-    # `Entry[]` field) calls a platform method, not missing repository code.
-    # Only declared types count: an untyped receiver stays unresolved.
+    # Receivers declared as built-in types (`Map`, arrays) call platform methods.
     platform = sorted(receiver_types(unit, receiver) & set(
         registry.ambient_globals(unit.source.language))) if receiver else []
     if platform:
@@ -941,7 +884,7 @@ def observations(unit):
 
 
 def _http_target(unit, expression, before, seen=()):
-    """Resolve only literal, wrapper-literal, or local constant HTTP targets."""
+    """Resolve literal, ``url(...)``-wrapped or local constant HTTP targets."""
     expression = (expression or '').strip()
     quoted = re.fullmatch(r'''(["'`])(.*)\1''', expression, re.DOTALL)
     if quoted:
@@ -991,7 +934,7 @@ def _operation_binding(unit, name, expression, start, resolution, reason):
 
 
 def _http_target_identity(unit, metadata, target_name, target_resolved):
-    """Build an identity only when the adapter established every component."""
+    """Return the HTTP identity if method and target are both resolved."""
     method = metadata.get('method')
     if (not target_resolved or not isinstance(method, str)
             or not method.strip()):
@@ -1000,7 +943,7 @@ def _http_target_identity(unit, metadata, target_name, target_resolved):
 
 
 def http_operation(unit, match, metadata=None):
-    """Normalize one tree-selected HTTP call for every frontend reader."""
+    """Build the operation observation for one HTTP call."""
     metadata = metadata or match.attributes
     start, end = span(unit.source, match)
     expression = capture(match, metadata.get('target_var'))
@@ -1089,7 +1032,7 @@ def operations(unit):
 
 
 def relations(source):
-    """Normalize declarative graph links and callback registrations."""
+    """Return structural and declarative relations for a source."""
     result = list(getattr(source, 'normalized_relations', []))
     for definition in source.definitions:
         if not definition.structural_only:
@@ -1144,7 +1087,7 @@ def relations(source):
 
 
 def hydrate_ui_calls(unit, facts, result, traced_symbols=None):
-    """Attach calls after any reader has finished resolving UI handlers."""
+    """Attach HTTP calls reachable from each UI event handler."""
     traced_symbols = traced_symbols or {
         sid for trace in facts['traces'].values()
         if trace['anchor_id'] == unit.anchor_id for sid in trace['symbol_ids']}

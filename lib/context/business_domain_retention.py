@@ -1,4 +1,4 @@
-"""Conservative cleanup of disposable discovery objects after publication."""
+"""Delete expired pending, cache and snapshot files after publication."""
 from pathlib import Path
 import time
 
@@ -27,8 +27,7 @@ def cleanup(root, config, timestamp=None):
         elif isinstance(value,list):
             for child in value:
                 collect(child)
-    # A malformed retained artifact prevents cleanup; absence of a readable
-    # reference is not evidence that its snapshot can be discarded.
+    # A malformed reference file aborts cleanup instead of freeing its snapshots.
     references = [directory/'business-domains.json',directory/'business-domain-facts.json',
                   directory/'business-domain-overrides.json']
     for name in ('business-domain-history','business-domain-baselines'):
@@ -55,7 +54,7 @@ def cleanup(root, config, timestamp=None):
             raise DomainError('CLEANUP_UNSAFE','Snapshot object is a symbolic link')
         if path not in retained and path.stat().st_mtime < cutoff:
             candidates.append(path)
-    # Complete reference discovery before making any deletion.
+    # Delete only after every reference has been read.
     for path in candidates:
         path.unlink()
     return len(candidates)

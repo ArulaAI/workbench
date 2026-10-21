@@ -1,4 +1,4 @@
-"""F-04 Oracle package-contract terminal conformance."""
+"""Tests for Oracle package spec/body trace resolution."""
 from lib.context.business_domain_extract import Extractor
 from lib.context.business_domain_schema import DEFAULTS, validate_references
 

@@ -1,7 +1,7 @@
-"""Oracle PL/SQL syntax and semantic adapter. Never executes SQL.
+"""SQL adapter for Oracle PL/SQL and PostgreSQL. Never executes SQL.
 
-Call classification is driven by the pinned sqlglot Oracle tokenizer/AST plus
-repository declarations. There is deliberately no ``WORD(`` regex fallback.
+Calls are classified from the sqlglot tokenizer/AST and repository
+declarations; there is no ``WORD(`` regex fallback.
 """
 from __future__ import annotations
 
@@ -50,7 +50,7 @@ def _parser_dialect(source: Source) -> str:
 
 
 def _mask_oracle_q_literals(text: str) -> str:
-    """Replace only Oracle Q literals, preserving all offsets."""
+    """Mask Oracle q'...' literals, keeping offsets unchanged."""
     result = list(text)
     pattern = re.compile(r"(?i)q'(.)")
     position = 0
@@ -111,10 +111,9 @@ def _parameter_segments(text: str) -> list[str]:
 
 
 def _parameter_list(header: str) -> str:
-    """Return the text inside a routine's own parameter parentheses.
+    """Return the text inside a routine's parameter parentheses.
 
-    Matching the first ``(`` keeps a following ``RETURNS numeric(10,2)`` out
-    of the parameter list, and so out of the routine identity.
+    Only the first ``(`` is matched so ``RETURNS numeric(10,2)`` is left out.
     """
     start = header.find("(")
     if start < 0:
@@ -130,8 +129,7 @@ def _parameter_list(header: str) -> str:
     return header[start + 1:]
 
 
-# PostgreSQL argument names are optional. These type names contain spaces,
-# so their first word must not be mistaken for an argument name.
+# Multi-word types; their first word is not an argument name.
 _POSTGRES_MULTIWORD_TYPE = re.compile(
     r"(?is)^(?:double\s+precision|character\s+varying|bit\s+varying"
     r"|(?:timestamp|time)(?:\s*\(\s*\d+\s*\))?\s+with(?:out)?\s+time\s+zone)\b")
@@ -152,16 +150,12 @@ def _postgres_parameter(segment: str) -> tuple[str | None, str | None, str] | No
 
 
 def _parameters(text: str, dialect: str) -> list[tuple[str, str]]:
-    """Normalize Oracle and PostgreSQL argument ordering to ``(name, type)``."""
+    """Return parameters as ``(name, type)`` pairs for Oracle or PostgreSQL."""
     return _parameters_and_defaults(text, dialect)[0]
 
 
 def _parameters_and_defaults(text: str, dialect: str) -> tuple[list, tuple]:
-    """``(_parameters(...), defaults)``: whether each parameter declares a default.
-
-    A parameter written with ``DEFAULT``, ``:=`` or ``=`` may be omitted by a
-    caller; one without may not.
-    """
+    """Return ``(parameters, defaults)``, flagging parameters that have a default."""
     result, defaults = [], []
     for position, segment in enumerate(_parameter_segments(text)):
         if dialect == "postgres":
@@ -198,7 +192,7 @@ _SQL_NAME = r'(?:"[^"]+"|[\w$#]+)(?:\s*\.\s*(?:"[^"]+"|[\w$#]+))*'
 
 
 def _sql_name(value: str) -> str:
-    """Normalize a possibly quoted, possibly qualified SQL name."""
+    """Normalize a quoted or qualified SQL name."""
     return ".".join(part.strip().strip('"')
                     for part in re.findall(r'"[^"]+"|[^.\s]+', value))
 
@@ -247,16 +241,14 @@ def _routine_identity(unit: Unit) -> str | None:
             f"{unit.sql_routine_kind}:{owner}{unit.name}({signature})").casefold()
 
 
-# PostgreSQL routine and trigger declarations are always CREATE statements.
-# GRANT/COMMENT/ALTER/DROP ... FUNCTION and EXECUTE FUNCTION inside CREATE
-# TRIGGER name a routine without declaring one.
+# Only CREATE declares a routine; GRANT/ALTER/DROP/EXECUTE FUNCTION just name one.
 _POSTGRES_CREATE = re.compile(
     r"(?i)\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:CONSTRAINT\s+)?$")
 _DOLLAR_QUOTE = re.compile(r"\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$")
 
 
 def _statement_semicolon(code: str, position: int) -> int:
-    """First statement-terminating semicolon outside parentheses, or -1."""
+    """Return the index of the first top-level semicolon, or -1."""
     depth = 0
     for index in range(position, len(code)):
         character = code[index]
@@ -272,8 +264,8 @@ def _statement_semicolon(code: str, position: int) -> int:
 def _dollar_body(code: str, position: int) -> tuple[int, int, int, int] | None:
     """Locate a PostgreSQL dollar-quoted routine body after a header.
 
-    Returns ``(open_start, body_start, body_end, close_end)``. A header ended by
-    ``;`` first has no dollar-quoted body (for example a string-literal body).
+    Returns ``(open_start, body_start, body_end, close_end)``, or None if the
+    header ends with ``;`` first.
     """
     opener = _DOLLAR_QUOTE.search(code, position)
     semicolon = code.find(";", position)
@@ -295,11 +287,9 @@ def _postgres_language(code: str, header_start: int, span) -> str | None:
 
 
 def _postgres_trigger(source: Source, code: str, match) -> list[Unit]:
-    """Model ``CREATE TRIGGER ... EXECUTE FUNCTION f()`` as a registration.
+    """Build a registration unit for ``CREATE TRIGGER ... EXECUTE FUNCTION f()``.
 
-    The registration selects the named function in ``prepare`` once every
-    PostgreSQL source has been extracted; the function may be declared later
-    or in another file.
+    The function is resolved later in ``prepare``, since it may live in another file.
     """
     semicolon = _statement_semicolon(code, match.end())
     finish = len(code) if semicolon < 0 else semicolon + 1
@@ -334,7 +324,7 @@ def _postgres_trigger(source: Source, code: str, match) -> list[Unit]:
 
 
 def _parenthesized(code: str, open_index: int) -> int:
-    """Index just after the parenthesis closing the one at ``open_index``."""
+    """Return the index just past the parenthesis matching ``open_index``."""
     depth = 0
     for index in range(open_index, len(code)):
         if code[index] == "(":
@@ -354,7 +344,7 @@ _ROW_SECURITY = re.compile(
 
 
 def _postgres_policies(source: Source, code: str) -> list[Unit]:
-    """Row-level security declarations as non-callable rule-bearing units."""
+    """Return row-level security policies as non-callable units."""
     units = []
     for match in _POLICY.finditer(code):
         semicolon = _statement_semicolon(code, match.end())
@@ -419,9 +409,8 @@ def extract(source: Source) -> list[Unit]:
             if match.group(1).casefold() == 'trigger':
                 units.extend(_postgres_trigger(source, code, match))
                 continue
-            # A PostgreSQL routine body is the dollar-quoted string. Bounding
-            # the body by its quotes keeps a LANGUAGE sql body (no BEGIN) from
-            # absorbing the following statements up to some later BEGIN.
+            # Bound the body by its dollar quotes so a LANGUAGE sql body
+            # doesn't run on to a later BEGIN.
             dollar = _dollar_body(code, match.end())
             if dollar is None:
                 continue
@@ -613,9 +602,8 @@ def extract(source: Source) -> list[Unit]:
             match.start(), end, "type")
         table.sql_declaration_kind = "table"
         units.append(table)
-    # Seed and migration files often contain only top-level DML. Keep one
-    # non-callable file symbol so the shared SQL operation projection can emit
-    # its reads_data/writes_data evidence.
+    # Seed/migration files may hold only top-level DML; add a file symbol so
+    # its reads and writes still get recorded.
     if not any(unit.kind == "declarative_operation" for unit in units) and re.search(
             r"(?i)\b(?:WITH|SELECT|INSERT|UPDATE|DELETE)\b", code):
         module = Unit(source, source.path.rsplit('/', 1)[-1],
@@ -628,9 +616,7 @@ def extract(source: Source) -> list[Unit]:
     return units
 
 
-# Procedural statement keywords the tokenizer reads as plain names. Followed
-# by a parenthesis they open an expression (``RETURN (SELECT ...)``,
-# ``IF (...) THEN``), never a call. A quoted or qualified name is a call.
+# Keywords the tokenizer reads as names; ``RETURN (...)`` or ``IF (...)`` is not a call.
 _STATEMENT_KEYWORDS = frozenset({
     "return", "if", "elsif", "elseif", "while", "perform", "raise",
 })
@@ -648,8 +634,7 @@ def _procedural_keyword(tokens, index: int) -> bool:
         return False
     word = token.text.casefold()
     if word in _STATEMENT_KEYWORDS:
-        # ``RETURN (...)`` and ``IF (...)`` open statements; mid-expression the
-        # same word followed by a parenthesis is a call (``SUM(IF(...))``).
+        # Mid-expression, ``IF(...)`` is a function call (``SUM(IF(...))``).
         return _statement_start(tokens, index)
     return word in _PROCEDURAL_KEYWORDS or (
         word in _RETURN_KEYWORDS and index > 0
@@ -775,11 +760,9 @@ def _collection_names(tokens, body_index: int, inherited_types=()) -> set[str]:
 
 
 def _statement_end(tokens, start_index: int) -> int:
-    """Last token of the statement starting at ``start_index``.
+    """Return the last token of the statement starting at ``start_index``.
 
-    A statement nested in an enclosing parenthesis, such as the scalar
-    subquery in ``IF (SELECT ...) THEN`` or ``x := (SELECT ...);``, ends
-    before the parenthesis that closes it.
+    A parenthesized subquery, e.g. ``IF (SELECT ...) THEN``, ends at its closing paren.
     """
     depth = 0
     for index in range(start_index, len(tokens)):
@@ -803,10 +786,9 @@ _CLAUSE_TOKENS = frozenset({
 
 
 def _plpgsql_into(tokens, start_index: int, end_index: int) -> tuple[int, int] | None:
-    """Token range of a PL/pgSQL ``INTO [STRICT] target[, ...]`` clause.
+    """Return the token range of a PL/pgSQL ``INTO [STRICT] target[, ...]`` clause.
 
-    In PL/pgSQL, ``SELECT ... INTO`` assigns variables and may appear after
-    the select list or at the end of the statement; it is not SQL.
+    This INTO assigns variables and can appear mid-statement or at the end.
     """
     into = _top_level_token(tokens, start_index + 1, end_index,
                             kinds=(TokenType.INTO,))
@@ -816,8 +798,7 @@ def _plpgsql_into(tokens, start_index: int, end_index: int) -> tuple[int, int] |
     if cursor <= end_index and tokens[cursor].text.casefold() == "strict":
         cursor += 1
     last = None
-    # Target variables may share a spelling with a non-reserved keyword
-    # (for example ``name``), so accept any word that does not open a clause.
+    # Targets can be non-reserved keywords like ``name``.
     while (cursor <= end_index
            and re.fullmatch(r"[A-Za-z_][\w$]*|\"[^\"]+\"", tokens[cursor].text)
            and tokens[cursor].token_type not in _CLAUSE_TOKENS):
@@ -853,7 +834,7 @@ _TABLE_CONSTRAINTS = frozenset({"constraint", "primary", "foreign", "unique", "c
 
 
 def _declared_columns(text: str) -> list[str]:
-    """Column names a ``CREATE TABLE`` declares, in order; table constraints skipped."""
+    """Return the column names declared by ``CREATE TABLE``, skipping constraints."""
     masked = mask_sql(text)
     opening = masked.find("(")
     if opening < 0:
@@ -877,10 +858,9 @@ def _declared_columns(text: str) -> list[str]:
 
 
 def _rowtype_record(unit: Unit, record: str, table: str, element: bool = False) -> bool:
-    """Whether *record* is declared in *unit* as ``table%ROWTYPE``.
+    """Return True if *record* is declared in *unit* as ``table%ROWTYPE``.
 
-    With *element*, *record* is a collection whose element type is
-    ``table%ROWTYPE`` (``TYPE t IS TABLE OF table%ROWTYPE``).
+    With *element*, check for a collection of ``table%ROWTYPE`` instead.
     """
     code = mask_sql(unit.text)
     rowtype = re.escape(table) + r"\s*%\s*ROWTYPE\b"
@@ -894,10 +874,9 @@ def _rowtype_record(unit: Unit, record: str, table: str, element: bool = False) 
 
 def _merge_values(unit: Unit, tokens, start_index: int, end_index: int,
                   target: str) -> tuple[list[str], list[dict]]:
-    """Columns and values MERGE's WHEN branches write: UPDATE SET and INSERT."""
+    """Return the columns and values written by MERGE's UPDATE SET and INSERT branches."""
     columns, values = [], []
-    # A branch opens with WHEN [NOT] MATCHED outside any parenthesis; the WHEN
-    # of a CASE expression inside a SET value never does.
+    # Only a top-level WHEN [NOT] MATCHED starts a branch, not a CASE WHEN.
     branches, depth = [], 0
     for index in range(start_index, end_index + 1):
         token = tokens[index]
@@ -914,8 +893,7 @@ def _merge_values(unit: Unit, tokens, start_index: int, end_index: int,
         update = _top_level_token(tokens, begin, last, kinds=(TokenType.UPDATE,))
         insert = _top_level_token(tokens, begin, last, kinds=(TokenType.INSERT,))
         if update is not None:
-            # ``_update_values`` stops before its end token: give it the next
-            # WHEN (or the statement end) so the last SET item is kept.
+            # _update_values excludes its end token, so pass the next WHEN or the end.
             branch_columns, branch_values = _update_values(
                 unit, tokens, update, min(finish, end_index), target)
             columns += branch_columns; values += branch_values
@@ -1030,7 +1008,7 @@ def _statement_predicate(unit: Unit, tokens, start_index: int,
 
 
 def _with_operation(tokens, start_index: int, end_index: int) -> tuple[int, set[str]]:
-    """Locate the outer DML verb and CTE aliases in a WITH statement."""
+    """Return the outer DML verb and CTE aliases of a WITH statement."""
     if tokens[start_index].token_type != TokenType.WITH:
         return start_index, set()
     aliases, depth = set(), 0
@@ -1055,7 +1033,7 @@ def _with_operation(tokens, start_index: int, end_index: int) -> tuple[int, set[
 
 def _control_condition(unit: Unit, tokens, position: int) -> tuple[
         str | None, bool, list[tuple[int, int]]]:
-    """Return token-derived enclosing control predicates for one statement."""
+    """Return the control conditions enclosing a statement."""
     frames, skip = [], set()
 
     def next_text(index: int, value: str) -> int | None:
@@ -1073,12 +1051,7 @@ def _control_condition(unit: Unit, tokens, position: int) -> tuple[
         return None
 
     def deciding(index: int) -> bool:
-        """Whether the statement lies inside the condition this IF/ELSIF opens.
-
-        The THEN closing the condition follows the statement, with no
-        statement end between: the statement is evaluated to decide the
-        branch, so this IF does not guard it.
-        """
+        """Return True if the statement is part of this IF/ELSIF condition itself."""
         depth = 0
         for cursor in range(index + 1, len(tokens)):
             token = tokens[cursor]
@@ -1128,8 +1101,7 @@ def _control_condition(unit: Unit, tokens, position: int) -> tuple[
         elif word in {"if", "elsif"}:
             then = next_text(index, "then")
             if then is None and deciding(index):
-                # Evaluating an ELSIF condition happens only once every
-                # earlier branch of its IF was false.
+                # An ELSIF condition is only reached when earlier branches were false.
                 selected = next((frame for frame in reversed(frames)
                                  if frame["kind"] == "if"), None) if word == "elsif" else None
                 if word == "elsif" and selected is None:
@@ -1200,8 +1172,7 @@ def _control_condition(unit: Unit, tokens, position: int) -> tuple[
                     block["condition"] = "EXCEPTION WHEN " + _normalized_clause(
                         unit.text[token.end + 1:tokens[then].start])
                     block["condition_span"] = (token.start, tokens[then].end + 1)
-    # A statement inside a CASE statement's branch runs under a WHEN this
-    # decoder does not record, so its condition is incomplete.
+    # CASE branch conditions are not recorded, so mark the condition incomplete.
     if any(frame["kind"] == "case" for frame in frames):
         complete = False
     conditions = [frame["condition"] for frame in frames if frame["condition"]]
@@ -1252,9 +1223,7 @@ def _parse_dml(unit: Unit, tokens, start_index: int, end_index: int) -> dict:
             last = tokens[clause[1]].end + 1 - start
             parse_text = (statement[:first] + " " * (last - first)
                           + statement[last:])
-    # ``WHERE CURRENT OF cursor`` names the row a cursor last fetched; the
-    # parser has no grammar for it. Parse with a neutral predicate of the
-    # same length; the statement predicate keeps the real text.
+    # sqlglot can't parse WHERE CURRENT OF; swap in a same-length dummy predicate.
     parse_text = re.sub(r"(?i)\bWHERE\s+CURRENT\s+OF\s+[\w$#]+",
                         lambda match: "WHERE 1 = 1".ljust(len(match.group())), parse_text)
     try:
@@ -1302,9 +1271,7 @@ def _parse_dml(unit: Unit, tokens, start_index: int, end_index: int) -> dict:
             if (not column_values and table_index + 1 <= end_index
                     and tokens[table_index + 1].token_type == TokenType.VALUES
                     and record_index <= end_index and _is_identifier(tokens[record_index])):
-                # ``INSERT INTO t VALUES rec`` with ``rec t%ROWTYPE`` (or an
-                # element ``recs(i)`` of a collection of them) writes every
-                # declared column of t from the matching record field.
+                # ``INSERT INTO t VALUES rec`` with a t%ROWTYPE record writes every column of t.
                 record = tokens[record_index]
                 after = record_index + 1
                 element = (after <= end_index and tokens[after].token_type == TokenType.L_PAREN
@@ -1412,13 +1379,12 @@ def _is_table_column_list(tokens, name_index: int) -> bool:
         and tokens[name_index - 2].token_type == TokenType.INSERT)
 
 
-# Text before a token that starts a statement: the end of the previous
-# statement, or a keyword that opens a statement list.
+# Tokens that can precede the start of a statement.
 _STATEMENT_START = re.compile(r"(?is)(?:;|\b(?:BEGIN|THEN|ELSE|LOOP|DECLARE)\b|^)\s*$")
 
 
 def _statement_start(tokens, index: int) -> bool:
-    """Whether ``tokens[index]`` begins a procedural statement."""
+    """Return True if ``tokens[index]`` starts a procedural statement."""
     prior = index - 1
     return prior < 0 or tokens[prior].token_type in {
         TokenType.BEGIN, TokenType.SEMICOLON, TokenType.THEN, TokenType.ELSE,
@@ -1433,8 +1399,7 @@ def _statement_level(tokens, receiver_start: int) -> bool:
     }
 
 
-# Keywords between an assignment and its EXECUTE IMMEDIATE that make the
-# path between them conditional: the assignment might not be the one run.
+# Keywords that make an assignment before EXECUTE IMMEDIATE conditional.
 _BRANCHING = frozenset({"if", "elsif", "else", "case", "when", "loop", "end",
                         "exception", "goto", "return", "exit", "continue"})
 _RUNTIME = "speed_runtime_"
@@ -1444,16 +1409,13 @@ _DYNAMIC_KINDS = {exp.Insert: TokenType.INSERT, exp.Update: TokenType.UPDATE,
 
 
 def _dynamic_text(unit: Unit, tokens, execute_index: int, end_index: int):
-    """The statement text an ``EXECUTE IMMEDIATE`` runs, or None.
+    """Return the statement text an ``EXECUTE IMMEDIATE`` runs, or None.
 
-    String literals are kept; every other concatenated piece becomes a named
-    runtime placeholder. A variable is followed to its one assignment in the
-    straight-line code before the EXECUTE; a branch, another assignment or an
-    ``INTO`` of that variable in between leaves the text unknown.
+    Non-literal pieces become runtime placeholders. A variable is resolved only
+    from a single unconditional assignment before the EXECUTE.
     Returns ``(text, {placeholder: source expression}, evidence spans)``.
     """
-    # The tokenizer reads ``EXECUTE`` as a command and hands back the rest
-    # of the statement as one string: tokenize that body on its own.
+    # sqlglot returns the text after EXECUTE as one string; tokenize it separately.
     if execute_index + 1 > end_index:
         return None
     body_start = tokens[execute_index].end + 1
@@ -1511,13 +1473,12 @@ def _dynamic_text(unit: Unit, tokens, execute_index: int, end_index: int):
 
 
 def _dynamic_statement(unit: Unit, tokens, execute_index: int, end_index: int):
-    """A DML statement for a resolvable ``EXECUTE IMMEDIATE``, or None."""
+    """Return the parsed DML for an ``EXECUTE IMMEDIATE``, or None."""
     evaluated = _dynamic_text(unit, tokens, execute_index, end_index)
     if evaluated is None:
         return None
     text, runtime, spans = evaluated
-    # Numbered binds (``:1``) have no grammar in the parser; name them,
-    # never touching quoted literal text.
+    # sqlglot can't parse ``:1`` binds; rename them outside string literals.
     masked = mask_sql(text)
     parse_text = "".join(
         f":b{text[match.start() + 1:match.end()]}" if masked[match.start()] == ":" else match.group()
@@ -1606,8 +1567,7 @@ def _analyze_unit(unit: Unit, routines: list[Unit], declared_tables: set[str]) -
         return
     body_position = getattr(unit, "sql_body_start", 0)
     if getattr(unit, "sql_statement_body", False):
-        # A statement-list body has no BEGIN; scanning starts at its first
-        # token, so the routine's own declaration is never read as a call.
+        # No BEGIN here; start at the body so the declaration isn't read as a call.
         body_index = next((index for index, token in enumerate(tokens)
             if token.start >= body_position), len(tokens)) - 1
         body_index = max(0, body_index)
@@ -1633,8 +1593,7 @@ def _analyze_unit(unit: Unit, routines: list[Unit], declared_tables: set[str]) -
             "start": max(0, len(unit.text) - 1), "end": len(unit.text)})
     collections = _collection_names(tokens, body_index,
         getattr(unit.source, "sql_collection_types", ()))
-    # MERGE is one statement: its WHEN ... UPDATE/INSERT branches and USING
-    # subquery are parts of it, not statements of their own.
+    # MERGE branches and its USING subquery belong to the MERGE statement.
     dml_starts = {TokenType.WITH, TokenType.SELECT, TokenType.INSERT,
                   TokenType.UPDATE, TokenType.DELETE, TokenType.MERGE}
     cursor = material_index
@@ -1742,7 +1701,7 @@ def _analyze_unit(unit: Unit, routines: list[Unit], declared_tables: set[str]) -
         start, end = token.start, tokens[end_index].end + 1
         statement = unit.text[start:end].strip()
         if token.start in dynamic_executes:
-            # Its statement text was evaluated: the EXECUTE is that statement.
+            # Already handled as the statement it executes.
             continue
         if statement.casefold().startswith("execute immediate"):
             unit.sql_calls.append({"receiver": None, "name": "dynamic_sql",
@@ -1768,12 +1727,10 @@ def _analyze_unit(unit: Unit, routines: list[Unit], declared_tables: set[str]) -
 
 
 def _select_trigger_functions(routines: list[Unit]) -> None:
-    """Select the function a PostgreSQL ``CREATE TRIGGER`` executes.
+    """Resolve the function each PostgreSQL ``CREATE TRIGGER`` executes.
 
-    ``EXECUTE FUNCTION f(args)`` passes literal trigger arguments; trigger
-    functions themselves declare no parameters. A qualified reference must
-    match the declaring schema; an unqualified one matches an unqualified or
-    ``public`` declaration.
+    A qualified name must match the schema; an unqualified one matches an
+    unqualified or ``public`` declaration.
     """
     functions = {}
     for unit in routines:
@@ -1805,8 +1762,7 @@ def _select_trigger_functions(routines: list[Unit]) -> None:
                 "outcome": "exact", "reason": None,
                 "evidence_spans": [(function.source, function.start,
                     function.start + max(1, function.sql_body_start))]})
-            # PostgreSQL rejects direct calls to a trigger function; the
-            # trigger is its entry point and the function its implementation.
+            # Trigger functions can't be called directly; the trigger is the entry point.
             function.anchor_kind = None
             function.anchor_resolution = None
             function.anchor_reason = None
@@ -1825,8 +1781,7 @@ def _select_trigger_functions(routines: list[Unit]) -> None:
                 "outcome": "ambiguous", "diagnostic_code": code,
                 "reason": reason})
         elif (platform := _platform_routine(registration, schema or None, name)):
-            # A routine the platform provides: the trigger runs documented
-            # platform behavior, an external implementation, never a gap.
+            # Platform-provided routine: external, not a gap.
             registration.source.semantic_relations.append({
                 "source": registration, "target": None, "candidate_targets": [],
                 "kind": "selects_implementation", "start": span[0], "end": span[1],
@@ -1845,8 +1800,7 @@ def _select_trigger_functions(routines: list[Unit]) -> None:
             code = "SQL_IMPLEMENTATION_UNAVAILABLE"
             registration.anchor_correspondence_state = "unresolved"
             registration.anchor_correspondence_reason = reason
-        # The firing registration is evidenced, but the entry point's behavior
-        # is not, so the registration is not an eligible canonical anchor.
+        # Without a resolved function the trigger can't be an eligible anchor.
         registration.anchor_resolution = (
             "ambiguous" if matches else "unresolved")
         registration.anchor_reason = reason
@@ -1860,7 +1814,7 @@ def _select_trigger_functions(routines: list[Unit]) -> None:
 
 
 def prepare(sources, units, diagnostics=None):
-    """Analyze SQL syntax, select package bodies, and establish local scope."""
+    """Parse SQL, link package specs to bodies and set up local scope."""
     diagnostics = diagnostics if diagnostics is not None else []
     source_ids = {id(source) for source in sources}
     routines = [unit for unit in units if id(unit.source) in source_ids
@@ -1965,8 +1919,7 @@ def prepare(sources, units, diagnostics=None):
     for bodies in bodies_by_key.values():
         for body in bodies:
             if body.sql_contract_key not in public_contract_keys:
-                # A body-only package routine has no evidenced public contract.
-                # Keep its callable symbol, but do not expose it as an entry point.
+                # Body-only routines are private: keep the symbol, but no anchor.
                 body.anchor_kind = None
                 body.anchor_resolution = None
                 body.anchor_reason = None
@@ -2025,8 +1978,7 @@ def resources(unit):
         return [{"kind": "table", "name": unit.name,
             "language": unit.source.language,
             "resolution": "resolved", "reason": None}]
-    # Operation targets are projected atomically from ``operations`` with
-    # exact statement evidence; this hook owns declarations only.
+    # Operation targets come from ``operations``; this only handles declarations.
     return []
 
 
@@ -2050,12 +2002,10 @@ def call_span(unit: Unit, position: int) -> tuple[int, int]:
 
 
 def _candidate_score(call: dict, candidate: Unit):
-    """How well a call's arguments match *candidate*, or None when they cannot.
+    """Score how well a call's arguments match *candidate*, or None if they can't.
 
-    A parameter the call omits must declare a default. In PostgreSQL a quoted
-    literal has no type of its own until it is matched, so it is accepted for
-    any parameter type (an enum or a domain, for instance), scoring below an
-    exact type match; other dialects require the types to agree.
+    Omitted parameters need a default. In PostgreSQL a quoted literal matches
+    any type, scoring below an exact match.
     """
     arguments = call["arguments"]
     defaults = getattr(candidate, "sql_param_defaults", ()) or ()
@@ -2124,7 +2074,7 @@ def _platform_catalog():
 
 
 def _platform_table(unit, name):
-    """The catalogued platform that provides table *name* here, or None."""
+    """Return the platform that provides table *name*, or None."""
     table = name.casefold().replace('"', "")
     dialect = _dialect(unit.source)
     return next((platform for platform in _platform_catalog()
@@ -2134,10 +2084,9 @@ def _platform_table(unit, name):
 
 
 def _platform_routine(unit, receiver, name):
-    """The catalogued platform that provides ``receiver.name`` here, or None.
+    """Return the platform that provides ``receiver.name``, or None.
 
-    An unqualified name matches only in a schema the platform always puts on
-    the search path (``implicit_schemas``).
+    Unqualified names match only the platform's ``implicit_schemas``.
     """
     dialect = _dialect(unit.source)
     for platform in _platform_catalog():
@@ -2217,7 +2166,7 @@ def _without_comments(text: str) -> str:
 
 
 def _row_security_observations(unit: Unit) -> list[dict]:
-    """PostgreSQL row-level security declarations as authorization rules."""
+    """Return PostgreSQL row-level security policies as authorization rules."""
     policy = unit.sql_policy
     table = policy["table"]
     resource = _resource(unit, table)

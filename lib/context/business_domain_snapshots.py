@@ -1,8 +1,4 @@
-"""Import explicitly supplied, versioned snapshots without remote retrieval.
-
-A supplied document establishes captured contents, never deployment activation.
-Format-specific interpretation remains the responsibility of source adapters.
-"""
+"""Import locally supplied, versioned snapshots. Nothing is fetched remotely."""
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
@@ -31,7 +27,7 @@ def sanitized_identity(value):
         raise DomainError('INVALID_SNAPSHOT','Snapshot identity must be a nonempty string')
     parsed = urlsplit(value)
     if parsed.scheme and parsed.netloc:
-        # Authentication, query parameters and fragments are not resource identity.
+        # Drop credentials, query and fragment from the identity.
         host = parsed.hostname or ''
         if ':' in host:
             host = '['+host+']'

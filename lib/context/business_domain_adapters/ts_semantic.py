@@ -1,8 +1,6 @@
-"""TypeScript and JavaScript semantics over the shared declarative reader.
+"""TypeScript and JavaScript adapter built on the rules adapter.
 
-The rules adapter remains the single owner of declarations, references,
-routes, bindings, operations, and base UI records.  This adapter adds the
-language-specific boundary decisions that require JavaScript module meaning.
+Adds module resolution, store access, request URLs and action labels.
 """
 from __future__ import annotations
 
@@ -34,7 +32,7 @@ def _modules(source):
 
 
 def activation_evidence(source):
-    """Expose normalized imports; this never searches source text."""
+    """Return the source's imported module names."""
     return {'imports': _modules(source)}
 
 
@@ -62,8 +60,7 @@ def _external_import_boundaries(source):
 
 
 def prepare(sources, units, diagnostics=None):
-    # Path aliases resolve against the configuration the supporting consumer
-    # chose for each source; no alias match leaves the import as it was.
+    # Resolve tsconfig path aliases; unmatched imports are left alone.
     source_paths = tuple(sorted(source.path for source in sources))
     for source in sources:
         selected = source.supporting_inputs.get(
@@ -105,8 +102,7 @@ def prepare(sources, units, diagnostics=None):
 
 
 def calls(unit):
-    """Avoid a duplicate call edge for a call already modeled as an effect or
-    as a read or write of in-process state."""
+    """Return calls not already modeled as an effect or a store access."""
     effects = set()
     for match in unit.source.rule_outputs:
         if match.output_type != 'semantic_effect':
@@ -119,12 +115,9 @@ def calls(unit):
             and not _store_access(unit, call)]
 
 
-# In-process state. A Map, Set or array held by a class member or a module is
-# where this code keeps its records; reading or changing it is data access, not
-# a library call. Each access is a data operation on a `memory_store` resource
-# named by where the collection is declared, so every activity that touches the
-# same state cites the same resource. A write completes when the call returns
-# and is lost when the process exits; that is the boundary a trace states.
+# A Map, Set or array held by a class member or module is treated as an
+# in-memory store. Accesses become data operations on a `memory_store` resource
+# named by where the collection is declared.
 STORE_RESOURCE_KIND = 'memory_store'
 IN_PROCESS_STATE_CODE = 'TS_IN_PROCESS_STATE'
 IN_PROCESS_STATE_REASON = ('The write changes in-process memory: it completes when the call '
@@ -173,12 +166,9 @@ def _store_operations(unit, occupied):
     return result
 
 
-# Callback props. A function component that destructures a prop such as
-# ``onChange`` and calls it receives the handler each JSX usage passes. The
-# handlers are only known when every usage is visible and passes a named
-# function; a spread, an inline function, a missing prop or any use of the
-# component other than as a JSX tag leaves the call unresolved. Test sources
-# are ignored, so a test double cannot widen a production callback.
+# Callback props: a call to a destructured prop like ``onChange`` resolves to
+# the named handlers passed at each JSX usage. Spreads, inline functions,
+# missing props or non-JSX uses leave it unresolved. Test sources are ignored.
 
 _DESTRUCTURED_PROPS = re.compile(
     r'\A\s*(?:export\s+default\s+)?(?:function\s*[\w$]*\s*)?\(\s*\{([^{}]*)\}')
@@ -188,7 +178,7 @@ _SCRIPT_SUFFIXES = ('', '.tsx', '.ts', '.jsx', '.js',
 
 
 def _destructured_props(component):
-    """Local names of the props a function component destructures."""
+    """Map local name to prop name for a component's destructured props."""
     found = _DESTRUCTURED_PROPS.match(component.text)
     if not found:
         return {}
@@ -203,7 +193,7 @@ def _destructured_props(component):
 
 
 def _opening_tag(text):
-    """The opening tag of a JSX element, without its children."""
+    """Return the opening tag of a JSX element."""
     depth, quote = 0, None
     for index, character in enumerate(text):
         if quote:
@@ -220,11 +210,7 @@ def _opening_tag(text):
 
 
 def _attribute(tag, prop):
-    """The expression the element's own attribute passes, or None when absent.
-
-    Only the tag's top level counts: a JSX element nested inside another
-    attribute's expression carries its own props.
-    """
+    """Return the expression passed for a top-level attribute, or None."""
     depth, quote = 0, None
     pattern = re.compile(rf'(?<![\w$-]){re.escape(prop)}\s*=\s*\{{')
     for index, character in enumerate(tag):
@@ -248,15 +234,14 @@ def _attribute(tag, prop):
 
 
 def _handler(origin, expression):
-    """The one unit a handler expression names in its rendering scope, or None."""
+    """Return the single unit a handler expression names, or None."""
     if not expression or not _HANDLER.fullmatch(expression):
         return None
     name = _HANDLER.fullmatch(expression).group(1)
     own = expression.startswith('this.')
     if not own and name in rules._import_bindings(origin.source):
         return None
-    # ``this.x`` is a member of the rendering class; a bare name is a binding
-    # in module scope, never a class method.
+    # ``this.x`` is a class member; a bare name is a module-level binding.
     found = [unit for unit in origin.source.units
              if unit.name == name and unit is not origin
              and (unit.owner == origin.owner if own else unit.owner is None)]
@@ -316,7 +301,7 @@ def _prepare_prop_callbacks(sources):
 
 
 def _prop_callback(unit, receiver, name):
-    """Handlers a call to a destructured callback prop reaches, or None."""
+    """Return the handlers a callback prop call reaches, or None."""
     if receiver:
         return None
     components = sorted((candidate for candidate in unit.source.units
@@ -326,8 +311,7 @@ def _prop_callback(unit, receiver, name):
     if not components or name not in components[0].prop_callback_targets:
         return None
     component = components[0]
-    # A local declaration of the same name between the call and the component
-    # shadows the prop.
+    # A local declaration with the same name shadows the prop.
     body = component.text[_DESTRUCTURED_PROPS.match(component.text).end():]
     escaped = re.escape(name)
     shadowing = (rf'\b(?:const|let|var)\s+[^=;]*(?<![\w$.]){escaped}(?![\w$])[^=;]*=',
@@ -343,7 +327,7 @@ def _prop_callback(unit, receiver, name):
 
 
 def _declared_class_candidates(unit, receiver, available, position):
-    """Methods of the repository class the source declares *receiver* as."""
+    """Return methods of the class *receiver* is declared as."""
     if not receiver or position is None:
         return []
     found = ts_types.receiver_type(unit, receiver, unit.start + position)
@@ -374,8 +358,7 @@ def candidates(unit, receiver, name, available, position=None):
             key=lambda candidate: candidate.qualified)
     if target['state'] == 'external':
         return []
-    # An alias matched but named no local file: TypeScript falls back to
-    # ordinary resolution, so the alias proves nothing either way.
+    # Alias matched but no local file: TypeScript falls back to normal resolution.
     return rules.candidates(unit, receiver, name, available, position)
 
 
@@ -401,8 +384,7 @@ def resolve_call(unit, receiver, name, candidates, position, evidence_id=None):
 
 
 def _declared_platform_call(unit, receiver, name, position, evidence):
-    """A call on a receiver whose declared type, read through annotations,
-    aliases, members and return types, is one the language provides."""
+    """Return an external result when the receiver's declared type is a built-in."""
     found = ts_types.receiver_type(unit, receiver, unit.start + position)
     provided = ts_types.platform(unit, found)
     if not provided:
@@ -501,15 +483,10 @@ def symbol_key(name):
     return name
 
 
-# HTTP endpoint requests
-#
-# The core links a client request to the server endpoint that answers it, so it
-# needs each request as the source composes it: the method, and the URL the call
-# really builds, base included. JavaScript decides both, so they are evaluated
-# here, from literals, templates, concatenation, conditional choices, constants,
-# wrapper functions such as ``url(path)``, build-time globals a bundler defines,
-# and the arguments a helper such as ``submitForm(method, path)`` receives at
-# each of its call sites. Anything else stays unknown and carries its reason.
+# HTTP requests: evaluate the method and full URL each request builds, from
+# literals, templates, concatenation, conditionals, constants, wrapper calls,
+# bundler-defined globals and helper arguments at each call site. Anything else
+# stays unknown with a reason.
 
 _IDENTIFIER = r'[A-Za-z_$][\w$]*'
 _NAME = re.compile(rf'{_IDENTIFIER}(?:\.{_IDENTIFIER})*')
@@ -520,7 +497,7 @@ _MAX_CALL_DEPTH = 4
 
 
 def _skip_comment(text, index):
-    """Index past a comment starting at index, or index itself."""
+    """Return the index past a comment at index, or index itself."""
     if text.startswith('//', index):
         end = text.find('\n', index)
         return len(text) if end < 0 else end
@@ -531,7 +508,7 @@ def _skip_comment(text, index):
 
 
 def _skip_literal(text, index):
-    """Index just past the string or template literal opening at index."""
+    """Return the index just past the string or template literal at index."""
     quote = text[index]
     cursor = index + 1
     while cursor < len(text):
@@ -569,7 +546,7 @@ def _scan(text, start=0):
 
 
 def _close(text, index):
-    """Index of the bracket closing the one opening at index."""
+    """Return the index of the bracket matching the one at index."""
     for cursor, character, depth in _scan(text, index):
         if depth == 0 and character in ')]}' and cursor > index:
             return cursor
@@ -582,7 +559,7 @@ def _top_level(text):
 
 
 def _split(text, separator):
-    """Top-level pieces of text, each with its offset."""
+    """Split text at top-level separators, returning (piece, offset) pairs."""
     pieces, start = [], 0
     for index, character in _top_level(text):
         if character == separator:
@@ -597,7 +574,7 @@ def _strip(text, start):
 
 
 def _statement_end(text, start):
-    """End of the expression statement whose value starts at start."""
+    """Return the end of the statement whose value starts at start."""
     for index, character, depth in _scan(text, start):
         if depth < 0 or (depth == 0 and character == ';'):
             return index
@@ -611,7 +588,7 @@ def _statement_end(text, start):
 
 
 def _concatenation(text):
-    """Top-level binary ``+`` operands of text, with their offsets."""
+    """Return the top-level ``+`` operands of text with their offsets."""
     cuts = []
     for index, character in _top_level(text):
         if character != '+' or text[index + 1:index + 2] in ('+', '=') \
@@ -629,7 +606,7 @@ def _concatenation(text):
 
 
 def _conditional(text):
-    """The test and both branches of a top-level ``a ? b : c``, or None."""
+    """Return the test and branches of a top-level ``a ? b : c``, or None."""
     marks = [(index, character) for index, character in _top_level(text)
              if character in '?:']
 
@@ -661,7 +638,7 @@ def _string(text):
 
 
 def _template(text):
-    """Literal and expression parts of a whole template literal, or None."""
+    """Return the literal and expression parts of a template literal, or None."""
     if len(text) < 2 or text[0] != '`' or _skip_literal(text, 0) != len(text):
         return None
     parts, literal, cursor = [], [], 1
@@ -723,7 +700,7 @@ def _unknown(reason, span=None):
 
 
 def _join(left, right):
-    """Concatenate two values, or None when their branch choices contradict."""
+    """Concatenate two values, or None if their conditions conflict."""
     conditions = dict(left.conditions)
     for test, taken in right.conditions:
         if conditions.get(test, taken) != taken:
@@ -761,7 +738,7 @@ def _parameters(unit):
 
 
 def _function_shape(unit):
-    """Parameter names, returned expression and its offset, or None."""
+    """Return (params, returned expression, offset), or None."""
     if unit.kind not in {'function', 'method'}:
         return None
     text = unit.text
@@ -804,7 +781,7 @@ def _call_target(source, name, start):
 
 
 def _constant(unit, name, before):
-    """The last ``const name = ...`` in the unit before an offset."""
+    """Return the last ``const name = ...`` in the unit before an offset."""
     text = unit.source.text
     found = list(re.finditer(rf'\bconst\s+{re.escape(name)}\b(?:\s*:[^=;]+)?\s*=(?!=)',
                              text[unit.start:before]))
@@ -825,7 +802,7 @@ def _module_constant(source, name):
 
 
 def _build_global(source, name):
-    """Values a bundler defines for a declared build-time global, or None."""
+    """Return bundler-defined values for a declared build-time global, or None."""
     declared = re.search(rf'\bdeclare\s+(?:var|let|const)\s+{re.escape(name)}\b[^;\n]*',
                          source.text)
     if not declared:
@@ -842,7 +819,7 @@ def _build_global(source, name):
 
 
 def _build_global_test(source, test):
-    """``(name, undefined_when_true)`` when *test* checks a declared build-time global."""
+    """Return ``(name, undefined_when_true)`` if *test* checks a build-time global."""
     found = re.fullmatch(r"typeof\s+([A-Za-z_$][\w$]*)\s*(===|!==|==|!=)\s*(['\"])undefined\3", test)
     if not found or not re.search(rf'\bdeclare\s+(?:var|let|const)\s+{re.escape(found.group(1))}\b',
                                   source.text):
@@ -851,7 +828,7 @@ def _build_global_test(source, test):
 
 
 def _evaluate(scope, text, start):
-    """Every value an expression can take."""
+    """Return every value an expression can take."""
     text, start = _strip(text, start)
     source = scope.unit.source
     if not text:
@@ -865,9 +842,8 @@ def _evaluate(scope, text, start):
         test = ' '.join(test.split())
         build = _build_global_test(scope.unit.source, test)
         if build:
-            # A build-time global's default branch is named by the value it
-            # falls back to; its defined branch needs no condition of its own,
-            # because each bundler definition states its value and file.
+            # Label the default branch; each bundler definition already
+            # carries its own value and file.
             name, undefined_first = build
             (default, default_at), (defined, defined_at) = (
                 ((yes, yes_at), (no, no_at)) if undefined_first else ((no, no_at), (yes, yes_at)))
@@ -911,12 +887,7 @@ def _evaluate(scope, text, start):
 
 
 def _embedded(scope, text, start):
-    """A value spliced into a string: an unknown one is a runtime variable.
-
-    A parameter spliced into a URL is a runtime value such as a path variable,
-    so it stays a variable here. Only a parameter that is the whole method or
-    destination is left to the caller to decide.
-    """
+    """Evaluate a value spliced into a string; unknowns become variables."""
     stripped, at = _strip(text, start)
     if stripped in scope.params and not (scope.env is not None and stripped in scope.env):
         return [_value((('var', stripped),), ((scope.unit.source, at, at + len(stripped)),))]
@@ -952,7 +923,7 @@ def _evaluate_name(scope, name, start, span):
 
 
 def _arguments(scope, text, start, params):
-    """Each parameter's values from a call's argument list text."""
+    """Map each parameter to its values from a call's argument text."""
     pieces = _split(text, ',') if text.strip() else []
     env = {}
     for index, param in enumerate(params):
@@ -993,7 +964,7 @@ def _method_value(value):
 
 
 def _options_method(scope, text, start):
-    """Methods a request options argument selects; GET when it names none."""
+    """Return the methods a request options object selects, defaulting to GET."""
     text, start = _strip(text, start)
     source = scope.unit.source
     span = (source, start, start + len(text))
@@ -1012,7 +983,7 @@ def _options_method(scope, text, start):
             return [_method_value(item) for item in _evaluate(scope, value, value_at)]
         if spread:
             return [_unknown('Spread request options may supply the HTTP method.', span)]
-        # The Fetch standard defaults a request without a method to GET.
+        # fetch() defaults to GET.
         return [_value((('lit', 'GET'),), (span,))]
     if re.fullmatch(_IDENTIFIER, text) and text not in scope.params and not (
             scope.env is not None and text in scope.env):
@@ -1073,15 +1044,10 @@ def _parametric(request):
 
 
 def _requests(unit, env=None, depth=0, stack=()):
-    """Requests issued by a unit, its parameters bound by env when given.
+    """Return requests issued by a unit, with parameters bound by env if given.
 
-    A request whose method or URL is a parameter is decided by the caller, so
-    each call site re-evaluates the callee with that call's arguments; the
-    result is attributed to the calling unit, never to the shared helper.
-
-    Without bindings the result still depends on how deep the walk is and
-    which callers it came through, so it is cached under that context: a unit
-    first reached deep in another unit's walk keeps its full result for depth 0.
+    Requests that depend on a parameter are re-evaluated at each call site and
+    attributed to the caller. Unbound results are cached per (depth, stack).
     """
     if env is None:
         cache = getattr(unit, '_endpoint_requests', None)
@@ -1106,8 +1072,7 @@ def _requests(unit, env=None, depth=0, stack=()):
             target = _call_target(source, reference.callee_name, start)
             if target is None or target is unit or id(target) in stack:
                 continue
-            # Only the requests the callee leaves to its caller are re-evaluated
-            # here; the others are already the callee's own.
+            # Only re-evaluate requests that depend on the callee's parameters.
             deferred = {(request['position'], request['end'])
                         for request in _requests(target, None, depth + 1, stack + (id(unit),))
                         if _parametric(request)}
@@ -1142,7 +1107,7 @@ def _rendered(parts):
 
 
 def endpoint_requests(unit):
-    """The HTTP requests this unit issues, composed as its source builds them."""
+    """Return the HTTP requests this unit issues."""
     result, seen = [], set()
     for request in _requests(unit):
         if _parametric(request):
@@ -1164,7 +1129,7 @@ def endpoint_requests(unit):
 
 
 def _defined_value(text):
-    """The string a DefinePlugin entry substitutes, when it is a literal."""
+    """Return the literal string a DefinePlugin entry substitutes, or None."""
     text = text.strip()
     stringified = re.fullmatch(r'JSON\.stringify\(\s*(.*?)\s*\)', text, re.DOTALL)
     if stringified:
@@ -1174,7 +1139,7 @@ def _defined_value(text):
 
 
 def _build_definitions(sources):
-    """Literal string values webpack DefinePlugin configurations assign."""
+    """Index literal values assigned in webpack DefinePlugin configs."""
     index = {}
     for source in sources:
         for found in _DEFINE_PLUGIN.finditer(source.text):
@@ -1190,19 +1155,10 @@ def _build_definitions(sources):
     return index
 
 
-# Action labels
-#
-# A button whose text is a JSX expression is labelled only by the string
-# literals that expression can produce: a literal, a conditional over
-# literals, or a ``const`` assigned only such values. A choice between several
-# literals is made per route, and only when the page on that route passes a
-# literal value for every flag the choice tests: the prop itself, an object
-# literal (directly, through a ``const`` or a function returning one) holding
-# the flag, or an object literal without it, which leaves the flag undefined.
-# A flag read from component state counts only when the constructor seeds that
-# state from the prop, so the choice is the label the screen first renders.
-# Any other value leaves every literal a candidate; an expression with a
-# runtime part leaves the action explicitly unlabeled.
+# Action labels: a JSX label expression is resolved to the string literals it
+# can produce. When there are several, pick one per route only if the page
+# passes literal values for every flag the conditional tests. Otherwise all
+# literals stay candidates; a runtime expression leaves the action unlabeled.
 
 LABEL_RUNTIME_CODE = 'UI_ACTION_LABEL_RUNTIME'
 LABEL_AMBIGUOUS_CODE = 'UI_ACTION_LABEL_AMBIGUOUS'
@@ -1211,7 +1167,7 @@ _PROPS_SOURCE = re.compile(r'\bconst\s*\{([^{}]*)\}\s*=\s*(this\.props|this\.sta
 
 
 def _literal_value(text):
-    """``(True, value)`` for a JavaScript literal token, else ``(False, None)``."""
+    """Return ``(True, value)`` for a JavaScript literal token, else ``(False, None)``."""
     text = text.strip()
     tokens = {'true': True, 'false': False, 'null': None, 'undefined': None}
     if text in tokens:
@@ -1227,7 +1183,7 @@ def _truthy(value):
 
 
 def _object_entries(text):
-    """Key -> value text and offset of an object literal, or None if it may hide keys."""
+    """Map key to (value text, offset) for an object literal, or None on spread/computed keys."""
     entries = {}
     for entry, at in _split(text[1:-1], ','):
         entry, entry_at = _strip(entry, 1 + at)
@@ -1244,13 +1200,13 @@ def _object_entries(text):
         elif key.end() == len(entry):
             entries[name] = (name, entry_at)
         else:
-            # A method or accessor: the key exists, its value is not a literal.
+            # Method or accessor: key exists but has no literal value.
             entries[name] = (None, entry_at)
     return entries
 
 
 def _path_value(unit, text, start, path, spans, depth=0):
-    """``(True, value)`` when *text* followed by *path* is a literal, else ``(False, reason)``."""
+    """Return ``(True, value)`` if *text* at *path* is a literal, else ``(False, reason)``."""
     text, start = _strip(text, start)
     source = unit.source
     if depth > _MAX_LABEL_DEPTH:
@@ -1265,7 +1221,7 @@ def _path_value(unit, text, start, path, spans, depth=0):
             return False, 'an object with spread or computed keys'
         spans.append((source, start, start + len(text)))
         if path[0] not in entries:
-            # A literal object without the key leaves it undefined.
+            # Missing key in a literal object means undefined.
             return ((True, None) if len(path) == 1 else
                     (False, f'an object without {path[0]}'))
         value, at = entries[path[0]]
@@ -1300,7 +1256,7 @@ def _component_name(unit):
 
 
 def _seeded_state(owner, key):
-    """The prop a class component's constructor seeds state *key* from, or None."""
+    """Return the prop the constructor seeds state *key* from, or None."""
     classes = [unit for unit in owner.source.units
                if unit.kind == 'class' and unit.name == owner.owner]
     constructors = [unit for unit in owner.source.units
@@ -1336,7 +1292,7 @@ def _seeded_state(owner, key):
 
 
 def _flag_prop(owner, names, before):
-    """``(prop, path, spans)`` when a flag is read from one of *owner*'s props."""
+    """Return ``(prop, path, spans)`` if the flag is read from a prop of *owner*."""
     if names[:2] == ['this', 'props'] and len(names) > 2:
         return names[2], names[3:], []
     if names[:2] == ['this', 'state'] and len(names) > 2:
@@ -1376,8 +1332,7 @@ def _top_level_text(text):
     return ''.join(top)
 
 
-# State spread into a component carries a literal flag only along one chain,
-# each step of which the source fixes:
+# A flag spread in through this.state is only resolved for this pattern:
 #
 #   const LITERAL = {...}                  the flag, in an object nothing else uses
 #   Promise.resolve(LITERAL)               a promise of exactly that object
@@ -1388,8 +1343,7 @@ def _top_level_text(text):
 #   if (!this.state) return ...;           nothing renders before that state
 #   <Component {...this.state} />          state keys become props
 #
-# Any other step (a loaded value, a second state write, an initial state, a
-# reused literal) leaves the flag unknown.
+# Anything else leaves the flag unknown.
 
 _THEN = re.compile(r'\.\s*then\s*\(')
 _SET_STATE_CALLBACKS = (
@@ -1404,7 +1358,7 @@ _STATE_WRITE = re.compile(
 
 
 def _arguments_text(text, opening):
-    """Top-level arguments of the call whose ``(`` is at *opening*, or None on a spread."""
+    """Return the top-level arguments of the call at *opening*, or None on a spread."""
     closing = _close(text, opening)
     pieces = [_strip(piece, opening + 1 + at)
               for piece, at in _split(text[opening + 1:closing], ',')]
@@ -1416,7 +1370,7 @@ def _arguments_text(text, opening):
 
 
 def _sole_use(source, name, declared, used):
-    """Why the ``const`` *name* may not hold its literal, or None when *used* is its only use."""
+    """Return why ``const`` *name* may not keep its literal, or None if *used* is its only use."""
     start, end = declared
     line = source.text[source.text.rfind('\n', 0, start) + 1:end]
     if re.match(r'\s*export\b', line):
@@ -1429,7 +1383,7 @@ def _sole_use(source, name, declared, used):
 
 
 def _promise_value(unit, text, start, path, spans, depth=0):
-    """``(True, value)`` when the promise *text* resolves to a literal at *path*."""
+    """Return ``(True, value)`` if the promise *text* resolves to a literal at *path*."""
     text, start = _strip(text, start)
     source = unit.source
     if depth > _MAX_LABEL_DEPTH:
@@ -1458,11 +1412,9 @@ def _promise_value(unit, text, start, path, spans, depth=0):
 
 
 def _model_value(unit, name, call_at, opening, key, path, spans):
-    """``(True, value)`` for ``key.path`` of the object a call to *name* resolves to.
+    """Return ``(True, value)`` for ``key.path`` of the object *name()* resolves to.
 
-    The callee must return ``Promise.all([...]).then(results => ({...}))``
-    and nothing else; ``results[i]`` is the i-th array element, either a
-    parameter the caller binds or a promise the callee builds itself.
+    The callee must return exactly ``Promise.all([...]).then(results => ({...}))``.
     """
     source = unit.source
     target = _call_target(source, name, call_at)
@@ -1470,7 +1422,7 @@ def _model_value(unit, name, call_at, opening, key, path, spans):
     if not shape or shape[1] is None:
         return False, f'{name}() does not return one evaluable expression'
     params, body, body_at = shape
-    # _function_shape counts top-level returns only; a nested one is another path.
+    # _function_shape only counts top-level returns.
     code = {index for index, _, _ in _scan(target.text)}
     returns = [found for found in re.finditer(r'(?<![\w$.])return(?![\w$])', target.text)
                if found.start() in code]
@@ -1500,7 +1452,7 @@ def _model_value(unit, name, call_at, opening, key, path, spans):
     if not arrow:
         return False, shown
     result, result_at = _strip(handler[arrow.end():], handler_at + arrow.end())
-    # ``=> {`` opens a block, so only a parenthesized object literal is returned.
+    # ``=> {`` is a block body, so require a parenthesized object literal.
     if not (result.startswith('(') and _close(result, 0) == len(result) - 1):
         return False, shown
     result, result_at = _strip(result[1:-1], result_at + 1)
@@ -1540,7 +1492,7 @@ def _model_value(unit, name, call_at, opening, key, path, spans):
 
 
 def _state_value(origin, usage, key, path, spans):
-    """``(True, value)`` when ``this.state.key.path`` is a literal wherever *usage* renders."""
+    """Return ``(True, value)`` if ``this.state.key.path`` is a literal where *usage* renders."""
     source = origin.source
     classes = [unit for unit in source.units
                if unit.kind == 'class' and unit.name == origin.owner]
@@ -1558,8 +1510,7 @@ def _state_value(origin, usage, key, path, spans):
         return False, (f'{page.name} sets state in {len(writes)} places' if writes
                        else f'{page.name} never sets state')
     write = writes[0].start()
-    # Without an initial state, ``this.state`` is null until the one write;
-    # the guard keeps the usage from rendering before then.
+    # With no initial state, require an ``if (!this.state) return`` guard.
     before = source.text[origin.start:usage]
     depths = {index: depth for index, _, depth in _scan(before)}
     guards = [found for found in
@@ -1597,7 +1548,7 @@ def _state_value(origin, usage, key, path, spans):
 
 
 def _passed_value(owner, origin, start, end, prop, path, spans):
-    """``(True, value)`` for the literal a JSX usage passes for ``prop.path``."""
+    """Return ``(True, value)`` for the literal a JSX usage passes for ``prop.path``."""
     tag = _opening_tag(origin.source.text[start:end])
     top = _top_level_text(tag)
     spreads = re.findall(r'\{\s*\.\.\.\s*([^{}]*?)\s*\}', tag)
@@ -1634,7 +1585,7 @@ def _passed_value(owner, origin, start, end, prop, path, spans):
 
 
 def _test_truth(owner, test, before, usage, spans):
-    """``(truth, None)`` for a flag the usage fixes, else ``(None, why)``."""
+    """Return ``(truth, None)`` if the usage fixes the flag, else ``(None, why)``."""
     origin, start, end = usage
     negated, text = False, ' '.join(test.split())
     while True:
@@ -1657,7 +1608,7 @@ def _test_truth(owner, test, before, usage, spans):
 
 
 def _choose_label(owner, values, before, contexts):
-    """The label each route shows, as ``(labels, conditions, spans, why)``."""
+    """Return ``(labels, conditions, spans, why)`` for the label each route shows."""
     if not contexts:
         return None, None, [], 'no route displays this component'
     if any(not chain for _, chain in contexts):

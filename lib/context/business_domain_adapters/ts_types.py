@@ -1,24 +1,9 @@
-"""Declared types of TypeScript receiver expressions.
+"""Resolve the declared types of TypeScript receiver expressions.
 
-A call is a platform call when the source declares its receiver as a type the
-language provides. The rules adapter answers that for a receiver a catalog rule
-binds directly (`this.items = new Map()`). This module answers it for receivers
-whose type the source still states, only further away:
-
-    req.pan.replace(...)          req: GatewayRequest, GatewayRequest = AuthoriseRequest & {...},
-                                  AuthoriseRequest.pan: string
-    payment.captures.reduce(...)  const payment = this.require(id), require(): Payment,
-                                  Payment.captures: Capture[]
-    sinks.logs.push(...)          const sinks = { logs: [] as LogRecord[] }
-    (++seq).toString(36)          an increment is a number
-    digits.slice(0, 6)            const digits = pan.replace(...), String.replace returns a string
-
-Every step reads something written: a parameter or member annotation, an `as`
-assertion, a type alias or interface, a declared return type, a constructed
-class, a literal, or the return type the platform documents for one of its own
-methods. Nothing is inferred from how a value is used, and a step that cannot
-be read ends the evaluation with no type. A narrowing (`Array.isArray(value)`)
-is not a declaration, so `value: unknown` stays untyped.
+Only reads what the source writes: annotations, `as` casts, aliases,
+interfaces, declared return types, constructors, literals and documented
+platform return types. Nothing is inferred from usage. If any step can't be
+read, the result is None.
 """
 from __future__ import annotations
 
@@ -40,10 +25,9 @@ _NULLISH = {'undefined', 'null', 'void'}
 _UNTYPED = {'any', 'unknown', 'object', 'never', '{}', 'Function'}
 _ITERABLE = {'Array', 'ReadonlyArray', 'Set', 'ReadonlySet', 'Iterator'}
 
-# Return types the platform declares for its own methods. A result whose type
-# depends on a callback is typed only as far as the platform fixes it: `map`
-# always returns an array, of elements no declaration names; `reduce` returns
-# the type of its initial value, and without one is not typed at all.
+# Return types of platform methods. Callback-dependent results are only typed
+# as far as the platform fixes them: `map` gives an array of unknown elements,
+# `reduce` takes the type of its initial value.
 _SAME = 'same'
 _ELEMENT = 'element'
 _VALUE = 'value'
@@ -90,7 +74,7 @@ _RETURNS = {
     'RegExp': {'test': 'Boolean', 'toString': 'String'},
 }
 _RETURNS['ReadonlyArray'] = _RETURNS['Array']
-# Static members of platform namespaces whose result type is fixed.
+# Static platform functions with a fixed result type.
 _STATIC_RETURNS = {
     ('Date', 'now'): 'Number', ('Date', 'parse'): 'Number', ('Date', 'UTC'): 'Number',
     ('JSON', 'stringify'): 'String', ('Object', 'keys'): ('Array', 'String'),
@@ -111,15 +95,12 @@ _LENGTH = {'String', 'Array', 'ReadonlyArray'}
 
 @dataclass(frozen=True)
 class Type:
-    """A declared type. *name* is a platform type, a repository class, or
-    ``{}`` (an object type whose members *body* lists) or ``{=}`` (an object
-    literal whose members are expressions).
+    """A declared type.
 
-    *declared* is the name a type alias, interface or module binding gives an
-    object type. *origin* says where a value lives when that is shared state:
-    ``(owner, member, path)`` for a class member or a member of a declared or
-    module-level object, ``(None, name, path)`` for a module-level binding. A
-    parameter, a local holding a new value, or a call result has none.
+    name is a platform type, a repository class, '{}' (object type, members in
+    body) or '{=}' (object literal). declared is the alias, interface or binding
+    name of an object type. origin is (owner, member, path) or (None, name, path)
+    when the value is shared state, and empty otherwise.
     """
     name: str
     args: tuple = ()
@@ -137,7 +118,7 @@ class Type:
         return replace(self, steps=(step, *self.steps) if first else (*self.steps, step))
 
     def after(self, earlier):
-        """This type, its derivation preceded by the steps of *earlier*."""
+        """Return this type with the steps of earlier prepended."""
         if earlier is None:
             return self
         steps = tuple(step for step in earlier.steps if step != 'ambient')
@@ -154,10 +135,10 @@ class Type:
         return self.name
 
 
-# ── Scanning ─────────────────────────────────────────────────────────────
+# Scanning
 
 def _skip(text, index):
-    """Index past the comment or string literal at index, or index itself."""
+    """Return the index past the comment or string literal at index, or index itself."""
     if text.startswith('//', index):
         end = text.find('\n', index)
         return len(text) if end < 0 else end
@@ -184,8 +165,7 @@ def _skip(text, index):
 def _scan(text, start=0, angles=False):
     """Yield (index, character, depth) outside comments and literals.
 
-    With *angles*, `<` and `>` nest like brackets (type text), except the `>`
-    of an arrow.
+    With angles=True, < and > nest like brackets, except the > in =>.
     """
     depth = 0
     cursor = start
@@ -206,7 +186,7 @@ def _scan(text, start=0, angles=False):
 
 
 def _close(text, index, angles=False):
-    """Index of the bracket closing the one opening at index."""
+    """Return the index of the bracket that closes the one at index."""
     for cursor, character, depth in _scan(text, index, angles):
         if depth == 0 and cursor > index and character in ')]}>':
             return cursor
@@ -214,7 +194,7 @@ def _close(text, index, angles=False):
 
 
 def _split(text, separators, angles=False):
-    """Top-level pieces of *text* between any of *separators*."""
+    """Split text on top-level separators."""
     pieces, start = [], 0
     for index, character, depth in _scan(text, 0, angles):
         if depth == 0 and character in separators:
@@ -225,7 +205,7 @@ def _split(text, separators, angles=False):
 
 
 def _top_level_find(text, token, angles=False, last=False):
-    """Index of *token* outside any bracket, comment or literal, or -1."""
+    """Return the index of token outside brackets, comments and literals, or -1."""
     found = -1
     for index, _character, depth in _scan(text, 0, angles):
         if depth == 0 and text.startswith(token, index):
@@ -236,8 +216,11 @@ def _top_level_find(text, token, angles=False, last=False):
 
 
 def _statement_end(text, start):
-    """End of the expression starting at start: `;`, a closing bracket, or a
-    line break the next line does not continue."""
+    """Return the end of the expression at start.
+
+    Stops at ;, an unmatched closing bracket, or a newline the next line
+    doesn't continue.
+    """
     for index, character, depth in _scan(text, start):
         if depth < 0 or (depth == 0 and character == ';'):
             return index
@@ -251,8 +234,11 @@ def _statement_end(text, start):
 
 
 def _annotation_end(text, start):
-    """End of a type annotation starting at start: a top-level `=`, `;`, `,`,
-    `)` or `{`, or a line break the next line does not continue."""
+    """Return the end of the type annotation at start.
+
+    Stops at a top-level =, ;, ,, ) or {, or a newline the next line doesn't
+    continue.
+    """
     for index, character, depth in _scan(text, start, angles=True):
         if depth < 0:
             return index
@@ -275,11 +261,11 @@ def _line(source, offset):
 
 
 def _normalize(expression):
-    """Join a chain split across lines: `a\n  .b()` is `a.b()`."""
+    """Join a method chain split across lines."""
     return re.sub(r'\s*\n\s*(\??\.)', r'\1', expression.strip()).strip()
 
 
-# ── Declarations ─────────────────────────────────────────────────────────
+# Declarations
 
 @dataclass
 class _Declaration:
@@ -294,7 +280,7 @@ class _Declaration:
 
 
 class _Index:
-    """Top-level declarations of every TypeScript source, by file."""
+    """Top-level declarations of all TypeScript sources, keyed by file."""
 
     def __init__(self, sources):
         self.sources = {source.path: source for source in sources}
@@ -303,8 +289,7 @@ class _Index:
         self.written = None
 
     def lookup(self, name, path, kinds, seen=()):
-        """The declaration *name* refers to in *path*: its own, or the one it
-        imports from another source of this repository."""
+        """Find the declaration name refers to in path, following relative imports."""
         found = [item for item in self.declarations.get(path, {}).get(name, ())
                  if item.kind in kinds]
         if found:
@@ -328,7 +313,7 @@ class _Index:
 
 
 def _imports(source):
-    """Local name -> (module, exported name) for each named import."""
+    """Map each named import's local name to (module, exported name)."""
     bound = {}
     for match in re.finditer(r'\bimport\s+(?:type\s+)?\{([^}]*)\}\s*from\s*([\'"])([^\'"]+)\2',
                              source.text):
@@ -345,7 +330,7 @@ def _imports(source):
 
 @lru_cache(maxsize=512)
 def _depths(text):
-    """Bracket depth at each character, outside comments and literals."""
+    """Return the bracket depth at each character, outside comments and literals."""
     depths = [None] * (len(text) + 1)
     for index, _character, depth in _scan(text):
         depths[index] = depth
@@ -411,7 +396,7 @@ def _declarations(source):
 
 
 def _return_annotation(text, opening):
-    """The return type written after the parameter list opening at *opening*."""
+    """Return the return type written after the parameter list at opening."""
     closing = _close(text, opening)
     after = re.match(r'\s*:\s*', text[closing + 1:])
     if not after:
@@ -435,7 +420,7 @@ def _return_annotation(text, opening):
 
 
 def _parameters(text, opening):
-    """(name, annotation, default) for each simple parameter in a list."""
+    """Return (name, annotation, default) for each simple parameter."""
     closing = _close(text, opening)
     result = []
     for piece in _split(text[opening + 1:closing], ','):
@@ -455,7 +440,7 @@ def _parameters(text, opening):
     return result
 
 
-# ── Evaluation ───────────────────────────────────────────────────────────
+# Evaluation
 
 class _Evaluator:
     def __init__(self, index, unit):
@@ -465,10 +450,10 @@ class _Evaluator:
         self.ambient = registry.ambient_globals(unit.source.language)
         self.depth = 0
 
-    # Types ----------------------------------------------------------------
+    # Types
 
     def parse(self, text, path, note=''):
-        """The Type a type annotation written in *path* names."""
+        """Parse a type annotation written in path."""
         self.depth += 1
         try:
             if self.depth > _MAX_DEPTH:
@@ -550,10 +535,10 @@ class _Evaluator:
                         declared=name) if extended else own
         return Type(name, args, path=declaration.source.path, offset=declaration.offset)
 
-    # Members --------------------------------------------------------------
+    # Members
 
     def member(self, owner, name):
-        """The declared type of member *name* of *owner*."""
+        """Return the declared type of a member of owner."""
         if owner is None:
             return None
         if owner.name == '&':
@@ -572,7 +557,7 @@ class _Evaluator:
         return None
 
     def method(self, owner, name, arguments):
-        """The declared return type of calling member *name* of *owner*."""
+        """Return the declared return type of calling a method on owner."""
         if owner is None:
             return None
         if owner.name == '&':
@@ -663,7 +648,7 @@ class _Evaluator:
         return None
 
     def _class_member(self, declaration, name, called=False):
-        """(type,) of a member of the class *declaration*, or ()."""
+        """Return (type,) for a member of a class declaration, or ()."""
         text = declaration.source.text
         body_start = declaration.end - len(declaration.text)
         body = declaration.text
@@ -720,10 +705,10 @@ class _Evaluator:
                 return (found,) if found else ()
         return ()
 
-    # Expressions ----------------------------------------------------------
+    # Expressions
 
     def expression(self, text, source, position):
-        """The declared type of expression *text* written at *position*."""
+        """Return the declared type of an expression written at position."""
         saved = (self.source, getattr(self, 'position', None))
         self.source, self.position = source, position
         self.depth += 1
@@ -778,7 +763,7 @@ class _Evaluator:
         return self._chain(text)
 
     def _chain(self, text):
-        """Type a primary followed by `.member`, `(args)`, `[index]` and `!`."""
+        """Resolve a primary followed by member access, calls, indexing and `!`."""
         construct = re.match(rf'new\s+({_IDENTIFIER})\s*(<)?', text)
         if construct:
             cursor = construct.end(1)
@@ -885,10 +870,10 @@ class _Evaluator:
         if static is not None:
             return self._platform_result(owner, static)
         found = self.method(owner, member, arguments)
-        # What a call returns is a new value, not the state it was read from.
+        # A call result is a new value, so it has no origin.
         return replace(found.after(owner), origin=()) if found is not None else None
 
-    # Names ----------------------------------------------------------------
+    # Names
 
     def _enclosing_class(self):
         position = self.position
@@ -905,14 +890,14 @@ class _Evaluator:
         return replace(found[0], origin=(declaration.name, name, declaration.source.path))
 
     def _scopes(self):
-        """Function-like units enclosing the position, innermost first."""
+        """Return the function and method units around the position, innermost first."""
         units = [unit for unit in self.source.units
                  if unit.start <= self.position < unit.end
                  and unit.kind in {'function', 'method'}]
         return sorted(units, key=lambda unit: unit.end - unit.start)
 
     def name(self, name):
-        """The declared type of identifier *name* where it is used."""
+        """Return the declared type of an identifier at the current position."""
         source, position = self.source, self.position
         for scope in self._scopes():
             text = source.text
@@ -953,8 +938,7 @@ class _Evaluator:
                 start = cursor + assign.end()
                 value = text[start:_statement_end(text, start)]
                 found = self.expression(value, source, start)
-                # A local bound to shared state (`const entries = this.entries`)
-                # still names that state; any other initializer is a new value.
+                # Keep the origin so `const entries = this.entries` still refers to shared state.
                 return found.note(f'{name} = {_short(value)} ({line})', first=True) if found else None
             if opening is not None:
                 for parameter, annotation, default in _parameters(text, opening):
@@ -978,7 +962,7 @@ class _Evaluator:
         if declaration.kind != 'value':
             return None
         line = f'{declaration.source.path}:{_line(declaration.source, declaration.offset)}'
-        # A module-level binding is state every function of the module shares.
+        # Module-level bindings are shared state.
         origin = (None, name, declaration.source.path)
         if declaration.annotation:
             found = self.parse(declaration.annotation, declaration.source.path,
@@ -993,7 +977,7 @@ class _Evaluator:
                        declared=name if found.name == '{=}' else found.declared)
 
     def function(self, name):
-        """The declared return type of calling function *name*."""
+        """Return the declared return type of calling a function."""
         for scope in self._scopes():
             if re.search(rf'\b(?:const|let|var|function)\s+{re.escape(name)}\b',
                          self.source.text[scope.start:self.position]):
@@ -1014,7 +998,7 @@ class _Evaluator:
 
 
 def _agree(types):
-    """One type when every alternative names the same type, else None."""
+    """Return the type if all alternatives agree, else None."""
     if not types or any(item is None for item in types):
         return None
     if len({(item.name, item.body, item.path if item.name in {'{}', '{=}'} else '')
@@ -1035,8 +1019,7 @@ def _element(iterable, note):
 
 
 def _arithmetic(text):
-    """True for a top-level `-`, `*`, `/` or `%` expression, which TypeScript
-    types as a number."""
+    """Return True for a top-level -, *, / or % expression, which is always a number."""
     for index, character, depth in _scan(text):
         if depth != 0 or index == 0 or character not in '-*/%':
             continue
@@ -1059,13 +1042,10 @@ _GUARDS = (
 
 
 def _narrowed(source, scope, name, position):
-    """The type a guard the platform declares narrows *name* to, when
-    *position* is inside the branch the guard protects.
+    """Return the type a guard narrows name to at position, or None.
 
-    `Array.isArray(arg): arg is any[]` and `typeof` comparisons are declared
-    narrowings: inside `if (Array.isArray(value)) ...` TypeScript itself types
-    `value` as an array. Only an `if` condition, or a `?:` test, made of the
-    guard alone or joined by `&&` narrows; an `||` or a negation does not.
+    Handles Array.isArray and typeof checks in an if condition or ?: test,
+    alone or joined with &&. Conditions using || or negation are ignored.
     """
     text = source.text
     escaped = re.escape(name)
@@ -1089,8 +1069,7 @@ def _narrowed(source, scope, name, position):
 
 
 def _guard_condition(text, match):
-    """('if', start, end) of the `if (...)` condition, or ('?', start, end)
-    of the `?:` test, that holds *match*; None otherwise."""
+    """Return ('if' or '?', start, end) for the condition containing match, or None."""
     opening = text.rfind('(', 0, match.start())
     while opening >= 0:
         closing = _close(text, opening)
@@ -1124,7 +1103,7 @@ def _guarded_body(text, kind, end):
 
 
 def _ternary(text):
-    """True when *text* is a conditional expression at its top level."""
+    """Return True if text is a top-level conditional expression."""
     for index, character, depth in _scan(text):
         if depth == 0 and character == '?' and text[index + 1:index + 2] not in {'.', '?'} \
                 and text[index - 1:index] != '?':
@@ -1133,9 +1112,10 @@ def _ternary(text):
 
 
 def _shadowed_by_callback(text, name, own=None):
-    """True when an inline callback parameter called *name* is still open
-    where *text* ends, so the name no longer means the outer declaration.
-    *own* is the offset of the unit's own parameter list, which never shadows."""
+    """Return True if an inline callback parameter shadows name at the end of text.
+
+    own is the offset of the unit's own parameter list, which is skipped.
+    """
     escaped = re.escape(name)
     for match in re.finditer(rf'(?:\(([^()]*)\)|\b({escaped}))\s*(?::[^=()]*)?=>', text):
         if own is not None and match.start() == own:
@@ -1159,7 +1139,7 @@ def _shadowed_by_callback(text, name, own=None):
 
 
 def _parameter_list(unit):
-    """Offset of the `(` that opens *unit*'s own parameter list."""
+    """Return the offset of the ( that opens the unit's parameter list."""
     text = unit.text
     match = re.match(rf'\s*(?:(?:export|default|async|static|public|private|protected|'
                      rf'readonly|override|get|set)\s+)*(?:function\s*\*?\s*)?'
@@ -1175,12 +1155,11 @@ def _short(text, limit=48):
     return text if len(text) <= limit else text[:limit - 1].rstrip() + '…'
 
 
-# ── Entry points ─────────────────────────────────────────────────────────
+# Entry points
 
 def prepare(sources):
-    """Index the declarations of every TypeScript source together."""
-    # Only TypeScript declares types. In JavaScript an initializer is not a
-    # declaration: a `let` holding an array may later hold anything.
+    """Build one declaration index shared by all TypeScript sources."""
+    # JavaScript initializers aren't type declarations, so only index TypeScript.
     typed = [source for source in sources if source.language in TYPED_LANGUAGES]
     index = _Index(typed)
     for source in typed:
@@ -1188,8 +1167,7 @@ def prepare(sources):
 
 
 def receiver_type(unit, receiver, position):
-    """The Type the source declares for *receiver* where *unit* calls at the
-    absolute offset *position*, or None."""
+    """Return the declared Type of receiver at absolute offset position, or None."""
     index = getattr(unit.source, 'ts_type_index', None)
     if index is None or not receiver:
         return None
@@ -1199,8 +1177,7 @@ def receiver_type(unit, receiver, position):
         return None
 
 
-# Methods of the platform collections that change their contents, and those
-# that only read them. Anything else on a collection is neither.
+# Collection methods that modify contents, and those that only read them.
 _COLLECTION_WRITES = {
     'Map': {'set', 'delete', 'clear'}, 'WeakMap': {'set', 'delete'},
     'Set': {'add', 'delete', 'clear'}, 'WeakSet': {'add', 'delete'},
@@ -1227,14 +1204,11 @@ class StoreAccess:
 
 
 def store_access(unit, receiver, name, position):
-    """The StoreAccess a call performs, or None.
+    """Return the StoreAccess a call performs, or None.
 
-    A call is a store access when its receiver is a platform collection that
-    lives in shared state (a class member, a module-level binding, or a member
-    of a declared or module-level object), its method reads or changes the
-    collection, and some code in the repository changes it. A collection a
-    parameter or a fresh local holds is not shared state, and one nothing ever
-    changes (a constant lookup table) is reference data, not a store.
+    The receiver must be a platform collection held in shared state (class
+    member, module binding, or member of a module-level object) that some code
+    in the repo writes. Collections nothing writes are treated as constants.
     """
     access = _cached_access(unit, receiver, name, position)
     index = getattr(unit.source, 'ts_type_index', None)
@@ -1244,7 +1218,7 @@ def store_access(unit, receiver, name, position):
 
 
 def store_written(unit, store):
-    """Whether some code in the repository writes *store*."""
+    """Return True if any code in the repo writes store."""
     index = getattr(unit.source, 'ts_type_index', None)
     return index is not None and store in _written_stores(index)
 
@@ -1263,8 +1237,10 @@ _TRUNCATION = re.compile(rf'((?:this\.)?{_IDENTIFIER}(?:\s*\.\s*{_IDENTIFIER})*)
 
 
 def truncations(unit):
-    """``[(start, end, StoreAccess)]`` for each `store.length = n` in *unit*,
-    unit-relative: assigning an array's length removes its elements."""
+    """Return unit-relative (start, end, StoreAccess) for each `store.length = n`.
+
+    Assigning an array's length removes elements, so it counts as a write.
+    """
     found = []
     text = unit.text
     depths = _depths(text)
@@ -1284,7 +1260,7 @@ def truncations(unit):
 
 
 def _written_stores(index):
-    """Every store some code in the repository writes."""
+    """Return every store written anywhere in the repo, cached on the index."""
     if index.written is None:
         written = set()
         for source in index.sources.values():
@@ -1318,7 +1294,7 @@ def _store_access(unit, receiver, name, position):
 
 
 def platform(unit, found):
-    """The platform type *found* names, or None for a repository type."""
+    """Return the platform type name of found, or None for a repo type."""
     if found is None:
         return None
     ambient = registry.ambient_globals(unit.source.language)

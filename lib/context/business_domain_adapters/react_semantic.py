@@ -1,4 +1,4 @@
-"""React-only enrichment over normalized TSX rule outputs."""
+"""React enrichment of normalized TSX rule outputs."""
 from __future__ import annotations
 
 import re
@@ -95,26 +95,17 @@ def prepare(sources, units, diagnostics=None):
         _navigation_relations(source, routes)
 
 
-# React Router navigation
-#
-# ``router.push(location)`` and ``router.replace(location)`` make the router
-# activate the route matching the new location. A component that issues them
-# through the router React Router puts in its context (an import of
-# react-router and a ``contextTypes`` entry for ``router``) is linked to what
-# that activation runs: the route's own registration, or, when the route is
-# the one rendering the navigating component, that component's
-# ``componentWillReceiveProps``, since it stays mounted and receives the new
-# location as props. Routes are tried in declaration order and the first that
-# matches wins, so a later route never answers for an earlier one; a runtime
-# path segment that could equal an earlier literal keeps every such route as a
-# candidate rather than picking one.
+# React Router navigation via this.context.router.push/replace.
+# Links the call to the matched route's registration, or to the component's
+# componentWillReceiveProps when that route renders the navigating component.
+# Routes match in declaration order; the first definite match wins.
 
 _NAVIGATIONS = frozenset({'push', 'replace'})
 _CONTEXT_ROUTER = re.compile(r'\bcontextTypes\s*=\s*\{[^}]*\brouter\s*:')
 
 
 def _route_segment(written, route):
-    """'definite', 'possible' or None for one path segment against a route's."""
+    """Match one path segment against a route segment: 'definite', 'possible' or None."""
     if re.fullmatch(r':[\w$]+', route):
         return 'definite'
     if any(mark in route for mark in '*()'):
@@ -128,8 +119,7 @@ def _route_match(segments, route):
     if route.strip() in {'*', '/*'}:
         return 'definite'
     if not route.startswith('/'):
-        # A relative child route depends on its parent's path, which this
-        # matcher does not compose; it can only ever be a candidate.
+        # Relative child routes depend on the parent path, which isn't composed here.
         return 'possible'
     pattern = [item for item in route.split('/') if item]
     if len(pattern) != len(segments):
@@ -142,7 +132,7 @@ def _route_match(segments, route):
 
 
 def _matching_routes(path, routes):
-    """Routes the router can activate for a path, in declaration order."""
+    """Return (route, match) pairs for a path, in declaration order."""
     query = re.search(r'[?#]', re.sub(r'\{[^{}]*\}', lambda found: '_' * len(found.group(0)), path))
     segments = [item for item in (path[:query.start()] if query else path).split('/') if item]
     by_file = {}
@@ -160,7 +150,7 @@ def _matching_routes(path, routes):
 
 
 def _router_evidence(source, owner):
-    """The class's ``contextTypes`` router entry, when React Router supplies it."""
+    """Return the span of the class's contextTypes router entry, if any."""
     if 'react-router' not in rules._import_bindings(source).values() or owner is None:
         return None
     classes = [unit for unit in source.units if unit.kind == 'class' and unit.name == owner]
@@ -171,7 +161,7 @@ def _router_evidence(source, owner):
 
 
 def _navigation_path(scope, call, start):
-    """The path values of a navigation call's location argument."""
+    """Return the path values of a navigation call's location argument."""
     opening = call.find('(')
     closing = ts_semantic._close(call, opening)
     pieces = ts_semantic._split(call[opening + 1:closing], ',')
@@ -187,7 +177,7 @@ def _navigation_path(scope, call, start):
 
 
 def _navigation_target(unit, route, routes):
-    """What activating a route runs, seen from the navigating unit."""
+    """Return the unit that runs when the navigating unit activates a route."""
     component = getattr(route, 'anchor_context_unit', None)
     rendering = [item for item in routes
                  if getattr(item, 'anchor_context_unit', None) is not None

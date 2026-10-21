@@ -1,4 +1,4 @@
-"""F-08 frontend operation hydration and PetClinic acceptance."""
+"""Tests for frontend operation hydration against PetClinic."""
 from pathlib import Path
 import uuid
 
@@ -118,7 +118,7 @@ def test_petclinic_all_supported_fetches_have_complete_graph_dispositions(petcli
     assert all(any(facts['evidence'][eid]['excerpt'].lstrip().startswith('fetch(')
                    for eid in edge['evidence_ids']) for edge in operations)
 
-    # The whole graph supplied to synthesis retains every operation closure.
+    # The graph passed to synthesis must keep every operation closure.
     model = copy_facts(facts, str(uuid.uuid4()))
     context = whole_graph_scope(model)['context']
     for effect in effects:

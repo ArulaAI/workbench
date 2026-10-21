@@ -1,4 +1,4 @@
-"""Regression coverage for entry-point detection and UI-to-endpoint linking."""
+"""Regression tests for entry-point detection and UI-to-endpoint linking."""
 import pytest
 
 from lib.context.business_domain_adapters.base import http_route_key
@@ -43,7 +43,7 @@ public class OwnerController {
 '''
 
 
-# ── Spring ─────────────────────────────────────────────────────────────────
+# Spring
 
 @pytest.mark.parametrize('text, expected', [
     ('@GetMapping("/owners")', ['/owners']),
@@ -144,7 +144,7 @@ public class VetController implements Routes {
 
     def excerpts(anchor):
         return {facts['evidence'][eid]['excerpt'] for eid in anchor['evidence_ids']}
-    # The constant declarations a route is computed from are its evidence.
+    # The constants used to build the route are its evidence.
     assert {'public static final String API = "/api";',
             'public static final String OWNERS = API + "/owners";',
             'String ID = "{id}";'} <= excerpts(anchors[('GET', '/api/owners/{id}')])
@@ -212,7 +212,7 @@ public interface OwnerClient {
     assert endpoints[0]['resolution'] == 'resolved'
 
 
-# ── Python ─────────────────────────────────────────────────────────────────
+# Python
 
 @pytest.mark.parametrize('decorator, expected', [
     ("@app.route('/orders')", 'GET'),
@@ -326,7 +326,7 @@ app.include_router(router)
     assert 'not a literal string' in anchor['reason']
 
 
-# ── Frontend calls ─────────────────────────────────────────────────────────
+# Frontend calls
 
 @pytest.mark.parametrize('request_text, expected', [
     ("{method: 'POST'}", 'POST'),
@@ -420,7 +420,7 @@ export default () => <button onClick={() => create()}>Create owner</button>;
     assert calls[0]['resolution'] == 'resolved'
 
 
-# ── SQL ────────────────────────────────────────────────────────────────────
+# SQL
 
 def test_editionable_oracle_package_is_detected_and_canonicalized(tmp_path):
     facts, _ = _extract(tmp_path, {'pay.sql': '''CREATE OR REPLACE EDITIONABLE PACKAGE pay AS

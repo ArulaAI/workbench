@@ -1,9 +1,4 @@
-"""Install a fixture source adapter through the extractor's routing seams.
-
-Extraction classifies, routes, selects and loads every owner exactly once, so a
-test adapter enters at those seams: its paths classify to the fixture language,
-selection finds its descriptor and loading returns the fixture module.
-"""
+"""Install a fixture source adapter by patching the extractor's routing hooks."""
 from lib.context import business_domain_extract as core
 from lib.context.language_registry import PathClassification
 
@@ -13,8 +8,7 @@ FIXTURE_SUFFIXES = ('.opaque', '.fixture')
 def install_fixture_adapter(monkeypatch, adapter, legacy, suffixes=FIXTURE_SUFFIXES):
     """Route fixture-suffixed paths to *adapter*.
 
-    *legacy* is the former ``descriptor()`` record: its ``language`` names the
-    classified language and its optional ``capability`` holds the installed
+    *legacy* has a ``language`` key and an optional ``capability`` dict of
     descriptor fields.
     """
     language = legacy['language']

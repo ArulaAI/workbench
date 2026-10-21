@@ -1,4 +1,4 @@
-"""Safe Maven generated-source metadata adapter; never executes Maven."""
+"""Read generated-source metadata from Maven POMs without running Maven."""
 from __future__ import annotations
 
 import posixpath
@@ -20,12 +20,9 @@ def _text(element, name):
 
 
 def _annotation_processors(root, text):
-    """The annotation processors the build runs, each with the span declaring it.
+    """Return declared annotation processors with the span declaring each.
 
-    A processor runs when it is on the compiler's processor path
-    (``annotationProcessorPaths``) or is an ordinary ``*-processor`` dependency
-    on the compile classpath. Only declared coordinates are reported; the build
-    is never executed, so a processor's generated output is never seen.
+    Covers ``annotationProcessorPaths`` and ``*-processor`` compile dependencies.
     """
     declared = [(path, "path") for paths in root.findall(".//{*}annotationProcessorPaths")
                 for path in paths.findall("{*}path")]
@@ -42,9 +39,7 @@ def _annotation_processors(root, text):
 
 def extract(source):
     root = ET.fromstring(source.text)
-    # The project's own coordinates name the namespace its code is published
-    # under. The <parent> groupId belongs to whatever the project inherits from
-    # (spring-boot-starter-parent, say), so it never counts as the project's.
+    # Use the project's own groupId; the <parent> one belongs to e.g. spring-boot-starter-parent.
     group_id = _text(root, "groupId")
     source.build_namespaces = [group_id] if group_id.count(".") >= 1 else []
     source.annotation_processors = _annotation_processors(root, source.text)
@@ -71,9 +66,8 @@ def extract(source):
                 "interface_only": interface_only,
                 "model_name_prefix": _text(configuration, "modelNamePrefix"),
                 "model_name_suffix": _text(configuration, "modelNameSuffix"),
-                # What decides the model classes the generator writes. Any
-                # mapping element can rename or replace a type, so its mere
-                # presence withholds model synthesis.
+                # These control which models get generated. Any mapping element
+                # can rename or replace a type, so its presence disables model synthesis.
                 "generate_models": _text(configuration, "generateModels"),
                 "models_to_generate": _text(configuration, "modelsToGenerate"),
                 "type_overrides": any(_local(configuration, name) is not None for name in _TYPE_OVERRIDES)
@@ -98,7 +92,7 @@ _TYPE_OVERRIDES = ("typeMappings", "importMappings", "schemaMappings", "instanti
 
 
 def _spec_path(build_source, input_spec):
-    """The repository path of a generator's input spec, or None if not literal."""
+    """Return the repo path of a generator's input spec, or None if not literal."""
     directory = posixpath.dirname(build_source.path) or "."
     path, substituted = re.subn(r"\$\{(?:project\.)?basedir\}", directory, input_spec or "")
     if not path or "${" in path or posixpath.isabs(path):
@@ -122,7 +116,7 @@ def _scalar(node, name):
 
 
 def _schema_nodes(spec):
-    """``{name: (key node, value node)}`` for each ``components.schemas`` entry."""
+    """Return ``{name: (key node, value node)}`` for each ``components.schemas`` entry."""
     import yaml
     from yaml.nodes import MappingNode, ScalarNode
     try:
@@ -142,12 +136,11 @@ def _span(spec, key, value):
 
 
 def _schema_spans(spec):
-    """Each ``components.schemas`` entry of an OpenAPI document with its span."""
+    """Return each ``components.schemas`` entry with its span."""
     return {name: _span(spec, key, value) for name, (key, value) in _schema_nodes(spec).items()}
 
 
-# openapi-generator escapes these as property names, so their accessors are
-# not the plain bean names; such properties get no accessor here.
+# openapi-generator escapes these property names, so we skip their accessors.
 _JAVA_RESERVED = frozenset("""abstract assert boolean break byte case catch char class const
 continue default do double else enum extends final finally float for goto if implements import
 instanceof int interface long native new package private protected public return short static
@@ -157,8 +150,7 @@ _IDENTIFIER = re.compile(r"[a-z][A-Za-z0-9]*\Z")
 _SCHEMA_NAME = re.compile(r"[A-Za-z][A-Za-z0-9]*\Z")
 _AFFIX = re.compile(r"[A-Za-z0-9]*\Z")
 _LOCAL_REF = re.compile(r"#/components/schemas/([A-Za-z][A-Za-z0-9]*)\Z")
-# The Java type openapi-generator's Java generators emit for a scalar schema,
-# keyed by (type, format), under the default java8 date library.
+# Java type per scalar (type, format), using the default java8 date library.
 _SCALARS = {
     ("string", None): "String", ("string", "email"): "String", ("string", "password"): "String",
     ("string", "date"): "java.time.LocalDate", ("string", "date-time"): "java.time.OffsetDateTime",
@@ -175,11 +167,9 @@ def _capitalized(text):
 
 
 def _is_model(node):
-    """True when openapi-generator writes a model class for a component schema.
+    """Return True if openapi-generator writes a model class for the schema.
 
-    An object schema (properties or ``allOf``) and a named enum become classes;
-    a scalar or array alias does not, and a ``oneOf``/``anyOf`` schema becomes a
-    generator-specific composed type this adapter does not model.
+    Objects and enums do; scalar/array aliases and oneOf/anyOf schemas do not.
     """
     if _member(node, "oneOf") is not None or _member(node, "anyOf") is not None:
         return False
@@ -187,13 +177,10 @@ def _is_model(node):
 
 
 def _openapi_models(spec, config):
-    """The model classes openapi-generator writes for one generator configuration.
+    """Return the model classes openapi-generator writes for one configuration.
 
-    One class per object or enum entry of ``components.schemas``, named
-    ``modelPackage.<prefix><Schema><suffix>``, with a bean getter and setter
-    per property, ``allOf`` parts included. A property whose Java type is not
-    established keeps its accessors with an unknown type; anything whose name
-    the generator would rewrite is omitted rather than guessed.
+    Names are ``modelPackage.<prefix><Schema><suffix>``. Names the generator
+    would rewrite are skipped.
     """
     from yaml.nodes import MappingNode, SequenceNode
     package = config.get("model_package")
@@ -217,7 +204,7 @@ def _openapi_models(spec, config):
     nullable = (config.get("openapi_nullable") or "true").casefold() != "false"
 
     def target(node):
-        """The component schema a local ``$ref`` names, or None."""
+        """Return the schema a local ``$ref`` points to, or None."""
         ref = _scalar(node, "$ref")
         match = _LOCAL_REF.match(ref or "")
         return match.group(1) if match and match.group(1) in schemas else None
@@ -229,8 +216,7 @@ def _openapi_models(spec, config):
                 return None
             if name in names:
                 return f"{package}.{names[name]}"
-            # An alias schema is inlined; a model the generator writes under a
-            # name not established here leaves the type unknown.
+            # Aliases are inlined; a model with an unknown name has an unknown type.
             referenced = schemas[name][1]
             return None if _is_model(referenced) else java_type(referenced, (*seen, name))
         if any(_member(node, key) is not None for key in ("allOf", "oneOf", "anyOf", "enum", "not")):
@@ -248,7 +234,7 @@ def _openapi_models(spec, config):
         return _SCALARS.get((kind, form))
 
     def properties(node, seen):
-        """``[(name, schema node, key node, declaring node)]``, or None if not composable."""
+        """Return ``[(name, schema node, key node, declaring node)]``, or None if not composable."""
         if any(_member(node, key) is not None for key in ("oneOf", "anyOf", "discriminator")):
             return None
         if _member(node, "$ref") is not None:
@@ -303,12 +289,10 @@ def _openapi_models(spec, config):
 def prepare(sources, units, diagnostics=None):
     java_sources = {id(unit.source): unit.source for unit in units
                     if unit.source.language == "java"}.values()
-    # Handed to every Java source whether or not a generator is configured: the
-    # Java adapter reads it to tell a missing project type from a dependency.
+    # The Java adapter uses these to tell a missing project type from a dependency.
     namespaces = sorted({namespace for source in sources
                          for namespace in getattr(source, "build_namespaces", [])})
-    # Each processor with the build file and span that declare it, so a Java
-    # declaration a processor implements can cite the build evidence.
+    # Keep the declaring span so Java code can cite the build file as evidence.
     processors = [(source, *processor["span"], processor["group"], processor["artifact"])
                   for source in sources for processor in getattr(source, "annotation_processors", [])]
     for source in java_sources:
@@ -322,12 +306,10 @@ def prepare(sources, units, diagnostics=None):
     build_unit = next((unit for unit in units if unit.source is build_source), None)
     start = build_unit.start if build_unit else 0
     end = build_unit.end if build_unit else len(build_source.text)
-    # Generated model types are never in the snapshot. What the generator was
-    # told, and the committed schema it reads, are the evidence that remains.
+    # Generated models are not in the snapshot; use the plugin config and schema as evidence.
     analyzed = {unit.source.path: unit.source for unit in units}
     known_models = {getattr(unit, "generated_model_name", None) for unit in units}
     for source in sources:
-        # The one <plugin> element that configures the generator.
         plugin = re.search(r"(?s)<plugin>(?:(?!<plugin>).)*?<artifactId>\s*"
                            r"openapi-generator-maven-plugin\s*</artifactId>.*?</plugin>",
                            source.text)
@@ -365,12 +347,9 @@ def prepare(sources, units, diagnostics=None):
 
 
 def _model_units(config, model):
-    """A generated model class and its bean accessors as units of the build file.
+    """Return units for a generated model class and its accessors.
 
-    The class is never in the snapshot, so each unit's own span is the plugin
-    that generates it, and its supporting evidence is the schema (for the
-    class) or the property (for an accessor) it is generated from. Accessors
-    are concrete: the generator writes a field read or write for each one.
+    Each unit's span is the generator plugin; evidence is the schema or property.
     """
     build_source, start, end = config["generator_evidence"]
     prefix = build_source.path + "::generated-model:" + model["qualified"]
@@ -412,7 +391,7 @@ def resources(unit): return []
 def observations(unit): return []
 def operations(unit): return []
 def relations(source):
-    """Each generated model class declares its accessors, citing the property."""
+    """Return relations from each generated model class to its accessors."""
     return [{"source": unit, "target": method, "candidate_targets": [method],
              "kind": "declares", "start": method.start, "end": method.end,
              "resolution": "resolved", "reason": None,

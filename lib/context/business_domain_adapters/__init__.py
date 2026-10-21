@@ -1,4 +1,4 @@
-"""Adapter registry. Discovery consumes contracts, not language names."""
+"""Adapter lookup and loading."""
 import importlib
 import json
 from pathlib import Path
@@ -18,9 +18,7 @@ def descriptor(
     category, language = registry.classify(Path(path).suffix.lower())
     if not language:
         return None
-    # Repository-relative location is admissible, deterministic dialect
-    # evidence (for example db/postgresql/*.sql). Keep it visibly separated
-    # from file contents so descriptors can opt into it explicitly.
+    # The path counts as dialect evidence (e.g. db/postgresql/*.sql).
     detection_text = (source_text or '') + '\nSPEED_PATH:' + path
     candidates = registry.source_adapters(
         language, detection_text, evidence=evidence, kind='adapter')
@@ -35,7 +33,7 @@ def enricher_descriptors(
     path: str | Source,
     evidence: dict[str, list[str] | tuple[str, ...] | str],
 ) -> list[dict]:
-    """Select installed framework enrichers solely from declared evidence."""
+    """Return enricher descriptors matching the given evidence."""
     if isinstance(path, Source):
         source_text, path = path.text, path.path
     else:
@@ -59,11 +57,9 @@ def load_installed(module_name: str):
 
 
 def descriptor_for_route(source: Source, route) -> list[dict]:
-    """Candidate installed owners for one routed source; selection is the caller's.
+    """Return candidate adapter descriptors for a routed source.
 
-    An explicit route names its owner. Otherwise the language candidates are
-    matched against installed adapters, excluding any adapter that requires an
-    explicit pre-decode route, so fallback matching never reaches a decoder.
+    Without an explicit owner, decoder adapters are skipped.
     """
     if route.disposition in {'ignore', 'reference_only'}:
         return []
@@ -86,7 +82,7 @@ def descriptor_for_route(source: Source, route) -> list[dict]:
 
 
 def enrichers_for(path: str | Source, evidence: dict) -> list:
-    """Load only evidence-selected enrichers from the installed package."""
+    """Load the enrichers selected by the given evidence."""
     return [load_installed(item['module']) for item in enricher_descriptors(path, evidence)
             if item.get('module')]
 

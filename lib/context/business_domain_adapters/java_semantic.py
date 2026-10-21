@@ -1,10 +1,7 @@
-"""Trusted Java semantic adapter.
+"""Java semantic adapter built on the tree-sitter Java grammar.
 
-The adapter parses contained source snapshots with the installed tree-sitter
-Java grammar.  It never invokes Maven, Gradle, annotation processors, or code
-from the repository being inspected.  Resolution is deliberately closed-world:
-only declarations present in the supplied snapshots are resolved; imported
-declarations that are absent remain explicit capability boundaries.
+Never runs build tools or repository code. Only declarations in the supplied
+snapshots are resolved; missing imports stay as capability boundaries.
 """
 from __future__ import annotations
 
@@ -27,17 +24,13 @@ from ..business_domain_schema import identifier
 _PARSER = Parser(Language(tree_sitter_java.language()))
 _TYPE_NODES = {"class_declaration", "interface_declaration", "enum_declaration", "record_declaration"}
 _METHOD_NODES = {"method_declaration", "constructor_declaration"}
-# The type nodes a heritage clause names directly. A generic argument is nested
-# inside one of these and is never a parent of its own.
+# Type nodes a heritage clause names directly (generic arguments are nested inside).
 _HERITAGE_TYPE_NODES = {"type_identifier", "scoped_type_identifier", "generic_type"}
-# Types that can carry a method body a call is dispatched to. An abstract class
-# is a class_declaration: it may hold the concrete body its subclasses inherit.
+# Abstract classes are class_declarations too and can hold inherited bodies.
 _CONCRETE_TYPE_KINDS = {"class_declaration", "enum_declaration", "record_declaration"}
-# Declarations with no body of their own. A call that lands on one has not yet
-# reached the code that runs, so it is joined to the methods that answer for it.
+# Bodyless declarations; calls to them are linked to the implementing methods.
 _DISPATCH_ROLES = {"interface", "abstract_declaration"}
-# Heritage hops walked between a declaring type and an implementing one. Bounds
-# the walk, so a malformed cycle cannot spin; Java hierarchies are far shallower.
+# Max heritage hops; guards against cycles in malformed code.
 _MAX_HERITAGE_DEPTH = 8
 
 
@@ -231,11 +224,9 @@ def _parameters(source, node):
 
 
 def _heritage_nodes(clause):
-    """Each type node one heritage clause names, read at the clause's top level.
+    """Return the top-level type nodes of a heritage clause.
 
-    ``extends Repository<Owner, Integer>`` names one parent. A walk of every
-    type node under the clause would also yield ``Owner`` and ``Integer`` from
-    the argument list, and they are not supertypes.
+    Type arguments are skipped: ``extends Repository<Owner, Integer>`` has one parent.
     """
     if clause is None:
         return []
@@ -244,39 +235,32 @@ def _heritage_nodes(clause):
 
 
 def _annotation_type(source, annotation):
-    """The qualified name an annotation refers to: written in full, or bound by an import.
-
-    A bare name under a wildcard import is not proven to be any one type, so it
-    yields None.
-    """
+    """Return an annotation's qualified name from its text or imports, else None."""
     written = annotation["text"].lstrip("@").split("(", 1)[0].strip()
     if "." in written:
         return written
     return source.semantic["imports"].get(written)
 
 
-# The annotation and processor that make MapStruct write a mapper's implementation
-# at build time. Both must be evidenced: the annotation alone does not run.
+# MapStruct generates mapper implementations only when both are present.
 _MAPSTRUCT_MAPPER = "org.mapstruct.Mapper"
 _MAPSTRUCT_PROCESSOR = ("org.mapstruct", "mapstruct-processor")
 
 
 def _keyword_modifiers(node):
-    """The modifier keywords on a declaration, e.g. ``{"public", "static"}``."""
+    """Return a declaration's modifier keywords, e.g. ``{"public", "static"}``."""
     modifiers = next(_children(node, {"modifiers"}), None)
     return {child.type for child in modifiers.children if not child.is_named} if modifiers else set()
 
 
-# A bare name in a written type that could be a type variable: never one
-# qualified by a package or an enclosing type.
+# Unqualified names only; a qualified name is never a type variable.
 _TYPE_VARIABLE_NAME = re.compile(r"(?<![\w.$])[A-Za-z_$][\w$]*")
 
 
 def _type_parameters(source, node):
-    """``{name: bound}`` for the type parameters a declaration introduces.
+    """Return ``{name: bound}`` for a declaration's type parameters.
 
-    The bound is the leftmost one written, which is what the parameter erases
-    to; an unbounded parameter erases to ``Object``.
+    Uses the leftmost bound (the erasure); unbounded parameters map to ``Object``.
     """
     clause = node.child_by_field_name("type_parameters") if node is not None else None
     result = {}
@@ -290,7 +274,7 @@ def _type_parameters(source, node):
 
 
 def _without_type_arguments(text):
-    """A written type with every ``<...>`` argument list removed."""
+    """Strip every ``<...>`` argument list from a written type."""
     kept, depth = [], 0
     for char in text or "":
         if char == "<":
@@ -303,7 +287,7 @@ def _without_type_arguments(text):
 
 
 def _type_arguments(text):
-    """The top-level type arguments a written type supplies, or None when it is raw."""
+    """Return the top-level type arguments, or None for a raw type."""
     text = text or ""
     start = text.find("<")
     if start < 0:
@@ -326,18 +310,16 @@ def _type_arguments(text):
 
 
 def _substitute(text, mapping):
-    """Replace each type variable *mapping* names with the type it stands for."""
+    """Replace type variables using *mapping*."""
     if not mapping:
         return text
     return _TYPE_VARIABLE_NAME.sub(lambda match: mapping.get(match.group(0), match.group(0)), text)
 
 
 def _erased(text, variables, depth=0):
-    """``(simple name, array depth)`` of a written type under Java erasure.
+    """Return ``(simple name, array depth)`` of a written type after erasure.
 
-    Type arguments are dropped, so ``List<Owner>`` and ``List<Pet>`` both erase
-    to ``List``. A type variable in *variables* erases to its bound; any other
-    name stands for itself, so an unknown variable never matches a concrete type.
+    Type variables in *variables* erase to their bound.
     """
     base = _without_type_arguments(text).replace(" ", "")
     dimensions = base.count("[]")
@@ -409,9 +391,7 @@ def _parse(source, units):
         owner_name = _text(source, owner_node.child_by_field_name("name")) if owner_node else None
         fqname = ".".join(filter(None, [package, owner_name, name]))
         if node.type == "interface_declaration":
-            # An interface names its parents in an ``extends_interfaces`` child,
-            # not in the ``interfaces`` field a class uses, so without this a
-            # class implementing a sub-interface never reaches the base's methods.
+            # Interfaces list parents under extends_interfaces, not the interfaces field.
             base_nodes = _heritage_nodes(next(_children(node, {"extends_interfaces"}), None))
             interface_nodes = []
         else:
@@ -522,19 +502,15 @@ def _parse(source, units):
     return info
 
 
-# A name a method declares with two different types: which one a use means
-# depends on block scope this flat table does not keep, so it is unknown.
+# Used when a local name is declared with conflicting types; block scope isn't tracked.
 _UNKNOWN_LOCAL_TYPE = "<unknown local type>"
 
 
 def _local_declarations(source, node):
-    """Each local name a method body declares with its written type.
+    """Map each local name in a method body to its written type.
 
-    Locals, enhanced-for variables, try-with-resources variables and
-    single-type catch parameters all declare a typed name. A name declared
-    with different types in separate blocks is recorded as unknown rather
-    than taking whichever declaration came last; a multi-catch parameter
-    (``A | B``) has no single type and is recorded as unknown too.
+    Covers locals, enhanced-for, try-with-resources and catch parameters. Names with
+    conflicting types and multi-catch parameters map to _UNKNOWN_LOCAL_TYPE.
     """
     found = {}
 
@@ -577,8 +553,7 @@ def _resolve_type(source, raw, types_by_fq, types_by_short):
         target = source.semantic["imports"][simple]
         candidates = [types_by_fq[target]] if target in types_by_fq else []
         if not candidates:
-            # Absent from the snapshot: a project type that should be here is a
-            # gap, anything else is a dependency the snapshot never contains.
+            # Missing project types are unresolved; anything else is an external dependency.
             local = any(target.startswith(namespace + ".")
                         for namespace in source.semantic.get("local_namespaces", ()))
             return ("unresolved" if local else "external"), []
@@ -601,13 +576,12 @@ def _resolve_type(source, raw, types_by_fq, types_by_short):
     return "unresolved", []
 
 
-# A simple type name as Java code conventionally writes one. A receiver that
-# is an expression, an untyped local (a lambda parameter) or an ALL_CAPS
-# constant is not a type, so no import can make it one.
+# Conventional Java type name: capitalized, with at least one lowercase letter
+# (excludes ALL_CAPS constants).
 _TYPE_NAME = re.compile(r"[A-Z](?=[A-Za-z0-9_]*[a-z])[A-Za-z0-9_]*")
 
 
-# Receivers whose static type comes from the expression, not from a name.
+# Receivers typed by their expression rather than by a name.
 _EXPRESSION_RECEIVERS = frozenset({"method_invocation", "object_creation_expression",
                                    "parenthesized_expression", "cast_expression",
                                    "string_literal"})
@@ -623,23 +597,20 @@ def _library_signatures():
 
 
 def _library_return(qualified, name, count):
-    """The catalogued return type of a library method, or None when not catalogued."""
+    """Return the catalogued return type of a library method, or None."""
     methods = _library_signatures().get(re.sub(r"<.*>", "", qualified), {})
     return methods.get(f"{name}/{count}") or methods.get(f"{name}/*")
 
 
 def _java_lang():
-    """The simple names Java's implicit ``java.lang.*`` import puts in scope."""
+    """Return the simple names implicitly imported from ``java.lang``."""
     return registry.ambient_globals("java")
 
 
 def _external_wildcards(source, simple, types_by_short):
-    """The non-local on-demand imports a simple type name can only come from.
+    """Return the external wildcard imports a simple type name must come from.
 
-    A name no analyzed type declares, written in a file whose every on-demand
-    import names a package outside the project, compiles only as a type of one
-    of those packages: a dependency the snapshot never contains. Any local
-    on-demand import, or any analyzed type of that name, keeps it unresolved.
+    Returns [] if any wildcard import is local or an analyzed type has that name.
     """
     wildcards = source.semantic["wildcards"]
     if not wildcards or types_by_short.get(simple):
@@ -653,7 +624,7 @@ def _external_wildcards(source, simple, types_by_short):
 
 
 def _external_provider(source, raw, types_by_short):
-    """``type:<qualified name>`` of an external receiver type, or None when unnamed."""
+    """Return ``type:<qualified name>`` for an external receiver type, or None."""
     name = re.sub(r"<.*>", "", raw or "").replace("[]", "").strip()
     simple = _simple(name)
     if "." in name and name[0].islower():
@@ -664,19 +635,16 @@ def _external_provider(source, raw, types_by_short):
         return f"type:java.lang.{simple}"
     wildcards = (_external_wildcards(source, simple, types_by_short)
                  if _TYPE_NAME.fullmatch(name) else [])
-    # Several on-demand packages are each a candidate provider; the catalog
-    # decides whether every one of them is a known library.
+    # With several wildcard packages, the catalog decides whether all are known libraries.
     return ("type:" + "|".join(f"{package}.{simple}" for package in wildcards)
             if wildcards else None)
 
 
 def _generated_model(source, raw):
-    """``(config, qualified name or None)`` when a configured generator writes *raw*.
+    """Return ``(config, qualified name)`` if *raw* is a generated model type, else None.
 
-    A generated model type is never in the snapshot. It is recognised only when
-    the source demonstrably names it from the generator's model package: an
-    explicit import from that package, or a wildcard import of exactly one such
-    package when the name carries the configured model-name affixes.
+    Requires an explicit import from the model package, or a single matching
+    wildcard import plus the configured name prefix/suffix.
     """
     name = re.sub(r"<.*>", "", raw or "").replace("[]", "").strip()
     simple = _simple(name)
@@ -700,7 +668,7 @@ def _generated_model(source, raw):
 
 
 def _generated_model_relation(kind, raw, generated):
-    """Reason and evidence for a relation to a generated model type."""
+    """Return the reason and evidence for a relation to a generated model type."""
     config, qualified = generated
     simple = qualified.rsplit(".", 1)[-1]
     prefix = config.get("model_name_prefix") or ""
@@ -719,12 +687,7 @@ def _generated_model_relation(kind, raw, generated):
 
 
 def _generated_model_type(unit):
-    """The type entry of a model class a build-time generator writes.
-
-    The build adapter supplies the class and its bean accessors as units of the
-    build file; the entry lets a typed receiver reach those accessors and an
-    argument of the class match a parameter exactly.
-    """
+    """Build a type entry for a generated model class and its accessors."""
     entry = {"node": None, "unit": unit, "name": unit.name, "fqname": unit.generated_model_name,
              "kind": "class_declaration", "bases": [], "interfaces": [], "type_parameters": [],
              "annotations": [], "fields": {}, "field_units": [], "methods": []}
@@ -738,9 +701,9 @@ def _generated_model_type(unit):
 
 
 def _qualified_type(source, raw, types_by_fq, types_by_short):
-    """The fully qualified name *raw* denotes in *source*, or None if unknown."""
+    """Return the fully qualified name of *raw* in *source*, or None."""
     if not hasattr(source, "semantic"):
-        # A generated declaration writes its project types fully qualified.
+        # Generated declarations use fully qualified project types.
         name = re.sub(r"<.*>", "", raw or "").replace("[]", "").strip()
         return name if name in types_by_fq else None
     state, matches = _resolve_type(source, raw, types_by_fq, types_by_short)
@@ -755,14 +718,7 @@ def _qualified_type(source, raw, types_by_fq, types_by_short):
 
 def _same_type(argument_source, argument, parameter_source, parameter,
                types_by_fq, types_by_short):
-    """True when an argument's static type is exactly the parameter's type.
-
-    Java selects the most specific applicable method, and a method whose
-    parameter types are exactly the arguments' static types is always it: any
-    other applicable method takes supertypes. Both types must resolve to the
-    same fully qualified name, so equal simple names from different packages
-    never match.
-    """
+    """Return True if both types resolve to the same fully qualified name."""
     if (argument or "").count("[]") != (parameter or "").count("[]"):
         return False
     left = _qualified_type(argument_source, argument, types_by_fq, types_by_short)
@@ -770,13 +726,7 @@ def _same_type(argument_source, argument, parameter_source, parameter,
     return left is not None and left == right
 
 
-# The Java language definition, not a heuristic. Eight primitives, their
-# java.lang boxes, String and void; boxing in both directions and the widening
-# order from JLS 5.1.2. Closed by the specification, so it cannot drift. The
-# tree-sitter grammar already recognises the primitive halves as integral_type,
-# floating_point_type, boolean_type and void_type, used for node selection at
-# lines 93-94, 186-187 and 220-221; the boxes are ordinary type_identifier
-# nodes and only their names distinguish them.
+# Primitives, their boxes, String and void. Widening order per JLS 5.1.2.
 BOXED_PRIMITIVES = {
     "Integer": "int", "Long": "long", "Double": "double", "Float": "float",
     "Short": "short", "Byte": "byte", "Boolean": "boolean", "Character": "char",
@@ -792,16 +742,11 @@ def _unboxed(name):
 
 
 def _assignable(argument, parameter):
-    """True when provably compatible, False when provably not, None when unknown.
+    """Return True/False for scalar type compatibility, None if it can't be judged.
 
-    Only the scalar types above are judged, and boxing is transparent in both
-    directions. Reference types need a type hierarchy this adapter does not
-    build, so they return None rather than a false negative that would veto an
-    otherwise unambiguous call.
+    Reference types always return None so they never veto a call.
     """
-    # `_simple` erases array depth, so compare it before normalising. Without
-    # this, int[] and int look identical and an overload pair such as
-    # f(int) / f(int[]) both match.
+    # _simple drops array depth, so check it first (f(int) vs f(int[])).
     if (argument or "").count("[]") != (parameter or "").count("[]"):
         return False
     left, right = _simple(argument), _simple(parameter)
@@ -822,16 +767,10 @@ def _assignable(argument, parameter):
 
 
 def _local_namespaces(java_sources):
-    """The package namespaces whose types belong to this project.
+    """Return the package namespaces that belong to this project.
 
-    An imported type the snapshot does not declare is a missing project type
-    when it falls under one of these, and an external dependency otherwise.
-
-    The namespaces are each declared package root; that root's parent when the
-    parent keeps at least two segments, so a sibling package such as a generated
-    ``org.example.api`` beside ``org.example.controller`` stays the project's;
-    the build's own coordinates (Maven ``groupId``); and the packages a
-    configured code generator writes into.
+    Includes each root package, its parent when that has two or more segments,
+    build groupIds and generator output packages.
     """
     declared = {source.semantic["package"] for source in java_sources
                 if source.semantic.get("package")}
@@ -848,22 +787,11 @@ def _local_namespaces(java_sources):
 
 
 def _implementation_relations(java_sources, types_by_fq, types_by_short, diagnostics):
-    """Join each interface or abstract method to the concrete methods that run for it.
+    """Add selects_implementation relations from interface/abstract methods to concrete ones.
 
-    A call written against an interface or an abstract type resolves to a method
-    with no body. This pass emits a ``selects_implementation`` relation from that
-    declaration to every concrete method that answers for it, which ``_traces``
-    follows.
-
-    A method answers when a concrete type inheriting the declaring type has, or
-    inherits from its superclasses, a method with the same name and the same
-    erased parameter types after substituting the type arguments its heritage
-    supplies (``I<T>.save(T)`` under ``C implements I<Owner>`` is
-    ``save(Owner)``; under a raw ``implements I`` it is ``save(Object)``). A type
-    with no such method runs the interface ``default`` it inherits. Static and
-    private methods never answer, and test sources are ignored so a test double
-    cannot make a production call ambiguous. One answer is exact, several make
-    the relation ambiguous, and none emits nothing.
+    Matches by name and erased parameter types after type-argument substitution,
+    falling back to inherited default methods. Static, private and test-source
+    methods are skipped. Several matches make the relation ambiguous.
     """
     test_path = re.compile(CATALOG["test_path_pattern"])
     source_of = {id(entry): source for source in java_sources
@@ -900,13 +828,9 @@ def _implementation_relations(java_sources, types_by_fq, types_by_short, diagnos
         return found
 
     def parameterized(parent, arguments, context):
-        """*parent*'s type parameters as the inheriting type supplies them.
+        """Map *parent*'s type parameters to the arguments supplied by the subtype.
 
-        Each argument is rewritten in the terms of the type the walk started
-        from, so ``J<U> extends I<U>`` under ``C implements J<Owner>`` gives
-        I's parameter ``Owner``. A raw supertype, or arguments that do not line
-        up with the parameters, leaves every parameter at its bound: Java
-        compares a raw supertype's members by erasure.
+        Raw or mismatched arguments fall back to the declared bounds (erasure).
         """
         declared = list(parent.get("type_parameters", {}).items())
         if (arguments is None or len(arguments) != len(declared)
@@ -918,7 +842,7 @@ def _implementation_relations(java_sources, types_by_fq, types_by_short, diagnos
     supertype_cache = {}
 
     def supertypes(entry):
-        """Every supertype of *entry*, nearest first, with how *entry* parameterizes it."""
+        """Return (supertype, type-argument mapping) pairs for *entry*, nearest first."""
         cached = supertype_cache.get(id(entry))
         if cached is not None:
             return cached
@@ -937,11 +861,9 @@ def _implementation_relations(java_sources, types_by_fq, types_by_short, diagnos
         return found
 
     def signature(method, mapping, scope):
-        """The erased parameter list Java compares *method* by, seen from *scope*.
+        """Return the method name and erased parameter types as seen from *scope*.
 
-        *mapping* rewrites the type variables of the type that declares the
-        method into *scope*'s terms. The method's own type variables shadow
-        them and erase to their bounds, as do *scope*'s.
+        The method's own type variables shadow *mapping* and erase to their bounds.
         """
         own = method.get("type_parameters", {})
         visible = {name: value for name, value in mapping.items() if name not in own}
@@ -951,7 +873,7 @@ def _implementation_relations(java_sources, types_by_fq, types_by_short, diagnos
                                      for _, value in method["params"])
 
     def concrete_method(entry, wanted):
-        """The concrete method *entry* runs for *wanted*: its own, or its superclass chain's."""
+        """Return the concrete method *entry* runs for *wanted*, searching superclasses."""
         chain = [(entry, {})] + [(parent, mapping) for parent, mapping in supertypes(entry)
                                  if parent["kind"] in _CONCRETE_TYPE_KINDS]
         for owner, mapping in chain:
@@ -964,12 +886,7 @@ def _implementation_relations(java_sources, types_by_fq, types_by_short, diagnos
         return None
 
     def inherited_default(entry, wanted):
-        """The ``default`` body *entry* runs for *wanted* when no class declares one.
-
-        Java takes the most specific default among the interfaces a type
-        inherits; the nearest one in the heritage walk stands for it. The
-        declaration's own default body is a candidate like any other.
-        """
+        """Return the nearest inherited interface ``default`` method matching *wanted*."""
         for owner, mapping in supertypes(entry):
             if owner["kind"] != "interface_declaration":
                 continue
@@ -981,7 +898,7 @@ def _implementation_relations(java_sources, types_by_fq, types_by_short, diagnos
         return None
 
     def mapstruct_evidence(source, entry):
-        """The ``@Mapper`` declaration and processor that make MapStruct generate *entry*."""
+        """Return (annotation, processor) if MapStruct generates *entry*, else None."""
         annotation = next((item for item in entry["annotations"]
                            if _annotation_type(source, item) == _MAPSTRUCT_MAPPER), None)
         processor = next((item for item in getattr(source, "build_processors", ())
@@ -1005,8 +922,7 @@ def _implementation_relations(java_sources, types_by_fq, types_by_short, diagnos
                 if base.trace_role not in _DISPATCH_ROLES:
                     continue
                 if generated and not base.executable_body:
-                    # The implementation exists, but only in the build's output:
-                    # a resource outside the snapshot, never a fabricated symbol.
+                    # Implementation is only in build output; point at an external resource.
                     annotation, (build_source, start, end, group, artifact) = generated
                     source.semantic_relations.append({
                         "source": base, "target": None, "candidate_targets": [],
@@ -1027,14 +943,11 @@ def _implementation_relations(java_sources, types_by_fq, types_by_short, diagnos
                     if (descendant["kind"] not in _CONCRETE_TYPE_KINDS
                             or test_path.search(source_of[id(descendant)].path)):
                         continue
-                    # The declaration as the descendant sees it, with the type
-                    # arguments its heritage supplies substituted in.
+                    # Substitute the descendant's type arguments into the declaration.
                     mapping = next((mapping for parent, mapping in supertypes(descendant)
                                     if parent is entry), {})
                     wanted = signature(declaration, mapping, descendant)
-                    # A class's own or inherited concrete method wins; otherwise
-                    # the type runs the default body it inherits, which may be
-                    # the declaration itself.
+                    # Prefer a concrete method; fall back to an inherited default.
                     unit = (concrete_method(descendant, wanted)
                             or inherited_default(descendant, wanted))
                     if unit is not None:
@@ -1091,10 +1004,9 @@ def prepare(sources, units, diagnostics=None):
     reachable = {}
 
     def typed_state(context, written):
-        """``(state, owners, provider)`` of a type written in *context*.
+        """Return ``(state, owners, provider)`` for a written type.
 
-        A context of None means *written* is already fully qualified, as the
-        library signature catalog writes it.
+        A None *context* means *written* is already fully qualified (catalog types).
         """
         if context is not None:
             state, owners = _resolve_type(context, written, types_by_fq, types_by_short)
@@ -1109,12 +1021,10 @@ def prepare(sources, units, diagnostics=None):
         return "external", [], f"type:{name}"
 
     def expression_type(source, method, node, variables, depth=0):
-        """``(context, written type)`` of a receiver expression, or None when unknown.
+        """Return ``(context, written type)`` for a receiver expression, or None.
 
-        A call's type is the declared return type of the one project method
-        it reaches, or the catalogued return type of a library method; a
-        type parameter, an uncatalogued library method or several candidate
-        return types leave it unknown, so the chain stays unresolved.
+        Method calls use the declared or catalogued return type; generic,
+        uncatalogued or conflicting return types give None.
         """
         if node is None or depth > _MAX_CHAIN:
             return None
@@ -1155,7 +1065,7 @@ def prepare(sources, units, diagnostics=None):
                      if candidate["name"] == name and len(candidate["params"]) == count]
             returns = {(id(candidate["unit"].source), candidate["return_type"]) for candidate in found}
             if not found:
-                # A member every class inherits from java.lang.Object.
+                # Fall back to java.lang.Object members.
                 inherited = _library_return("java.lang.Object", name, count)
                 return (None, inherited) if inherited and inherited not in _PRIMITIVES else None
             if len(returns) != 1:
@@ -1170,8 +1080,7 @@ def prepare(sources, units, diagnostics=None):
             declaring = chosen["unit"].source
             if getattr(declaring, "semantic", None):
                 return declaring, written
-            # A generated declaration has no imports: only a qualified name or
-            # an implicitly imported java.lang type is known.
+            # Generated declarations have no imports; only qualified or java.lang names resolve.
             if "." in written:
                 return None, written
             simple = re.sub(r"<.*>", "", written)
@@ -1186,12 +1095,7 @@ def prepare(sources, units, diagnostics=None):
         return None
 
     def callable_methods(owner):
-        """The methods a call on *owner* can reach: its own, then its supertypes'.
-
-        Supertypes are walked nearest first through resolved heritage, so a
-        method a nearer type redeclares with the same erased parameters
-        overrides, and hides, the one it overrides.
-        """
+        """Return methods callable on *owner*, nearest first, with overridden ones hidden."""
         if id(owner) in reachable:
             return reachable[id(owner)]
         found, signatures = [], set()
@@ -1291,17 +1195,14 @@ def prepare(sources, units, diagnostics=None):
         for method in source.semantic["methods"]:
             for invocation in method["invocations"]:
                 receiver = invocation["receiver"]
-                # A receiver written `this.field` or `super.field` arrives as the
-                # whole expression, while `variables` is keyed by bare names. Strip
-                # the qualifier so field receivers resolve to their declared type.
+                # Strip this./super. so field receivers match keys in `variables`.
                 bare = receiver
                 if receiver and receiver.split(".")[0] in {"this", "super"}:
                     bare = receiver.split(".", 1)[1] if "." in receiver else None
                 owner_states = []
                 node = invocation.get("receiver_node")
                 if node is not None and node.type in _EXPRESSION_RECEIVERS:
-                    # A chained call: its receiver's type is the type of the
-                    # expression, read from declarations and the catalog.
+                    # Chained call: type the receiver expression.
                     typed = expression_type(source, method, node, invocation["variables"])
                     state, owners, provider = (typed_state(*typed) if typed
                                                else ("unresolved", [], None))
@@ -1322,13 +1223,10 @@ def prepare(sources, units, diagnostics=None):
                 if (state == "resolved" and not candidates and owners
                         and _library_return("java.lang.Object", invocation["name"],
                                             len(invocation["argument_types"]))):
-                    # Every class inherits java.lang.Object's members; a project
-                    # type that does not redeclare one runs the platform's.
+                    # Not redeclared, so it's an inherited java.lang.Object method.
                     state, owners = "external", []
                     invocation["provider"] = "type:java.lang.Object"
-                # Parameters that are exactly the arguments' static types make a
-                # method applicable without any conversion, and Java then
-                # always selects it; a conversion (boxing, widening) never does.
+                # An exact parameter match always wins Java overload resolution.
                 identical = [candidate for candidate in candidates if all(
                     (_simple(argument) in SCALAR_TYPES
                      and argument.count("[]") == parameter[1].count("[]")
@@ -1341,9 +1239,7 @@ def prepare(sources, units, diagnostics=None):
                              _assignable(argument, parameter[1]) is True
                              for argument, parameter in zip(invocation["argument_types"],
                                                             candidate["params"]))])
-                # A candidate is plausible when no argument is provably incompatible.
-                # `_assignable` returns None for pairs it cannot judge, which is the
-                # normal case for reference types, and None must not veto a match.
+                # Plausible = no argument is provably incompatible (None doesn't veto).
                 plausible = [candidate for candidate in candidates if not any(
                     _assignable(argument, parameter[1]) is False
                     for argument, parameter in zip(invocation["argument_types"], candidate["params"]))]
@@ -1370,10 +1266,9 @@ def prepare(sources, units, diagnostics=None):
                 if state in {"ambiguous", "external"}:
                     diagnostics.append({"code": call_code, "message": call_reason,
                         "subject_ids": [source.resource_id], "evidence_ids": []})
-    # After every source's relations are reset and rebuilt above: a declaration's
-    # relation lands in its own source, which may precede its implementer's.
+    # Must run after all sources are rebuilt; relations land in the declaring source.
     _implementation_relations(java_sources, types_by_fq, types_by_short, diagnostics)
-    # Used by candidate resolution without any global mutable adapter state.
+    # Stored per source for candidate resolution, avoiding module-level state.
     for source in java_sources:
         source.semantic_types_by_fq = types_by_fq
         source.semantic_types_by_short = types_by_short
@@ -1455,13 +1350,7 @@ def observations(unit):
 
 
 def operations(unit):
-    """Rule-declared operations plus the persistence operations a framework enricher found.
-
-    An enricher that understands a persistence API (Spring JDBC, JPA, Spring
-    Data) records, on the unit performing it, each statement's data access:
-    its span, read or write, target table and the conditions that select it.
-    Its normalized observation is built here, once the unit has its symbol.
-    """
+    """Return rule operations plus persistence operations recorded by framework enrichers."""
     result = rules.operations(unit)
     for item in getattr(unit, "persistence_operations", []):
         gaps = list(item["gaps"])

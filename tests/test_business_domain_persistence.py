@@ -1,9 +1,7 @@
-"""Repository operations reach the tables they read and write.
+"""Tests that repository operations are linked to the tables they read and write.
 
-A miniature of the PetClinic repository layer: one repository interface with
-JDBC, JPA and Spring Data implementations selected by @Profile, a Spring Data
-@Query redeclaration and repository fragment, a service and a controller, and
-a schema declaring the tables.
+The fixture is a small PetClinic-style repository layer: JDBC, JPA and Spring
+Data implementations selected by @Profile, plus a service, controller and schema.
 """
 import pytest
 
@@ -248,7 +246,7 @@ def _name(facts, symbol_id):
 
 
 def _data(facts, origin):
-    """``(kind, table, resolution)`` of every data edge from one method."""
+    """Return ``(kind, table, resolution)`` for each data edge from one method."""
     return sorted((edge['kind'], facts['resources'][edge['to_ref']['id']]['name'], edge['resolution'])
                   for edge in facts['edges'].values()
                   if edge['kind'] in ('reads_data', 'writes_data')
@@ -333,14 +331,12 @@ def test_declared_profile_adds_a_conditioned_selection_and_keeps_the_alternative
     assert 'spring.profiles.active=hsqldb,spring-data-jpa' in edge['condition']
     assert 'runtime profile override' in edge['condition']
     assert 'JdbcOwnerRepositoryImpl' in edge['condition'] and 'JpaOwnerRepositoryImpl' in edge['condition']
-    # Every implementation names its @Profile, so each stays a path under its
-    # own condition rather than one ambiguous choice.
+    # Each implementation has its own @Profile, so each is a separate conditional path.
     assert not [edge for edge in selections if edge['resolution'] == 'ambiguous']
     assert sorted(_name(facts, edge['to_ref']['id']).split('.')[0] for edge in selections) == [
         'JdbcOwnerRepositoryImpl', 'JpaOwnerRepositoryImpl', 'SpringDataOwnerRepositoryImpl']
     assert all(edge['condition'] for edge in selections)
-    # The Java adapter's earlier ambiguity report is withdrawn, including the
-    # one rewritten when the Spring Data fragment joined the candidates.
+    # The Java adapter's ambiguity report, including the rewritten one, is withdrawn.
     assert not [warning for warning in facts['warnings']
                 if warning['code'] == 'JAVA_IMPLEMENTATION_AMBIGUOUS'
                 and 'OwnerRepository.delete(' in warning['message']]
@@ -365,8 +361,7 @@ def test_traces_reach_tables_through_the_declared_profile(facts):
     names = {_name(facts, symbol_id).split('(')[0] for symbol_id in find['symbol_ids']}
     assert {'ClinicServiceImpl.findOwnerByLastName', 'OwnerRepository.findByLastName',
             'SpringDataOwnerRepository.findByLastName'} <= names
-    # Every profile alternative is followed; the choice is a config_selected
-    # boundary with its assumption, never a resolution.
+    # Profile alternatives are config_selected boundaries, not resolutions.
     assert 'JdbcOwnerRepositoryImpl.findByLastName' in names
     conditional = [facts['trace_obligations'][oid] for oid in find['obligation_ids']
                    if facts['trace_obligations'][oid]['reason_code'] == 'CONDITIONAL_IMPLEMENTATION']
@@ -383,7 +378,7 @@ def test_traces_reach_tables_through_the_declared_profile(facts):
 
 def test_without_a_declared_profile_selection_stays_unresolved(tmp_path):
     facts = _extract(tmp_path, profiles=None)
-    # Only @Profile conditions remain; no declared property selects anything.
+    # Only @Profile conditions remain; no property selects anything.
     assert not [edge for edge in facts['edges'].values()
                 if edge['kind'] == 'selects_implementation'
                 and 'spring.profiles.active' in (edge['condition'] or '')]
@@ -392,7 +387,7 @@ def test_without_a_declared_profile_selection_stays_unresolved(tmp_path):
     names = {_name(facts, symbol_id).split('(')[0] for symbol_id in find['symbol_ids']}
     assert 'ClinicServiceImpl.findOwnerByLastName' in names
     assert find['resolution'] != 'resolved'
-    # The source statements are still facts about their methods.
+    # Source statements are still recorded on their methods.
     assert _data(facts, 'JdbcOwnerRepositoryImpl.findByLastName') == [('reads_data', 'owners', 'resolved')]
 
 
@@ -411,8 +406,7 @@ def test_service_implementation_reach_is_unchanged_by_persistence(tmp_path):
 
 
 def test_unavailable_sql_parser_is_reported_and_extraction_continues(tmp_path, monkeypatch):
-    # The SQL language adapter loads its own parser on import; load it first so
-    # only the Spring enricher sees the failing loader.
+    # Import the SQL adapter first so only the Spring enricher sees the failing loader.
     from lib.context.business_domain_adapters import spring_semantic, sql  # noqa: F401
 
     def unavailable(identity):
@@ -427,7 +421,7 @@ def test_unavailable_sql_parser_is_reported_and_extraction_continues(tmp_path, m
     reports = [item for item in facts['warnings'] if item['code'] == 'SPRING_SQL_PARSER_UNAVAILABLE'
                and item['subject_ids'] == [jdbc]]
     assert len(reports) == 1 and 'sqlglot RuntimeError' in reports[0]['message']
-    # SQL text is left unparsed; writes that need no SQL parsing are still found.
+    # SQL text stays unparsed, but writes that don't need parsing are still found.
     assert _data(facts, 'JdbcOwnerRepositoryImpl.delete') == []
     assert _data(facts, 'JdbcOwnerRepositoryImpl.save') == [('writes_data', 'owners', 'unresolved')]
     assert ('reads_data', 'owners', 'resolved') in _data(facts, 'SpringDataOwnerRepository.findByLastName')

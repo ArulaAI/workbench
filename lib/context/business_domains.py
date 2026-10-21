@@ -1,4 +1,4 @@
-"""Canonical business-domain discovery build and read boundary."""
+"""Build, validate and load the business-domain model."""
 from __future__ import annotations
 import copy
 try:
@@ -102,7 +102,7 @@ def _artifact_schema(name):
 
 
 def load(root):
-    """Read stored output only; never inventory, interpret, reconcile or write."""
+    """Return the stored (model, status) without rebuilding anything."""
     locations = paths(root)
     model = read_json(locations['model'])
     if model:
@@ -175,7 +175,7 @@ def _allowed_evidence(payload, packet):
 
 
 def accept_activity(model, packet, payload):
-    """Validate before mutating the candidate model, including cached output."""
+    """Validate an activity payload and merge it into the model."""
     _allowed_evidence(payload,packet)
     candidate = copy.deepcopy(model)
     for collection in ('activities','rules','concepts','information_uses','claims'):
@@ -198,10 +198,7 @@ def accept_activity(model, packet, payload):
                 for tid in activity['trace_ids']):
             raise DomainError('INVALID_TRACE',
                 'Supported activity requires semantically complete implementation traces')
-        # These lists are deterministic projections of the accepted traces.
-        # Provider values are hints only; normalizing them locally prevents a
-        # semantically correct candidate from failing on mechanically derivable
-        # closure fields.
+        # Recompute these from the traces instead of trusting the provider's values.
         for field, ids in activity_closure(candidate, activity).items():
             candidate['activities'][activity['id']][field] = sorted(ids)
         for rid in activity['rule_ids']:
@@ -210,10 +207,7 @@ def accept_activity(model, packet, payload):
                 raise DomainError('INVALID_REFERENCE','Activity references a rule that was not supplied')
             if rule['enforcement_status'] == 'verified_on_trace' and any(
                     candidate['traces'][tid]['resolution'] != 'resolved' for tid in activity['trace_ids']):
-                # Trace resolution is authoritative and mechanically known.
-                # Downgrade an overconfident provider projection rather than
-                # spending a semantic repair request on this deterministic
-                # support ceiling.
+                # Downgrade here instead of spending a repair request on it.
                 candidate['rules'][rid]['enforcement_status'] = 'declared_only'
     for use in payload['information_uses'].values():
         if use['activity_id'] not in payload['activities']:
@@ -241,7 +235,7 @@ def accept_activity(model, packet, payload):
 
 
 def accept_activity_child(model, packet, payload):
-    """Validate a hierarchical leaf without granting references outside it."""
+    """Validate a hierarchical leaf, rejecting references outside its segment."""
     traces = set(packet['context']['traces'])
     effects = set(packet['context']['effects'])
     bindings = set(packet['context']['bindings'])
@@ -273,7 +267,7 @@ def accept_activity_child(model, packet, payload):
 
 
 def materialize_observed_rules(model):
-    """Promote every extracted constraint into a trace-linked declared rule."""
+    """Create a declared rule for each rule observation not already covered."""
     activity_symbols = {
         activity_id: {symbol_id for trace_id in activity['trace_ids']
                       for symbol_id in model['traces'][trace_id]['symbol_ids']}
@@ -379,13 +373,13 @@ def accept_grouping(model, packet, payload):
 
 
 def accept_candidate(model, graph, payload, *, verified=False):
-    """Validate one complete canonical candidate before changing its model."""
+    """Validate a full candidate and merge it into the model."""
     _allowed_evidence(payload, graph)
     candidate = copy.deepcopy(model)
     grouped_findings = {}
 
     def report(code, message, *subject_ids):
-        """Collect equal violations while retaining every affected subject."""
+        """Group findings by (code, message), collecting subject ids."""
         grouped_findings.setdefault((code, message), set()).update(
             subject_id for subject_id in subject_ids if subject_id)
 
@@ -408,9 +402,7 @@ def accept_candidate(model, graph, payload, *, verified=False):
     traces = dict(graph['context']['traces'])
     observations = set(graph['context']['rule_observations'])
     if graph['scope_kind'] == 'reconciliation':
-        # A reconciliation scope supplies validated child records with their
-        # traces and observations by identity; each child checked them
-        # against full content.
+        # Reconciliation scopes reference already-validated child records by id.
         for record_id, reference in graph['context']['record_refs'].items():
             if reference['collection'] == 'traces' and record_id in model['traces']:
                 traces[record_id] = model['traces'][record_id]
@@ -458,9 +450,8 @@ def accept_candidate(model, graph, payload, *, verified=False):
                     candidate, activity).items():
                 candidate['activities'][activity_id][field] = sorted(identifiers)
 
-    # An activity's inputs, outputs and effects derive from the traces it
-    # selects. Activities of one anchor that derive identical lists divide one
-    # behaviour that no repair of those lists can separate.
+    # Activities on the same anchor with identical inputs, outputs and effects
+    # can't be told apart, since those lists come from the traces.
     derived = {}
     for activity_id in payload['activities']:
         stored = candidate['activities'][activity_id]
@@ -645,12 +636,11 @@ def apply_verdicts(model, submitted, payload):
 
 
 def publication_status(model, external_freshness):
-    """Derive publication completeness from evidenced work and declared gaps."""
+    """Return 'complete' or 'partial' for the model."""
     complete = (
         model['coverage']['anchors_pending'] == 0
         and not model['limits']['truncated']
-        # Any reported entry-point gap (language without detection, likely
-        # missed marker, or zero entry points) keeps publication partial.
+        # Any entry-point gap keeps the result partial.
         and not model['coverage'].get('entrypoint_gaps')
         and external_freshness not in ('stale', 'unknown')
         and all(item['status'] == 'supported' for item in model['capabilities'])
@@ -671,7 +661,7 @@ def publication_status(model, external_freshness):
 
 def discover(root, config=None, provider=None, lock_held=False, *,
              recorder=None, run_id=None):
-    """Explicit refresh only. Failed attempts preserve the last valid model."""
+    """Run a full discovery build. A failed run keeps the last published model."""
     root = Path(root).resolve()
     if not root.is_dir():
         raise DomainError('INVALID_ROOT','Repository root does not exist')
@@ -735,9 +725,7 @@ def discover(root, config=None, provider=None, lock_held=False, *,
         account_artifact_bytes(facts)
         io_write('artifact.facts.write',locations['facts'],facts,config['max_artifact_bytes'])
         status['coverage'] = facts['coverage']; status['limits'] = facts['limits']
-        # Activities start from entry points with an established identity.
-        # Without one, synthesis can only return an empty model, so stop here
-        # rather than pay for model calls and publish nothing of use.
+        # No resolved entry points means synthesis would return nothing; skip the model calls.
         if not any(anchor['resolution'] == 'resolved'
                    for anchor in facts['anchors'].values()):
             raise DomainError('NO_ENTRY_POINTS', (
@@ -747,9 +735,7 @@ def discover(root, config=None, provider=None, lock_held=False, *,
                 '`speed discover domains --facts-only` to see entry-point coverage.'))
         synthesis = Synthesis(root,config,provider,status['limits'],cancelled,
                               heartbeat,recorder=recorder)
-        # Provider/model caps resolve after deterministic extraction. Persist
-        # the updated shared Limits object so facts, attempt status and any
-        # eventual model report the same effective request boundary.
+        # Synthesis updates the shared limits with provider caps; rewrite facts to match.
         io_write('artifact.facts.write',locations['facts'],facts,config['max_artifact_bytes'])
         model = copy_facts(facts,build_id)
         model['fingerprint'].update(prompts=prompt_fingerprint(),provider=synthesis.provider_hash)
@@ -780,9 +766,7 @@ def discover(root, config=None, provider=None, lock_held=False, *,
                 graph, lambda candidate: accept_scope(graph, candidate))
             root_unit = None
         else:
-            # The complete sequence does not fit one request: partition the
-            # semantic work and reconcile it to a root (tech spec,
-            # "Large-repository hierarchical mode").
+            # Too large for one request, so use hierarchical mode.
             from .business_domain_hierarchy import run as run_hierarchical
             pending_scope = [ROOT_SCOPE_ID]
             graph, payload, root_unit = run_hierarchical(
@@ -792,8 +776,7 @@ def discover(root, config=None, provider=None, lock_held=False, *,
             raise DomainError('CANCELLED', 'Discovery cancelled')
         accept_candidate(model, graph, payload, verified=True)
         if root_unit is not None:
-            # The root disposes of child scopes; each anchor no root activity
-            # holds keeps the disposition the unit beneath it gave.
+            # Anchors not used by the root keep the disposition from their child unit.
             model['unassigned'] = unassigned_anchors(root_unit)
         pending_scope = []
         status['current_scope_id'] = None
@@ -814,8 +797,7 @@ def discover(root, config=None, provider=None, lock_held=False, *,
         status['warnings'] = copy.deepcopy(model['warnings'])
         status['phase'] = 'validating'
         heartbeat()
-        # Verify the input inventory again before publishing. A dirty/untracked
-        # edit matters even when Git HEAD did not change.
+        # Rescan sources; uncommitted edits count even if HEAD hasn't moved.
         if cancelled():
             raise DomainError('CANCELLED','Discovery cancelled before publication')
         current_scan = scan_inventory(root, config)
@@ -847,9 +829,7 @@ def discover(root, config=None, provider=None, lock_held=False, *,
         if time.monotonic() >= synthesis.deadline:
             raise DomainError('BUILD_TIMEOUT', 'Discovery deadline exceeded before publication')
         account_artifact_bytes(model)
-        # A baseline is a validated publication companion, not an attempt
-        # scratch file.  Do not persist the candidate before every semantic,
-        # override, evidence and deadline gate has passed.
+        # Only write the baseline once every check above has passed.
         if recorder:
             recorder.progress('domain.publish','Publishing verified domain model')
             publication = recorder.boundary('domain.publish',model)
@@ -880,8 +860,7 @@ def discover(root, config=None, provider=None, lock_held=False, *,
             else:
                 cleanup(root,config)
         except (DomainError,OSError):
-            # Publication is complete. Disposable storage maintenance cannot
-            # invalidate the newly validated result or remove review history.
+            # Already published; a cleanup failure is only a warning.
             status['warnings'] = list(status['warnings'])+[record('Diagnostic',
                 code='CLEANUP_FAILED',message='Published discovery is available; disposable artifact cleanup could not finish.')]
     except (DomainError,KeyboardInterrupt) as exc:
@@ -892,8 +871,7 @@ def discover(root, config=None, provider=None, lock_held=False, *,
             status['warnings'].append(record('Diagnostic', code=exc.code,
                 message=str(exc), subject_ids=([exc.field] if exc.field else pending_scope)))
         elif exc.code in TERMINAL_PROVIDER_CODES:
-            # Keep the exact undispatched/incomplete semantic scope visible;
-            # provider causality remains on the terminal error itself.
+            # Record which scope was left incomplete; the cause is on the error.
             status['warnings'].append(record('Diagnostic', code=exc.code,
                 message=str(exc), subject_ids=pending_scope))
         status['phase'] = {'CANCELLED':'cancelled','SUPERSEDED':'superseded',

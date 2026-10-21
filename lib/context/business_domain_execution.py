@@ -1,4 +1,4 @@
-"""Bounded concurrent interpretation with deterministic result consumption."""
+"""Run work on a thread pool and yield results in input order."""
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager

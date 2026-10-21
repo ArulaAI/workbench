@@ -1,12 +1,7 @@
-"""Actions in composed components are anchored per route and labelled from literals.
+"""Tests for per-route action anchors and literal action labels.
 
-A component composed by several routed pages shows its action once per route,
-so each route gets its own action anchor. The visible label comes only from
-string literals: a literal child, a conditional over literals, or a ``const``
-assigned only literals. A choice between literals is made per route when the
-page on that route passes a literal value for the flag the choice tests;
-otherwise every candidate stays recorded as ambiguous. A label with a runtime
-part leaves the action explicitly unlabeled.
+A shared component gets one action anchor per route. Conditional labels are
+resolved per route from literal flags, otherwise recorded as ambiguous.
 """
 import pytest
 
@@ -348,9 +343,8 @@ def test_a_directly_routed_literal_action_is_unchanged(facts):
     assert len(registration['evidence_ids']) == 1
 
 
-# A page flag passed through component state reaches the editor only along
-# Promise.resolve(literal) -> Promise.all(...).then(results => ({...})) ->
-# .then(model => this.setState(model)) -> <Editor {...this.state} />.
+# Flag passed via state: Promise.resolve(literal) -> Promise.all(...).then(...)
+# -> .then(model => this.setState(model)) -> <Editor {...this.state} />.
 MODEL_ROUTES = """import * as React from 'react';
 import { Route } from 'react-router';
 import NewModelPage from './NewModelPage';
@@ -416,8 +410,7 @@ export default (ownerId: string, petLoaderPromise: Promise<any>): Promise<any> =
 };
 """
 
-# Its last return has the Promise.all shape, but an earlier one resolves to
-# another object: no single model.
+# An earlier return resolves to a different object, so there is no single model.
 UNKNOWN_MODEL = """export default (ownerId: string, petLoaderPromise: Promise<any>): Promise<any> => {
   if (!ownerId) {
     return Promise.resolve({ pet: { isNew: false } });

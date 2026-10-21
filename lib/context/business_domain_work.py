@@ -1,4 +1,4 @@
-"""Deterministic hierarchical work scopes for business-domain activity synthesis."""
+"""Work scopes (slices and reconciliations) for business-domain activity synthesis."""
 from __future__ import annotations
 
 import copy
@@ -21,12 +21,10 @@ GRAPH_CONTEXT_COLLECTIONS = (
 
 def graph_context(model: dict, selected: dict | None = None, *,
                   keep_references: bool = False) -> dict:
-    """Project the canonical model, or a selection of it, into a GraphContext.
+    """Build a GraphContext from the model, or from a selection of it.
 
-    Omitted evidence a selection cites is copied in, so every citation stays
-    usable. A whole-graph scope omits nothing else. A slice may name records
-    that belong to other scopes (`keep_references`): those stay identity-only
-    `record_refs`, which never stand in for content the slice was not given.
+    Evidence cited by the selection is always copied in. Records listed in
+    `keep_references` are included as identity-only `record_refs`.
     """
     context = record('GraphContext')
     context['capabilities'] = copy.deepcopy(model.get('capabilities', []))
@@ -67,7 +65,7 @@ def graph_context(model: dict, selected: dict | None = None, *,
 
 
 def whole_graph_scope(model: dict, selected: dict | None = None) -> dict:
-    """Return the mandatory first semantic scope containing every anchor."""
+    """Return the root scope that contains every anchor."""
     context = graph_context(model, selected)
     anchors = sorted(context['anchors'])
     representations = sorted(context['anchor_representations'])
@@ -88,26 +86,18 @@ def whole_graph_scope(model: dict, selected: dict | None = None) -> dict:
     return scope
 
 
-# ── Hierarchical work ──────────────────────────────────────────────────
+# Hierarchical work
 #
-# When the complete graph does not fit one request's synthesis, verification,
-# repair and reverification, the semantic work is partitioned (tech spec,
-# "Large-repository hierarchical mode"). The graph stays whole in canonical
-# storage; only requests are divided:
+# Used when the whole graph does not fit in one request. Scope kinds:
 #
-#   application boundary the complete trace closures of one service's anchors
-#   entry-point bundle   the closures of several anchors of a boundary too
-#                        large for one request
-#   execution segment    part of one anchor's closure too large for a request,
-#                        cut at typed execution edges
-#   reconciliation       validated units rolled up; segments into their anchor,
-#                        then groups of units, until one root covers them all
+#   application boundary all trace closures for one service's anchors
+#   entry-point bundle   closures of several anchors from a boundary that is
+#                        too large for one request
+#   execution segment    part of one anchor's closure, cut at execution edges
+#   reconciliation       rolls validated units up until one root covers them all
 #
-# A unit is publishable only through the root, which must keep every anchor a
-# unit beneath it represented.
-
-# Scope identities derive from content, never from the hierarchy above them, so
-# an unchanged slice keeps its cache entry when other slices change.
+# Scope IDs are derived from content only, so an unchanged slice keeps its
+# cache entry when other slices change.
 ROOT_SCOPE_ID = identifier('scope', 'reconciliation', 'root')
 SEMANTIC_COLLECTIONS = (
     'activities', 'rules', 'concepts', 'information_uses', 'ownerships',
@@ -115,26 +105,23 @@ SEMANTIC_COLLECTIONS = (
 COVERAGE_MANIFEST = 'coverage_manifest'
 CROSS_SCOPE_INFORMATION = 'cross_scope_information'
 MERGE_CANDIDATE = 'merge_candidate'
-# What SPEED states about a reconciliation's children. The reconciliation reads
-# and cites these claims; they are never part of its candidate.
+# Claims SPEED adds about a reconciliation's children; never part of the candidate.
 SPEED_CLAIM_KINDS = frozenset({COVERAGE_MANIFEST, CROSS_SCOPE_INFORMATION, MERGE_CANDIDATE})
 GROUPING_COLLECTIONS = ('domains', 'ownerships', 'relationships')
 WRITE_ACCESS = frozenset({'creates', 'updates', 'deletes'})
-# When two ownerships of one concept land in one domain, the stronger stands.
 OWNERSHIP_STRENGTH = ('authoritative_source', 'creates', 'maintains', 'shared', 'unknown')
-# Citations per coverage manifest: enough to locate a child's evidence without
-# re-sending every excerpt it already had verified.
+# Max evidence citations per coverage manifest.
 MANIFEST_EVIDENCE = 8
 
 
 def anchor_scope_id(anchor_id: str) -> str:
-    """The reconciliation scope that reunites one anchor's execution segments."""
+    """Return the reconciliation scope that joins an anchor's execution segments."""
     return identifier('scope', 'reconciliation', 'anchor', anchor_id)
 
 
 def slice_scope(model: dict, anchor_ids, selected: dict, strategy: str, *,
                 cross_scope_edge_ids=(), parent_scope_id: str = ROOT_SCOPE_ID) -> dict:
-    """An unsized slice scope over `selected`, the closure of `anchor_ids`."""
+    """Return an unsized slice scope over `selected` for `anchor_ids`."""
     context = graph_context(model, selected, keep_references=True)
     anchors = sorted(set(anchor_ids))
     representations = sorted(context['anchor_representations'])
@@ -156,11 +143,9 @@ def slice_scope(model: dict, anchor_ids, selected: dict, strategy: str, *,
 
 
 def _pack(items, build, fits):
-    """Stable prefix packing: grow a group until the next item would not fit.
+    """Greedily pack items into groups, yielding `(group, build(group))`.
 
-    Yields `(group, built)` pairs, where `built` is `build(group)`; a group the
-    next item would overflow is closed and that item starts a new one. A
-    single item that does not fit is yielded alone for the caller to handle.
+    An item that doesn't fit on its own is yielded alone for the caller to handle.
     """
     group, built = [], None
     for item in items:
@@ -176,15 +161,11 @@ def _pack(items, build, fits):
 
 
 def _affinity_pack(items, build, fits, shared, tries=2):
-    """Pack items into groups by the code they share, deterministically.
+    """Pack items into groups by how much code they share.
 
-    A group starts from the first remaining item in canonical order and grows
-    by the remaining item sharing the most with it (`shared(item)` is the set
-    it brings), canonical order breaking ties; of the `tries` closest, the
-    first that still fits joins. Items that share code land together, so the
-    code is carried once per group instead of once per item's group. Yields
-    `(group, built)` pairs like `_pack`; an item that does not fit alone is
-    yielded alone for the caller to handle.
+    `shared(item)` returns the set of code an item brings. Each group starts
+    from the first remaining item and adds the closest-sharing item that still
+    fits, checking up to `tries` candidates. Yields pairs like `_pack`.
     """
     remaining = sorted(items)
     while remaining:
@@ -206,7 +187,7 @@ def _affinity_pack(items, build, fits, shared, tries=2):
 
 
 def _edge_users(model: dict) -> dict:
-    """Edge ID -> the canonical anchors whose traces include it."""
+    """Map each edge ID to the anchors whose traces include it."""
     users = {}
     for trace in model['traces'].values():
         for edge_id in trace['edge_ids']:
@@ -215,11 +196,9 @@ def _edge_users(model: dict) -> dict:
 
 
 def application_boundaries(model: dict) -> dict:
-    """Boundary name -> its canonical anchors, from each anchor's service.
+    """Map each boundary name to its anchors, based on each anchor's service.
 
-    A service is the deployable boundary extraction found for the anchor's
-    source (its nearest build manifest); an anchor without one belongs to the
-    repository boundary.
+    Anchors without a service fall into the repository boundary.
     """
     boundaries = {}
     for anchor_id, anchor in model['anchors'].items():
@@ -230,20 +209,17 @@ def application_boundaries(model: dict) -> dict:
 
 
 def plan_slices(model: dict, build_bundle, build_segment, fits, limit) -> list[dict]:
-    """Sized slices covering every canonical anchor, in a deterministic order.
+    """Return sized slices covering every anchor, in a deterministic order.
 
-    The primary partition is the application boundary: every anchor of one
-    deployable service in one slice. A boundary too large for one request is
-    packed into entry-point bundles grouped by the code their traces share,
-    and an anchor too large alone is cut into execution segments. No slice spans two boundaries.
-    Shared implementation appears in every slice that reaches it, and its
-    edges are declared cross-scope so reconciliation recognises the shared
-    records.
+    Slices are split by application boundary first. A boundary that is too
+    large becomes entry-point bundles, and an anchor that is too large on its
+    own is cut into execution segments. Shared code is repeated in each slice
+    that reaches it and its edges are marked cross-scope.
 
     `build_bundle(anchor_ids, cross_scope_edge_ids, strategy)` and
-    `build_segment(view, anchor_id, cut_edge_ids)` return sized scopes;
-    `fits(scope)` decides whether a scope's complete sequence can run and
-    `limit(scope)` names the setting it exceeds when it cannot.
+    `build_segment(view, anchor_id, cut_edge_ids)` return sized scopes.
+    `fits(scope)` checks whether a scope can run; `limit(scope)` names the
+    setting it exceeds.
     """
     users = _edge_users(model)
     owned = {}
@@ -260,7 +236,7 @@ def plan_slices(model: dict, build_bundle, build_segment, fits, limit) -> list[d
     boundaries = application_boundaries(model)
     slices = []
     for anchors in boundaries.values():
-        # A lone boundary is the whole graph, already known not to fit.
+        # A single boundary is the whole graph, which we already know is too big.
         if len(boundaries) > 1:
             scope = build(anchors, 'application_boundary')
             if fits(scope):
@@ -272,7 +248,7 @@ def plan_slices(model: dict, build_bundle, build_segment, fits, limit) -> list[d
 
 
 def _bundles(model, anchors, build, build_segment, fits, limit, shared) -> list[dict]:
-    """Entry-point bundles over `anchors`, segmenting any anchor too large alone."""
+    """Return entry-point bundles over `anchors`, segmenting oversized anchors."""
     slices = []
     for anchor_ids, scope in _affinity_pack(anchors, build, fits, shared):
         if fits(scope):
@@ -293,13 +269,11 @@ def _bundles(model, anchors, build, build_segment, fits, limit, shared) -> list[
 
 
 def plan_execution_segments(model: dict, anchor_id: str, build, fits) -> list[dict]:
-    """Cut one anchor's oversized trace closure into segments that each fit.
+    """Split one anchor's oversized trace closure into segments that fit.
 
-    Symbols are taken in stable breadth-first order from the anchor along its
-    typed execution edges, and a segment grows until the next symbol would not
-    fit. A segment keeps every edge touching its symbols; an edge into another
-    segment is a cut, carried as an `execution_segment` obligation and declared
-    cross-scope. Only the anchor's reconciliation disposes of the anchor.
+    Symbols are visited breadth-first from the anchor along execution edges.
+    Edges between segments become `execution_segment` obligations and are
+    marked cross-scope.
     """
     traces = [trace for trace in model['traces'].values() if trace['anchor_id'] == anchor_id]
     symbols = {symbol_id for trace in traces for symbol_id in trace['symbol_ids']}
@@ -349,13 +323,11 @@ def _stable_breadth_first(start: str, symbols: set[str], edges: dict) -> list[st
 
 
 def segment_view(model: dict, anchor_id: str, primary_symbols) -> tuple[dict, tuple[str, ...]]:
-    """A view of `model` holding one segment of `anchor_id`'s traces.
+    """Return a view of `model` limited to one segment of `anchor_id`'s traces.
 
-    The view shares every record it does not change. Each trace keeps the
-    edges touching the segment's symbols; an edge with one end outside the
-    segment is a cut, recorded as an `execution_segment` obligation, and a
-    trace that loses edges this way is no longer traversal-complete.
-    Returns the view and the cut edge IDs.
+    Edges with one end outside the segment are cut and recorded as
+    `execution_segment` obligations; traces that lose edges are marked
+    incomplete. Returns the view and the cut edge IDs.
     """
     primary = set(primary_symbols)
     selected_edges, cut_edges, kept_obligations = set(), set(), set()
@@ -413,8 +385,7 @@ def segment_view(model: dict, anchor_id: str, primary_symbols) -> tuple[dict, tu
             carried.add(obligation_id)
         trace['obligation_ids'] = sorted(carried)
         if 'completion' in trace:
-            # A segment keeps the assumptions of the boundaries it carries; a
-            # cut is a gap of the segment, never a boundary.
+            # Cuts are segment gaps, not boundaries, so keep only real boundary assumptions.
             blocking = [obligations[key] for key in trace['obligation_ids']
                         if obligations[key]['status'] != 'satisfied']
             trace['assumptions'] = [item for item in trace.get('assumptions', [])
@@ -433,8 +404,6 @@ def segment_view(model: dict, anchor_id: str, primary_symbols) -> tuple[dict, tu
     view = dict(model)
     view['traces'] = traces
     view['trace_obligations'] = obligations
-    # An effect several entry points reach names their traces too; in the
-    # segment it serves only the segment's traces.
     view['effects'] = {key: {**effect, 'trace_ids': sorted(set(effect['trace_ids']) & set(traces))}
                        if 'trace_ids' in effect else effect
                        for key, effect in model['effects'].items()
@@ -442,15 +411,15 @@ def segment_view(model: dict, anchor_id: str, primary_symbols) -> tuple[dict, tu
     return view, tuple(sorted(cut_edges))
 
 
-# ── Units and reconciliation ───────────────────────────────────────────
+# Units and reconciliation
 
 @dataclass(frozen=True)
 class Unit:
-    """A validated scope and what it established about each anchor.
+    """A validated scope and its coverage of each anchor.
 
-    `coverage` maps each anchor the unit accounts for to its status
-    (`represented`, `excluded` or `unresolved`), the unit's activities that
-    represent it, and the reason and evidence for any other status.
+    `coverage` maps anchor ID to its status (`represented`, `excluded` or
+    `unresolved`), the activities that represent it, and the reason and
+    evidence for other statuses.
     """
     scope: dict
     payload: dict
@@ -466,7 +435,7 @@ def _anchor_activities(payload: dict) -> dict:
 
 
 def slice_unit(scope: dict, payload: dict) -> Unit:
-    """The unit a validated slice forms, from its anchor dispositions."""
+    """Build the unit for a validated slice."""
     activities = _anchor_activities(payload)
     coverage = {}
     for disposition in payload['dispositions']:
@@ -481,10 +450,10 @@ def slice_unit(scope: dict, payload: dict) -> Unit:
 
 
 def reconciled_unit(scope: dict, payload: dict, children) -> Unit:
-    """The unit a validated reconciliation forms over `children`.
+    """Build the unit for a validated reconciliation over `children`.
 
-    Anchors its activities hold are represented; any other anchor keeps the
-    first status a child gave it.
+    Anchors held by its activities are represented; others keep the first
+    status a child gave them.
     """
     activities = _anchor_activities(payload)
     coverage = {}
@@ -507,12 +476,10 @@ VERIFICATION_STRENGTH = ('verified', 'inferred', 'unresolved')
 
 
 def _combine_records(existing, item):
-    """One record two child scopes proposed under the same ID.
+    """Combine two versions of a record that share an ID.
 
-    An ID is derived from the fields that identify a record, never from its
-    wording, so two versions describe the same thing in different words. The
-    better verified version is kept, then the first child's, and the evidence
-    either cites is kept.
+    Prefers the better-verified version, then the first child's, and keeps
+    evidence from both.
     """
     if existing == item:
         return existing
@@ -530,13 +497,10 @@ PROSE_ALIAS = re.compile(r'_ref:(\d+)')
 
 
 def _decode_prose_aliases(unit: Unit) -> Unit:
-    """`unit` with the provider aliases its prose cites made readable.
+    """Return `unit` with request-local aliases in its prose replaced.
 
-    A provider names records by request-local aliases, and its explanations
-    cite them. In a parent request the same alias names a different record,
-    so carried prose would point at the wrong one. An alias of the unit's own
-    request becomes the record's name or location; one its request did not
-    send names the child scope.
+    Aliases differ between requests, so they are swapped for the record's
+    name or location, or for the child scope if the alias is unknown.
     """
     text = json.dumps([unit.payload, unit.coverage])
     if not PROSE_ALIAS.search(text):
@@ -580,16 +544,13 @@ def _decode_prose_aliases(unit: Unit) -> Unit:
 
 def reconciliation_scope(model: dict, units, *, scope_id: str,
                          parent_scope_id: str | None = None) -> dict:
-    """An unsized reconciliation scope over validated `units`.
+    """Build an unsized reconciliation scope over validated `units`.
 
-    It carries every unit's semantic records, the evidence excerpts those
-    records cite, one coverage manifest per unit, and what SPEED derives about
-    how the units connect: information one unit reads that only another
-    writes, and domains of different units that one boundary may cover. Child
-    concepts naming the same code type arrive as one concept. Raw graph
-    records stay identity-only references: each unit already validated them
-    against their full content, and re-sending them would rebuild the graph
-    that did not fit.
+    Includes each unit's semantic records, the evidence they cite, a coverage
+    manifest per unit, and derived claims about cross-unit reads and possible
+    domain merges. Concepts for the same code type are merged. Raw graph
+    records are passed as identity-only references since each unit already
+    validated them.
     """
     units = [_decode_prose_aliases(unit)
              for unit in sorted(units, key=lambda unit: unit.scope['scope_id'])]
@@ -616,9 +577,7 @@ def reconciliation_scope(model: dict, units, *, scope_id: str,
     child_ids = [unit.scope['scope_id'] for unit in units]
     cross = sorted({edge_id for unit in units for edge_id in unit.scope['cross_scope_edge_ids']})
     manifests = [_renamed(coverage_manifest(unit), aliases) for unit in units]
-    # An anchor a child left unrepresented may be named by nothing but its
-    # manifest once a reconciliation drops the records that cited it; the
-    # manifest still references it, so the scope identifies it.
+    # Keep anchors referenced only by a manifest identifiable in the scope.
     for anchor_id in sorted({item['anchor_id'] for manifest in manifests
                              for status in ('represented', 'unrepresented')
                              for item in manifest[status]}):
@@ -644,7 +603,7 @@ def reconciliation_scope(model: dict, units, *, scope_id: str,
 
 
 def coverage_manifest(unit: Unit) -> dict:
-    """What one validated unit established, as its parent receives it."""
+    """Return a unit's coverage in the form its parent scope receives."""
     coverage = unit.coverage
     return {
         'child_scope_id': unit.scope['scope_id'],
@@ -663,7 +622,7 @@ def coverage_manifest(unit: Unit) -> dict:
 
 
 def _manifest(context: dict, unit: Unit, aliases: dict, stable: bool = False) -> None:
-    """State one unit's coverage as a claim the reconciliation can cite."""
+    """Return a unit's coverage as a claim the reconciliation can cite."""
     scope, coverage = unit.scope, unit.coverage
     by_status = {status: sorted(anchor_id for anchor_id, item in coverage.items()
                                 if item['status'] == status)
@@ -677,8 +636,7 @@ def _manifest(context: dict, unit: Unit, aliases: dict, stable: bool = False) ->
     contributed = sorted({aliases.get(record_id, record_id)
                           for collection in SEMANTIC_COLLECTIONS
                           for record_id in unit.payload[collection]})
-    # Cite the unit's own evidence, its dispositions first: a citation chosen
-    # for another unit would not support this unit's coverage.
+    # Use the unit's own evidence, dispositions first.
     evidence = [eid for item in coverage.values() for eid in item['evidence_ids']]
     evidence += [eid for collection in SEMANTIC_COLLECTIONS
                  for item in unit.payload[collection].values()
@@ -691,9 +649,7 @@ def _manifest(context: dict, unit: Unit, aliases: dict, stable: bool = False) ->
               f"Excluded or unresolved anchors: {others}. "
               f"Records it contributes: {', '.join(contributed) or 'none'}. "
               f"Typed cross-scope edges: {', '.join(scope['cross_scope_edge_ids']) or 'none'}."),
-        # The root's units are reconciled in this process, in an order that
-        # need not repeat; sorted, the root scope and so its repair
-        # checkpoint are the same in every run.
+        # Sort so the root scope and its repair checkpoint are stable across runs.
         evidence_ids=(sorted(set(evidence)) if stable
                       else list(dict.fromkeys(evidence)))[:MANIFEST_EVIDENCE],
         trace_ids=sorted(_ids(unit.payload['activities'].values(), 'trace_ids')),
@@ -701,19 +657,15 @@ def _manifest(context: dict, unit: Unit, aliases: dict, stable: bool = False) ->
 
 
 def _merge_concepts(model: dict, context: dict) -> dict:
-    """Merge child concepts that name one code type; return their aliases.
+    """Merge child concepts that refer to the same code type; return the aliases.
 
-    Each unit names the concepts it meets independently, so one type can
-    arrive as several concepts. Concepts whose qualified type names resolve to
-    a common declared type are one concept, as are concepts of one name that
-    information uses keep in a common store: the first by ID stands for all
-    of them, with their names, symbols, evidence and claims, and every
-    reference to another is rewritten to it. A bare type name resolves only
-    when exactly one declared symbol carries it.
+    Concepts are merged when their qualified type names resolve to the same
+    declared type, or when they share a name and a store. The concept with the
+    lowest ID absorbs the others and references are rewritten. A bare type
+    name only resolves if exactly one declared symbol has it.
     """
     symbols = [symbol.get('qualified_name') or '' for symbol in model.get('symbols', {}).values()]
-    # A dotted name such as a Java class's is the type its source file
-    # declares, when exactly one file of that package path declares it.
+    # Java names classes by package; resolve a dotted name to the one file that declares it.
     located = {}
     for name in symbols:
         path, _, declared_name = name.partition('::')
@@ -735,8 +687,7 @@ def _merge_concepts(model: dict, context: dict) -> dict:
 
     declared = {}
     qualified = [name for name in symbols if '::' in name]
-    # A type another unit already named in full is declared too, though the
-    # symbol table holds no symbol for it, as for a class property.
+    # Types another unit named in full count as declared even without a symbol (e.g. a class property).
     qualified += [full(name) for concept in context['concepts'].values()
                   for name in concept['qualified_type_names']
                   if '::' in name or '.' in name]
@@ -763,9 +714,7 @@ def _merge_concepts(model: dict, context: dict) -> dict:
         if one != other:
             parent[other] = one
 
-    # Concepts naming one type are that type's concept. One naming several
-    # types joins them only where they are already one concept: it does not
-    # make two types it happens to mention the same thing.
+    # A concept naming several types only joins concepts that are already merged.
     keys = {concept_id: {key for key in map(resolve, concept['qualified_type_names'])
                          if key is not None}
             for concept_id, concept in context['concepts'].items()}
@@ -791,8 +740,7 @@ def _merge_concepts(model: dict, context: dict) -> dict:
             roots = {root(first[key]) for key in keys[concept_id]}
             if len(roots) == 1:
                 union(roots.pop(), concept_id)
-    # A concept a unit named without its type is the concept of the same name
-    # another unit keeps in the same store.
+    # An untyped concept matches the same-named concept in the same store.
     stores = {}
     for use in context['information_uses'].values():
         if use.get('concept_id'):
@@ -806,7 +754,7 @@ def _merge_concepts(model: dict, context: dict) -> dict:
                 if one != other:
                     parent[other] = one
         named.setdefault(name, []).append(concept_id)
-    # A concept named without any type is the one typed concept of its name.
+    # Otherwise an untyped concept matches the only typed concept with that name.
     for name, concept_ids in named.items():
         typed = {root(concept_id) for concept_id in concept_ids
                  if context['concepts'][concept_id]['qualified_type_names']}
@@ -833,7 +781,7 @@ def _merge_concepts(model: dict, context: dict) -> dict:
 
 
 def _renamed(value, aliases):
-    """`value` with every ID in `aliases` replaced, lists of IDs deduplicated."""
+    """Return `value` with IDs in `aliases` replaced and ID lists deduplicated."""
     if isinstance(value, str):
         return aliases.get(value, value)
     if isinstance(value, list):
@@ -847,7 +795,7 @@ def _renamed(value, aliases):
 
 
 def _children_of(units, activities: dict) -> dict:
-    """The units whose anchors each activity carries."""
+    """Map each activity to the units whose anchors it carries."""
     unit_of = {anchor_id: unit.scope['scope_id'] for unit in units
                for anchor_id in unit.coverage}
     return {activity_id: {unit_of[anchor_id] for anchor_id in activity['anchor_ids']
@@ -856,12 +804,7 @@ def _children_of(units, activities: dict) -> dict:
 
 
 def cross_scope_reads(activities: dict, uses: dict, children: dict) -> list:
-    """`(reader, resource, writers)` for information only other units write.
-
-    A unit validated the links between its own activities; what one unit's
-    activity reads and only activities of other units create, update or
-    delete is a dependency no unit could see.
-    """
+    """Return `(reader, resource, writers)` where a resource is only written by other units."""
     writers, readers = {}, {}
     for use in uses.values():
         if use['activity_id'] not in activities:
@@ -881,10 +824,9 @@ def cross_scope_reads(activities: dict, uses: dict, children: dict) -> list:
 
 
 def _owner(model: dict, anchor_id: str) -> str | None:
-    """The class, or else the module, that implements an anchor.
+    """Return the class, or else the module, that implements an anchor.
 
-    An operation an API contract documents is owned by the code implementing
-    it, not by the contract file every documented operation shares.
+    For contract-documented operations this is the implementing code, not the contract file.
     """
     anchor = model.get('anchors', {}).get(anchor_id) or {}
     representations = [item for item in anchor.get('representations') or ()
@@ -908,12 +850,10 @@ def _plain(name: str) -> str:
 
 
 def merge_candidates(model: dict, domains: dict, activities: dict, children: dict) -> list:
-    """`(domain, domain, shared owners)` that one business boundary may cover.
+    """Return `(domain, domain, shared owners)` pairs that may be the same domain.
 
-    Units are cut by size, so entry points one class or module declares can
-    land in different units and come back as different domains. Two domains
-    of disjoint units are candidates when their primary activities' anchors
-    share a declaring class or module, or when the domains bear the same name.
+    Domains from disjoint units are candidates when their primary activities'
+    anchors share a class or module, or when the domains have the same name.
     """
     owners, names, units = {}, {}, {}
     for domain_id, domain in domains.items():
@@ -935,7 +875,7 @@ def merge_candidates(model: dict, domains: dict, activities: dict, children: dic
 
 
 def _state_links(model: dict, context: dict, units, stable: bool = False) -> None:
-    """State, as claims, how the units connect where no unit could see it."""
+    """Add claims for cross-unit links that no single unit could see."""
     activities = context['activities']
     children = _children_of(units, activities)
     reads = {}
@@ -987,19 +927,14 @@ def _speed_claim(context, kind, subject_id, text, evidence, model, key=None,
 
 
 def expand_reconciliation(scope: dict, payload: dict, model: dict | None = None) -> dict:
-    """The complete candidate a compact reconciliation answer stands for.
+    """Expand a compact reconciliation answer into the full candidate.
 
-    A reconciliation returns only what it changes: merged or new records, the
-    domains it forms or changes, and one disposition per child whose
-    `incorporated_record_ids` name the child activities, rules, concepts and
-    information uses it keeps. Kept records, and the claims, rules, concepts
-    and information uses they rest on, are copied from the scope. A child
-    activity whose anchors are all held by activities the answer returned was
-    merged into them and is not copied.
-
-    The children's groupings stay unless the answer changes them; see
-    `_regroup`. SPEED does this bookkeeping so the answer never has to
-    restate what it keeps.
+    The answer only returns what changed plus one disposition per child, whose
+    `incorporated_record_ids` list the child records it keeps. Kept records and
+    their dependencies are copied from the scope. A child activity whose
+    anchors are all held by returned activities is treated as merged and not
+    copied. Child groupings are kept unless the answer changes them (see
+    `_regroup`).
     """
     if scope['scope_kind'] != 'reconciliation':
         return payload
@@ -1019,7 +954,6 @@ def expand_reconciliation(scope: dict, payload: dict, model: dict | None = None)
              for record_id in disposition['incorporated_record_ids']}
     for disposition in expanded['dispositions']:
         if disposition['subject_kind'] == 'child_scope':
-            # The answer's own records are not child records it incorporates.
             disposition['incorporated_record_ids'] = [
                 record_id for record_id in disposition['incorporated_record_ids']
                 if record_id not in returned or record_id in supplied_ids]
@@ -1033,11 +967,8 @@ def expand_reconciliation(scope: dict, payload: dict, model: dict | None = None)
            | {claim_id for claim_id, claim in supplied['claims'].items()
               if claim['subject_id'] in groupings},
            merged)
-    # After everything kept is carried, so no kept domain or activity brings a
-    # replaced rule back.
-    # At the root, a child rule the answer returns changed is the answer's
-    # revision of it: it replaces the child rules it describes, and no stale
-    # copy is merged back into it.
+    # Run after everything is carried so kept records can't bring a replaced rule back.
+    # At the root, a returned child rule replaces the child rules it describes.
     revised = (frozenset(rule_id for rule_id, rule in payload['rules'].items()
                          if rule_id in supplied['rules'] and rule != supplied['rules'][rule_id])
                if scope.get('scope_id') == ROOT_SCOPE_ID else frozenset())
@@ -1060,7 +991,7 @@ def expand_reconciliation(scope: dict, payload: dict, model: dict | None = None)
     return expanded
 
 
-# Spring status names Python's HTTPStatus lacks, and ResponseEntity helpers.
+# Spring status names missing from HTTPStatus, plus ResponseEntity helpers.
 SPRING_STATUS = {'MOVED_TEMPORARILY': 302, 'PAYLOAD_TOO_LARGE': 413, 'URI_TOO_LONG': 414,
                  'I_AM_A_TEAPOT': 418, 'CHECKPOINT': 103, 'METHOD_FAILURE': 420,
                  'DESTINATION_LOCKED': 421, 'INSUFFICIENT_SPACE_ON_RESOURCE': 419}
@@ -1083,15 +1014,11 @@ def _returned_statuses(expression: str) -> set:
 
 
 def _contract_status_conflicts(expanded: dict, model: dict, citable: set) -> None:
-    """State where an operation's code returns a status its contract omits.
+    """Add claims where an operation returns a status its contract doesn't declare.
 
-    Both sides are facts: the contract's declared responses and the statuses
-    the implementing method returns. Slices notice the difference unevenly,
-    and a merge of one that did with one that did not reads as an ignored
-    contradiction, so SPEED states each one, keyed by anchor so it follows
-    whichever activity holds the anchor. Only a status the code returns and
-    the contract omits is stated: a declared status the code never returns
-    may come from an exception handler.
+    Keyed by anchor so the claim follows whichever activity holds it. Declared
+    statuses the code never returns are ignored, since an exception handler may
+    produce them.
     """
     bindings = model.get('bindings', {})
     by_source = {}
@@ -1151,19 +1078,17 @@ def _contract_status_conflicts(expanded: dict, model: dict, citable: set) -> Non
                                 semantic_review='uncertain')
 
 
-# The accesses that establish each kind of authoritative ownership.
+# Access types that justify each kind of authoritative ownership.
 OWNING_ACCESS = {'creates': frozenset({'creates'}),
                  'maintains': WRITE_ACCESS,
                  'authoritative_source': WRITE_ACCESS}
 
 
 def _keep_writers(expanded: dict) -> None:
-    """Keep in each authoritative ownership only the activities that write it.
+    """Remove activities that don't write the concept from authoritative ownerships.
 
-    A creates ownership rests on creating the concept, and a maintains or
-    authoritative one on writing it; an activity whose uses of the concept do
-    neither leaves the ownership. One left with no such activity stays as it
-    is, for review to judge. An ownership cites only its activities' uses.
+    `creates` needs a create; `maintains` and `authoritative_source` need any
+    write. An ownership left with no activities is kept for review.
     """
     uses = expanded['information_uses']
     for ownership in expanded['ownerships'].values():
@@ -1182,7 +1107,7 @@ def _keep_writers(expanded: dict) -> None:
 
 
 def _call_graph(expanded: dict, model: dict) -> tuple[dict, dict]:
-    """Each activity's entry-point symbols, and the symbols its traces reach."""
+    """Return each activity's entry-point symbols and the symbols its traces reach."""
     entry, reached = {}, {}
     for activity_id, activity in expanded['activities'].items():
         entry[activity_id] = {model['anchors'][anchor_id].get('symbol_id')
@@ -1195,12 +1120,9 @@ def _call_graph(expanded: dict, model: dict) -> tuple[dict, dict]:
 
 
 def _link_direct_calls(expanded: dict, model: dict, citable: set) -> None:
-    """Record a direct call from one domain's activity to another's.
+    """Add relationships for direct calls between activities in different domains.
 
-    An activity whose own code calls another activity's entry point requests
-    action from it. A call made inside a third activity it calls is that
-    activity's, not a direct one. A call between domains no relationship
-    records yet gets one, resting on the call's evidence the scope supplies.
+    Calls made inside a third, intermediate activity are not counted.
     """
     entry, reached = _call_graph(expanded, model)
     activities = expanded['activities']
@@ -1235,13 +1157,7 @@ def _link_direct_calls(expanded: dict, model: dict, citable: set) -> None:
 
 
 def _link_information_flow(expanded: dict, citable: set) -> None:
-    """Record that an activity uses information another domain's activity writes.
-
-    Information uses state what each activity reads and writes. A reader in
-    one domain of a resource a writer in another domain writes uses
-    information from it; a pair no relationship records yet gets one,
-    resting on the reader's and writer's evidence for that resource.
-    """
+    """Add relationships where an activity reads data another domain's activity writes."""
     home = _home_domains(expanded)
     activities = expanded['activities']
     linked = {frozenset((item['from_activity_id'], item['to_activity_id']))
@@ -1250,7 +1166,7 @@ def _link_information_flow(expanded: dict, citable: set) -> None:
     for use in expanded['information_uses'].values():
         if use['activity_id'] not in activities:
             continue
-        # Deleting information is not a source of it.
+        # A delete is not a source of information.
         target = (writers if use['access'] in ('creates', 'updates')
                   else readers if use['access'] == 'reads' else None)
         for resource_id in use['resource_ids'] if target is not None else ():
@@ -1277,12 +1193,7 @@ def _link_information_flow(expanded: dict, citable: set) -> None:
 
 
 def _attach_rules_to_enforcers(expanded: dict, model: dict) -> None:
-    """A rule enforced inside an activity another one calls applies to both.
-
-    A rule attached to a calling activity, whose enforcement sites all lie
-    within the trace of an activity it calls, is enforced by that activity
-    too, and is attached to it.
-    """
+    """Attach a rule to a called activity when all its enforcement sites are in that activity's trace."""
     entry, reached = _call_graph(expanded, model)
     activities = expanded['activities']
     for rule_id in sorted(expanded['rules']):
@@ -1300,13 +1211,11 @@ def _attach_rules_to_enforcers(expanded: dict, model: dict) -> None:
 
 
 def _drop_delegating_owners(expanded: dict, model: dict) -> None:
-    """Credit a write to the activity that performs it, not to one calling it.
+    """Credit writes to the activity that performs them, not to its callers.
 
-    An activity whose trace calls another activity's entry point reaches that
-    activity's writes too. Where every write it makes of a concept is one the
-    called activity also makes, it only requests the change: it leaves the
-    authoritative ownerships of that concept, and an ownership left with no
-    activity goes when the called activity's domain owns the concept.
+    If every write a caller makes of a concept is also made by an activity it
+    calls, the caller is removed from that concept's authoritative ownerships.
+    Ownerships left empty are dropped when the callee's domain owns the concept.
     """
     activities = expanded['activities']
     entry, reached = _call_graph(expanded, model)
@@ -1316,7 +1225,7 @@ def _drop_delegating_owners(expanded: dict, model: dict) -> None:
             writes.setdefault((use['activity_id'], use['concept_id']), set()).update(use['effect_ids'])
 
     def delegate(activity_id, concept_id):
-        """The activity `activity_id` calls that makes all its writes of the concept."""
+        """Return the activity `activity_id` calls that makes all its writes of the concept."""
         own = writes.get((activity_id, concept_id), set())
         return next((other for other in sorted(activities)
                      if other != activity_id and entry[other] & reached[activity_id]
@@ -1354,11 +1263,7 @@ def _drop_delegating_owners(expanded: dict, model: dict) -> None:
 
 
 def _prune_symbol_memberships(expanded: dict) -> None:
-    """A domain's symbol memberships name only activities the candidate holds.
-
-    Acceptance derives them again from the activities; until then they must
-    not credit an activity the reconciliation replaced.
-    """
+    """Drop symbol memberships that name activities no longer in the candidate."""
     for domain in expanded['domains'].values():
         if 'symbol_memberships' in domain:
             domain['symbol_memberships'] = [
@@ -1367,12 +1272,11 @@ def _prune_symbol_memberships(expanded: dict) -> None:
 
 
 def _collect_domain_rules(expanded: dict, returned=frozenset(), supplied=None) -> None:
-    """A domain lists the rules its primary activities apply, and a rule the
-    activities that apply it.
+    """Link domains and activities to the rules they apply.
 
-    A rule naming an activity is listed back by it, unless the answer returned
-    that activity without the rule a child carried: the answer's record wins.
-    A technical rule is listed on a domain only where the domain names it.
+    A rule naming an activity is added to it unless the answer returned that
+    activity without the rule. Technical rules are only listed on domains that
+    name them.
     """
     carried = set((supplied or {}).get('rules', ())) - set(returned)
     for rule_id in sorted(expanded['rules']):
@@ -1384,9 +1288,7 @@ def _collect_domain_rules(expanded: dict, returned=frozenset(), supplied=None) -
             if activity_id in returned and rule_id in carried:
                 rule['activity_ids'].remove(activity_id)
             elif rule.get('enforcement_status') != 'verified_on_trace':
-                # Enforcement verified on a trace is checked against every
-                # trace of each activity applying the rule; that is the
-                # child's claim to make, not SPEED's.
+                # Trace-level enforcement is checked by the child, not here.
                 activity['rule_ids'] = [*activity['rule_ids'], rule_id]
     for rule_id, rule in expanded['rules'].items():
         if 'activity_ids' in rule:
@@ -1406,10 +1308,10 @@ def _collect_domain_rules(expanded: dict, returned=frozenset(), supplied=None) -
 
 
 def _rule_basis(rule: dict):
-    """What identifies the rule a record describes, or None.
+    """Return the identity of the rule a record describes, or None.
 
-    A rule over observations is the rule those observations show. One with
-    none is identified by where it is enforced and what kind of check it is.
+    Uses the rule's observations if it has any, otherwise its enforcement
+    sites and check kind.
     """
     observed = frozenset(rule.get('observation_ids') or ())
     if observed:
@@ -1417,7 +1319,7 @@ def _rule_basis(rule: dict):
     sites = frozenset(site['source_id'] for site in rule.get('enforcement_sites') or ())
     if sites:
         return ('enforced', sites, rule.get('evaluation_kind'))
-    # A rule only documented or tested is identified by what it is called.
+    # Rules that are only documented or tested are identified by name.
     name = _plain(rule.get('name') or '')
     return ('named', name) if name else None
 
@@ -1429,12 +1331,11 @@ def _words(name: str) -> set:
 
 
 def _same_rule(rule: dict, other: dict, *, within: bool = False) -> bool:
-    """Whether two rule records describe one rule.
+    """Return whether two rule records describe the same rule.
 
-    Rules over observations are one rule when their observations agree; with
-    `within`, when `rule`'s lie within `other`'s. Rules without are one rule
-    when enforced at the same sites, or `rule`'s within `other`'s, and they
-    are the same kind of check or plainly name the same rule.
+    With observations, they must match (or `rule`'s must be a subset of
+    `other`'s when `within` is set). Without, they must share enforcement
+    sites and either the check kind or the name.
     """
     observed, others = set(rule.get('observation_ids') or ()), set(other.get('observation_ids') or ())
     if observed or others:
@@ -1453,13 +1354,10 @@ def _same_rule(rule: dict, other: dict, *, within: bool = False) -> bool:
 
 
 def _merge_duplicate_rules(expanded: dict, scope: dict, revised=frozenset()) -> None:
-    """Make one rule of the copies different children kept of it.
+    """Merge duplicate copies of a rule kept by different children.
 
-    Children describe one rule independently. Where the answer left copies
-    from different children that describe the same rule, the copy most
-    activities apply stands for all of them, with their activities,
-    concepts, sites, evidence, observations, conflicts and questions, and
-    what named another names it.
+    The copy applied by the most activities absorbs the others, and references
+    to the removed copies are rewritten.
     """
     child_of = {record_id: manifest['child_scope_id']
                 for manifest in scope.get('coverage_manifests', ())
@@ -1499,11 +1397,9 @@ def _merge_duplicate_rules(expanded: dict, scope: dict, revised=frozenset()) -> 
 
 
 def _supersede_rules(expanded: dict, supplied: dict, revised=frozenset()) -> None:
-    """Replace child rules with the returned rule describing the same rule.
+    """Replace child rules with the returned rule that describes the same rule.
 
-    Children describe one rule independently; a rule the answer returns
-    replaces every child rule with its basis, or citing only observations it
-    cites, and what named a replaced rule names the returned one.
+    References to a replaced rule are rewritten to the returned one.
     """
     returned = {rule_id: rule for rule_id, rule in expanded['rules'].items()
                 if (rule_id not in supplied['rules'] or rule_id in revised) and _rule_basis(rule)}
@@ -1528,10 +1424,9 @@ def _supersede_rules(expanded: dict, supplied: dict, revised=frozenset()) -> Non
 
 
 def _different_checks(rule: dict, other: dict) -> bool:
-    """Whether two rules are plainly different checks, whatever they cite.
+    """Return whether two rules are clearly different checks, regardless of citations.
 
-    One observation cited by mistake should not make an authorization check
-    part of a data constraint enforced elsewhere.
+    Guards against one mistaken citation merging unrelated rules.
     """
     categories = {rule.get('category'), other.get('category')} - {None, 'unclassified'}
     sites = {site['source_id'] for site in rule.get('enforcement_sites') or ()}
@@ -1540,12 +1435,9 @@ def _different_checks(rule: dict, other: dict) -> bool:
 
 
 def _rehome(expanded: dict, supplied: dict, merged: set, listed: bool = False) -> None:
-    """Give a merged activity what was established about the activities it replaced.
+    """Move a replaced activity's information uses and claims to the activity that merged it.
 
-    A child activity's information uses and the claims about its behaviour
-    follow its anchors and traces, which the activity now holding those
-    anchors holds; they move to it unless the answer stated that activity's
-    uses, or its claims, itself.
+    Skipped when the answer already states the merged activity's uses or claims.
     """
     activities = expanded['activities']
     holder = {}
@@ -1568,8 +1460,7 @@ def _rehome(expanded: dict, supplied: dict, merged: set, listed: bool = False) -
             expanded['claims'][claim_id] = {**copy.deepcopy(claim), 'subject_id': target}
     stated = {use['activity_id'] for use in expanded['information_uses'].values()}
     seen = {_use_key(use) for use in expanded['information_uses'].values()}
-    # With `listed`, a merged activity the answer returns naming its uses
-    # takes only the child uses it names.
+    # With `listed`, only take the child uses the merged activity names.
     chosen = {activity_id: set(activity['information_use_ids'])
               for activity_id, activity in activities.items()
               if listed and activity_id not in supplied['activities']
@@ -1605,11 +1496,10 @@ def _use_key(use: dict) -> tuple:
 
 
 def _supersede_claims(expanded: dict, supplied: dict, returned: set) -> None:
-    """Keep the answer's word on what is claimed about the records it returns.
+    """Let the answer's claims override child claims about the records it returns.
 
-    A claim the answer makes about a record replaces the children's claims of
-    the same kind about it, and a record the answer returns rests on the
-    claims it lists: a child claim about it the answer left out is dropped.
+    Child claims of the same kind are replaced, and child claims the answer
+    left off a returned record are dropped.
     """
     restated = {(claim['subject_id'], claim['kind']) for claim_id, claim in expanded['claims'].items()
                 if claim_id in returned and claim_id not in supplied['claims']}
@@ -1622,7 +1512,7 @@ def _supersede_claims(expanded: dict, supplied: dict, returned: set) -> None:
         if claim_id not in supplied['claims'] or claim_id in returned:
             continue
         subject = claim['subject_id']
-        # A claim moved here from a replaced record was not the answer's to list.
+        # Claims moved over from a replaced record weren't listed by the answer.
         about_it = supplied['claims'][claim_id]['subject_id'] == subject
         if (subject, claim['kind']) in restated or (
                 about_it and subject in listed and claim_id not in listed[subject]):
@@ -1630,11 +1520,7 @@ def _supersede_claims(expanded: dict, supplied: dict, returned: set) -> None:
 
 
 def _drop_orphan_rules(expanded: dict, supplied: dict, returned: set) -> None:
-    """Remove carried child rules nothing in the candidate applies any more.
-
-    A rule the answer merged into one it returned is still named by the child
-    records that cited it; once no activity or domain does, it is gone.
-    """
+    """Remove carried child rules that no activity or domain applies anymore."""
     applied = {rule_id for activity in expanded['activities'].values()
                for rule_id in activity.get('rule_ids', ())}
     applied |= {rule_id for domain in expanded['domains'].values()
@@ -1645,10 +1531,9 @@ def _drop_orphan_rules(expanded: dict, supplied: dict, returned: set) -> None:
 
 
 def _link_claims(expanded: dict) -> None:
-    """List every claim about a record in that record's `claim_ids`.
+    """Add every claim about a record to that record's `claim_ids`.
 
-    A domain membership the answer gave no claim rests on the claims about
-    its activity.
+    Domain memberships without a claim use the claims about their activity.
     """
     about = {}
     for claim_id in sorted(expanded['claims']):
@@ -1664,12 +1549,10 @@ def _link_claims(expanded: dict) -> None:
 
 
 def verification_view(scope: dict, complete: dict) -> dict:
-    """The reconciliation scope as verification of `complete` receives it.
+    """Return the reconciliation scope trimmed for verifying `complete`.
 
-    The complete candidate already holds every child record it keeps, so the
-    scope keeps only the child records the candidate replaced, merged or
-    retired, against which verification checks the change, and SPEED's own
-    claims. Verification then costs no more than the scope it reviews.
+    Keeps only child records the candidate replaced, merged or retired, plus
+    SPEED's own claims, so verification stays small.
     """
     view = copy.deepcopy(scope)
     context = view['context']
@@ -1683,8 +1566,7 @@ def verification_view(scope: dict, complete: dict) -> dict:
             if record_id not in held or item.get('kind') in SPEED_CLAIM_KINDS}
         omitted.update((record_id, (collection, item)) for record_id, item in records.items()
                        if record_id not in context[collection])
-    # What the scope still cites, in its records or its coverage manifests,
-    # stays identifiable, as any record a scope omits does.
+    # Keep anything the scope still cites identifiable.
     cited = {key: value for key, value in view.items() if key != 'context'}
     cited['context'] = {key: value for key, value in context.items() if key != 'record_refs'}
     for record_id in sorted(_referenced_ids(cited, set(omitted))):
@@ -1713,10 +1595,10 @@ def _referenced_ids(value, known: set) -> set:
 
 
 def _carry(expanded: dict, supplied: dict, pending: set, merged: set) -> None:
-    """Copy `pending` supplied records, and what they rest on, into `expanded`.
+    """Copy `pending` records and their dependencies into `expanded`.
 
-    Groupings are `_regroup`'s; SPEED's own claims and records about merged
-    activities are never copied.
+    Groupings are handled by `_regroup`; SPEED's claims and records about
+    merged activities are skipped.
     """
     present = {record_id for collection in SEMANTIC_COLLECTIONS
                for record_id in expanded[collection]}
@@ -1743,14 +1625,13 @@ def _carry(expanded: dict, supplied: dict, pending: set, merged: set) -> None:
 
 
 def _regroup(expanded: dict, supplied: dict, merged: set) -> None:
-    """Settle the children's domains, ownerships and relationships.
+    """Reconcile the children's domains, ownerships and relationships.
 
-    A returned domain claims its member activities. A child domain keeps the
-    activities no returned domain claims, and is retired when none remain;
-    each of its ownerships moves to the domain now holding the activities it
-    rests on. Two ownerships of one concept in one domain combine. Relationships follow their activities: each end's domain
-    is its activity's primary domain, and links to activities that no longer
-    exist, or within one activity, are dropped.
+    Returned domains take their member activities. Child domains keep the
+    remaining activities and are retired when empty; their ownerships move with
+    the activities. Duplicate ownerships of a concept in one domain are
+    combined. Relationships follow their activities' primary domains, and
+    links to missing activities or self-links are dropped.
     """
     activities = expanded['activities']
     holder = {}
@@ -1769,8 +1650,7 @@ def _regroup(expanded: dict, supplied: dict, merged: set) -> None:
 
     domains = expanded['domains']
     returned = set(domains)
-    # A returned domain may name a child activity the answer merged away; it
-    # means the activity that replaced it.
+    # A returned domain may name a merged-away child activity; map it to its replacement.
     for domain in domains.values():
         members = {}
         for membership in domain['activity_memberships']:
@@ -1834,8 +1714,7 @@ def _regroup(expanded: dict, supplied: dict, merged: set) -> None:
         if origin in domains or not origin:
             item['domain_id'] = origin
         else:
-            # A retired domain's activities may now sit in several domains;
-            # its ownership goes where the activities it rests on went.
+            # Move a retired domain's ownership to wherever its activities went.
             homes = [home[activity_id] for activity_id in item['activity_ids']
                      if activity_id in home]
             item['domain_id'] = min(homes, key=lambda target: (-homes.count(target), target),
@@ -1852,8 +1731,7 @@ def _regroup(expanded: dict, supplied: dict, merged: set) -> None:
             ownership_id not in stated,
             OWNERSHIP_STRENGTH.index(ownerships[ownership_id]['kind']), ownership_id))
         if stated:
-            # The answer's ownership of a concept in a domain replaces the
-            # children's there; it is not widened with what they listed.
+            # The answer's ownership replaces the children's instead of extending it.
             for ownership_id in group:
                 if ownership_id not in stated:
                     ownerships.pop(ownership_id)
@@ -1868,7 +1746,7 @@ def _regroup(expanded: dict, supplied: dict, merged: set) -> None:
                 kept[field] = list(dict.fromkeys([*kept[field], *other[field]]))
     expanded['ownerships'] = ownerships
     if combined:
-        # What named a combined ownership names the one it became.
+        # Point references at the combined ownership.
         for collection in SEMANTIC_COLLECTIONS:
             if collection != 'ownerships':
                 for record_id, item in expanded[collection].items():
@@ -1903,15 +1781,12 @@ def _by_owner(ownerships: dict) -> dict:
 
 
 def _drop_replaced_references(expanded: dict, supplied: dict, returned: set = frozenset()) -> None:
-    """Remove what the candidate still says about child records it replaced.
+    """Remove references to child records the candidate replaced.
 
-    A child record the candidate does not hold was merged away, retired or
-    dropped. Records that depend on one, such as an information use of a
-    merged activity or a claim about a retired domain, go with it, and lists
-    that name one lose that entry, until nothing refers to a replaced record.
+    Dependent records (e.g. information uses of a merged activity or claims
+    about a retired domain) are removed, and ID lists drop those entries.
     """
-    # Records the answer returned that the bookkeeping since removed are gone
-    # as well as replaced child records.
+    # Also covers returned records that were removed during bookkeeping.
     supplied_ids = {record_id for name in SEMANTIC_COLLECTIONS for record_id in supplied[name]}
     supplied_ids |= set(returned)
     dependent_fields = {'information_uses': ('activity_id', 'concept_id'),
@@ -1932,7 +1807,7 @@ def _drop_replaced_references(expanded: dict, supplied: dict, returned: set = fr
 
 
 def _without(value, replaced: set):
-    """`value` with every ID in `replaced` removed from its lists of IDs."""
+    """Return `value` with IDs in `replaced` removed from its ID lists."""
     if isinstance(value, list):
         return [_without(item, replaced) for item in value
                 if not (isinstance(item, str) and item in replaced)]
@@ -1942,13 +1817,13 @@ def _without(value, replaced: set):
 
 
 def _referenced(payload: dict, supplied: dict) -> set:
-    """Supplied semantic records the records of `payload` name."""
+    """Return the supplied semantic records referenced by `payload`."""
     known = {record_id for name in SEMANTIC_COLLECTIONS for record_id in supplied[name]}
     return _referenced_ids([payload.get(name, {}) for name in SEMANTIC_COLLECTIONS], known)
 
 
 def _home_domains(payload: dict) -> dict:
-    """Each activity's primary domain, else the first domain holding it."""
+    """Map each activity to its primary domain, or else the first domain holding it."""
     home = {}
     for role in ('primary', 'supporting'):
         for domain_id in sorted(payload['domains']):
@@ -1959,15 +1834,11 @@ def _home_domains(payload: dict) -> dict:
 
 
 def reconciliation_findings(model: dict, units, payload: dict) -> list[dict]:
-    """Repairable findings on a complete reconciliation candidate.
+    """Return repairable findings for a complete reconciliation candidate.
 
-    Reconciliation may merge or regroup activities, never drop an anchor a
-    unit represented, and a child reported as represented must name records
-    it contributed. Where units connect in ways no unit could see, the
-    candidate must account for it: information one unit reads that only
-    another writes needs a relationship or a shared domain, and domains that
-    one boundary may cover need merging or a recorded decision to keep them
-    apart.
+    Checks that no represented anchor was dropped, that represented children
+    contributed records, that cross-unit reads have a relationship or shared
+    domain, and that merge candidates were merged or explicitly kept apart.
     """
     represented = set(_anchor_activities(payload))
     lost = sorted({anchor_id for unit in units for anchor_id, item in unit.coverage.items()
@@ -1979,7 +1850,7 @@ def reconciliation_findings(model: dict, units, payload: dict) -> list[dict]:
             'message': ('Reconciliation dropped anchors a validated child represented; '
                         'every such anchor must stay in a reconciled activity'),
             'subject_ids': lost, 'evidence_ids': []})
-    # A child contributed a concept merged into another under that one's ID.
+    # A child concept may have been merged into another under that ID.
     aliases = _merge_concepts(model, {
         collection: ({record_id: copy.deepcopy(item) for unit in units
                       for record_id, item in unit.payload[collection].items()}
@@ -2006,7 +1877,7 @@ def reconciliation_findings(model: dict, units, payload: dict) -> list[dict]:
 
 
 def _rule_findings(payload: dict, units) -> list[dict]:
-    """Rules of different units describing the same rule are one rule."""
+    """Find rules from different units that describe the same rule."""
     unit_of = {rule_id: unit.scope['scope_id'] for unit in units
                for rule_id in unit.payload['rules']}
     groups = []
@@ -2030,13 +1901,10 @@ def _rule_findings(payload: dict, units) -> list[dict]:
 
 
 def _mixed_observation_findings(payload: dict, units) -> list[dict]:
-    """A returned rule that cites most of one child rule's observations and
-    some of another's instead of the rest.
+    """Find returned rules that cite observations from two different child rules.
 
-    A returned rule replaces each child rule whose observations it cites, so
-    one observation cited in place of another replaces the wrong rule and
-    leaves the right one standing. The finding names both observations, which
-    the symptoms the reviewer sees do not.
+    This usually means one observation was cited in place of another, which
+    would replace the wrong child rule.
     """
     children = {rule_id: rule for unit in units for rule_id, rule in unit.payload['rules'].items()}
     cited_by = {}
@@ -2108,7 +1976,7 @@ def _merge_findings(model: dict, units, payload: dict) -> list[dict]:
     home = _home_domains(payload)
 
     def settled(domain_id):
-        """The candidate domains now holding a child domain's activities."""
+        """Return the candidate domains that now hold a child domain's activities."""
         return {home[holder[anchor_id]]
                 for membership in domains[domain_id]['activity_memberships']
                 if membership['activity_id'] in activities
@@ -2116,7 +1984,7 @@ def _merge_findings(model: dict, units, payload: dict) -> list[dict]:
                 if anchor_id in holder and holder[anchor_id] in home}
 
     def decided(sides):
-        """Whether a domain on one side records a boundary decision naming the other."""
+        """Return whether either domain records a boundary decision about the other."""
         for side, other in (sides, sides[::-1]):
             for domain_id in side:
                 domain = payload['domains'].get(domain_id)
@@ -2142,7 +2010,7 @@ def _merge_findings(model: dict, units, payload: dict) -> list[dict]:
 
 
 def unassigned_anchors(unit: Unit) -> list[dict]:
-    """Published dispositions of the anchors the root does not represent."""
+    """Return dispositions for anchors the root does not represent."""
     return [record('Unassigned', subject_id=anchor_id,
                    status='excluded' if item['status'] == 'excluded' else 'pending',
                    reason=item['reason'])
@@ -2151,9 +2019,9 @@ def unassigned_anchors(unit: Unit) -> list[dict]:
 
 
 def plan_reconciliation(units, build, fits) -> list[list[Unit]]:
-    """Group units, in order, into the fewest stable groups whose rollup fits.
+    """Group units in order into the fewest groups whose rollup fits.
 
-    `build(units)` returns a sized reconciliation scope. A unit that fits with
-    no neighbour forms a group of one, which the caller passes up unchanged.
+    `build(units)` returns a sized reconciliation scope. A unit that can't be
+    grouped with a neighbour is returned alone.
     """
     return [group for group, _ in _pack(list(units), build, fits)]

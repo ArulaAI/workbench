@@ -1,4 +1,4 @@
-"""F-05 SQL call-classification and resolution acceptance coverage."""
+"""Tests for SQL call classification and resolution."""
 from pathlib import Path
 
 import pytest
@@ -81,8 +81,7 @@ END;
 """})
     excerpts = [facts["evidence"][edge["evidence_ids"][0]]["excerpt"]
         for edge in _calls(facts)]
-    # The literal EXECUTE IMMEDIATE is evaluated as the SELECT it runs, so it
-    # is a read, not a dynamic call; no keyword ever becomes a call target.
+    # A literal EXECUTE IMMEDIATE is treated as the SELECT it runs, so it is a read.
     assert excerpts == []
     reads = [facts["evidence"][edge["evidence_ids"][0]]["excerpt"]
              for edge in facts["edges"].values() if edge["kind"] == "reads_data"]

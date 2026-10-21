@@ -1,24 +1,7 @@
-"""Repositories too large for one whole-graph request, made small on purpose.
+"""Small fixture repositories for hierarchical discovery tests.
 
-Hierarchical discovery (BD-40) applies when the complete synthesis,
-verification, repair and reverification sequence does not fit one request.
-Real repositories that large cost an hour of provider time per run, so these
-fixtures are small and the request allowance is lowered instead:
-`max_request_input_tokens` is the specified setting that bounds every request,
-and `calibrate` measures each fixture to choose the allowance that forces the
-partition a test needs.
-
-The shapes follow BD-40's fixture list:
-
-    write_monolith      one service, many entry points, one shared helper
-                        module every entry point calls (overlapping shared code)
-    write_long_chain    one entry point whose single trace runs many steps
-                        (a single oversized trace)
-    write_monorepo      several services, each its own deployable boundary
-                        (a synthetic monorepo)
-    InterruptingProvider
-                        fails after a number of synthesis requests
-                        (interrupted and resumed work)
+Tests lower `max_request_input_tokens` instead of using large repos; `calibrate`
+picks an allowance that forces the split a test needs.
 """
 from __future__ import annotations
 
@@ -79,11 +62,7 @@ def write_monolith(root: Path, entry_points: int = 8) -> Path:
 
 
 def write_long_chain(root: Path, steps: int = 24) -> Path:
-    """One entry point whose single trace runs `steps` settlement steps.
-
-    The entry point calls every step in turn, so the whole chain stays inside
-    one trace however short the trace depth limit is.
-    """
+    """One entry point that calls `steps` settlement steps directly, so they share one trace."""
     body = ''.join(f'    state = step_{index}(state)\n' for index in range(steps))
     functions = ''.join(f'''
 
@@ -119,18 +98,16 @@ def write_monorepo(root: Path, services=('billing', 'catalog', 'shipping'),
 
 
 def force_split(allowance: int) -> dict:
-    """Configuration that bounds every semantic request to `allowance` tokens."""
+    """Return config that caps every semantic request at `allowance` tokens."""
     return {'business_domains': {'max_request_input_tokens': allowance}}
 
 
 @dataclass(frozen=True)
 class Calibration:
-    """Measured request sizes of one fixture under one provider.
+    """Measured request sizes for one fixture.
 
-    `whole` is the complete graph scope; `anchors` maps each canonical anchor
-    to the scope holding only its trace closure. `allowance(size)` is the
-    request allowance at which a scope of `size` tokens exactly fits its
-    complete synthesis, verification and repair sequence.
+    `whole` is the whole-graph scope size; `anchors` maps each canonical anchor
+    to the size of its own scope.
     """
     whole: int
     anchors: dict
@@ -140,7 +117,7 @@ class Calibration:
         return size + 2 * self.output_allowance
 
     def splitting_allowance(self) -> int:
-        """An allowance every single-anchor scope fits and the whole graph does not."""
+        """Return an allowance that fits every single-anchor scope but not the whole graph."""
         largest = max(self.anchors.values())
         low, high = self.allowance(largest), self.allowance(self.whole) - 1
         if low > high:
@@ -151,7 +128,7 @@ class Calibration:
 
 
 def calibrate(root: Path, provider=None) -> Calibration:
-    """Measure `root` exactly as discovery would size its requests."""
+    """Measure request sizes for `root` the same way discovery does."""
     provider = provider or PassingProvider()
     facts, _ = Extractor(root, settings({})).extract()
     model = copy_facts(facts, 'calibration')
@@ -168,13 +145,10 @@ def calibrate(root: Path, provider=None) -> Calibration:
 
 
 class ReconcilingProvider(PassingProvider):
-    """A provider that behaves as a model would in hierarchical mode.
+    """Fake provider for hierarchical mode.
 
-    For a whole graph or a slice it proposes one activity per canonical anchor,
-    citing that anchor's own evidence and traces, and groups them in one
-    domain. For a reconciliation scope it answers compactly: it returns only
-    the activities it merges (an anchor's segments become one) and its domain,
-    and keeps every other child activity by naming it incorporated.
+    Slices get one activity per canonical anchor in a single domain.
+    Reconciliation merges activities that share an anchor and keeps the rest by ID.
     """
 
     def generate(self, request, schema, *rest):
@@ -244,7 +218,7 @@ class ReconcilingProvider(PassingProvider):
                       domains=domains, claims=claims, dispositions=dispositions)
 
     def _merge_by_anchor(self, context):
-        """Kept child activity IDs, and one merged activity per anchor that has several."""
+        """Return kept activity IDs plus one merged activity per anchor with several."""
         groups = {}
         for activity_id, activity in sorted(context['activities'].items()):
             groups.setdefault(tuple(activity['anchor_ids']), []).append(activity)
@@ -264,7 +238,7 @@ class ReconcilingProvider(PassingProvider):
         return kept, merged, claims
 
     def _reconcile(self, graph, _allowed):
-        """Answer compactly: merged activities and domains; keep the rest by ID."""
+        """Return merged activities and the domain; other activities are kept by ID."""
         context = graph['context']
         kept, activities, claims = self._merge_by_anchor(context)
         grouped = {activity_id: True for activity_id in kept}
@@ -304,10 +278,9 @@ class InterruptingProvider(ReconcilingProvider):
 
 
 class RepairingProvider(ReconcilingProvider):
-    """Reject the first `rejections` verifications; repairs reword what was named.
+    """Fail the first `rejections` verifications and reword the named records on repair.
 
-    `interruptions` repair requests fail before any repair succeeds, which
-    leaves a repair chain interrupted mid-way.
+    The first `interruptions` repair requests raise.
     """
 
     def __init__(self, rejections: int = 1, interruptions: int = 0):
@@ -360,9 +333,7 @@ class SplittingProvider(ReconcilingProvider):
     def _synthesize(self, graph, allowed):
         payload = super()._synthesize(graph, allowed)
         first = sorted(payload['activities'])[0]
-        # A concept of its own gives the twin a distinct identity, as differing
-        # rules or concepts do for a model's split; its derived lists still
-        # match the activity it was split from.
+        # The extra concept gives the twin its own identity.
         twin = copy.deepcopy(payload['activities'][first])
         twin.update(id='activity:twin', name=twin['name'] + ': record the result',
                     claim_ids=['claim:twin'], concept_ids=['concept:result'])
@@ -385,7 +356,7 @@ class SplittingProvider(ReconcilingProvider):
 
     def generate(self, request, schema, *rest):
         if request['operation'] == 'verify' and request['deterministic_findings']:
-            # A verifier fails a candidate deterministic validation rejected.
+            # Fail verification when deterministic checks already found problems.
             self.requests.append(copy.deepcopy(request))
             graph = request['graph']
             subjects = sorted({subject for finding in request['deterministic_findings']

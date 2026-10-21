@@ -1,4 +1,4 @@
-"""PostgreSQL triggers, row-level security, body bounds and SQL test scripts."""
+"""Tests for PostgreSQL triggers, row-level security, body bounds and SQL test scripts."""
 import pytest
 
 from lib.context.business_domain_extract import Extractor
@@ -76,7 +76,7 @@ def test_create_trigger_is_an_entry_point_that_selects_its_function(
         ("registration", "eligible", registration["symbol_id"]),
         ("implementation", "supporting", function.symbol_id)}
     assert [item["state"] for item in anchor["correspondences"]] == ["resolved"]
-    # A trigger function cannot be called directly; the trigger is its entry point.
+    # Trigger functions are entered through their trigger, not called directly.
     assert len(facts["anchors"]) == 1
     trace = next(iter(facts["traces"].values()))
     assert function.symbol_id in trace["symbol_ids"] and edge["id"] in trace["edge_ids"]
@@ -298,8 +298,7 @@ def test_test_seed_and_ci_sql_scripts_are_reference_only_test_evidence(tmp_path)
 
 
 def test_merge_is_one_statement_writing_its_target(tmp_path):
-    # Bounding nested subqueries must not split MERGE's WHEN branches into
-    # free-standing UPDATE/INSERT fragments.
+    # MERGE's WHEN branches must not be split into separate UPDATE/INSERT fragments.
     facts, units = _extract(tmp_path, {"merge.sql": """
 CREATE OR REPLACE PROCEDURE roll_up(p_card_id IN NUMBER) IS
 BEGIN
@@ -326,7 +325,7 @@ END roll_up;
                        ("reads_data", "transactions")}
 
 
-# ── Call resolution: keywords, defaults, literal coercion, platforms ─────
+# Call resolution
 
 def _call_edges(facts, caller):
     symbols = facts["symbols"]
@@ -407,7 +406,7 @@ def test_a_platform_routine_is_a_known_boundary_only_in_a_platform_layout(tmp_pa
     obligation = next(item for item in facts["trace_obligations"].values()
                       if item["edge_id"] == platform["id"])
     assert obligation["boundary"] == "library_call"
-    # Outside a Supabase project layout nothing establishes the platform.
+    # Without a Supabase layout the platform is unknown.
     [other] = _call_edges(facts, "other")
     assert other["resolution"] == "unresolved" and other["to_ref"] is None
 
@@ -431,7 +430,7 @@ def test_a_platform_table_is_a_known_boundary_not_a_missing_table(tmp_path):
     assert obligation["boundary"] == "library_call"
 
 
-# ── Control conditions and declarations ──────────────────────────────────
+# Control conditions and declarations
 
 def test_a_query_inside_an_if_condition_is_not_guarded_by_that_if(tmp_path):
     facts, units = _extract(tmp_path, {"supabase/migrations/1_caller.sql": _postgres_caller(
@@ -505,7 +504,7 @@ def test_oracle_dual_is_a_platform_table(tmp_path):
     assert "SQL_DATA_TARGET_UNRESOLVED" not in _codes(facts)
 
 
-# ── IF as a statement vs IF() in an expression; platform trigger functions ─
+# IF statements, IF() expressions and platform trigger functions
 
 LATE_FEES = """CREATE FUNCTION public.get_customer_balance(p_customer_id integer) RETURNS numeric
     LANGUAGE plpgsql
@@ -587,7 +586,7 @@ def test_postgresql_only_markers_establish_the_dialect(tmp_path, text):
     assert "SQL_DIALECT_UNDETERMINED" not in _codes(facts)
 
 
-# ── Oracle writes: MERGE branches, record inserts, WHERE CURRENT OF ──────
+# Oracle writes
 
 ORACLE_WRITES = """CREATE TABLE counters (card_id NUMBER, txn_count NUMBER, total NUMBER,
   CONSTRAINT pk_counters PRIMARY KEY (card_id));
@@ -694,7 +693,7 @@ def test_declared_columns_skip_table_constraints():
         "id", "Name", "amount"]
 
 
-# ── Dynamic SQL: evaluated statement text, runtime pieces stay gaps ──────
+# Dynamic SQL
 
 def _dynamic_body(body):
     return ("CREATE TABLE apps (id NUMBER, name VARCHAR2(30), status VARCHAR2(10));\n"
@@ -738,7 +737,7 @@ def test_literal_and_numbered_bind_statements_are_evaluated(tmp_path, body, kind
 
 
 @pytest.mark.parametrize("body", [
-    # A branch between the assignment and the EXECUTE: which text runs is unknown.
+    # A branch between assignment and EXECUTE makes the text unknown.
     "    v_sql := 'DELETE FROM apps';\n    IF p_before IS NULL THEN\n"
     "      v_sql := 'DELETE FROM ' || p_table;\n    END IF;\n    EXECUTE IMMEDIATE v_sql;",
     # Text that does not parse as SQL stays dynamic.

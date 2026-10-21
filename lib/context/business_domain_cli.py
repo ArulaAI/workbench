@@ -1,6 +1,6 @@
-"""Command-line owner for `speed discover domains`.
+"""CLI for `speed discover domains`.
 
-Prints exactly one JSON result on stdout. Progress events go to stderr, one
+Prints one JSON result on stdout. Progress events go to stderr, one
 per line, prefixed with EVENT_PREFIX so the shell can render them.
 
 Exit codes: 0 complete or partial, 1 failed, 3 configuration or provider
@@ -32,10 +32,8 @@ def _progress(event):
           file=sys.stderr, flush=True)
 
 
-# Why traces are not resolved, read from the obligations each trace already
-# records. This only reports; it never changes how a trace is resolved. A
-# blocker is a boundary when extraction classified its obligation as one (the
-# trace then lists the assumption), and a gap otherwise.
+# Report labels for unsatisfied trace obligations. An obligation marked as a
+# boundary during extraction is a known boundary; anything else is a gap.
 BOUNDARY_LABELS = {
     'generated_implementation': 'Generated/runtime implementation',
     'config_selected': 'Profile/config-selected implementation',
@@ -63,7 +61,7 @@ _HTTP_EDGES = {'invokes_endpoint', 'emits'}
 
 
 def _blocker(obligation, edge_kind):
-    """The gap category of one obligation that is not satisfied."""
+    """Return the gap category for an unsatisfied obligation."""
     kind, status = obligation['kind'], obligation['status']
     if kind == 'implementation_selection':
         return {'external': 'generated_implementation',
@@ -80,8 +78,6 @@ def _blocker(obligation, edge_kind):
     if kind in {'depth_limit', 'symbol_limit'}:
         return 'navigation_depth'
     if kind == 'capability':
-        # Which capability is missing decides what the reader should do:
-        # identify the entry point, or analyze the source behind it.
         return {'UNRESOLVED_ANCHOR': 'unidentified_entry_point',
                 'CAPABILITY_UNAVAILABLE': 'unanalyzed_source'}.get(
                     obligation.get('reason_code'), 'contract_only')
@@ -89,10 +85,9 @@ def _blocker(obligation, edge_kind):
 
 
 def trace_blockers(facts):
-    """Unique traces per blocker category; a trace counts once per category.
+    """Count distinct traces per blocker category.
 
-    Each item is a ``boundary`` or a ``gap``: boundaries first, then gaps,
-    each by trace count and then in label order.
+    Boundaries come first, then gaps, each sorted by trace count then label order.
     """
     obligations, edges = facts['trace_obligations'], facts['edges']
     traces = {}
@@ -121,11 +116,9 @@ def _registration(anchor):
 
 
 def entry_point_counts(facts):
-    """``[{kind, resolved, total}]`` per entry-point kind, most frequent first.
+    """Return [{kind, resolved, total}] per entry-point kind, most frequent first.
 
-    The kind is the registration an adapter declared (``http_route``,
-    ``route``, ``action``, ``database_trigger``...), or the anchor kind when
-    the anchor has no registration of its own.
+    The kind is the anchor's registration kind, or the anchor kind if it has none.
     """
     counts = {}
     for anchor in facts['anchors'].values():
@@ -141,7 +134,7 @@ _CANDIDATE_LABELS = re.compile(r"one of ((?:'[^']*'(?:, )?)+)")
 
 
 def screen_actions(facts):
-    """Each UI action anchor with its screen and label, or why it has none."""
+    """List UI action anchors with their route, label and resolution state."""
     actions = []
     for anchor in facts['anchors'].values():
         registration = _registration(anchor)
@@ -154,7 +147,7 @@ def screen_actions(facts):
             candidates = re.findall(r"'([^']*)'", found.group(1)) if found else []
         reason = (registration.get('reason') or anchor.get('reason') or '').split(';')[0]
         actions.append({
-            # The screen, or the declaring file when no route is established.
+            # Fall back to the declaring file when there is no route.
             'route': (anchor['operation'].get('path')
                       or facts['symbols'][anchor['symbol_id']]['file']),
             'label': label, 'candidates': candidates,
@@ -166,10 +159,9 @@ def screen_actions(facts):
 
 
 def generated_declarations(facts):
-    """Build-time declarations modelled from generator inputs, and calls into them.
+    """Count generated symbols and resolved calls into them, per kind.
 
-    Generated symbols are named ``<build file>::generated-<kind>:<name>``; the
-    kind is whatever the generating adapter declared.
+    Generated symbols are named <build file>::generated-<kind>:<name>.
     """
     generated = {}
     for symbol in facts['symbols'].values():
@@ -189,16 +181,15 @@ def generated_declarations(facts):
 
 
 def _language_names():
-    """Display names of language ids, from the entry-point marker catalog."""
+    """Return display names for language ids."""
     from .business_domain_entrypoints import load_catalog
     return dict(load_catalog().display_names)
 
 
 def warning_counts(warnings):
-    """``[{code, count, boundary}]``, most frequent first, then by code.
+    """Return [{code, count, boundary}], most frequent first, then by code.
 
-    ``boundary`` marks codes the trace-boundary catalog classifies as known
-    boundaries: expected records of a stated assumption, not problems.
+    boundary is True for codes listed in the trace-boundary catalog.
     """
     from .business_domain_extract import TRACE_BOUNDARIES
     known = set(TRACE_BOUNDARIES['diagnostic_codes']) | set(TRACE_BOUNDARIES['library_codes'])
@@ -213,15 +204,9 @@ def _relative(root, path):
     return str(Path(path).relative_to(root))
 
 
-# ── The --facts-only report ──────────────────────────────────────────────
-#
-# What a reader asks first is whether each entry point was followed to an end
-# this tool can name, and if not, exactly where it stopped. The report answers
-# that from the facts alone: it counts, never reclassifies. A call site on a
-# trace is in this repository, at a platform or library boundary the facts
-# name, or open; an open site is listed with its source line.
+# --facts-only report
 
-# Languages the entry-point catalog does not name: data and documentation.
+# Data/doc languages missing from the entry-point catalog.
 _DATA_LANGUAGE_NAMES = {'json': 'JSON', 'yaml': 'YAML', 'markdown': 'Markdown',
                         'toml': 'TOML', 'xml': 'XML', 'properties': 'Properties',
                         'css': 'CSS', 'scss': 'SCSS', 'csv': 'CSV'}
@@ -232,7 +217,7 @@ _UNANALYZED = re.compile(r'^(?P<path>[^:]+): language=(?P<language>[^;]+);.*?'
 
 
 def _call_site(facts, edge):
-    """Where the call *edge* records its site: (path, line, excerpt)."""
+    """Return (path, line, excerpt) for a call edge."""
     for evidence_id in edge.get('evidence_ids') or ():
         evidence = facts['evidence'].get(evidence_id) or {}
         locator = evidence.get('locator') or {}
@@ -243,7 +228,7 @@ def _call_site(facts, edge):
 
 
 def _call_class(facts, edge):
-    """repository, platform, library, ambiguous or open."""
+    """Classify a call as repository, platform, library, ambiguous or open."""
     if edge['resolution'] == 'resolved':
         return 'repository'
     if edge['resolution'] == 'ambiguous':
@@ -256,7 +241,7 @@ def _call_class(facts, edge):
 
 
 def _calls_on_traces(facts):
-    """Each distinct call site any trace reaches, classified once."""
+    """Count and classify the distinct call sites reached by any trace."""
     edges = facts['edges']
     seen = {}
     for trace in facts['traces'].values():
@@ -290,7 +275,7 @@ MAX_STORES = 6
 
 
 def _data_on_traces(facts):
-    """Reads and writes any trace reaches, per data resource, each site once."""
+    """Summarize data reads and writes reached by traces, per store."""
     edges = facts['edges']
     seen = {}
     for trace in facts['traces'].values():
@@ -315,7 +300,7 @@ def _data_on_traces(facts):
 
 
 def _unanalyzed_sources(warnings):
-    """Files discovery found but could not analyze, and what that cost."""
+    """List files that could not be analyzed, from SOURCE_CAPABILITY_UNAVAILABLE warnings."""
     files = []
     for warning in warnings:
         if warning.get('code') != 'SOURCE_CAPABILITY_UNAVAILABLE':
@@ -328,18 +313,16 @@ def _unanalyzed_sources(warnings):
 
 
 def _relationships(facts, measured):
-    """Resolved and unresolved relationships, and where the unresolved lie.
+    """Count resolved and unresolved relationships.
 
-    An unresolved relationship on a trace either ends at a resource the facts
-    name (a platform or library) or is open; one no trace reaches is counted
-    apart, since no business flow depends on it.
+    Unresolved edges on traces are split into those ending at a known resource
+    and those left open.
     """
     traced = {edge_id for trace in facts['traces'].values() for edge_id in trace.get('edge_ids', ())}
     on_traces = [edge for edge in facts['edges'].values()
                  if edge['resolution'] != 'resolved' and edge['id'] in traced]
     named = sum((edge.get('to_ref') or {}).get('kind') == 'resource' for edge in on_traces)
-    # Distinct edges, so the parts add up: the coverage counters count each
-    # call occurrence, and two occurrences can record one edge.
+    # Count distinct edges; coverage counters count occurrences, which can share an edge.
     return {'resolved': sum(edge['resolution'] == 'resolved' for edge in facts['edges'].values()),
             'open': measured['open'],
             'outside_traces': measured['open_outside_traces'],
@@ -348,7 +331,7 @@ def _relationships(facts, measured):
 
 
 def facts_report(facts, root=None, elapsed_ms=None):
-    """The data the terminal summary shows, computed from *facts* alone."""
+    """Build the terminal summary data from facts."""
     code_names = _language_names()
     names = {**_DATA_LANGUAGE_NAMES, **code_names}
     measured = extraction_measurements(facts)
@@ -365,7 +348,7 @@ def facts_report(facts, root=None, elapsed_ms=None):
     return {
         'repository': Path(root).name if root else None,
         'elapsed_ms': elapsed_ms,
-        # Source code first, then documentation and data, each most files first.
+        # Code languages first, then by file count.
         'files': [{'language': language, 'files': count, 'code': language in code}
                   for language, count in sorted(files.items(), key=lambda item: (
                       item[0] not in code, -item[1], item[0]))],
@@ -399,7 +382,7 @@ def facts_report(facts, root=None, elapsed_ms=None):
 
 
 def facts_only(root):
-    """Deterministic extraction only; never invokes a provider."""
+    """Run extraction only, without calling a provider."""
     config = settings(load_speed_toml(str(root)))
     target = paths(root)['facts']
     _progress({'stage': 'domain.extract', 'level': 'step',
@@ -422,15 +405,14 @@ def facts_only(root):
 
 
 def run(root):
-    """Full pipeline: extract, synthesize, verify, publish."""
+    """Run the full pipeline: extract, synthesize, verify, publish."""
     recorder = DiscoveryRecorder(root, progress=_progress)
     outcome, result = 'failed', None
     try:
         model, status = discover(root, load_speed_toml(str(root)),
                                  recorder=recorder, run_id=recorder.run_id)
         outcome = status['phase']
-        # A failed attempt leaves the previous model in place. It is still the
-        # published model, but this attempt did not publish it.
+        # A failed run keeps the previous model, but it wasn't published by this run.
         published = (model is not None and outcome in {'complete', 'partial'}
                      and status['published_build_id'] == status['attempt_build_id'])
         result = {'mode': 'run', 'status': status, 'published': published,
@@ -460,11 +442,7 @@ MODES = {'run': run, 'facts': facts_only, 'status': status, 'cancel': cancel}
 
 
 def _stop(signum, frame):
-    """End every provider call, in every thread, before this process exits.
-
-    Without this, a terminated discovery leaves its provider processes
-    running, and spending, with no one to read their answers.
-    """
+    """Stop all provider calls before exiting so they don't keep running."""
     request_shutdown()
     raise KeyboardInterrupt
 

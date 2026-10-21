@@ -1,11 +1,7 @@
-"""OpenAPI model classes are built from the committed schema, one per schema.
+"""Tests for model classes synthesized from openapi-generator-maven-plugin config.
 
-openapi-generator-maven-plugin writes one Java class per object schema into
-``modelPackage``, named ``<modelNamePrefix><Schema><modelNameSuffix>``, with a
-bean getter and setter per property (``allOf`` parts included). The snapshot
-never contains those classes, so the build adapter synthesizes them from the
-plugin configuration and the schema. Accessor calls and overloads taking them
-then resolve exactly; anything the configuration does not pin stays unresolved.
+The generator writes one class per object schema into ``modelPackage``, named
+``<modelNamePrefix><Schema><modelNameSuffix>``, with a getter/setter per property.
 """
 import pytest
 
@@ -189,7 +185,7 @@ def test_type_and_accessor_evidence_cite_the_plugin_and_the_schema(facts):
     assert set(pet) == {'pom.xml', SPEC_PATH}
     assert pet['pom.xml'].startswith('<plugin>') and pet['pom.xml'].endswith('</plugin>')
     assert pet[SPEC_PATH].startswith('Pet:\n') and pet[SPEC_PATH].endswith('format: int64')
-    # An allOf property is evidenced where it is declared: in PetFields.
+    # allOf properties cite PetFields, where they are declared.
     name = _evidence(facts, _generated(facts)['com.example.dto.PetDto.getName()'])
     assert name[SPEC_PATH] == 'name:\n          type: string'
     assert 'openapi-generator-maven-plugin' in name['pom.xml']

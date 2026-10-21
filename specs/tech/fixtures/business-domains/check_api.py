@@ -1,4 +1,4 @@
-"""Explicit fixture checks; never run by ordinary domain discovery."""
+"""Fixture checks for the cancel API; not run by domain discovery."""
 import json
 from pathlib import Path
 from fastapi.testclient import TestClient
@@ -16,7 +16,7 @@ with TestClient(app) as client:
     rows = app.state.db.execute('SELECT status, cancellation_reason FROM orders ORDER BY tenant_id, order_id').fetchall()
     assert rows == [('CANCELLED', 'changed mind'), ('SHIPPED', None), ('PLACED', None)], rows
 app.state.db.close()
-# A write failure must not produce success or leave a transaction/mutation behind.
+# A failed write must return an error and roll back.
 app = create_app()
 app.state.db.execute("CREATE TRIGGER fail_update BEFORE UPDATE ON orders BEGIN SELECT RAISE(ABORT, 'fixture failure'); END")
 with TestClient(app) as client:

@@ -1,4 +1,4 @@
-"""HTML form and template semantics over declarative tree-sitter rules."""
+"""HTML form and template adapter built on the rules adapter."""
 from __future__ import annotations
 
 import re
@@ -12,15 +12,15 @@ from .base import (declare_anchor_registration, declare_anchor_representation,
 PREPARE_PHASE = 50
 
 
-# Marks an identity part that is not statically determined. Such an identity
-# also carries the form's location, so incomplete forms never merge.
+# Placeholder for an unknown identity part; such identities also get the form
+# location appended so incomplete forms never merge.
 _UNRESOLVED_PART = '<unresolved>'
 _SUBMIT_INPUT_TYPES = frozenset({'submit', 'image'})
 _HTTP_FORM_METHODS = frozenset({'get', 'post'})
 
 
 class _FormReader(HTMLParser):
-    """The form's own attributes and its submit controls, in document order."""
+    """Collect a form's attributes and its submit controls."""
 
     def __init__(self):
         super().__init__(convert_charrefs=True)
@@ -53,12 +53,7 @@ def _computed(attributes, pattern):
 
 
 def _form_submission(text, metadata):
-    """``(method, action, label, missing)`` of a form; unknown parts are None.
-
-    Each value is the literal one the browser submits. A part a template
-    engine computes, or one the markup leaves open, is reported missing
-    rather than guessed.
-    """
+    """Return ``(method, action, label, missing)`` for a form; unknown parts are None."""
     reader = _FormReader()
     reader.feed(text)
     reader.close()
@@ -120,8 +115,7 @@ def prepare(sources, units, diagnostics=None):
             method, action, label, missing = _form_submission(
                 source.text[unit.start:unit.end], unit.html_form_metadata)
             scope = source.service_scope
-            # The label is the last part, so escaping its separators keeps the
-            # key unambiguous for actions that themselves contain ':'.
+            # Escape ':' in the label so the identity key stays parseable.
             written_label = (None if label is None else
                              label.replace('%', '%25').replace(':', '%3A'))
             identity = (f'ui:{scope}:form:{_identity_part(method)}:'

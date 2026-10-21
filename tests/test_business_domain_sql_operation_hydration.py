@@ -1,4 +1,4 @@
-"""F-08 Oracle/PostgreSQL operation hydration and Grocery acceptance."""
+"""Tests for Oracle and PostgreSQL operation hydration."""
 from pathlib import Path
 
 import pytest

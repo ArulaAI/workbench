@@ -1,4 +1,4 @@
-"""Java Properties: parsing, scope, byte accounting and redaction (F1)."""
+"""Tests for Java .properties parsing, scope, byte accounting and redaction."""
 import json
 from pathlib import Path
 
@@ -38,13 +38,13 @@ def _extract(root, files):
 
 
 def _persisted(root, facts):
-    """Every persisted and provider-ready projection of one extraction, as text."""
+    """Return every persisted and provider-facing projection of one extraction as text."""
     snapshots = ''.join(path.read_text() for path in
         (root / '.speed/context/business-domain-snapshots').glob('*.json'))
     return json.dumps(facts) + snapshots
 
 
-# ── Grammar ──────────────────────────────────────────────────────────────
+# Grammar
 
 @pytest.mark.parametrize('text, expected', [
     ('a=1', [('a', '1')]),
@@ -156,7 +156,7 @@ def test_impossible_configuration_paths_raise(path):
         java_properties._configuration_scope(path)
 
 
-# ── Projection ───────────────────────────────────────────────────────────
+# Projection
 
 def test_duplicate_keys_have_distinct_stable_unit_symbol_and_binding_ids(tmp_path):
     facts, units = _extract(tmp_path, {MAIN: 'k=one\nk=two\n'})
@@ -217,7 +217,7 @@ def test_malformed_neighbor_keeps_valid_facts_and_leaves_the_file_unresolved(tmp
     assert facts['coverage']['unsupported_source_ids'] == []
 
 
-# ── Redaction ────────────────────────────────────────────────────────────
+# Redaction
 
 def test_secret_literals_never_persist(tmp_path):
     text = ('spring.datasource.password = alpha beta\n'

@@ -1,4 +1,4 @@
-"""Read-only business participation for planning and task coordination."""
+"""Map tasks and files to business domains for planning."""
 from collections import defaultdict
 import logging
 
@@ -47,7 +47,7 @@ def domain_overlap(tasks, model):
 
 
 def file_participation(model, visible_ids=None):
-    """Files can implement multiple responsibilities through distinct symbols."""
+    """Return the set of domain ids each file belongs to."""
     files = defaultdict(set)
     if model:
         for did, domain in model['domains'].items():
@@ -61,7 +61,7 @@ def file_participation(model, visible_ids=None):
 
 
 def project_participation(digest, model):
-    """Project many-to-many file participation without reading source files."""
+    """Add domain participation to a digest without reading source files."""
     visible = {d['id']:d for d in digest.get('domains',[])}
     files = file_participation(model,visible)
     for collection in ('hotspots','risks'):
