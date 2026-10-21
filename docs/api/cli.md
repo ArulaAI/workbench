@@ -83,6 +83,8 @@ Standalone cross-task coherence check. The Coherence Checker examines how indepe
 
 ### `integrate`
 Merges completed task branches into the main branch in dependency order (set `MAIN_BRANCH` to merge into a different branch). Coherence checking is a separate command (`speed coherence`) run before integration.
+*   **Target branch**: If the checked-out branch is not the target, asks for confirmation in a terminal and refuses without one; set `MAIN_BRANCH` or pass `--yes` to skip the question. Checks always run on the target branch, which is checked out first (the command stops if there are uncommitted changes).
+*   **Output**: Ends with a summary of branches, regression, contract, Guardian and spec coverage. Use `--verbose` for every merged branch, contract item and the full Integrator report.
 *   **Merge check**: After the Integrator agent finishes, verifies in git that every branch is in the target branch. Stops with exit code 4 if any is missing or a merge is left in progress.
 *   **Regression**: Runs the test, lint and typecheck commands from the `## Quality Gates` section of the project's agent file (`AGENTS.md` or `CLAUDE.md`) once all branches are merged. Skip with `--skip-tests`. Warns when no gates are configured.
 *   **CSG Rebuild**: Rebuilds the codebase index against the merged result.
