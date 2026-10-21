@@ -397,7 +397,7 @@ task_print_graph() {
             history_str+=" ${COLOR_ACCENT}[retry x${retry_count}]${RESET}"
         fi
 
-        printf "  %b%s%b  %-4s %s%s%s\n" "$status_color" "$status_icon" "$RESET" "$id" "$title" "$dep_str" "$history_str"
+        printf "  %b%s%b  %-4s %s%b%b\n" "$status_color" "$status_icon" "$RESET" "$id" "$title" "$dep_str" "$history_str"
     done | sort -t' ' -k4 -n
 }
 
