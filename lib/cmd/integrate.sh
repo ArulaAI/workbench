@@ -156,18 +156,46 @@ ${PROJECT_ROOT}
     # Save integration log
     echo "$output" > "${LOGS_DIR}/integration.log"
     log_success "Integration log saved to ${LOGS_DIR}/integration.log"
+
+    # Don't trust the agent's report; check in git that every branch landed.
+    if [[ -f "$(_git rev-parse --git-path MERGE_HEAD)" ]]; then
+        log_error "A merge is still in progress in ${PROJECT_ROOT}; resolve or abort it, then rerun"
+        log_error "Feature not marked complete"
+        exit "$EXIT_MERGE_CONFLICT"
+    fi
+    local unmerged=()
+    for b in "${branches[@]}"; do
+        _git merge-base --is-ancestor "$b" "$integrate_branch" 2>/dev/null || unmerged+=("$b")
+    done
+    if [[ ${#unmerged[@]} -gt 0 ]]; then
+        log_error "${#unmerged[@]} of ${#branches[@]} branches are not in ${integrate_branch} after the Integrator ran:"
+        for b in "${unmerged[@]}"; do
+            echo "    - ${b}"
+        done
+        log_error "Feature not marked complete. See ${LOGS_DIR}/integration.log"
+        exit "$EXIT_MERGE_CONFLICT"
+    fi
+    log_success "Verified in git: all ${#branches[@]} branches are in ${integrate_branch}"
     fi
 
     # ── Post-integration: regression tests ────────────────────────
     echo ""
     log_header "Post-Integration Verification"
 
+    # Checks that fail stop the feature from being marked complete.
+    local failed_checks=()
+
     if [[ "$skip_tests" == true ]]; then
         log_info "Regression tests skipped (--skip-tests)"
+        _log_gate_skip "tests" "integrate"
+    elif [[ -z "$(gates_get_config test both)$(gates_get_config lint both)$(gates_get_config typecheck both)" ]]; then
+        log_warn "No quality gates configured, so regression checked nothing"
+        log_warn "Add a '## Quality Gates' section (e.g. '- test: \`npm test\`') to ${AGENT_FILE:-AGENTS.md}"
         _log_gate_skip "tests" "integrate"
     elif regression_run; then
         log_success "Regression tests passed"
     else
+        failed_checks+=("regression tests")
         log_error "Regression tests FAILED after integration"
         log_error "The merge may have introduced incompatibilities"
         echo ""
@@ -187,6 +215,7 @@ ${PROJECT_ROOT}
         if contract_check; then
             log_success "Contract check passed — schema matches plan"
         else
+            failed_checks+=("contract check")
             log_error "Contract check FAILED — built schema doesn't match the plan"
             log_error "This means the implementation doesn't support the product's core question"
             echo ""
@@ -231,6 +260,7 @@ This is a post-integration check. Evaluate whether the integrated result, taken 
         local _guardian_out
         _guardian_out=$(_run_guardian "post-integration" "$guardian_input" "integration") || grc=$?
         if [[ $grc -eq 1 ]]; then
+            failed_checks+=("guardian")
             echo ""
             log_error "Guardian REJECTED the integrated result — vision violation detected"
             log_error "Review the guardian report before shipping"
@@ -274,11 +304,22 @@ PYTHON_EOF
         fi
     fi
 
+    if [[ ${#failed_checks[@]} -gt 0 ]]; then
+        echo ""
+        log_error "Integration checks failed: ${failed_checks[*]}"
+        log_error "Feature not marked complete. Fix the failures and run 'speed integrate' again"
+        exit "$EXIT_GATE_FAILURE"
+    fi
+
     # ── Post-integration: observation extraction ─────────────────
     echo ""
-    local run_learn="y"
-    read -r -p "Integration complete. Run observation extraction? [Y/n] " run_learn </dev/tty || run_learn="y"
-    run_learn="${run_learn:-y}"
+    local run_learn="n"
+    if { : </dev/tty; } 2>/dev/null; then
+        read -r -p "Integration complete. Run observation extraction? [Y/n] " run_learn </dev/tty || run_learn="n"
+        run_learn="${run_learn:-y}"
+    else
+        log_info "No terminal, so skipping observation extraction (run 'speed learn' to do it later)"
+    fi
     if [[ "$run_learn" =~ ^[Yy]$ ]]; then
         cmd_learn || log_warn "Observation extraction failed (non-blocking)"
     fi
