@@ -39,14 +39,35 @@ _cmd_integrate_defect() {
     # 6. Integrate (runs guardian check, merges, and runs regression)
     integrate_defect "$name"
 }
+_integrate_has_tty() {
+    { : </dev/tty; } 2>/dev/null
+}
+
+# Print the end-of-run summary. Reads the caller's locals.
+_integrate_summary() {
+    local result="$1"
+    echo ""
+    echo -e "  ${BOLD}Integration summary${RESET}  ${FEATURE_NAME} → ${integrate_branch}"
+    printf "    %-14s %s\n" "Branches" "$branch_summary"
+    printf "    %-14s %s\n" "Regression" "$regression_summary"
+    printf "    %-14s %s\n" "Contract" "$contract_summary"
+    printf "    %-14s %s\n" "Guardian" "$guardian_summary"
+    printf "    %-14s %s\n" "Spec coverage" "$coverage_summary"
+    printf "    %-14s %s\n" "Logs" "${LOGS_DIR#"${PROJECT_ROOT}"/}/"
+    echo -e "    $(printf '%-14s' Result) ${result}"
+    echo ""
+}
+
 cmd_integrate() {
     local skip_tests=false
+    local assume_yes=false
     local defect_name=""
 
     # Parse flags before _require_feature so --defect can skip feature requirement
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --skip-tests) skip_tests=true; shift ;;
+            --yes|-y)     assume_yes=true; shift ;;
             --defect)     _need_value "$@"; defect_name="$2"; shift 2 ;;
             *) log_error "Unknown option: $1"; exit 1 ;;
         esac
@@ -79,43 +100,79 @@ cmd_integrate() {
         return
     fi
 
-    # Get branches in topological order
-    local branches=()
+    local integrate_branch
+    integrate_branch=$(git_main_branch)
+    local was_complete=false
+    if [[ "$(jq -r '.status // ""' "$STATE_FILE" 2>/dev/null)" == "completed" ]]; then
+        was_complete=true
+    fi
+
+    # Get branches in topological order; skip ones already merged
+    local branches=() missing=()
+    local total=0 skipped=0
     local ordered_tasks
     ordered_tasks=$(task_topo_sort)
 
     while IFS= read -r task_id; do
         local status
         status=$(jq -r '.status // "unknown"' "${TASKS_DIR}/${task_id}.json")
-        if [[ "$status" == "done" ]]; then
-            local branch
-            branch=$(jq -r '.branch' "${TASKS_DIR}/${task_id}.json")
-            if git_branch_exists "$branch"; then
-                # Skip branches already merged (idempotent)
-                if _git merge-base --is-ancestor "$branch" "$(git_main_branch)" 2>/dev/null; then
-                    log_step "Branch ${branch} already merged — skipping"
-                    continue
-                fi
-                branches+=("$branch")
-            fi
+        [[ "$status" == "done" ]] || continue
+        local branch
+        branch=$(jq -r '.branch' "${TASKS_DIR}/${task_id}.json")
+        total=$((total + 1))
+        if ! git_branch_exists "$branch"; then
+            missing+=("${task_id}: ${branch}")
+        elif _git merge-base --is-ancestor "$branch" "$integrate_branch" 2>/dev/null; then
+            skipped=$((skipped + 1))
+            log_verbose "Branch ${branch} already merged"
+        else
+            branches+=("$branch")
         fi
     done <<< "$ordered_tasks"
 
+    log_info "Feature '${FEATURE_NAME}': ${total} done tasks, merging into '${integrate_branch}'"
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        log_warn "${#missing[@]} done tasks have no branch, so they can't be merged:"
+        for m in "${missing[@]}"; do
+            echo "    - ${m}"
+        done
+    fi
+    if [[ $skipped -gt 0 ]]; then
+        log_step "${skipped} of ${total} branches already merged into ${integrate_branch}"
+    fi
+
+    # Integrating into a branch other than the one checked out is easy to do by accident.
+    local current_branch
+    current_branch=$(_git branch --show-current 2>/dev/null || true)
+    if [[ -n "$current_branch" && "$current_branch" != "$integrate_branch" \
+          && -z "${MAIN_BRANCH:-}" && "$assume_yes" != true ]]; then
+        log_warn "You are on '${current_branch}', but integrate merges into '${integrate_branch}' (set MAIN_BRANCH to change)"
+        if _integrate_has_tty; then
+            local answer=""
+            read -r -p "Integrate into '${integrate_branch}'? [y/N] " answer </dev/tty || answer=""
+            if [[ ! "$answer" =~ ^[Yy]$ ]]; then
+                log_info "Cancelled. Nothing was merged"
+                exit 1
+            fi
+        else
+            log_error "No terminal to confirm. Rerun with MAIN_BRANCH=${integrate_branch} or --yes"
+            exit 1
+        fi
+    fi
+
+    local branch_summary
     if [[ ${#branches[@]} -eq 0 ]]; then
-        log_info "All branches already merged — skipping to verification."
+        log_info "Nothing new to merge, so going straight to verification"
+        branch_summary="${total} done, all already in ${integrate_branch}"
     else
 
     log_step "Merging ${#branches[@]} branches in dependency order..."
-    echo ""
 
     # Build branch list for integrator
     local branch_list=""
     for b in "${branches[@]}"; do
         branch_list+="- ${b}"$'\n'
     done
-
-    local integrate_branch
-    integrate_branch=$(git_main_branch)
 
     local agent_message="## Integration Task
 
@@ -150,12 +207,19 @@ ${PROJECT_ROOT}
         exit 1
     fi
 
-    echo "$output"
-    echo ""
-
-    # Save integration log
     echo "$output" > "${LOGS_DIR}/integration.log"
-    log_success "Integration log saved to ${LOGS_DIR}/integration.log"
+    if [[ "${VERBOSITY:-1}" -ge 2 ]]; then
+        echo "$output"
+    fi
+
+    local report
+    report=$(parse_agent_json "$output" 2>/dev/null) || report=""
+    if [[ -n "$report" ]] && jq -e 'type == "object"' >/dev/null 2>&1 <<< "$report"; then
+        log_success "Integrator reports $(jq '.merged_branches // [] | length' <<< "$report") merged, $(jq '.conflicts_resolved // [] | length' <<< "$report") conflicts resolved, $(jq '.failed_merges // [] | length' <<< "$report") failed"
+    else
+        log_warn "Integrator report has no JSON summary"
+    fi
+    log_info "Full Integrator report: ${LOGS_DIR#"${PROJECT_ROOT}"/}/integration.log"
 
     # Don't trust the agent's report; check in git that every branch landed.
     if [[ -f "$(_git rev-parse --git-path MERGE_HEAD)" ]]; then
@@ -176,26 +240,52 @@ ${PROJECT_ROOT}
         exit "$EXIT_MERGE_CONFLICT"
     fi
     log_success "Verified in git: all ${#branches[@]} branches are in ${integrate_branch}"
+    branch_summary="${#branches[@]} merged now, ${skipped} already merged; verified in git"
+    fi
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        branch_summary+="; ${#missing[@]} with no branch"
     fi
 
     # ── Post-integration: regression tests ────────────────────────
     echo ""
     log_header "Post-Integration Verification"
 
+    # The checks must look at the branch that was integrated into.
+    local head_branch
+    head_branch=$(_git branch --show-current 2>/dev/null || true)
+    if [[ "$head_branch" != "$integrate_branch" ]]; then
+        if [[ -n "$(_git status --porcelain --untracked-files=no 2>/dev/null)" ]]; then
+            log_error "Checks must run on '${integrate_branch}', but '${head_branch:-HEAD}' has uncommitted changes. Commit or stash them, then rerun"
+            exit 1
+        fi
+        if ! _git checkout -q "$integrate_branch"; then
+            log_error "Could not check out '${integrate_branch}' to run the checks"
+            exit 1
+        fi
+        log_info "Checked out '${integrate_branch}' to run the checks"
+    fi
+
     # Checks that fail stop the feature from being marked complete.
     local failed_checks=()
+    local regression_summary contract_summary guardian_summary coverage_summary
 
+    local gate_cmds
+    gate_cmds=$(for g in test lint typecheck; do gates_get_config "$g" both || true; done | sed '/^$/d' | paste -sd ',' - | sed 's/,/, /g') || gate_cmds=""
     if [[ "$skip_tests" == true ]]; then
         log_info "Regression tests skipped (--skip-tests)"
         _log_gate_skip "tests" "integrate"
-    elif [[ -z "$(gates_get_config test both)$(gates_get_config lint both)$(gates_get_config typecheck both)" ]]; then
+        regression_summary="skipped (--skip-tests)"
+    elif [[ -z "$gate_cmds" ]]; then
         log_warn "No quality gates configured, so regression checked nothing"
         log_warn "Add a '## Quality Gates' section (e.g. '- test: \`npm test\`') to ${AGENT_FILE:-AGENTS.md}"
         _log_gate_skip "tests" "integrate"
+        regression_summary="not configured (nothing tested)"
     elif regression_run; then
         log_success "Regression tests passed"
+        regression_summary="✓ passed (${gate_cmds})"
     else
         failed_checks+=("regression tests")
+        regression_summary="✗ FAILED (${gate_cmds})"
         log_error "Regression tests FAILED after integration"
         log_error "The merge may have introduced incompatibilities"
         echo ""
@@ -207,21 +297,22 @@ ${PROJECT_ROOT}
     fi
 
     # ── Post-integration: rebuild CSG for accurate contract check ──
-    log_step "Rebuilding code symbol graph..."
-    context_build_layer1 "true" >/dev/null 2>&1 || log_warn "CSG rebuild failed — contract check will use stale index"
+    local csg_start=$SECONDS
+    if context_build_layer1 "true" >/dev/null 2>&1; then
+        log_success "Code index rebuilt ($((SECONDS - csg_start))s)"
+    else
+        log_warn "Code index rebuild failed, so the contract check uses the previous index"
+    fi
 
     # ── Post-integration: contract check ──────────────────────────
+    contract_summary="no contract"
     if [[ -f "${CONTRACT_FILE}" ]]; then
         if contract_check; then
-            log_success "Contract check passed — schema matches plan"
+            contract_summary="✓ ${CONTRACT_PASSED}/${CONTRACT_TOTAL} declared artifacts found"
         else
             failed_checks+=("contract check")
-            log_error "Contract check FAILED — built schema doesn't match the plan"
+            contract_summary="✗ FAILED (${CONTRACT_PASSED:-0}/${CONTRACT_TOTAL:-?} found)"
             log_error "This means the implementation doesn't support the product's core question"
-            echo ""
-
-            # Invoke supervisor for contract failure
-            _invoke_supervisor "0" "contract"
         fi
     fi
 
@@ -259,24 +350,29 @@ This is a post-integration check. Evaluate whether the integrated result, taken 
         local grc=0
         local _guardian_out
         _guardian_out=$(_run_guardian "post-integration" "$guardian_input" "integration") || grc=$?
-        if [[ $grc -eq 1 ]]; then
-            failed_checks+=("guardian")
-            echo ""
-            log_error "Guardian REJECTED the integrated result — vision violation detected"
-            log_error "Review the guardian report before shipping"
-            echo -e "Report: ${COLOR_STEP}${LOGS_DIR}/guardian-post-integration-*.json${RESET}"
-        elif [[ $grc -eq 3 ]]; then
-            log_warn "Guardian returned unparseable output during post-integration check"
-        fi
+        case $grc in
+            0) guardian_summary="✓ aligned" ;;
+            2) guardian_summary="flagged (see guardian report)" ;;
+            3) guardian_summary="no usable answer"
+               log_warn "Guardian returned unparseable output during post-integration check" ;;
+            *) guardian_summary="✗ REJECTED"
+               failed_checks+=("guardian")
+               echo ""
+               log_error "Guardian REJECTED the integrated result — vision violation detected"
+               log_error "Review the guardian report before shipping"
+               echo -e "Report: ${COLOR_STEP}${LOGS_DIR}/guardian-post-integration-*.json${RESET}" ;;
+        esac
     else
+        log_info "Guardian check skipped (SKIP_GUARDIAN=true)"
         _log_gate_skip "guardian_post_integration" "integrate"
+        guardian_summary="skipped (SKIP_GUARDIAN=true)"
     fi
 
     # ── Post-integration: spec traceability ──────────────────────
+    coverage_summary="no spec"
     local spec_file
     spec_file=$(_get_spec_path)
     if [[ -n "$spec_file" ]] && [[ -f "$spec_file" ]]; then
-        log_step "Running spec traceability..."
         local trace_output
         trace_output=$($(_context_python) - "${TASKS_DIR}" "${FEATURE_DIR}/spec-traceability.json" "$spec_file" <<'PYTHON_EOF'
 import sys, os, json
@@ -301,11 +397,12 @@ PYTHON_EOF
         ) 2>/dev/null || trace_output=""
         if [[ -n "$trace_output" ]]; then
             log_success "Spec traceability: ${trace_output} coverage → spec-traceability.json"
+            coverage_summary="$trace_output"
         fi
     fi
 
     if [[ ${#failed_checks[@]} -gt 0 ]]; then
-        echo ""
+        _integrate_summary "✗ Not complete: ${failed_checks[*]} failed. Fix and run 'speed integrate' again"
         log_error "Integration checks failed: ${failed_checks[*]}"
         log_error "Feature not marked complete. Fix the failures and run 'speed integrate' again"
         exit "$EXIT_GATE_FAILURE"
@@ -314,7 +411,7 @@ PYTHON_EOF
     # ── Post-integration: observation extraction ─────────────────
     echo ""
     local run_learn="n"
-    if { : </dev/tty; } 2>/dev/null; then
+    if _integrate_has_tty; then
         read -r -p "Integration complete. Run observation extraction? [Y/n] " run_learn </dev/tty || run_learn="n"
         run_learn="${run_learn:-y}"
     else
@@ -324,8 +421,6 @@ PYTHON_EOF
         cmd_learn || log_warn "Observation extraction failed (non-blocking)"
     fi
 
-    echo ""
-
     # Mark feature complete
     jq --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
         '.status = "completed" | .completed_at = $ts' \
@@ -333,5 +428,9 @@ PYTHON_EOF
 
     [[ "${MP_ENABLED:-}" == "true" ]] && event_emit "integrate.completed" "$FEATURE_NAME" "{\"branches_merged\":${#branches[@]}}" || true
 
-    log_success "Feature marked complete"
+    if [[ "$was_complete" == true && ${#branches[@]} -eq 0 ]]; then
+        _integrate_summary "✓ Already complete; re-verified and all checks pass"
+    else
+        _integrate_summary "✓ Feature complete"
+    fi
 }

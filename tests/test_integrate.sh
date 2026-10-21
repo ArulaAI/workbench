@@ -32,7 +32,7 @@ prompt=$(cat)
 result='{}'
 if grep -q "## Integration Task" <<< "$prompt"; then
     dir=$(awk '/^### Working Directory/{getline; print; exit}' <<< "$prompt")
-    target=$(grep -m1 -oE 'branches into [^,]+' <<< "$prompt" | sed 's/branches into //')
+    target=$(grep -m1 -oE 'Merge the following branches into [^,]+' <<< "$prompt" | sed 's/.* into //')
     list=$(awk '/^Merge the following branches/{f=1;next} /^### Working Directory/{f=0} f && /^- /{sub(/^- /,""); print}' <<< "$prompt")
     [[ "${FAKE_MERGE:-all}" == "skip-last" ]] && list=$(sed '$d' <<< "$list")
     cd "$dir" && git checkout -q "$target"
@@ -102,6 +102,9 @@ test_all_branches_merged_and_checks_pass() {
     check "verifies the merges in git" 'grep -q "Verified in git: all 2 branches" <<< "$OUTPUT"'
     check "marks the feature complete" '[[ "$(feature_status)" == completed ]]'
     check "skips observation extraction without a terminal" 'grep -q "No terminal, so skipping observation extraction" <<< "$OUTPUT"'
+    check "prints a summary with the result" 'grep -q "Integration summary" <<< "$OUTPUT" && grep -q "Result .*Feature complete" <<< "$OUTPUT"'
+    check "shows the skipped guardian" 'grep -q "Guardian check skipped (SKIP_GUARDIAN=true)" <<< "$OUTPUT"'
+    check "keeps the agent report out of the terminal" '! grep -q "merged_branches" <<< "$OUTPUT"'
     teardown
 }
 
@@ -147,7 +150,41 @@ test_rerun_skips_merged_branches() {
     SKIP_GUARDIAN=true run_integrate
     SKIP_GUARDIAN=true run_integrate
     check "second run exits 0" '[[ $RC -eq 0 ]]'
-    check "second run skips the merged branches" 'grep -q "All branches already merged" <<< "$OUTPUT"'
+    check "second run reports the merged branches in one line" 'grep -q "2 of 2 branches already merged into main" <<< "$OUTPUT" && ! grep -q "task-1 already merged" <<< "$OUTPUT"'
+    check "second run says the feature was already complete" 'grep -q "Already complete; re-verified" <<< "$OUTPUT"'
+    teardown
+}
+
+test_other_target_branch_needs_confirmation() {
+    setup; gates "true"
+    git -C "${WORK}/project" checkout -qb work
+    SKIP_GUARDIAN=true run_integrate
+    check "refuses without a terminal to confirm" '[[ $RC -eq 1 ]] && grep -q "No terminal to confirm" <<< "$OUTPUT"'
+    check "merges nothing when it refuses" '! git -C "${WORK}/project" merge-base --is-ancestor speed/demo/task-1 main'
+    SKIP_GUARDIAN=true run_integrate --yes
+    check "merges into main with --yes" '[[ $RC -eq 0 ]] && git -C "${WORK}/project" merge-base --is-ancestor speed/demo/task-2 main'
+    teardown
+}
+
+test_checks_run_on_the_target_branch() {
+    setup; gates "test -f two.txt"
+    SKIP_GUARDIAN=true run_integrate
+    git -C "${WORK}/project" checkout -qb old "$(git -C "${WORK}/project" rev-list --max-parents=0 HEAD)"
+    SKIP_GUARDIAN=true run_integrate --yes
+    check "switches to the target branch for the checks" 'grep -q "Checked out .main. to run the checks" <<< "$OUTPUT"'
+    check "checks see the integrated code" '[[ $RC -eq 0 ]] && [[ "$(git -C "${WORK}/project" branch --show-current)" == main ]]'
+    git -C "${WORK}/project" checkout -q old
+    echo change >> "${WORK}/project/base.txt"
+    SKIP_GUARDIAN=true run_integrate --yes
+    check "refuses to switch with uncommitted changes" '[[ $RC -eq 1 ]] && grep -q "has uncommitted changes" <<< "$OUTPUT" && [[ "$(git -C "${WORK}/project" branch --show-current)" == old ]]'
+    teardown
+}
+
+test_done_task_without_branch_is_reported() {
+    setup; gates "true"
+    git -C "${WORK}/project" branch -q -D speed/demo/task-2
+    SKIP_GUARDIAN=true run_integrate
+    check "warns about the task with no branch" 'grep -q "1 done tasks have no branch" <<< "$OUTPUT" && grep -q "2: speed/demo/task-2" <<< "$OUTPUT"'
     teardown
 }
 
@@ -158,6 +195,9 @@ test_failing_regression_stops_completion
 test_guardian_rejection_stops_completion
 test_missing_gates_are_reported_not_passed
 test_rerun_skips_merged_branches
+test_other_target_branch_needs_confirmation
+test_checks_run_on_the_target_branch
+test_done_task_without_branch_is_reported
 
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"
