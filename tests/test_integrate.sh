@@ -76,7 +76,7 @@ gates() {
 }
 
 run_integrate() {
-    OUTPUT=$(SPEED_DIR="${SCRIPT_DIR}/.." "$SPEED_BIN" integrate --feature demo "$@" < /dev/null 2>&1)
+    OUTPUT=$(SPEED_NO_TTY=1 SPEED_DIR="${SCRIPT_DIR}/.." "$SPEED_BIN" integrate --feature demo "$@" < /dev/null 2>&1)
     RC=$?
 }
 
@@ -176,7 +176,71 @@ test_checks_run_on_the_target_branch() {
     git -C "${WORK}/project" checkout -q old
     echo change >> "${WORK}/project/base.txt"
     SKIP_GUARDIAN=true run_integrate --yes
-    check "refuses to switch with uncommitted changes" '[[ $RC -eq 1 ]] && grep -q "has uncommitted changes" <<< "$OUTPUT" && [[ "$(git -C "${WORK}/project" branch --show-current)" == old ]]'
+    check "refuses to switch with uncommitted changes" '[[ $RC -eq 1 ]] && grep -q "uncommitted changes" <<< "$OUTPUT" && [[ "$(git -C "${WORK}/project" branch --show-current)" == old ]]'
+    teardown
+}
+
+test_detached_head_needs_confirmation() {
+    setup; gates "true"
+    git -C "${WORK}/project" checkout -q --detach main
+    SKIP_GUARDIAN=true run_integrate
+    check "refuses on a detached HEAD without confirmation" '[[ $RC -eq 1 ]] && grep -q "You are on a detached HEAD" <<< "$OUTPUT"'
+    check "merges nothing on a detached HEAD" '! git -C "${WORK}/project" merge-base --is-ancestor speed/demo/task-1 main'
+    teardown
+}
+
+test_deleted_merged_branches_count_as_merged() {
+    setup; gates "true"
+    SKIP_GUARDIAN=true run_integrate
+    git -C "${WORK}/project" branch -q -d speed/demo/task-1 speed/demo/task-2
+    SKIP_GUARDIAN=true run_integrate
+    check "counts merged-then-deleted branches as merged" '[[ $RC -eq 0 ]] && grep -q "2 of 2 branches already merged" <<< "$OUTPUT"'
+    check "does not warn about them" '! grep -q "have no branch" <<< "$OUTPUT"'
+    teardown
+}
+
+test_guardian_without_overview_is_reported_skipped() {
+    setup; gates "true"
+    run_integrate
+    check "says the guardian was skipped for want of an overview" 'grep -q "Guardian check skipped (no product overview" <<< "$OUTPUT"'
+    check "does not claim the guardian approved" '! grep -q "aligned" <<< "$OUTPUT"'
+    teardown
+}
+
+test_missing_target_branch_is_refused() {
+    setup; gates "true"
+    MAIN_BRANCH=nope SKIP_GUARDIAN=true run_integrate
+    check "refuses a target branch that does not exist" '[[ $RC -eq 1 ]] && grep -q "Target branch .nope. does not exist" <<< "$OUTPUT"'
+    check "merges nothing" '! git -C "${WORK}/project" merge-base --is-ancestor speed/demo/task-1 main'
+    teardown
+}
+
+test_uncommitted_changes_are_refused_before_merging() {
+    setup; gates "true"
+    echo change >> "${WORK}/project/base.txt"
+    SKIP_GUARDIAN=true run_integrate
+    check "refuses with uncommitted changes" '[[ $RC -eq 1 ]] && grep -q "uncommitted changes" <<< "$OUTPUT"'
+    check "merges nothing" '! git -C "${WORK}/project" merge-base --is-ancestor speed/demo/task-1 main'
+    teardown
+}
+
+test_target_checked_out_elsewhere_is_refused() {
+    setup; gates "true"
+    git -C "${WORK}/project" checkout -qb work
+    git -C "${WORK}/project" worktree add -q "${WORK}/other" main
+    SKIP_GUARDIAN=true run_integrate --yes
+    check "refuses when the target is checked out in another worktree" '[[ $RC -eq 1 ]] && grep -q "checked out in another worktree" <<< "$OUTPUT"'
+    check "merges nothing" '! git -C "${WORK}/project" merge-base --is-ancestor speed/demo/task-1 main'
+    teardown
+}
+
+test_rerun_keeps_the_first_completion_time() {
+    setup; gates "true"
+    SKIP_GUARDIAN=true run_integrate
+    local first; first=$(jq -r .completed_at "${WORK}/project/.speed/features/demo/state.json")
+    sleep 1
+    SKIP_GUARDIAN=true run_integrate
+    check "keeps completed_at from the first completion" '[[ "$(jq -r .completed_at "${WORK}/project/.speed/features/demo/state.json")" == "$first" ]]'
     teardown
 }
 
@@ -197,6 +261,13 @@ test_missing_gates_are_reported_not_passed
 test_rerun_skips_merged_branches
 test_other_target_branch_needs_confirmation
 test_checks_run_on_the_target_branch
+test_detached_head_needs_confirmation
+test_deleted_merged_branches_count_as_merged
+test_guardian_without_overview_is_reported_skipped
+test_missing_target_branch_is_refused
+test_uncommitted_changes_are_refused_before_merging
+test_target_checked_out_elsewhere_is_refused
+test_rerun_keeps_the_first_completion_time
 test_done_task_without_branch_is_reported
 
 echo ""

@@ -1267,6 +1267,9 @@ toml_get_value() {
 
 contract_check() {
     local contract_file="${CONTRACT_FILE:-${STATE_DIR}/contract.json}"
+    CONTRACT_PASSED=""
+    CONTRACT_TOTAL=""
+    CONTRACT_REPORT=""
 
     if [[ ! -f "$contract_file" ]]; then
         log_warn "No contract.json found — skipping contract verification"
@@ -1315,9 +1318,11 @@ contract_check() {
     echo "$results_json" | jq -r '.results[] | "\(if .passed == true then "ok  " else "FAIL" end) \(.check): \(.detail)"' > "$report"
     CONTRACT_REPORT="$report"
 
-    if [[ "${VERBOSITY:-1}" -ge 2 || "$failed" -gt 0 ]]; then
+    local show_all=false
+    [[ "${VERBOSITY:-1}" -ge 2 ]] && show_all=true
+    if [[ "$show_all" == true || "$failed" -gt 0 ]]; then
         echo ""
-        echo "$results_json" | jq -r --arg v "${VERBOSITY:-1}" '.results[] | select($v >= "2" or .passed != true) | [.passed, .check, .detail] | @tsv' |
+        echo "$results_json" | jq -r --argjson all "$show_all" '.results[] | select($all or .passed != true) | [.passed, .check, .detail] | @tsv' |
         while IFS=$'\t' read -r passed check_name detail; do
             if [[ "$passed" == "true" ]]; then
                 echo -e "    ${COLOR_SUCCESS}${SYM_CHECK} ${check_name}${RESET} ${COLOR_DIM}${detail}${RESET}"
