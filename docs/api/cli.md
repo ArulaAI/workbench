@@ -82,11 +82,14 @@ Triggers code review for completed tasks. Uses the Reviewer agent to check diffs
 Standalone cross-task coherence check. The Coherence Checker examines how independently developed task branches interact when combined, looking for interface mismatches, duplicated logic, and contradictory assumptions. Runs delta comparison against previous reports when they exist, categorizing issues as fixed, remaining, or new.
 
 ### `integrate`
-Merges validated branches into the main repository in dependency order. Coherence checking is a separate command (`speed coherence`) run before integration.
-*   **Regression**: Runs automated tests after each merge (skip with `--skip-tests`).
+Merges completed task branches into the main branch in dependency order (set `MAIN_BRANCH` to merge into a different branch). Coherence checking is a separate command (`speed coherence`) run before integration.
+*   **Merge check**: After the Integrator agent finishes, verifies in git that every branch is in the target branch. Stops with exit code 4 if any is missing or a merge is left in progress.
+*   **Regression**: Runs the test, lint and typecheck commands from the `## Quality Gates` section of the project's agent file (`AGENTS.md` or `CLAUDE.md`) once all branches are merged. Skip with `--skip-tests`. Warns when no gates are configured.
 *   **CSG Rebuild**: Rebuilds the codebase index against the merged result.
 *   **Contract Check**: Verifies that implemented code matches the Architect's data model contract. Invokes the Supervisor on failure.
-*   **Guardian Gate**: Performs a final vision check on the integrated result.
+*   **Guardian Gate**: Performs a final vision check on the integrated result (skip with `SKIP_GUARDIAN=true`).
+*   **Failures**: If regression, the contract check or the Guardian fails, the feature is not marked complete and the command exits with code 2. Fix the failures and run `speed integrate` again; branches already merged are skipped.
+*   **Observation extraction**: Offered at the end in an interactive terminal; skipped when there is no terminal.
 *   **Option**: `--defect <name>`: Integrates a defect fix (runs review first for moderate defects in "fixed" state).
 
 ### `learn`
