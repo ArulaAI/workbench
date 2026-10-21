@@ -2,6 +2,7 @@
 const MAX_RETRIES = 3;
 const API_BASE_URL = "https://api.example.com";
 const DEFAULT_TIMEOUT_MS = 30000;
+export const SCHEME_FEE_BPS: number = 149;
 
 // NOT constants — camelCase or inside functions
 const myVariable = "hello";

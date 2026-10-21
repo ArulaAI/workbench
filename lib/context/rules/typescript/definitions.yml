@@ -157,7 +157,9 @@ metadata:
   produces: node
   kind: constant
 rule:
-  pattern: const $NAME = $VALUE
+  any:
+    - pattern: const $NAME = $VALUE
+    - pattern: "const $NAME: $TYPE = $VALUE"
   not:
     inside:
       any:
