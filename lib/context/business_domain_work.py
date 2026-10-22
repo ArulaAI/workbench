@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass
 from itertools import combinations
 
-from .business_domain_schema import DomainError, digest, identifier, record, validate
+from .business_domain_schema import DomainError, canonical, digest, identifier, record, validate
 
 
 GRAPH_CONTEXT_COLLECTIONS = (
@@ -1574,6 +1574,155 @@ def verification_view(scope: dict, complete: dict) -> dict:
         context['record_refs'][record_id] = {'id': record_id, 'collection': collection,
                                              'content_hash': digest(item)}
     return view
+
+
+# Collections whose records describe code: a kept trace brings everything it
+# reaches through them, so the repair sees whole traces rather than fragments.
+CODE_COLLECTIONS = frozenset({
+    'traces', 'edges', 'trace_obligations', 'symbols', 'bindings', 'effects',
+    'resources', 'rule_observations', 'anchors', 'anchor_representations',
+    'anchor_correspondences'})
+# Small collections a repair always sees in full: anchors and correspondences
+# decide which subjects a scope covers, and the groupings give the shape of
+# the whole model.
+ALWAYS_SHOWN = frozenset({
+    'anchors', 'anchor_representations', 'anchor_correspondences',
+    'domains', 'concepts', 'ownerships', 'relationships', 'rule_relationships'})
+# Never focused: capabilities is a list, snapshots never reach the provider,
+# and record_refs are trimmed by the projection itself.
+UNFOCUSED = frozenset({'capabilities', 'source_snapshots', 'record_refs'})
+# Fields by which a record depends on another: a claim on its subject, an
+# information use on its activity or concept, a trace on its anchor. The same
+# dependencies decide what reconciliation drops with a replaced record.
+DEPENDENT_FIELDS = ('subject_id', 'activity_id', 'concept_id', 'anchor_id')
+# A focus that keeps more than this share of the context isn't worth the risk.
+FOCUS_MAX_SHARE = 0.8
+
+
+def repair_focus(scope: dict, candidate: dict, findings, report) -> list | None:
+    """Return the context records a repair needs to see, or None for all.
+
+    A repair changes the records its findings name and what depends on them,
+    so it needs the part of the graph those records rest on, not the whole
+    scope. The candidate itself is always sent in full. Kept from the context:
+
+      - every record the findings name or cite;
+      - one step out from those, and from named candidate records: what they
+        reference, plus the claims, information uses and traces that depend
+        on them (`subject_id`, `activity_id`, `anchor_id`);
+      - the whole of every kept trace;
+      - the evidence all of these cite;
+      - SPEED's own claims and the small collections in ALWAYS_SHOWN, without
+        their evidence.
+
+    Returns None, so the repair sees everything, when an error or blocking
+    finding names no subject, when a named subject can't be found, or when the
+    focus would keep most of the context anyway.
+    """
+    context = scope['context']
+    records = {record_id: (collection, item)
+               for collection, items in context.items()
+               if collection not in UNFOCUSED and isinstance(items, dict)
+               for record_id, item in items.items()}
+    if not records:
+        return None
+    named, cited = set(), set()
+    for finding in [*(findings or []), *((report or {}).get('findings') or [])]:
+        subjects = set(finding.get('subject_ids') or ())
+        if not subjects and finding.get('severity') in ('error', 'blocking'):
+            return None
+        named |= subjects
+        cited |= set(finding.get('evidence_ids') or ())
+    candidate_records = {item['id']: item
+                         for collection in ('dispositions', *SEMANTIC_COLLECTIONS)
+                         for item in _items(candidate.get(collection))}
+    known = (set(records) | set(context.get('record_refs') or ()) | set(candidate_records)
+             | {scope['scope_id'], *scope.get('child_scope_ids', ()),
+                *scope.get('canonical_anchor_ids', ()),
+                *scope.get('source_representation_ids', ()),
+                *scope.get('cross_scope_edge_ids', ())})
+    if named - known:
+        return None
+
+    ids = set(records)
+    references = {record_id: _referenced_ids(item, ids) - {record_id}
+                  for record_id, (_, item) in records.items()}
+    # Only dependents count as pointing back; following every reference
+    # backwards would reach most of the scope through shared concepts.
+    dependents: dict[str, set] = {}
+    for record_id, (_, item) in records.items():
+        for field in DEPENDENT_FIELDS:
+            target = item.get(field)
+            if isinstance(target, str) and target in ids:
+                dependents.setdefault(target, set()).add(record_id)
+
+    focus = (named | cited) & ids
+    keep = set(focus)
+    for record_id in focus | named:
+        keep |= references.get(record_id, set()) | dependents.get(record_id, set())
+    # Named candidate records are sent in the candidate; the graph they rest on
+    # is what the repair needs to check them.
+    for record_id in named & set(candidate_records):
+        keep |= _referenced_ids(candidate_records[record_id], ids)
+    pending = [record_id for record_id in keep if records[record_id][0] in CODE_COLLECTIONS]
+    while pending:
+        for target in references[pending.pop()]:
+            if target not in keep and records[target][0] in CODE_COLLECTIONS:
+                keep.add(target)
+                pending.append(target)
+    keep |= {target for record_id in list(keep) for target in references[record_id]
+             if records[target][0] == 'evidence'}
+    keep |= {record_id for record_id, (collection, item) in records.items()
+             if collection in ALWAYS_SHOWN or item.get('kind') in SPEED_CLAIM_KINDS}
+
+    kept_size = sum(len(canonical(records[record_id][1])) for record_id in keep)
+    total_size = sum(len(canonical(item)) for _, item in records.values())
+    if len(keep) == len(records) or kept_size > FOCUS_MAX_SHARE * total_size:
+        return None
+    return sorted(keep)
+
+
+def restore_unseen_incorporations(previous: dict, repaired: dict, shown,
+                                  restorable) -> tuple[dict, list]:
+    """Put back child records a focused reconciliation repair couldn't see.
+
+    A focused repair sees only the records its findings need, so it can't
+    judge the rest of a child's records, and dropping one from
+    `incorporated_record_ids` would retire it unseen. Restores each record
+    the previous candidate incorporated that the repair dropped, wasn't shown,
+    doesn't return and is in `restorable`: the child records no finding names.
+    An ID a finding names may be exactly what the repair was asked to remove.
+    Returns the candidate and the restored IDs.
+    """
+    shown, restorable = set(shown), set(restorable)
+    returned = {record_id for collection in SEMANTIC_COLLECTIONS
+                for record_id in repaired.get(collection) or {}}
+    before = {disposition['subject_id']: disposition
+              for disposition in previous.get('dispositions') or ()
+              if disposition['subject_kind'] == 'child_scope'
+              and disposition['status'] == 'represented'}
+    repaired = copy.deepcopy(repaired)
+    restored = []
+    for disposition in repaired.get('dispositions') or ():
+        earlier = before.get(disposition['subject_id'])
+        if (earlier is None or disposition['subject_kind'] != 'child_scope'
+                or disposition['status'] != 'represented'):
+            continue
+        current = set(disposition['incorporated_record_ids'])
+        lost = [record_id for record_id in earlier['incorporated_record_ids']
+                if record_id not in current and record_id not in shown
+                and record_id not in returned and record_id in restorable]
+        if lost:
+            disposition['incorporated_record_ids'] = [
+                *disposition['incorporated_record_ids'], *lost]
+            restored.extend(lost)
+    return repaired, sorted(restored)
+
+
+def _items(records) -> list:
+    if isinstance(records, dict):
+        return list(records.values())
+    return list(records or ())
 
 
 def _referenced_ids(value, known: set) -> set:

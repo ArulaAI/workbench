@@ -7453,6 +7453,33 @@
         "deadline_at": {
           "type": "string",
           "format": "date-time"
+        },
+        "provider_focus": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "version",
+                "record_ids"
+              ],
+              "properties": {
+                "version": {
+                  "const": 1
+                },
+                "record_ids": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "uniqueItems": true
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [

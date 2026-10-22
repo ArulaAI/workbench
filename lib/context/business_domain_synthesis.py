@@ -22,7 +22,9 @@ from .business_domain_schema import (
     verification_report_findings, activity_closure, information_use_closure,
     required_scope_subjects,
 )
-from .business_domain_work import whole_graph_scope
+from .business_domain_work import (
+    SEMANTIC_COLLECTIONS, UNFOCUSED, repair_focus, restore_unseen_incorporations,
+    whole_graph_scope)
 
 AGENTS = Path(__file__).resolve().parents[2]/'agents'
 POLICY = json.loads(Path(__file__).with_name('business_domain_policies.json').read_text())
@@ -57,7 +59,7 @@ OPERATIONS = {
     'verify': ('VerificationReport', 'verification'),
     'repair': ('RepairPayload', 'synthesis'),
 }
-PROVIDER_PROJECTION_VERSION = 1
+PROVIDER_PROJECTION_VERSION = 2
 
 
 def allowed_evidence_ids(packet):
@@ -136,12 +138,18 @@ class ProviderProjection:
     _OMITTED_EVIDENCE_FIELDS = ('content_hash', 'extractor', 'extractor_version')
     _OMITTED_LOCATOR_FIELDS = ('source_hash', 'snapshot_id', 'pointer')
 
-    def __init__(self, packet):
+    def __init__(self, packet, focus=None, referenced=()):
+        """Project `packet`; with `focus`, send only those context records.
+
+        Aliases are numbered over the whole packet either way, so `_ref:N`
+        names the same record in focused and complete requests. Records left
+        out of the focus go to the sidecar; any that the sent records or
+        `referenced` still mention are sent as identity-only record_refs.
+        """
         self.packet = copy.deepcopy(packet)
         self.canonical_hash = digest(self.packet)
         self.counts = _projection_counts(self.packet)
         semantic, self.sidecar = self._semantic_packet(self.packet)
-        self.semantic_hash = digest(semantic)
         self.identifiers = _record_ids(semantic)
         self.reference_gaps = _packet_reference_gaps(
             self.packet, _record_ids(self.packet))
@@ -152,6 +160,11 @@ class ProviderProjection:
         self.aliases = {ident: f'_ref:{index}' for index, ident in
                         enumerate(sorted(self.identifiers))}
         self.canonical_ids = {alias: ident for ident, alias in self.aliases.items()}
+        self.omitted_records = 0
+        self.visible_evidence = None
+        if focus is not None:
+            self._focus(semantic, set(focus), set(referenced))
+        self.semantic_hash = digest(semantic)
         aliased = self._rewrite(semantic, self.aliases)
         self.wire_packet = self._pack(aliased)
         # Check the round trip now, before sizing or dispatch.
@@ -177,6 +190,12 @@ class ProviderProjection:
                 omitted['locator'] = locator_omitted
             if omitted:
                 sidecar['evidence'][evidence_id] = omitted
+        # A record_ref's hash only proves identity locally; the provider can't
+        # use it, and every hash is a long unique string.
+        sidecar['record_refs'] = {
+            record_id: reference.pop('content_hash')
+            for record_id, reference in context.get('record_refs', {}).items()
+            if 'content_hash' in reference}
         # Send embedded anchor records as IDs; the full records are already in
         # the top-level indexes.
         if ('anchor_representations' in context
@@ -187,6 +206,45 @@ class ProviderProjection:
                 anchor['correspondences'] = [
                     value['id'] for value in anchor['correspondences']]
         return value, sidecar
+
+    def _focus(self, semantic, keep, referenced):
+        """Move context records outside `keep` to the sidecar."""
+        context = semantic['context']
+        omitted = {}
+        for collection, records in context.items():
+            if collection in UNFOCUSED or not isinstance(records, dict):
+                continue
+            dropped = {record_id: item for record_id, item in records.items()
+                       if record_id not in keep}
+            if dropped:
+                context[collection] = {record_id: item for record_id, item in records.items()
+                                       if record_id in keep}
+                omitted[collection] = dropped
+        references = context.get('record_refs', {})
+        sent = {key: value for key, value in semantic.items() if key != 'context'}
+        sent['context'] = {key: value for key, value in context.items()
+                           if key != 'record_refs'}
+        mentioned = set(self._strings(sent)) | referenced
+        stubs = {record_id: {'id': record_id, 'collection': collection}
+                 for collection, records in omitted.items()
+                 for record_id in records if record_id in mentioned}
+        unmentioned = {record_id: reference for record_id, reference in references.items()
+                       if record_id not in mentioned}
+        context['record_refs'] = {
+            **{record_id: reference for record_id, reference in references.items()
+               if record_id in mentioned},
+            **stubs}
+        self.sidecar['focus'] = {'omitted': omitted, 'record_refs': unmentioned,
+                                 'stubs': sorted(stubs)}
+        self.omitted_records = sum(len(records) for records in omitted.values())
+        self.visible_evidence = set(context.get('evidence', {})) | {
+            record_id for record_id, reference in context['record_refs'].items()
+            if reference['collection'] == 'evidence'}
+        gaps = _packet_reference_gaps(semantic, _record_ids(semantic))
+        if gaps:
+            raise DomainError('INVALID_REFERENCE',
+                              'Focused provider projection left a reference unresolved',
+                              sorted(gaps)[0])
 
     @staticmethod
     def _rewrite(value, replacements):
@@ -325,6 +383,23 @@ class ProviderProjection:
         if self.sidecar['input_fingerprint'] is not None:
             value['input_fingerprint'] = self.sidecar['input_fingerprint']
         context = value.get('context', {})
+        focus = self.sidecar.get('focus')
+        if focus is not None:
+            references = context.get('record_refs', {})
+            for record_id in focus['stubs']:
+                if record_id not in references:
+                    raise DomainError('INVALID_ARTIFACT',
+                                      'Provider projection lost a focus reference', record_id)
+                del references[record_id]
+            references.update(copy.deepcopy(focus['record_refs']))
+            for collection, records in focus['omitted'].items():
+                context[collection].update(copy.deepcopy(records))
+        for record_id, content_hash in self.sidecar['record_refs'].items():
+            reference = context.get('record_refs', {}).get(record_id)
+            if reference is None:
+                raise DomainError('INVALID_ARTIFACT',
+                                  'Provider projection lost a record reference', record_id)
+            reference['content_hash'] = content_hash
         if ('anchor_representations' in context
                 and 'anchor_correspondences' in context):
             for anchor in context.get('anchors', {}).values():
@@ -421,7 +496,7 @@ class AliasRegistry:
 
 
 PROJECTION_INSTRUCTIONS = (
-    'The packet uses speed-domain-wire version 1. Decode root recursively: '
+    'The packet uses speed-domain-wire version 2. Decode root recursively: '
     'an array beginning null is a list; an array beginning -1 is an ID-keyed '
     'record map; any other array begins with layout index L and is an object '
     'whose sorted field names are layouts[L]. A nonnegative integer N is '
@@ -429,9 +504,25 @@ PROJECTION_INSTRUCTIONS = (
     'Values named _ref:N are stable aliases '
     'for supplied record IDs. Reuse those aliases exactly in response reference '
     'fields. New semantic record IDs must use their contract prefix and must not '
-    'use _ref:. Storage-only snapshot and integrity metadata is intentionally '
-    'local. Anchor representation/correspondence arrays contain IDs into their '
-    'complete top-level maps. Every semantic graph record and evidence excerpt is present.'
+    'use _ref:. Storage-only snapshot and integrity metadata, including '
+    'record_refs content hashes, is intentionally local. Anchor '
+    'representation/correspondence arrays contain IDs into their complete '
+    'top-level maps.'
+)
+COMPLETE_PACKET_INSTRUCTIONS = ' Every semantic graph record and evidence excerpt is present.'
+FOCUSED_PACKET_INSTRUCTIONS = (
+    ' This repair packet is focused on the findings. It supplies in full the '
+    'records the findings name or cite, the graph records that the candidate '
+    'records you may change rest on, the records one reference away from '
+    'those, whole traces, and the evidence all of them cite. The rest of the '
+    'scope was already validated and is left out to save input; a left-out '
+    'record that something still references is listed in context.record_refs '
+    'with its ID and collection only. A left-out record is not missing, '
+    'unsupported or retired: keep every reference to it exactly as the '
+    'candidate has it, and do not remove, retire, revise or mark unresolved '
+    'anything because its content is not shown. New citations must come from '
+    'context.evidence. Change only what the findings require, and apply the '
+    'completion gate to the records the findings name.'
 )
 
 
@@ -1448,6 +1539,15 @@ def _as_returned(graph, candidate):
     return graph, candidate
 
 
+def _restorable_child_records(graph, findings, report):
+    """Return the child records of a reconciliation that no finding names."""
+    named = {subject_id
+             for finding in [*(findings or []), *((report or {}).get('findings') or [])]
+             for subject_id in finding.get('subject_ids') or ()}
+    return {record_id for collection in SEMANTIC_COLLECTIONS
+            for record_id in graph['context'].get(collection, {})} - named
+
+
 def _repair_limit(graph):
     """Return the repair limit for a scope.
 
@@ -1815,8 +1915,18 @@ class Synthesis:
         return self.effective_request_input_tokens*3-len(canonical(schema))-len(prompt)-len(canonical({'budget':self.config}))
 
     def request_for(self, operation, graph, candidate=None,
-                    deterministic_findings=(), verification_report=None):
+                    deterministic_findings=(), verification_report=None,
+                    focus=None):
+        """Build a semantic request; `focus` lists the context records to send.
+
+        The request always carries the whole graph, which validation,
+        normalization and caching use. The focus only narrows what the
+        projection sends, and it is part of the request, so it is part of the
+        cache key.
+        """
         output_type, _ = OPERATIONS[operation]
+        extra = ({'provider_focus': {'version': 1, 'record_ids': list(focus)}}
+                 if focus is not None else {})
         deadline_at = datetime.fromtimestamp(
             time.time() + max(0, self.deadline-time.monotonic()),
             timezone.utc).isoformat()
@@ -1832,7 +1942,10 @@ class Synthesis:
             model=(self.agent_config['model'] if self.provider is None
                    else self.provider.model),
             max_output_tokens=self.effective_request_output_tokens,
-            deadline_at=deadline_at)
+            deadline_at=deadline_at, **extra)
+        if focus is None:
+            # record() fills every optional field; an unfocused request has none.
+            request.pop('provider_focus', None)
         validate(request, 'SemanticRequest')
         return request
 
@@ -1866,23 +1979,45 @@ class Synthesis:
 
     def project_exchange(self, request, schema, projection=None):
         """Build the compact request and schema sent to the provider."""
-        projection = projection or ProviderProjection(request['graph'])
+        focus = (request.get('provider_focus')
+                 if request['operation'] == 'repair' else None)
+        projection = projection or ProviderProjection(
+            request['graph'],
+            focus=focus['record_ids'] if focus else None,
+            referenced=ProviderProjection._strings([
+                request['candidate'], request['deterministic_findings'],
+                request['verification_report']]))
         projection.extend_aliases(
             request['candidate'], request['deterministic_findings'],
             request['verification_report'],
             registry=self.alias_registry(request['graph']))
         projected = copy.deepcopy(request)
+        projected.pop('provider_focus', None)
         projected['graph'] = copy.deepcopy(projection.wire_packet)
         projected['provider_projection'] = {
             'version': projection.VERSION,
             'semantic_hash': projection.semantic_hash,
-            'instructions': PROJECTION_INSTRUCTIONS,
+            'instructions': PROJECTION_INSTRUCTIONS + (
+                FOCUSED_PACKET_INSTRUCTIONS if focus else COMPLETE_PACKET_INSTRUCTIONS),
         }
+        provider_schema = projection.project_schema(schema)
+        if projection.visible_evidence is not None:
+            # Offer only evidence the provider can see: what is sent and what the
+            # candidate already cites. Canonical validation keeps the whole set.
+            projected['allowed_evidence_ids'] = [
+                evidence_id for evidence_id in projected['allowed_evidence_ids']
+                if evidence_id in projection.visible_evidence]
+            allowed = provider_schema.get('$defs', {}).get('AllowedEvidenceId')
+            visible = [alias for alias in (allowed or {}).get('enum', ())
+                       if projection.canonical_ids.get(alias, alias)
+                       in projection.visible_evidence]
+            if visible:
+                allowed['enum'] = visible
         for field in ('candidate', 'deterministic_findings',
                       'verification_report', 'allowed_evidence_ids'):
             projected[field] = projection._rewrite(
                 projected[field], projection.aliases)
-        return projected, projection.project_schema(schema), projection
+        return projected, provider_schema, projection
 
     def estimate_input(self, request, schema):
         if request.get('graph', {}).get('format') != ProviderProjection.FORMAT:
@@ -2019,6 +2154,22 @@ class Synthesis:
                 'evidence_ids': [],
             }])
         return findings
+
+    def _repair_focus(self, graph, candidate, findings, report, attempt):
+        """Return the context records a repair round sends, or None for all.
+
+        Set SPEED_DISCOVER_FOCUSED_REPAIR=0 to always send the whole scope.
+        """
+        if os.environ.get('SPEED_DISCOVER_FOCUSED_REPAIR', '1') == '0':
+            return None
+        focus = repair_focus(graph, candidate, findings, report)
+        if focus is not None and self.recorder:
+            total = sum(len(records) for collection, records in graph['context'].items()
+                        if collection not in UNFOCUSED and isinstance(records, dict))
+            self.recorder.progress('semantic',
+                f'Repair round {attempt} sends {len(focus)} of {total} graph records '
+                'its findings need')
+        return focus
 
     @staticmethod
     def _repair_subject_closure(candidate, subject_ids):
@@ -2224,12 +2375,30 @@ class Synthesis:
         self._checkpoint(synthesis_request, state)
         for repair_attempt in range(
                 state.attempts + 1, limit + 1):
+            focus = self._repair_focus(graph, candidate, findings, report,
+                                       repair_attempt)
             repair_request = self.request_for(
-                'repair', graph, candidate, findings, report)
+                'repair', graph, candidate, findings, report, focus=focus)
             try:
-                repaired, _ = self._run_with_retries(
-                    repair_request,
-                    progress_operation=f'Repair round {repair_attempt}, provider')
+                try:
+                    repaired, _ = self._run_with_retries(
+                        repair_request,
+                        progress_operation=f'Repair round {repair_attempt}, provider')
+                except DomainError as exc:
+                    if focus is None or exc.repair_kind != 'schema':
+                        raise
+                    # The focus can't be what made a valid answer impossible, but
+                    # don't risk the round on it: ask again with the whole scope.
+                    if self.recorder:
+                        self.recorder.progress('semantic',
+                            'Focused repair answer was invalid; asking again with the '
+                            'whole scope', level='warning')
+                    focus = None
+                    repair_request = self.request_for(
+                        'repair', graph, candidate, findings, report)
+                    repaired, _ = self._run_with_retries(
+                        repair_request,
+                        progress_operation=f'Repair round {repair_attempt}, provider')
             except DomainError as exc:
                 if not (exc.repair_kind == 'semantic' and exc.findings
                         and exc.rejected_candidate is not None):
@@ -2237,12 +2406,25 @@ class Synthesis:
                 # Identity defects can be repaired too. The raw candidate feeds the next
                 # round but is never verified, cached or published.
                 repaired = exc.rejected_candidate
+                if compact and focus is not None:
+                    repaired, _ = restore_unseen_incorporations(
+                        candidate, repaired, focus,
+                        _restorable_child_records(graph, findings, report))
                 repaired_findings = exc.findings
                 repaired_report = report
             else:
                 identity_changes = self.last_identity_changes.pop(
                     threading.get_ident(), [])
                 restored = regressions = []
+                if compact and focus is not None:
+                    repaired, unseen = restore_unseen_incorporations(
+                        candidate, repaired, focus,
+                        _restorable_child_records(graph, findings, report))
+                    if unseen and self.recorder:
+                        self.recorder.progress('semantic',
+                            f'Repair dropped {len(unseen)} child records it was not '
+                            'shown; they were kept', level='warning',
+                            details={'record_ids': unseen})
                 if not compact:
                     repaired, identity_changes, restored = \
                         self._restore_out_of_scope_revisions(
