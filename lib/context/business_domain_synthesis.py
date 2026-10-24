@@ -780,6 +780,10 @@ def wire_schema(type_name: str, packet=None) -> dict:
         membership['properties']['claim_ids']['minItems'] = 1
     if packet is not None:
         produced = set(DEFINITIONS[type_name]['properties'])
+        # A repair produces a whole candidate, so its records may cite the
+        # candidate's own records, as a synthesis answer may.
+        if type_name == 'RepairPayload':
+            produced |= set(DEFINITIONS['CandidatePayload']['properties'])
         fixed = {}
         evidence_ids = allowed_evidence_ids(packet)
         evidence_definition = None
@@ -1259,6 +1263,17 @@ def _derive_deterministic_fields(payload, graph):
                     use['reason'] = (
                         f'The operation facts of this use are {use["resolution"]}'
                         + (f': {reasons[0]}' if reasons else '.'))
+    # Acceptance rejects a supported activity on an unresolved trace
+    # (INVALID_TRACE), so settle it here rather than spend a verify and repair
+    # round on it. Activities citing traces outside the graph are left for
+    # acceptance to report.
+    for activity in payload['activities'].values():
+        trace_ids = activity.get('trace_ids') or []
+        if (activity.get('support') == 'supported' and trace_ids
+                and set(trace_ids) <= set(traces)
+                and any(traces[trace_id]['resolution'] != 'resolved'
+                        for trace_id in trace_ids)):
+            activity['support'] = 'partial'
     return payload
 
 
@@ -1631,7 +1646,11 @@ def request_shutdown():
     SHUTDOWN.set()
 
 
-USAGE_FIELDS = ('inputTokens', 'outputTokens', 'peakInputTokens', 'peakOutputTokens')
+USAGE_FIELDS = ('inputTokens', 'outputTokens', 'peakInputTokens', 'peakOutputTokens',
+                'cacheReadInputTokens', 'cacheCreationInputTokens')
+# Parts of the reported input that came from, or went into, the prompt cache.
+CACHE_USAGE_FIELDS = {'cacheReadInputTokens': 'input_cache_read_tokens_reported',
+                      'cacheCreationInputTokens': 'input_cache_creation_tokens_reported'}
 
 
 def _reported_usage(path):
@@ -3206,6 +3225,10 @@ class Synthesis:
                     exceeded |= peak > (
                         request_input_limit if kind == 'input'
                         else request['max_output_tokens'])
+            for usage_field, counter in CACHE_USAGE_FIELDS.items():
+                tokens = actual.get(usage_field)
+                if type(tokens) is int and tokens >= 0:
+                    self.counters[counter] = (self.counters.get(counter) or 0) + tokens
         if exceeded:
             raise DomainError(
                 'PROVIDER_BUDGET',
@@ -3300,6 +3323,8 @@ class Synthesis:
             usage={
                 'input_tokens': actual.get('inputTokens'),
                 'output_tokens': actual.get('outputTokens'),
+                'cache_read_input_tokens': actual.get('cacheReadInputTokens'),
+                'cache_creation_input_tokens': actual.get('cacheCreationInputTokens'),
             },
             provider_revision=None, warnings=[])
         validate(response, 'SemanticResponse')

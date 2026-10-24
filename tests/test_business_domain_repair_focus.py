@@ -379,3 +379,16 @@ def test_a_focused_repair_is_offered_only_evidence_it_can_see(tmp_path):
     assert 'ev:fixture-002' not in offered
     # The request itself still allows the whole graph's evidence for validation.
     assert 'ev:fixture-002' in request['allowed_evidence_ids']
+
+
+def test_a_repair_answer_may_cite_its_own_candidate_records():
+    # A small scope fixes graph references to an enum of the supplied IDs; the
+    # candidate's own claims, activities and domains must stay citable.
+    graph = reference_graph()
+    schema = wire_schema('RepairPayload', graph)
+    membership = schema['$defs']['ActivityMembership']['properties']
+    assert 'enum' not in membership['claim_ids']['items']
+    assert 'enum' not in membership['activity_id']
+    synthesis_schema = wire_schema('CandidatePayload', graph)
+    assert (synthesis_schema['$defs']['ActivityMembership']['properties']['claim_ids']
+            == membership['claim_ids'])

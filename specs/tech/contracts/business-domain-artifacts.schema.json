@@ -729,6 +729,28 @@
             }
           ]
         },
+        "input_cache_read_tokens_reported": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "input_cache_creation_tokens_reported": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "requests": {
           "type": "integer",
           "minimum": 0
@@ -7353,6 +7375,28 @@
           ]
         },
         "output_tokens": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cache_read_input_tokens": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cache_creation_input_tokens": {
           "anyOf": [
             {
               "type": "integer",

@@ -473,6 +473,8 @@ provider_run() {
 #   inputTokens, outputTokens          totals across every model turn, as spent
 #   peakInputTokens, peakOutputTokens  the largest single turn, which is what a
 #                                      per-request limit bounds
+#   cacheReadInputTokens,              the part of inputTokens read from, or
+#   cacheCreationInputTokens           written to, the prompt cache
 # Input counts every token a turn read, cached or not. Nothing is written when
 # the event carries no usage.
 _claude_report_usage() {
@@ -483,6 +485,8 @@ _claude_report_usage() {
         .usage // empty
         | (.iterations // []) as $turns
         | {inputTokens: read, outputTokens: (.output_tokens // 0),
+           cacheReadInputTokens: (.cache_read_input_tokens // 0),
+           cacheCreationInputTokens: (.cache_creation_input_tokens // 0),
            peakInputTokens: ([$turns[] | read] | max // null),
            peakOutputTokens: ([$turns[] | .output_tokens // 0] | max // null)}
         | .peakInputTokens //= .inputTokens
