@@ -1334,8 +1334,8 @@ def relationships_table(index: Model) -> list:
 def readme(index: Model, entities: Entities, coverage=()) -> str:
     domains = [index.domains[domain_id] for domain_id in index.domain_order]
     lines = ['# Domain model', '', *model_banner(index, compact=True), '',
-             '[Rules](rules.md) · [Glossary](glossary.md) · [Gaps](gaps.md) · '
-             '[index.html](index.html) (all pages with diagrams; needs a CDN)', '']
+             '[Rules](rules.md) · [Glossary](glossary.md) · [Gaps](gaps.md)'
+             '<span class="files-only"> · [index.html](index.html) (all pages with diagrams; needs a CDN)</span>', '']
     missing = [item for item, expected, found in coverage if expected != found]
     if missing:
         lines += [f"> **Incomplete export:** {', '.join(missing)} not fully present; see [Gaps](gaps.md).", '']
@@ -2439,7 +2439,7 @@ aside#toc a.sub{padding-left:24px;font-size:12.2px;color:var(--faint)}
 aside#toc a:hover{color:var(--text)}
 aside#toc a.on{color:var(--accent);border-left-color:var(--accent)}
 footer{max-width:1060px;margin:60px auto 0;padding-top:20px;border-top:1px solid var(--border);color:var(--faint);font-size:12.5px;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
-.offline{max-width:720px;margin:60px auto;padding:20px;border:1px solid var(--border);border-radius:14px;background:var(--surface)}
+.files-only{display:none}.offline{max-width:720px;margin:60px auto;padding:20px;border:1px solid var(--border);border-radius:14px;background:var(--surface)}
 ::-webkit-scrollbar{width:10px;height:10px}::-webkit-scrollbar-thumb{background:var(--border-strong);border-radius:10px;border:2px solid transparent;background-clip:padding-box}
 @media (max-width:1300px){.app{grid-template-columns:262px minmax(0,1fr)}aside#toc{display:none}}
 @media (max-width:900px){.app{grid-template-columns:minmax(0,1fr)}.menu{display:inline-flex}.chips,.brand small{display:none}
@@ -2682,12 +2682,16 @@ function card(figure, title) {
     <button data-act="in" aria-label="Zoom in" title="Zoom in">${svg('plus')}</button><button data-act="fit" aria-label="Fit to width" title="Fit to width">${svg('fit')}</button>
     <button data-act="full" aria-label="Full screen" title="Full screen">${svg('full')}</button><button data-act="save" aria-label="Download SVG" title="Download SVG">${svg('download')}</button></div></div>
     <div class="diagram-body loading"></div>`;
+  if (!document.fullscreenEnabled) figure.querySelector('[data-act="full"]').remove();
   figure.querySelector('.tools').addEventListener('click', event => {
     const action = (event.target.closest('button') || {}).dataset?.act;
     if (action === 'in') setScale(figure, figure.scale * 1.25);
     if (action === 'out') setScale(figure, figure.scale / 1.25);
     if (action === 'fit') fit(figure);
-    if (action === 'full') { document.fullscreenElement ? document.exitFullscreen() : figure.requestFullscreen?.(); }
+    if (action === 'full') {
+      const done = document.fullscreenElement ? document.exitFullscreen() : figure.requestFullscreen?.();
+      if (done && done.catch) done.catch(() => {});
+    }
     if (action === 'save') {
       const graphic = figure.querySelector('.diagram-body svg');
       if (!graphic) return;
