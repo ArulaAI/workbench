@@ -1324,7 +1324,7 @@ def readme(index: Model, entities: Entities, coverage=()) -> str:
     if coverage:
         lines += ['', '## Completeness check', '',
                   'Every record of the model, checked against the text of the generated documents.', '']
-        lines += table([('Item', False), ('In the model', True), ('Found in the documents', True), ('', False)],
+        lines += table([('Item', False), ('In the model', True), ('Found in the documents', True), ('Status', False)],
                        [(item, expected, found, 'complete' if expected == found else 'MISSING')
                         for item, expected, found in coverage])
     lines += ['', '## How to read the badges', '']
@@ -1423,7 +1423,7 @@ def use_case_diagrams(index: Model, domain: dict) -> list:
             arrow = '-->' if access[activity['id']][1] else '-.->'
             for role in index.roles(activity):
                 lines.append(f'  R_{slug(role).replace("-", "_")} {arrow} {node("U", activity["id"])}')
-        lines.append('  classDef actor fill:#eef,stroke:#446')
+        lines.append('  classDef actor fill:#eef,stroke:#446,color:#1a1a2e')
         lines.append('  classDef unresolved stroke-dasharray: 5 5')
         diagrams.append('\n'.join(lines))
     return diagrams
@@ -1987,77 +1987,539 @@ def viewer(files: dict) -> str:
     return VIEWER.replace('__DOCUMENTS__', documents)
 
 
-VIEWER = """<!doctype html>
+VIEWER = r"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Domain model</title>
+<title>Domain Model Explorer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
-:root{--text:#1f2328;--muted:#59636e;--line:#d0d7de;--panel:#f6f8fa;--accent:#ddf4ff;--bg:#fff;--link:#0969da}
-@media (prefers-color-scheme: dark){:root{--text:#e6edf3;--muted:#9198a1;--line:#3d444d;--panel:#151b23;--accent:#1f3a5f;--bg:#0d1117;--link:#4493f8}}
-main a{color:var(--link)}
-body{margin:0;font:15px/1.6 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;color:var(--text);background:var(--bg);display:flex}
-nav{width:280px;flex:none;height:100vh;overflow:auto;position:sticky;top:0;background:var(--panel);border-right:1px solid var(--line);padding:16px;box-sizing:border-box}
-nav a{display:block;padding:6px 8px;border-radius:6px;color:var(--text);text-decoration:none;font-size:14px}
-nav a.on,nav a:hover{background:var(--accent)}
-main{flex:1;min-width:0;padding:24px 40px;max-width:1240px}
-table{border-collapse:collapse;display:block;overflow:auto;margin:12px 0}
-th,td{border:1px solid var(--line);padding:6px 10px;vertical-align:top}th{background:var(--panel)}
-code{background:var(--panel);padding:1px 5px;border-radius:4px;font-size:13px}
-blockquote{margin:12px 0;padding:6px 14px;border-left:4px solid var(--line);color:var(--muted)}
-.mermaid{margin:16px 0;overflow:auto;background:#fff;border:1px solid var(--line);border-radius:8px;padding:8px}
-h1{border-bottom:1px solid var(--line);padding-bottom:6px}
-@media (max-width:800px){body{display:block}nav{width:auto;height:auto;position:static}main{padding:16px}}
+:root{
+  --bg:#f4f6fb;--surface:rgba(255,255,255,.82);--surface-solid:#fff;--surface-2:#f1f4fa;--header:rgba(244,246,251,.78);
+  --border:rgba(15,23,42,.09);--border-strong:rgba(15,23,42,.16);
+  --text:#0b1220;--muted:#56657d;--faint:#8b98ac;
+  --accent:#0e7490;--accent-2:#6d28d9;--grad:linear-gradient(100deg,#0891b2,#6366f1 55%,#a21caf);
+  --title:linear-gradient(100deg,#0b1220,#3730a3 60%,#86198f);
+  --ok:#047857;--ok-bg:rgba(4,120,87,.10);--bad:#b91c1c;--bad-bg:rgba(220,38,38,.10);--warn-bg:rgba(245,158,11,.10);
+  --glow-1:rgba(56,189,248,.20);--glow-2:rgba(167,139,250,.18);--grid:rgba(15,23,42,.035);
+  --row-hover:rgba(99,102,241,.05);--code-bg:rgba(15,23,42,.06);--active:rgba(99,102,241,.10);
+  --shadow:0 1px 2px rgba(15,23,42,.05),0 10px 30px -12px rgba(15,23,42,.18);
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#060a13;--surface:rgba(14,21,38,.72);--surface-solid:#0c1322;--surface-2:rgba(22,32,56,.66);--header:rgba(6,10,19,.72);
+  --border:rgba(148,163,184,.12);--border-strong:rgba(148,163,184,.22);
+  --text:#e6edf7;--muted:#93a3bc;--faint:#64748b;
+  --accent:#22d3ee;--accent-2:#a78bfa;--grad:linear-gradient(100deg,#22d3ee,#818cf8 55%,#e879f9);
+  --title:linear-gradient(100deg,#f0f9ff,#c7d2fe 55%,#f5d0fe);
+  --ok:#34d399;--ok-bg:rgba(52,211,153,.12);--bad:#f87171;--bad-bg:rgba(248,113,113,.12);--warn-bg:rgba(251,191,36,.08);
+  --glow-1:rgba(34,211,238,.13);--glow-2:rgba(167,139,250,.14);--grid:rgba(148,163,184,.045);
+  --row-hover:rgba(129,140,248,.07);--code-bg:rgba(148,163,184,.12);--active:rgba(129,140,248,.14);
+  --shadow:0 1px 0 rgba(255,255,255,.03) inset,0 20px 40px -24px rgba(0,0,0,.8);
+  color-scheme:dark;
+}}
+:root[data-theme="dark"]{
+  --bg:#060a13;--surface:rgba(14,21,38,.72);--surface-solid:#0c1322;--surface-2:rgba(22,32,56,.66);--header:rgba(6,10,19,.72);
+  --border:rgba(148,163,184,.12);--border-strong:rgba(148,163,184,.22);
+  --text:#e6edf7;--muted:#93a3bc;--faint:#64748b;
+  --accent:#22d3ee;--accent-2:#a78bfa;--grad:linear-gradient(100deg,#22d3ee,#818cf8 55%,#e879f9);
+  --title:linear-gradient(100deg,#f0f9ff,#c7d2fe 55%,#f5d0fe);
+  --ok:#34d399;--ok-bg:rgba(52,211,153,.12);--bad:#f87171;--bad-bg:rgba(248,113,113,.12);--warn-bg:rgba(251,191,36,.08);
+  --glow-1:rgba(34,211,238,.13);--glow-2:rgba(167,139,250,.14);--grid:rgba(148,163,184,.045);
+  --row-hover:rgba(129,140,248,.07);--code-bg:rgba(148,163,184,.12);--active:rgba(129,140,248,.14);
+  --shadow:0 1px 0 rgba(255,255,255,.03) inset,0 20px 40px -24px rgba(0,0,0,.8);
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html{scroll-padding-top:84px}
+body{margin:0;font:15px/1.7 Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--text);background:var(--bg);
+  background-image:radial-gradient(900px 520px at 12% -8%,var(--glow-1),transparent 70%),radial-gradient(800px 520px at 100% 0%,var(--glow-2),transparent 70%),
+  linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:auto,auto,44px 44px,44px 44px;background-attachment:fixed;-webkit-font-smoothing:antialiased}
+#progress{position:fixed;top:0;left:0;height:2px;width:0;background:var(--grad);z-index:60;box-shadow:0 0 12px var(--accent)}
+.app{display:grid;grid-template-columns:276px minmax(0,1fr) 244px;grid-template-rows:64px 1fr;min-height:100vh}
+header{grid-column:1/-1;position:sticky;top:0;z-index:40;display:flex;align-items:center;gap:14px;padding:0 20px;background:var(--header);
+  backdrop-filter:blur(16px) saturate(1.5);-webkit-backdrop-filter:blur(16px) saturate(1.5);border-bottom:1px solid var(--border)}
+.brand{display:flex;align-items:center;gap:11px;min-width:0;text-decoration:none;color:var(--text)}
+.brand svg{flex:none;filter:drop-shadow(0 0 10px rgba(99,102,241,.45))}
+.brand b{display:block;font-weight:700;letter-spacing:-.01em;font-size:15px;line-height:1.2}
+.brand small{display:block;color:var(--muted);font-size:11.5px;line-height:1.2;letter-spacing:.02em}
+.chips{display:flex;gap:6px;margin-left:6px}
+.chip{font:500 11.5px/1 "JetBrains Mono",ui-monospace,monospace;padding:6px 9px;border-radius:999px;border:1px solid var(--border-strong);color:var(--muted);white-space:nowrap}
+.chip.status{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 45%,transparent);background:color-mix(in srgb,var(--accent) 8%,transparent)}
+.spacer{flex:1}
+.search{position:relative;width:min(380px,40vw)}
+.search input{width:100%;height:38px;padding:0 64px 0 38px;border-radius:12px;border:1px solid var(--border-strong);background:var(--surface);color:var(--text);font:inherit;font-size:14px;outline:none;transition:border-color .2s,box-shadow .2s}
+.search input:focus{border-color:var(--accent);box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 18%,transparent)}
+.search .icon{position:absolute;left:12px;top:11px;color:var(--faint)}
+.search kbd{position:absolute;right:10px;top:9px;font:500 11px/1 "JetBrains Mono",monospace;padding:4px 6px;border-radius:6px;border:1px solid var(--border-strong);color:var(--faint)}
+.results{position:absolute;top:46px;right:0;width:min(560px,92vw);max-height:70vh;overflow:auto;border-radius:14px;border:1px solid var(--border-strong);background:var(--surface-solid);box-shadow:0 30px 60px -20px rgba(0,0,0,.5);padding:6px;display:none}
+.results.open{display:block}
+.results button{display:block;width:100%;text-align:left;padding:9px 11px;border:0;border-radius:9px;background:none;color:var(--text);font:inherit;font-size:13.5px;cursor:pointer}
+.results button.on,.results button:hover{background:var(--active)}
+.results .where{display:block;font-size:11.5px;color:var(--faint);margin-bottom:2px}
+.results mark{background:color-mix(in srgb,var(--accent) 28%,transparent);color:inherit;border-radius:3px;padding:0 2px}
+.results .none{padding:14px;color:var(--muted);font-size:13.5px}
+.iconbtn{display:inline-flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:11px;border:1px solid var(--border-strong);background:var(--surface);color:var(--muted);cursor:pointer;transition:color .2s,border-color .2s,transform .15s}
+.iconbtn:hover{color:var(--accent);border-color:var(--accent)}
+.iconbtn:active{transform:scale(.96)}
+.menu{display:none}
+nav#nav{position:sticky;top:64px;height:calc(100vh - 64px);overflow:auto;padding:22px 14px 30px;border-right:1px solid var(--border)}
+.group{margin:0 0 22px}
+.group h4{margin:0 10px 8px;font:600 10.5px/1 "JetBrains Mono",monospace;letter-spacing:.14em;text-transform:uppercase;color:var(--faint)}
+nav a{position:relative;display:flex;align-items:center;gap:10px;padding:8px 10px;margin:2px 0;border-radius:10px;color:var(--muted);text-decoration:none;font-size:14px;font-weight:500;line-height:1.35;transition:background .2s,color .2s}
+nav a svg{flex:none;opacity:.8}
+nav a:hover{color:var(--text);background:var(--active)}
+nav a.on{color:var(--text);background:var(--active)}
+nav a.on::before{content:"";position:absolute;left:-14px;top:8px;bottom:8px;width:3px;border-radius:0 3px 3px 0;background:var(--grad);box-shadow:0 0 12px var(--accent)}
+nav a.on svg{color:var(--accent);opacity:1}
+main{min-width:0;padding:40px 52px 90px}
+.doc{max-width:1060px;margin:0 auto;animation:enter .35s ease both}
+@keyframes enter{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.eyebrow{display:inline-flex;align-items:center;gap:8px;font:600 11px/1 "JetBrains Mono",monospace;letter-spacing:.16em;text-transform:uppercase;color:var(--accent);margin-bottom:12px}
+.eyebrow::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 10px var(--accent)}
+.doc h1{margin:0 0 10px;font-size:clamp(28px,3.4vw,40px);line-height:1.12;font-weight:800;letter-spacing:-.035em;background:var(--title);-webkit-background-clip:text;background-clip:text;color:transparent}
+.doc h2{position:relative;margin:2.6em 0 .7em;padding-left:16px;font-size:22px;line-height:1.3;font-weight:700;letter-spacing:-.02em}
+.doc h2::before{content:"";position:absolute;left:0;top:.2em;bottom:.2em;width:4px;border-radius:4px;background:var(--grad)}
+.doc h3{margin:2em 0 .6em;font-size:17px;font-weight:650;letter-spacing:-.01em}
+.doc h4{margin:1.6em 0 .5em;font-size:15px}
+.doc h2 .anchor,.doc h3 .anchor{opacity:0;margin-left:8px;color:var(--faint);text-decoration:none;font-weight:500;transition:opacity .2s}
+.doc h2:hover .anchor,.doc h3:hover .anchor{opacity:1}
+.doc p,.doc li{color:var(--text)}
+.doc em{color:var(--muted)}
+.doc a{color:var(--accent);text-decoration:none;border-bottom:1px solid color-mix(in srgb,var(--accent) 35%,transparent)}
+.doc a:hover{border-bottom-color:var(--accent)}
+.doc code{font:500 .86em "JetBrains Mono",ui-monospace,monospace;background:var(--code-bg);padding:2px 6px;border-radius:6px;word-break:break-word}
+.doc pre.code{background:var(--surface-solid);border:1px solid var(--border);border-radius:12px;padding:14px 16px;overflow:auto}
+.doc pre.code code{background:none;padding:0}
+.doc ul,.doc ol{padding-left:1.3em}
+.doc li{margin:.25em 0}
+.doc li::marker{color:var(--accent)}
+.doc hr{border:0;height:1px;background:var(--border);margin:2em 0}
+.doc blockquote{margin:18px 0;padding:14px 18px 14px 20px;border:1px solid var(--border);border-radius:14px;background:var(--surface);box-shadow:var(--shadow);position:relative;color:var(--muted)}
+.doc blockquote::before{content:"";position:absolute;left:0;top:12px;bottom:12px;width:3px;border-radius:3px;background:var(--grad)}
+.doc blockquote p{margin:.3em 0;color:var(--muted)}
+.doc blockquote strong{color:var(--text)}
+.doc details{margin:14px 0;border:1px solid var(--border);border-radius:12px;background:var(--surface);padding:10px 16px}
+.doc details summary{cursor:pointer;font-weight:600;color:var(--text)}
+.table-wrap{margin:16px 0 22px;overflow:auto;border:1px solid var(--border);border-radius:14px;background:var(--surface);box-shadow:var(--shadow);backdrop-filter:blur(8px)}
+.doc table{width:100%;border-collapse:separate;border-spacing:0;font-size:13.8px;line-height:1.55}
+.doc th{position:sticky;top:0;z-index:1;text-align:left;padding:11px 14px;background:var(--surface-solid);color:var(--muted);font:600 11px/1.3 "JetBrains Mono",monospace;letter-spacing:.08em;text-transform:uppercase;border-bottom:1px solid var(--border-strong);white-space:nowrap}
+.doc td{padding:11px 14px;border-bottom:1px solid var(--border);vertical-align:top}
+.doc tr:last-child td{border-bottom:0}
+.doc tbody tr{transition:background .15s}
+.doc tbody tr:hover{background:var(--row-hover)}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;font:600 11.5px/1.4 "JetBrains Mono",monospace;white-space:nowrap}
+.pill.ok{color:var(--ok);background:var(--ok-bg)}
+.pill.bad{color:var(--bad);background:var(--bad-bg)}
+.pill.muted{color:var(--muted);background:var(--code-bg)}
+.pill.ok::before,.pill.bad::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor;box-shadow:0 0 8px currentColor}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin:18px 0 10px}
+.stat{position:relative;padding:18px 18px 16px;border-radius:16px;border:1px solid var(--border);background:var(--surface);box-shadow:var(--shadow);overflow:hidden}
+.stat::before{content:"";position:absolute;inset:0 0 auto 0;height:2px;background:var(--grad);opacity:.9}
+.stat::after{content:"";position:absolute;right:-30px;top:-30px;width:110px;height:110px;border-radius:50%;background:radial-gradient(var(--glow-2),transparent 70%)}
+.stat .value{font-size:34px;font-weight:800;letter-spacing:-.04em;line-height:1.1;background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+.stat .label{margin-top:4px;font:600 10.5px/1.3 "JetBrains Mono",monospace;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+figure.diagram{margin:22px 0 26px;border:1px solid var(--border);border-radius:16px;background:var(--surface);box-shadow:var(--shadow);overflow:hidden;backdrop-filter:blur(8px)}
+.diagram-bar{display:flex;align-items:center;gap:10px;padding:8px 8px 8px 14px;border-bottom:1px solid var(--border);background:var(--surface-2)}
+.diagram-bar .kind{font:600 10.5px/1 "JetBrains Mono",monospace;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);white-space:nowrap}
+.diagram-bar .title{font-size:13px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.tools{margin-left:auto;display:flex;align-items:center;gap:2px;flex:none}
+.tools button{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:8px;border:0;background:none;color:var(--muted);cursor:pointer;transition:background .15s,color .15s}
+.tools button:hover{background:var(--active);color:var(--accent)}
+.tools .zoom{font:500 11px "JetBrains Mono",monospace;color:var(--faint);min-width:42px;text-align:center}
+.diagram-body{overflow:auto;padding:20px;max-height:80vh;cursor:grab}
+.diagram-body.dragging{cursor:grabbing;user-select:none}
+.diagram-body svg{display:block;margin:0 auto;height:auto}
+.diagram-body.loading{min-height:170px;background:linear-gradient(100deg,transparent 30%,var(--active) 50%,transparent 70%) 0 0/200% 100%;animation:shimmer 1.4s linear infinite}
+@keyframes shimmer{to{background-position:-200% 0}}
+.diagram-error{color:var(--bad);font-size:13.5px}
+figure.diagram:fullscreen{display:flex;flex-direction:column;border-radius:0;background:var(--bg)}
+figure.diagram:fullscreen .diagram-body{flex:1;max-height:none}
+aside#toc{position:sticky;top:64px;height:calc(100vh - 64px);overflow:auto;padding:40px 18px 30px 8px}
+aside#toc h4{margin:0 0 12px 12px;font:600 10.5px/1 "JetBrains Mono",monospace;letter-spacing:.14em;text-transform:uppercase;color:var(--faint)}
+aside#toc a{display:block;padding:5px 12px;border-left:2px solid var(--border);color:var(--muted);text-decoration:none;font-size:12.8px;line-height:1.4;transition:color .15s,border-color .15s}
+aside#toc a.sub{padding-left:24px;font-size:12.2px;color:var(--faint)}
+aside#toc a:hover{color:var(--text)}
+aside#toc a.on{color:var(--accent);border-left-color:var(--accent)}
+footer{max-width:1060px;margin:60px auto 0;padding-top:20px;border-top:1px solid var(--border);color:var(--faint);font-size:12.5px;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.offline{max-width:720px;margin:60px auto;padding:20px;border:1px solid var(--border);border-radius:14px;background:var(--surface)}
+::-webkit-scrollbar{width:10px;height:10px}::-webkit-scrollbar-thumb{background:var(--border-strong);border-radius:10px;border:2px solid transparent;background-clip:padding-box}
+@media (max-width:1300px){.app{grid-template-columns:262px minmax(0,1fr)}aside#toc{display:none}}
+@media (max-width:900px){.app{grid-template-columns:minmax(0,1fr)}.menu{display:inline-flex}.chips,.brand small{display:none}
+  nav#nav{position:fixed;left:0;top:64px;z-index:35;width:min(300px,86vw);background:var(--surface-solid);transform:translateX(-102%);transition:transform .25s ease;box-shadow:20px 0 40px -20px rgba(0,0,0,.5)}
+  body.nav-open nav#nav{transform:none}main{padding:24px 16px 70px}.spacer{display:none}.search{width:auto;flex:1}.search kbd{display:none}.search input{padding-right:12px}header{padding:0 12px;gap:10px}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style></head>
-<body><nav id="nav"></nav><main id="doc"></main>
+<body><div id="progress"></div>
+<div class="app">
+<header>
+  <button class="iconbtn menu" id="menu" aria-label="Open navigation"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+  <a class="brand" href="#README.md">
+    <svg width="34" height="34" viewBox="0 0 40 40" aria-hidden="true"><defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#22d3ee"/><stop offset=".55" stop-color="#818cf8"/><stop offset="1" stop-color="#e879f9"/></linearGradient></defs>
+      <path d="M20 2.5l15.2 8.75v17.5L20 37.5 4.8 28.75v-17.5z" fill="none" stroke="url(#lg)" stroke-width="2.2"/>
+      <circle cx="20" cy="13" r="3.2" fill="url(#lg)"/><circle cx="12.5" cy="25" r="3.2" fill="url(#lg)"/><circle cx="27.5" cy="25" r="3.2" fill="url(#lg)"/>
+      <path d="M20 16.2l-6 6M20 16.2l6 6M15.7 25h8.6" stroke="url(#lg)" stroke-width="1.6" stroke-linecap="round"/></svg>
+    <span><b id="brand-title">Domain Model</b><small>DDD · UML · Business rules</small></span>
+  </a>
+  <div class="chips" id="chips"></div>
+  <div class="spacer"></div>
+  <div class="search">
+    <svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+    <input id="q" type="search" placeholder="Search use cases, rules, entities…" autocomplete="off" aria-label="Search the documents">
+    <kbd>⌘K</kbd>
+    <div class="results" id="results" role="listbox"></div>
+  </div>
+  <button class="iconbtn" id="theme" aria-label="Switch light or dark theme"></button>
+</header>
+<nav id="nav" aria-label="Documents"></nav>
+<main><article class="doc" id="doc"></article><footer id="footer"></footer></main>
+<aside id="toc" aria-label="On this page"></aside>
+</div>
 <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js"></script>
 <script>
 const DOCUMENTS = __DOCUMENTS__;
-mermaid.initialize({startOnLoad: false, securityLevel: 'strict', maxTextSize: 200000, theme: 'default'});
-const nav = document.getElementById('nav'), doc = document.getElementById('doc');
-let drawn = 0, showing = 0;
-const escape = text => text.replace(/&/g, '&amp;').replace(/</g, '&lt;');
-for (const name of Object.keys(DOCUMENTS)) {
-  const link = document.createElement('a');
-  const heading = DOCUMENTS[name].match(/^# (.+)$/m);
-  link.href = '#' + name; link.textContent = heading ? heading[1] : name; link.dataset.name = name;
-  nav.appendChild(link);
+(function () {
+const $ = selector => document.querySelector(selector);
+const nav = $('#nav'), doc = $('#doc'), toc = $('#toc'), root = document.documentElement;
+const escape = text => String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const titleOf = name => ((DOCUMENTS[name] || '').match(/^# (.+)$/m) || [, name])[1];
+const slugify = text => String(text).toLowerCase().replace(/<[^>]+>/g, '').replace(/&[#a-z0-9]+;/g, '')
+  .replace(/[`*_[\]()]/g, '').replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '-').slice(0, 80) || 'section';
+const store = {
+  get(key) { try { return localStorage.getItem(key); } catch (error) { return null; } },
+  set(key, value) { try { localStorage.setItem(key, value); } catch (error) { /* storage unavailable */ } },
+};
+const ICON = {
+  overview: '<path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"/>',
+  context: '<path d="M12 2.8l8 4.6v9.2l-8 4.6-8-4.6V7.4z"/><path d="M12 12l8-4.6M12 12v9.2M12 12L4 7.4"/>',
+  rules: '<path d="M10 6h10M10 12h10M10 18h10M4 6l1.2 1.2L7.5 5M4 12l1.2 1.2L7.5 11M4 18l1.2 1.2L7.5 17"/>',
+  glossary: '<path d="M5 4.5A1.5 1.5 0 016.5 3H19v15H6.5A1.5 1.5 0 005 19.5zM5 19.5A1.5 1.5 0 006.5 21H19"/>',
+  gaps: '<path d="M12 3.5l9 16H3z"/><path d="M12 10v4.5M12 17.2v.1"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+  moon: '<path d="M20 14.5A8 8 0 019.5 4 8 8 0 1020 14.5z"/>',
+  minus: '<path d="M5 12h14"/>', plus: '<path d="M12 5v14M5 12h14"/>',
+  fit: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',
+  full: '<path d="M9 4H4v5M15 4h5v5M9 20H4v-5M15 20h5v-5"/><path d="M4 4l6 6M20 4l-6 6M4 20l6-6M20 20l-6-6"/>',
+  download: '<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>',
+};
+const svg = (name, size) => `<svg width="${size || 16}" height="${size || 16}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[name]}</svg>`;
+const kindOf = name => name === 'README.md' ? 'overview' : name.startsWith('contexts/') ? 'context'
+  : name.startsWith('rules') ? 'rules' : name.startsWith('glossary') ? 'glossary' : 'gaps';
+const GROUPS = [['Overview', name => name === 'README.md'], ['Bounded contexts', name => name.startsWith('contexts/')],
+  ['Reference', name => name !== 'README.md' && !name.startsWith('contexts/')]];
+const EYEBROW = {overview: 'Domain model', context: 'Bounded context', rules: 'Reference', glossary: 'Reference', gaps: 'Reference'};
+
+if (typeof marked === 'undefined' || typeof mermaid === 'undefined') {
+  doc.innerHTML = '<div class="offline"><h2>The viewer needs an internet connection</h2><p>It loads its Markdown and diagram libraries from jsDelivr. '
+    + 'The same documents are in the Markdown files next to this page.</p></div>';
+  return;
 }
-async function show() {
-  const current = ++showing;
-  let [name, anchor] = decodeURIComponent(location.hash.slice(1) || 'README.md').split('#');
-  if (!DOCUMENTS[name]) name = 'README.md';
-  // mermaid.run() reads innerHTML and does not decode &lt; &gt;, so each diagram is
-  // rendered from its source text instead.
-  const renderer = new marked.Renderer(), sources = [];
-  renderer.code = (code, language) => language === 'mermaid'
-    ? '<div class="mermaid" data-source="' + (sources.push(code) - 1) + '"></div>'
-    : '<pre><code>' + escape(code) + '</code></pre>';
-  doc.innerHTML = marked.parse(DOCUMENTS[name], {renderer});
+
+// Header chips from the overview's model banner.
+const readme = DOCUMENTS['README.md'] || '';
+const build = (readme.match(/build `([0-9a-f]{8})/) || [])[1];
+const status = (readme.match(/Model status: (\w+)/) || [])[1];
+$('#chips').innerHTML = (status ? `<span class="chip status">model ${escape(status)}</span>` : '')
+  + (build ? `<span class="chip">build ${escape(build)}</span>` : '');
+
+for (const [group, belongs] of GROUPS) {
+  const names = Object.keys(DOCUMENTS).filter(belongs);
+  if (!names.length) continue;
+  nav.insertAdjacentHTML('beforeend', `<div class="group"><h4>${group}</h4>${names.map(name =>
+    `<a href="#${escape(name)}" data-name="${escape(name)}">${svg(kindOf(name))}<span>${escape(titleOf(name))}</span></a>`).join('')}</div>`);
+}
+
+function theme() {
+  return root.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+}
+const saved = store.get('domain-model-theme');
+if (saved === 'dark' || saved === 'light') root.dataset.theme = saved;
+function paintToggle() { $('#theme').innerHTML = svg(theme() === 'dark' ? 'sun' : 'moon', 18); }
+paintToggle();
+
+const FONT = 'Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif';
+const PALETTE = {
+  dark: {darkMode: true, background: '#0c1322', fontFamily: FONT, fontSize: '14px',
+    primaryColor: '#111b31', primaryTextColor: '#e6edf7', primaryBorderColor: '#4f8cff',
+    secondaryColor: '#1a1538', secondaryTextColor: '#e6edf7', secondaryBorderColor: '#8b7cf6',
+    tertiaryColor: '#0e1729', tertiaryTextColor: '#cbd5e1', tertiaryBorderColor: '#2b3a55',
+    mainBkg: '#111b31', nodeBorder: '#4f8cff', nodeTextColor: '#e6edf7', textColor: '#e6edf7', titleColor: '#e6edf7',
+    lineColor: '#67c8f0', edgeLabelBackground: '#0c1322', clusterBkg: '#0d1a2e', clusterBorder: '#24507a',
+    actorBkg: '#111b31', actorBorder: '#4f8cff', actorTextColor: '#e6edf7', actorLineColor: '#2b3a55',
+    signalColor: '#67c8f0', signalTextColor: '#dbe7f5', labelBoxBkgColor: '#1a1538', labelBoxBorderColor: '#8b7cf6',
+    labelTextColor: '#ede9fe', loopTextColor: '#c4b5fd', noteBkgColor: '#1d1938', noteBorderColor: '#8b7cf6',
+    noteTextColor: '#ede9fe', activationBkgColor: '#1b2742', activationBorderColor: '#4f8cff', sequenceNumberColor: '#06101f',
+    attributeBackgroundColorOdd: '#0e1729', attributeBackgroundColorEven: '#111b31', classText: '#e6edf7'},
+  light: {darkMode: false, background: '#ffffff', fontFamily: FONT, fontSize: '14px',
+    primaryColor: '#eef3ff', primaryTextColor: '#0b1220', primaryBorderColor: '#6366f1',
+    secondaryColor: '#f5f3ff', secondaryTextColor: '#0b1220', secondaryBorderColor: '#8b5cf6',
+    tertiaryColor: '#f8fafc', tertiaryTextColor: '#334155', tertiaryBorderColor: '#cbd5e1',
+    mainBkg: '#eef3ff', nodeBorder: '#6366f1', nodeTextColor: '#0b1220', textColor: '#0b1220', titleColor: '#0b1220',
+    lineColor: '#64748b', edgeLabelBackground: '#ffffff', clusterBkg: '#f6f7ff', clusterBorder: '#c7d2fe',
+    actorBkg: '#eef3ff', actorBorder: '#6366f1', actorTextColor: '#0b1220', actorLineColor: '#cbd5e1',
+    signalColor: '#334155', signalTextColor: '#0b1220', labelBoxBkgColor: '#f5f3ff', labelBoxBorderColor: '#8b5cf6',
+    labelTextColor: '#4c1d95', loopTextColor: '#6d28d9', noteBkgColor: '#fff8eb', noteBorderColor: '#f0b44c',
+    noteTextColor: '#7c2d12', activationBkgColor: '#e0e7ff', activationBorderColor: '#6366f1', sequenceNumberColor: '#ffffff',
+    attributeBackgroundColorOdd: '#ffffff', attributeBackgroundColorEven: '#f8fafc', classText: '#0b1220'},
+};
+const ACTOR = {dark: 'classDef actor fill:#1a1538,stroke:#a78bfa,color:#ede9fe', light: 'classDef actor fill:#f5f3ff,stroke:#8b5cf6,color:#4c1d95'};
+function configure() {
+  mermaid.initialize({startOnLoad: false, securityLevel: 'strict', maxTextSize: 200000, theme: 'base',
+    themeVariables: PALETTE[theme()], fontFamily: FONT,
+    flowchart: {curve: 'basis', padding: 14, nodeSpacing: 46, rankSpacing: 56},
+    sequence: {mirrorActors: false, actorFontWeight: 600, noteFontSize: 13, messageFontSize: 13.5, boxMargin: 10, diagramMarginX: 20},
+    er: {fontSize: 13}, class: {}});
+}
+const KINDS = {sequenceDiagram: 'Sequence', classDiagram: 'Class diagram', erDiagram: 'ER diagram', flowchart: 'Flow', graph: 'Flow'};
+
+// Search over headings and text of every document.
+const INDEX = [];
+for (const [name, text] of Object.entries(DOCUMENTS)) {
+  let heading = '', fenced = false;
+  for (const line of text.split('\n')) {
+    if (line.startsWith('```')) { fenced = !fenced; continue; }
+    if (fenced || !line.trim()) continue;
+    const match = line.match(/^(#{1,4}) (.+)/);
+    if (match) { heading = match[2]; INDEX.push({name, heading: match[1].length > 1 ? heading : '', text: heading, title: true}); continue; }
+    const plain = line.replace(/<[^>]+>/g, ' ').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/\*\*|`|^>\s*/g, '')
+      .replace(/\|/g, ' · ').replace(/^[\s·-]+|[\s·]+$/g, '').replace(/\s+/g, ' ');
+    if (plain && !/^[-:· ]+$/.test(plain)) INDEX.push({name, heading, text: plain});
+  }
+}
+const input = $('#q'), results = $('#results');
+let hits = [], selected = 0;
+function highlight(text, query) {
+  const at = text.toLowerCase().indexOf(query);
+  const start = Math.max(0, at - 50), slice = text.slice(start, at + query.length + 90);
+  const local = slice.toLowerCase().indexOf(query);
+  return (start ? '…' : '') + escape(slice.slice(0, local)) + '<mark>' + escape(slice.slice(local, local + query.length)) + '</mark>'
+    + escape(slice.slice(local + query.length)) + (at + query.length + 90 < text.length ? '…' : '');
+}
+function search() {
+  const query = input.value.trim().toLowerCase();
+  if (query.length < 2) { results.classList.remove('open'); return; }
+  hits = INDEX.filter(item => item.text.toLowerCase().includes(query))
+    .sort((a, b) => (b.title - a.title)).slice(0, 40);
+  selected = 0;
+  results.innerHTML = hits.length ? hits.map((hit, position) =>
+    `<button role="option" data-position="${position}" class="${position ? '' : 'on'}"><span class="where">${escape(titleOf(hit.name))}${hit.heading ? ' › ' + escape(hit.heading) : ''}</span>${highlight(hit.text, query)}</button>`).join('')
+    : '<div class="none">Nothing matches that search.</div>';
+  results.classList.add('open');
+}
+function go(hit) {
+  results.classList.remove('open'); input.blur();
+  location.hash = hit.name + (hit.heading ? '#' + slugify(hit.heading) : '');
+}
+input.addEventListener('input', search);
+input.addEventListener('focus', search);
+input.addEventListener('keydown', event => {
+  const buttons = results.querySelectorAll('button');
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    event.preventDefault();
+    if (!buttons.length) return;
+    buttons[selected].classList.remove('on');
+    selected = (selected + (event.key === 'ArrowDown' ? 1 : buttons.length - 1)) % buttons.length;
+    buttons[selected].classList.add('on'); buttons[selected].scrollIntoView({block: 'nearest'});
+  } else if (event.key === 'Enter' && hits[selected]) { go(hits[selected]); }
+  else if (event.key === 'Escape') { results.classList.remove('open'); input.blur(); }
+});
+results.addEventListener('mousedown', event => {
+  const button = event.target.closest('button');
+  if (button) { event.preventDefault(); go(hits[Number(button.dataset.position)]); }
+});
+document.addEventListener('click', event => { if (!event.target.closest('.search')) results.classList.remove('open'); });
+document.addEventListener('keydown', event => {
+  if ((event.key === 'k' && (event.metaKey || event.ctrlKey)) || (event.key === '/' && document.activeElement !== input)) {
+    event.preventDefault(); input.focus(); input.select();
+  }
+});
+
+// Diagram cards.
+function setScale(figure, scale) {
+  const graphic = figure.querySelector('.diagram-body svg');
+  if (!graphic || !figure.baseWidth) return;
+  figure.scale = Math.min(4, Math.max(0.2, scale));
+  graphic.style.maxWidth = 'none';
+  graphic.style.width = Math.round(figure.baseWidth * figure.scale) + 'px';
+  figure.querySelector('.zoom').textContent = Math.round(figure.scale * 100) + '%';
+}
+function fit(figure) {
+  const body = figure.querySelector('.diagram-body');
+  const room = body.clientWidth - 40;
+  setScale(figure, Math.min(1, Math.max(room / figure.baseWidth, document.fullscreenElement === figure ? 0.2 : 0.62)));
+}
+function card(figure, title) {
+  const source = figure.source;
+  const kind = KINDS[source.trim().split(/\s/)[0]] || 'Diagram';
+  figure.innerHTML = `<div class="diagram-bar"><span class="kind">${kind}</span><span class="title">${escape(title)}</span>
+    <div class="tools"><button data-act="out" aria-label="Zoom out" title="Zoom out">${svg('minus')}</button><span class="zoom">100%</span>
+    <button data-act="in" aria-label="Zoom in" title="Zoom in">${svg('plus')}</button><button data-act="fit" aria-label="Fit to width" title="Fit to width">${svg('fit')}</button>
+    <button data-act="full" aria-label="Full screen" title="Full screen">${svg('full')}</button><button data-act="save" aria-label="Download SVG" title="Download SVG">${svg('download')}</button></div></div>
+    <div class="diagram-body loading"></div>`;
+  figure.querySelector('.tools').addEventListener('click', event => {
+    const action = (event.target.closest('button') || {}).dataset?.act;
+    if (action === 'in') setScale(figure, figure.scale * 1.25);
+    if (action === 'out') setScale(figure, figure.scale / 1.25);
+    if (action === 'fit') fit(figure);
+    if (action === 'full') { document.fullscreenElement ? document.exitFullscreen() : figure.requestFullscreen?.(); }
+    if (action === 'save') {
+      const graphic = figure.querySelector('.diagram-body svg');
+      if (!graphic) return;
+      const blob = new Blob([new XMLSerializer().serializeToString(graphic)], {type: 'image/svg+xml'});
+      const link = Object.assign(document.createElement('a'), {href: URL.createObjectURL(blob), download: slugify(title || kind) + '.svg'});
+      link.click(); setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+    }
+  });
+  const body = figure.querySelector('.diagram-body');
+  let drag = null;
+  body.addEventListener('pointerdown', event => {
+    if (event.button !== 0) return;
+    drag = {x: event.clientX, y: event.clientY, left: body.scrollLeft, top: body.scrollTop};
+    body.classList.add('dragging'); body.setPointerCapture(event.pointerId);
+  });
+  body.addEventListener('pointermove', event => {
+    if (!drag) return;
+    body.scrollLeft = drag.left - (event.clientX - drag.x); body.scrollTop = drag.top - (event.clientY - drag.y);
+  });
+  const stop = () => { drag = null; body.classList.remove('dragging'); };
+  body.addEventListener('pointerup', stop); body.addEventListener('pointercancel', stop);
+  body.addEventListener('wheel', event => {
+    if (!(event.ctrlKey || event.metaKey)) return;
+    event.preventDefault(); setScale(figure, figure.scale * (event.deltaY < 0 ? 1.1 : 1 / 1.1));
+  }, {passive: false});
+}
+document.addEventListener('fullscreenchange', () => {
+  document.querySelectorAll('figure.diagram').forEach(figure => figure.baseWidth && fit(figure));
+});
+
+// Page rendering.
+let drawn = 0, showing = 0, current = null, observer = null;
+function nearestHeading(element) {
+  for (let node = element.previousElementSibling; node; node = node.previousElementSibling) {
+    if (/^H[1-4]$/.test(node.tagName)) return node.textContent.replace(/#$/, '').trim();
+  }
+  return '';
+}
+function decorate(name) {
+  // Tables scroll inside rounded cards; status cells become pills.
+  doc.querySelectorAll('table').forEach(table => {
+    const wrap = document.createElement('div'); wrap.className = 'table-wrap';
+    table.replaceWith(wrap); wrap.appendChild(table);
+  });
+  doc.querySelectorAll('td').forEach(cell => {
+    const text = cell.textContent.trim();
+    if (text === 'complete') cell.innerHTML = '<span class="pill ok">complete</span>';
+    else if (text === 'MISSING') cell.innerHTML = '<span class="pill bad">missing</span>';
+    else if (text === 'yes') cell.innerHTML = '<span class="pill ok">yes</span>';
+    else if (text === 'no') cell.innerHTML = '<span class="pill muted">no</span>';
+  });
+  // The overview's "At a glance" table becomes stat cards.
+  doc.querySelectorAll('h2').forEach(heading => {
+    const wrap = heading.nextElementSibling;
+    if (heading.textContent.replace(/#$/, '').trim() !== 'At a glance' || !wrap || !wrap.classList.contains('table-wrap')) return;
+    const labels = [...wrap.querySelectorAll('th')].map(cell => cell.textContent.trim());
+    const values = [...wrap.querySelectorAll('tbody tr:first-child td')].map(cell => cell.textContent.trim());
+    const stats = document.createElement('div'); stats.className = 'stats';
+    stats.innerHTML = labels.map((label, position) =>
+      `<div class="stat"><div class="value">${escape(values[position] || '')}</div><div class="label">${escape(label)}</div></div>`).join('');
+    wrap.replaceWith(stats);
+  });
+  const title = doc.querySelector('h1');
+  if (title) title.insertAdjacentHTML('beforebegin', `<div class="eyebrow">${EYEBROW[kindOf(name)]}</div>`);
+  // Internal links route through the hash; heading anchors already do.
   const base = name.includes('/') ? name.split('/').slice(0, -1).join('/') + '/' : '';
   doc.querySelectorAll('a[href]').forEach(link => {
     const href = link.getAttribute('href');
-    if (/^[a-z]+:/i.test(href)) return;
+    if (link.classList.contains('anchor') || /^[a-z]+:/i.test(href)) return;
     if (href.startsWith('#')) { link.href = '#' + name + href; return; }
     const [path, fragment] = href.split('#'), parts = [];
     if (!path.endsWith('.md')) return;
     for (const part of (base + path).split('/')) { if (part === '..') parts.pop(); else if (part && part !== '.') parts.push(part); }
     link.href = '#' + parts.join('/') + (fragment ? '#' + fragment : '');
   });
-  nav.querySelectorAll('a').forEach(link => link.classList.toggle('on', link.dataset.name === name));
-  for (const block of doc.querySelectorAll('.mermaid')) {
-    if (current !== showing) return;
-    const source = sources[Number(block.dataset.source)];
-    try {
-      block.innerHTML = (await mermaid.render('diagram' + (++drawn), source)).svg;
-    } catch (error) {
-      block.innerHTML = '<p>This diagram could not be drawn. Its source:</p><pre><code>' + escape(source) + '</code></pre>';
-    }
-  }
+}
+function contents(name) {
+  const headings = [...doc.querySelectorAll('h2[id], h3[id]')];
+  toc.innerHTML = headings.length ? '<h4>On this page</h4>' + headings.map(heading =>
+    `<a href="#${escape(name)}#${heading.id}" data-id="${heading.id}" class="${heading.tagName === 'H3' ? 'sub' : ''}">${escape(heading.textContent.replace(/#$/, '').trim())}</a>`).join('') : '';
+  if (observer) observer.disconnect();
+  observer = new IntersectionObserver(entries => {
+    const visible = entries.filter(entry => entry.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
+    if (!visible) return;
+    toc.querySelectorAll('a').forEach(link => link.classList.toggle('on', link.dataset.id === visible.target.id));
+    const active = toc.querySelector('a.on');
+    if (active) active.scrollIntoView({block: 'nearest'});
+  }, {rootMargin: '-72px 0px -70% 0px'});
+  headings.forEach(heading => observer.observe(heading));
+}
+function scrollTo(anchor) {
   const target = anchor && document.getElementById(anchor);
   if (target) target.scrollIntoView(); else window.scrollTo(0, 0);
 }
-window.addEventListener('hashchange', show);
-show();
+async function show(force) {
+  let [name, anchor] = decodeURIComponent(location.hash.slice(1) || 'README.md').split('#');
+  if (!DOCUMENTS[name]) name = 'README.md';
+  document.body.classList.remove('nav-open');
+  if (name === current && !force) { scrollTo(anchor); return; }
+  const run = ++showing;
+  current = name;
+  const used = new Set(), sources = [];
+  const renderer = new marked.Renderer();
+  renderer.heading = (text, level, raw) => {
+    if (level === 1) return `<h1>${text}</h1>`;
+    let id = slugify(raw);
+    while (used.has(id)) id += '-';
+    used.add(id);
+    return `<h${level} id="${id}">${text}<a class="anchor" href="#${escape(name)}#${id}" aria-label="Link to this section">#</a></h${level}>`;
+  };
+  renderer.code = (code, language) => language === 'mermaid'
+    ? `<figure class="diagram" data-source="${sources.push(code) - 1}"></figure>`
+    : `<pre class="code"><code>${escape(code)}</code></pre>`;
+  const html = marked.parse(DOCUMENTS[name], {renderer});
+  doc.innerHTML = typeof DOMPurify !== 'undefined' ? DOMPurify.sanitize(html) : html;
+  doc.style.animation = 'none'; void doc.offsetWidth; doc.style.animation = '';
+  decorate(name);
+  nav.querySelectorAll('a').forEach(link => link.classList.toggle('on', link.dataset.name === name));
+  document.title = `${titleOf(name)} · Domain Model`;
+  $('#footer').innerHTML = `<span>Generated by <code>speed discover domains --export ddd</code></span><span>${Object.keys(DOCUMENTS).length} documents</span>`;
+  contents(name);
+  const figures = [...doc.querySelectorAll('figure.diagram')];
+  figures.forEach(figure => { figure.source = sources[Number(figure.dataset.source)]; card(figure, nearestHeading(figure)); });
+  scrollTo(anchor);
+  if (document.fonts && document.fonts.ready) await document.fonts.ready;
+  configure();
+  for (const figure of figures) {
+    if (run !== showing) return;
+    const body = figure.querySelector('.diagram-body');
+    const source = figure.source.replace(/classDef actor [^\n]*/, ACTOR[theme()]);
+    try {
+      body.innerHTML = (await mermaid.render('diagram' + (++drawn), source)).svg;
+      const graphic = body.querySelector('svg');
+      figure.baseWidth = graphic.viewBox && graphic.viewBox.baseVal && graphic.viewBox.baseVal.width || graphic.getBoundingClientRect().width;
+      fit(figure);
+    } catch (error) {
+      body.innerHTML = '<div class="diagram-error">This diagram could not be drawn. Its source:</div><pre class="code"><code>' + escape(figure.source) + '</code></pre>';
+    }
+    body.classList.remove('loading');
+  }
+  if (run === showing) scrollTo(anchor);
+}
+$('#theme').addEventListener('click', () => {
+  root.dataset.theme = theme() === 'dark' ? 'light' : 'dark';
+  store.set('domain-model-theme', root.dataset.theme);
+  paintToggle(); show(true);
+});
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (!root.dataset.theme) { paintToggle(); show(true); } });
+$('#menu').addEventListener('click', () => document.body.classList.toggle('nav-open'));
+window.addEventListener('scroll', () => {
+  const height = document.documentElement.scrollHeight - innerHeight;
+  $('#progress').style.width = (height > 0 ? scrollY / height * 100 : 0) + '%';
+}, {passive: true});
+window.addEventListener('hashchange', () => show(false));
+show(true);
+})();
 </script></body></html>
 """
 

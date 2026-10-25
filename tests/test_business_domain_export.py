@@ -593,7 +593,7 @@ def test_the_completeness_check_finds_every_record_and_the_viewer_holds_every_pa
     page = files['index.html']
     documents = json.loads(re.search(r'const DOCUMENTS = (\{.*?\});\n', page, re.S).group(1).replace('<\\/', '</'))
     assert set(documents) == set(files) - {'index.html'}
-    assert '</script' not in page.split('const DOCUMENTS = ')[1].split(';\nmermaid')[0]
+    assert '</script' not in page.split('const DOCUMENTS = ')[1].split(';\n')[0]
     assert 'marked@12.0.2' in page and 'mermaid@11.4.1' in page
     # mermaid.run() reads escaped innerHTML and fails on '->>' and '<<entity>>'; diagrams are
     # rendered from their source text instead.
