@@ -30,9 +30,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from lib.context.business_domain_schema import DomainError, limits, settings
-from lib.context.business_domain_synthesis import Synthesis
+from lib.context.business_domain_schema import DEFINITIONS, DomainError, limits, settings
+from lib.context.business_domain_synthesis import OPERATIONS, Synthesis, wire_schema
 from lib.context.business_domains import load_speed_toml
+from tests.business_domains.provider_fixture import encode
 
 
 def saved_verifications(cache):
@@ -72,17 +73,31 @@ def main():
     parser.add_argument('--model', required=True)
     parser.add_argument('--limit', type=int, default=10)
     parser.add_argument('--json', type=Path, help='Write per-request results here')
+    parser.add_argument('--dry-run', action='store_true',
+                        help='Answer with the original verdicts instead of calling the provider')
     args = parser.parse_args()
 
     source = args.repo.expanduser().resolve()
     items = sample(saved_verifications(source / '.speed/context/business-domain-cache'), args.limit)
-    work = Path(tempfile.mkdtemp(prefix='speed-verify-agreement-'))
+    # Resolve the temp folder: on macOS it sits behind a symlink, and SPEED
+    # refuses to write its cache through one.
+    work = Path(tempfile.mkdtemp(prefix='speed-verify-agreement-')).resolve()
     root = work / source.name
     shutil.copytree(source, root, ignore=shutil.ignore_patterns('.speed'))
     os.environ['SPEED_DISCOVER_VERIFICATION_MODEL'] = args.model
     config = settings(load_speed_toml(str(root)))
     counters = limits(config)
     runner = Synthesis(root, config, None, counters)
+    current = {}
+    if args.dry_run:
+        def answer(wire_request, schema, timeout, role):
+            # Return the original verdict exactly as a provider would send it.
+            output_type = OPERATIONS[current['request']['operation']][0]
+            _, _, projection = runner.project_exchange(
+                current['request'], wire_schema(output_type, current['request']['graph']))
+            wire = encode(current['original'], DEFINITIONS[output_type])
+            return projection._rewrite(wire, projection.aliases), {}
+        runner._run_agent = answer
 
     results = []
     try:
@@ -90,6 +105,7 @@ def main():
             request = copy.deepcopy(saved)
             request.update(model=args.model, request_id=str(uuid.uuid4()),
                            deadline_at=(datetime.now(timezone.utc) + timedelta(hours=1)).isoformat())
+            current.update(request=request, original=original)
             before = counters.get('input_tokens_reported') or 0
             try:
                 report, _ = runner._run_once(request)

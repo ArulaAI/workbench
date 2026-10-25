@@ -126,7 +126,9 @@ def main():
         if parent == source or source in parent.parents:
             parser.error('--work must be outside the repository')
         parent.mkdir(parents=True, exist_ok=True)
-    work = Path(tempfile.mkdtemp(prefix='speed-rehearsal-', dir=parent))
+    # Resolved: on macOS the temp folder sits behind a symlink, and SPEED
+    # refuses to write its cache through one.
+    work = Path(tempfile.mkdtemp(prefix='speed-rehearsal-', dir=parent)).resolve()
     target = work / source.name
     shutil.copytree(source, target, ignore=shutil.ignore_patterns('.speed'))
     print(f'Rehearsing in {target}')
