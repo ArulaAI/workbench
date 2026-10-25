@@ -325,6 +325,7 @@ def test_export_writes_the_documents_and_a_manifest(tmp_path, capsys):
     assert result['ok'] and result['mode'] == 'export' and result['format'] == 'ddd'
     directory = tmp_path / result['directory']
     assert result['directory'] == export.EXPORT_DIRECTORY
+    assert result['viewer'] == (tmp_path / export.EXPORT_DIRECTORY / 'index.html').resolve().as_uri()
     for name in result['files']:
         assert (directory / name).is_file()
     manifest = json.loads((directory / export.MANIFEST).read_text())
@@ -377,13 +378,14 @@ def test_the_shell_prints_where_the_documents_went(tmp_path):
     result = tmp_path / 'result.json'
     result.write_text(json.dumps({
         'ok': True, 'mode': 'export', 'build_id': 'b1', 'directory': '.speed/context/business-domain-ddd',
-        'files': ['README.md', 'rules.md'],
+        'files': ['README.md', 'rules.md'], 'viewer': 'file:///repo/.speed/context/business-domain-ddd/index.html',
         'counts': {'contexts': 2, 'use_cases': 3, 'entities': 4, 'rules': 5, 'links': 1}}))
     output = subprocess.run(
         ['bash', '-c', f'source "{ROOT}/lib/cmd/domains.sh"; _domains_render_export "{result}"'],
         capture_output=True, text=True, check=True).stdout
     assert 'Wrote 2 documents for build b1 to .speed/context/business-domain-ddd/' in output
     assert '2 bounded contexts · 3 use cases · 4 entities · 5 business rules' in output
+    assert 'Open in a browser: file:///repo/.speed/context/business-domain-ddd/index.html' in output
     assert '\x1b[' not in output
 
 

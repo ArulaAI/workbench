@@ -2135,6 +2135,7 @@ def write_export(root: Path, model: dict, out=None) -> dict:
         shown = str(base)
     index = Model(model)
     return {'directory': shown, 'files': sorted(files), 'build_id': model.get('build_id'),
+            'viewer': (base / 'index.html').as_uri(),
             'counts': {'contexts': len(index.domain_order), 'use_cases': len(index.activities),
                        'entities': len(index.concepts), 'rules': len(index.rules),
                        'links': len(index.relationships)}}

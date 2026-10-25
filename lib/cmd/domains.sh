@@ -279,6 +279,7 @@ _domains_render_export() {
         "",
         (.files[] | "  \(.)"),
         "",
+        (if .viewer then "Open in a browser: \(.viewer)" else empty end),
         "Start with \(.directory)/README.md"
     ' "$1"
 }
