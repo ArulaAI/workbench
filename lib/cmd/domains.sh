@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # domains.sh: business-domain discovery
 #
-# speed discover domains [--facts-only | --status | --cancel] [--json]
+# speed discover domains [--facts-only | --status | --cancel | --export ddd [--out DIR]] [--json]
 #
 # Sourced: provides _discover_domains, which runs lib/context/business_domain_cli.py
 # and renders its JSON result.
@@ -272,18 +272,46 @@ _domains_render_status() {
     ' "$1"
 }
 
+_domains_render_export() {
+    jq -r '
+        "Wrote \(.files | length) documents for build \(.build_id) to \(.directory)/",
+        "  \(.counts.contexts) bounded contexts · \(.counts.use_cases) use cases · \(.counts.entities) entities · \(.counts.rules) business rules",
+        "",
+        (.files[] | "  \(.)"),
+        "",
+        "Start with \(.directory)/README.md"
+    ' "$1"
+}
+
 _discover_domains() {
     local mode_flag=""
+    local export_format="" export_out=""
     local json_output="${JSON_OUTPUT:-false}"
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --facts-only|--status|--cancel)
+            --facts-only|--status|--cancel|--export)
                 if [[ -n "$mode_flag" ]]; then
-                    log_error "Use only one of --facts-only, --status, --cancel"
+                    log_error "Use only one of --facts-only, --status, --cancel, --export"
                     exit "$EXIT_CONFIG_ERROR"
                 fi
-                mode_flag="$1"; shift ;;
+                mode_flag="$1"; shift
+                if [[ "$mode_flag" == "--export" ]]; then
+                    if [[ "${1:-}" != "ddd" ]]; then
+                        log_error "--export needs a format: --export ddd"
+                        exit "$EXIT_CONFIG_ERROR"
+                    fi
+                    export_format="$1"; shift
+                fi ;;
+            --out)
+                if [[ -z "${2:-}" || "$2" == --* ]]; then
+                    log_error "--out needs a directory"
+                    exit "$EXIT_CONFIG_ERROR"
+                fi
+                export_out="$2"
+                # Relative to where the command was run, not the project root.
+                [[ "$export_out" == /* ]] || export_out="$PWD/$export_out"
+                shift 2 ;;
             *)
                 log_error "Unknown option: $1"
                 _discover_usage
@@ -291,6 +319,11 @@ _discover_domains() {
                 ;;
         esac
     done
+
+    if [[ -n "$export_out" && "$mode_flag" != "--export" ]]; then
+        log_error "--out needs --export"
+        exit "$EXIT_CONFIG_ERROR"
+    fi
 
     local tmp_result
     local rc=0
@@ -301,10 +334,12 @@ _discover_domains() {
         "")           log_header "Business-domain discovery" >&2
                       log_step "Full pipeline: extraction, then model synthesis and verification..." >&2 ;;
         --facts-only) log_header "Business-domain facts" >&2 ;;
+        --export)     log_header "Business-domain DDD export" >&2 ;;
     esac
 
     PYTHONPATH="${SPEED_DIR:-$(cd "${LIB_DIR}/.." && pwd)}" "$(_context_python)" \
         -m lib.context.business_domain_cli --root "$PROJECT_ROOT" ${mode_flag:+"$mode_flag"} \
+        ${export_format:+"$export_format"} ${export_out:+--out "$export_out"} \
         > "$tmp_result" 2> >(_domains_render_progress) || rc=$?
 
     if [[ "$json_output" == "true" ]]; then
@@ -322,6 +357,7 @@ _discover_domains() {
         --facts-only) echo; _domains_render_facts "$tmp_result" ;;
         --status)     _domains_render_status "$tmp_result" ;;
         --cancel)     log_success "Cancellation requested for build $(jq -r '.build_id' "$tmp_result")." ;;
+        --export)     _domains_render_export "$tmp_result" ;;
         "")
             _domains_render_status "$tmp_result"
             log_info "Run log: $(jq -r '.log' "$tmp_result")" >&2

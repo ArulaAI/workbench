@@ -7,7 +7,7 @@
 #   domains    Business-domain discovery (lib/cmd/domains.sh)
 
 _discover_usage() {
-    echo "Usage: speed discover domains [--facts-only | --status | --cancel] [--json]" >&2
+    echo "Usage: speed discover domains [--facts-only | --status | --cancel | --export ddd [--out DIR]] [--json]" >&2
 }
 
 cmd_discover() {

@@ -147,6 +147,13 @@ Adds tree-sitter extraction support for a new programming language. Validates th
 ### `test-rules [language | --all]`
 Runs ast-grep rules against fixture files and compares output to expected results. Without arguments, tests the active language. With `--all`, tests every registered language. Reports PASS/FAIL/OK per fixture.
 
+### `discover domains`
+Discovers the business domains in the repository: their activities, entities, rules and the evidence behind each. Without options it extracts facts from the source, then has the model synthesize and verify a domain model, and publishes it to `.speed/context/business-domains.json`. Large repositories run in hierarchical mode: slices of entry points are synthesized separately and reconciled into one model. An interrupted run resumes from its cache when started again.
+*   `--facts-only`: Extract facts without calling a model and print the extraction report.
+*   `--status`: Show the latest attempt and whether a model is published.
+*   `--cancel`: Ask a running discovery to stop.
+*   `--export ddd [--out DIR]`: Write domain-driven design documents from the published model, without calling a model: an overview with the context map and entity model, one page per bounded context (use cases, entities, data access, links, call sequences, rules), a business-rules catalog, a glossary and a page of gaps. Diagrams are Mermaid, which GitHub renders. Output goes to `.speed/context/business-domain-ddd/` unless `--out` names another directory (relative to where the command runs). Each run rewrites the files it owns, listed in `manifest.json`, and leaves other files alone. It refuses with `EXPORT_CONFLICT` rather than overwrite a file it did not write, so point `--out` at an empty or new directory. Exits 1 with `DOMAIN_DISCOVERY_MISSING` when nothing is published, and with `EXPORT_WRITE_FAILED` when the directory can't be written.
+
 ## Multi-Player Commands
 
 These commands are available after running `speed mp-init`. See the [Multi-Player Mode](/docs/multiplayer/) guide for the full workflow.

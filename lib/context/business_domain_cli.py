@@ -3,8 +3,8 @@
 Prints one JSON result on stdout. Progress events go to stderr, one
 per line, prefixed with EVENT_PREFIX so the shell can render them.
 
-Exit codes: 0 complete or partial, 1 failed, 3 configuration or provider
-unavailable, 130 cancelled.
+Exit codes: 0 complete or partial, 1 failed (or nothing published to
+export), 3 configuration or provider unavailable, 130 cancelled.
 """
 import argparse
 import json
@@ -14,6 +14,7 @@ import sys
 import time
 from pathlib import Path
 
+from .business_domain_export import write_export
 from .business_domain_extract import Extractor, extraction_measurements
 from .business_domain_schema import DomainError, atomic_write, read_status, settings
 from .business_domain_synthesis import request_shutdown
@@ -438,7 +439,16 @@ def cancel(root):
     return {'mode': 'cancel', **cancel_build(root, current['attempt_build_id'])}, 0
 
 
-MODES = {'run': run, 'facts': facts_only, 'status': status, 'cancel': cancel}
+def export(root, out=None):
+    """Write DDD documents from the published model, without calling a provider."""
+    model, _ = load(root)
+    if model is None:
+        raise DomainError('DOMAIN_DISCOVERY_MISSING',
+                          'No published domain model to export. Run: speed discover domains')
+    return {'mode': 'export', 'format': 'ddd', **write_export(root, model, out)}, 0
+
+
+MODES = {'run': run, 'facts': facts_only, 'status': status, 'cancel': cancel, 'export': export}
 
 
 def _stop(signum, frame):
@@ -454,15 +464,23 @@ def main(argv=None):
     for flag, name in (('--facts-only', 'facts'), ('--status', 'status'),
                        ('--cancel', 'cancel')):
         mode.add_argument(flag, dest='mode', action='store_const', const=name)
+    mode.add_argument('--export', choices=['ddd'],
+                      help='Write DDD documents and diagrams from the published model')
+    parser.add_argument('--out', help='Directory for --export (default .speed/context/business-domain-ddd)')
     parser.set_defaults(mode='run')
     args = parser.parse_args(argv)
+    if args.export:
+        args.mode = 'export'
+    elif args.out:
+        parser.error('--out needs --export')
     root = Path(args.root).resolve()
     for signum in (signal.SIGTERM, signal.SIGINT):
         signal.signal(signum, _stop)
     try:
         if not root.is_dir():
             raise DomainError('INVALID_ROOT', 'Repository root does not exist')
-        result, code = MODES[args.mode](root)
+        result, code = (export(root, args.out) if args.mode == 'export'
+                        else MODES[args.mode](root))
         result['ok'] = code == 0
     except KeyboardInterrupt:
         result, code = {'ok': False, 'mode': args.mode,
