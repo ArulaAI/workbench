@@ -286,7 +286,7 @@ def test_export_is_byte_identical_and_independent_of_insertion_order():
     for key in ('symbols', 'edges', 'evidence', 'concepts'):
         reordered[key] = dict(reversed(list(reordered[key].items())))
     assert export.export_ddd(reordered) == first
-    assert set(first) == {'README.md', 'rules.md', 'glossary.md', 'gaps.md',
+    assert set(first) == {'README.md', 'rules.md', 'glossary.md', 'gaps.md', 'index.html',
                           'contexts/owner-records-main.md'}
 
 
@@ -469,3 +469,223 @@ def test_an_interrupted_export_does_not_lock_its_directory(tmp_path, capsys, mon
     monkeypatch.setattr(export, '_write_text', real)
     capsys.readouterr()
     assert main(['--root', str(tmp_path), '--export', 'ddd', '--out', str(directory)]) == 0
+
+
+def table_model():
+    """entity_model with tables, keys, a cascaded collection and a many-to-many join table."""
+    model = entity_model()
+    owner_file = 'src/main/java/org/example/model/Owner.java'
+    pet_file = 'src/main/java/org/example/model/Pet.java'
+    vet_file = 'src/main/java/org/example/model/Vet.java'
+    model['symbols'].update({
+        'symbol:Vet': symbol('symbol:Vet', 'Vet', vet_file, 'class', ['ev:Vet']),
+        'symbol:Specialty': symbol('symbol:Specialty', 'Specialty', 'src/main/java/org/example/model/Specialty.java',
+                                   'class', ['ev:Specialty']),
+        'symbol:ownerId': symbol('symbol:ownerId', 'Owner.id()', owner_file, 'field', ['ev:ownerId']),
+        'symbol:petId': symbol('symbol:petId', 'Pet.id()', pet_file, 'field', ['ev:petId']),
+        'symbol:specialties': symbol('symbol:specialties', 'Vet.specialties()', vet_file, 'field', ['ev:specialties']),
+    })
+    model['evidence'].update({
+        'ev:Pet': evidence('ev:Pet', pet_file, 1, '@Entity @Table(name = "pets") public class Pet'),
+        'ev:Vet': evidence('ev:Vet', vet_file, 1, '@Entity @Table(name = "vets") public class Vet'),
+        'ev:Specialty': evidence('ev:Specialty', 'src/main/java/org/example/model/Specialty.java', 1,
+                                 '@Entity @Table(name = "specialties") public class Specialty'),
+        'ev:pets': evidence('ev:pets', owner_file, 9, '@OneToMany(cascade = CascadeType.ALL, mappedBy = "owner") '
+                                                      'private Set<Pet> pets;'),
+        'ev:ownerId': evidence('ev:ownerId', owner_file, 3, '@Id @Column(name = "id") private Integer id;'),
+        'ev:petId': evidence('ev:petId', pet_file, 3, '@Id @Column(name = "id") private Integer id;'),
+        'ev:specialties': evidence('ev:specialties', vet_file, 9,
+                                   '@ManyToMany @JoinTable(name = "vet_specialties", joinColumns = @JoinColumn('
+                                   'name = "vet_id"), inverseJoinColumns = @JoinColumn(name = "specialty_id")) '
+                                   'private Set<Specialty> specialties;'),
+    })
+    model['edges'].update({
+        'edge:f4': edge('edge:f4', 'has_field', 'symbol:Owner', 'symbol:ownerId'),
+        'edge:f5': edge('edge:f5', 'has_field', 'symbol:Pet', 'symbol:petId'),
+        'edge:f6': edge('edge:f6', 'has_field', 'symbol:Vet', 'symbol:specialties'),
+    })
+    model['concepts'].update({
+        'concept:vet': {'id': 'concept:vet', 'name': 'Veterinarian', 'symbol_ids': [],
+                        'qualified_type_names': ['org.example.model.Vet']},
+        'concept:specialty': {'id': 'concept:specialty', 'name': 'Specialty', 'symbol_ids': [],
+                              'qualified_type_names': ['org.example.model.Specialty']},
+    })
+    model['domains']['domain:owners']['concepts'] += ['concept:vet', 'concept:specialty']
+    return model
+
+
+def test_the_er_diagram_lists_keys_foreign_keys_and_join_tables():
+    diagram = export.Entities(export.Model(table_model())).er_diagram()
+    owners = diagram.split('  owners {')[1].split('  }')[0].split('\n')
+    # The primary key comes first, then plain columns.
+    assert [line.strip() for line in owners if line.strip()] == ['Integer id PK', 'String city']
+    assert 'Integer owner_id FK' in diagram.split('  pets {')[1].split('  }')[0]
+    assert 'owners ||--o{ pets : "owner_id"' in diagram
+    join = diagram.split('  vet_specialties {')[1].split('  }')[0]
+    assert 'vet_id FK' in join and 'specialty_id FK' in join
+    assert 'vets ||--o{ vet_specialties : "vet_id"' in diagram
+    assert 'specialties ||--o{ vet_specialties : "specialty_id"' in diagram
+
+
+def test_a_cascaded_collection_is_a_composition_and_an_aggregate():
+    index = export.Model(table_model())
+    entities = export.Entities(index)
+    assert 'Owner "1" *-- "*" Pet : pets' in entities.diagram(['concept:owner', 'concept:pet'])
+    assert ('Owner', ['Pet'], []) in entities.aggregates()
+    # Pet belongs to Owner's aggregate, so it is not a root of its own.
+    assert all(root != 'Pet' for root, _, _ in entities.aggregates())
+    assert ('Vet', [], ['Specialty']) in entities.aggregates()
+
+
+def test_an_opt_followed_by_its_negation_becomes_alt_else():
+    sequences = export.Sequences(export.Model(service_model()))
+    first = ('message', 'A', 'B', '->>', 'update()')
+    second = ('message', 'A', 'B', '->>', 'add()')
+    steps = [('opt', 'owner.isNew()'), first, ('end',), ('opt', '!(owner.isNew())'), second, ('end',)]
+    assert sequences._alternatives(steps) == [('alt', 'owner.isNew()'), first,
+                                              ('else', '!(owner.isNew())'), second, ('end',)]
+    unrelated = [('opt', 'a'), first, ('end',), ('opt', 'b'), second, ('end',)]
+    assert sequences._alternatives(unrelated) == unrelated
+
+
+def test_participants_are_grouped_by_layer():
+    sequences = export.Sequences(export.Model(service_model()))
+    sequences.files['OwnersPage'] = 'client/src/OwnersPage.tsx'
+    assert sequences.layer('table', 'owners') == 'Tables'
+    assert sequences.layer('contract', 'API contract (no implementation)') == 'API contract'
+    assert sequences.layer('participant', 'OwnersPage') == 'User interface'
+    assert sequences.layer('participant', 'OwnerRestController') == 'Controllers'
+    assert sequences.layer('participant', 'ClinicServiceImpl') == 'Application services'
+    assert sequences.layer('participant', 'OwnerRepository') == 'Repositories'
+    assert sequences.layer('participant', 'OwnerMapper') == 'Mappers'
+    assert sequences.layer('participant', 'KeyHolder') == 'Other classes'
+    assert export.Sequences(export.Model(table_model())).layer('participant', 'Owner') == 'Entities'
+    index = export.Model(service_model())
+    sequences = export.Sequences(index)
+    sequences.diagrams(index.activities['activity:add'])
+    diagram, layers = export.component_diagram(sequences, ['trace:post'])
+    assert layers['Controllers'] == ['OwnerRestController']
+    assert layers['Tables'] == ['owners']
+    assert 'subgraph repositories["Repositories"]' in diagram
+
+
+def test_a_class_and_its_generated_proxy_are_one_implementation():
+    model = service_model()
+    model['symbols']['symbol:sd'] = symbol('symbol:sd', 'SpringDataOwnerRepository.save(Owner)', 'src/Sd.java')
+    model['edges']['edge:sd'] = edge('edge:sd', 'selects_implementation', 'symbol:repo', 'symbol:sd',
+                                     condition=model['edges']['edge:active']['condition'])
+    model['traces']['trace:post']['edge_ids'].append('edge:sd')
+    index = export.Model(model)
+    [(_, _, diagram)], _ = export.Sequences(index).diagrams(index.activities['activity:add'])
+    assert 'runs SpringDataOwnerRepository, generated at runtime#59;' in diagram
+    assert 'SpringDataOwnerRepository, SpringDataOwnerRepository' not in diagram
+    assert 'several match' not in diagram and 'chosen at runtime' not in diagram
+
+
+def test_the_completeness_check_finds_every_record_and_the_viewer_holds_every_page():
+    model = table_model()
+    files = export.export_ddd(model)
+    rows = export.coverage(export.Model(model), files)
+    assert rows and all(found == total for _, total, found in rows), rows
+    assert '## Completeness check' in files['README.md']
+    page = files['index.html']
+    documents = json.loads(re.search(r'const DOCUMENTS = (\{.*?\});\n', page, re.S).group(1).replace('<\\/', '</'))
+    assert set(documents) == set(files) - {'index.html'}
+    assert '</script' not in page.split('const DOCUMENTS = ')[1].split(';\nmermaid')[0]
+    assert 'marked@12.0.2' in page and 'mermaid@11.4.1' in page
+
+
+def test_the_readme_summarises_relationships_and_aggregates():
+    files = export.export_ddd(table_model())
+    readme = files['README.md']
+    assert '## Aggregates' in readme and 'Owner' in readme.split('## Aggregates')[1].split('\n## ')[0]
+    assert '## Data model' in readme and 'erDiagram' in readme
+
+
+def test_an_argument_call_runs_before_the_call_it_is_passed_to():
+    model = service_model()
+    controller = 'src/OwnerRestController.java'
+    # Each edge cites only its own expression; another excerpt holds the whole statement.
+    model['evidence']['ev:map'] = evidence('ev:map', controller, 30, 'mapper.toOwner(clinicService.saveOwner(owner))')
+    model['evidence']['ev:save'] = evidence('ev:save', controller, 30, 'clinicService.saveOwner(owner)')
+    model['evidence']['ev:stmt'] = evidence('ev:stmt', controller, 30,
+                                            'return mapper.toOwner(clinicService.saveOwner(owner));')
+    index = export.Model(model)
+    [(_, _, diagram)], _ = export.Sequences(index).diagrams(index.activities['activity:add'])
+    calls = [line.split(': ')[1] for line in diagram.splitlines() if '->>' in line and 'Client' not in line]
+    assert calls.index('saveOwner()') < calls.index('toOwner()')
+
+
+def test_the_cascading_parent_draws_the_association_whichever_class_sorts_first():
+    model = table_model()
+    # Rename so the child sorts before its parent.
+    model['symbols']['symbol:Owner']['qualified_name'] = 'src/main/java/org/example/model/Owner.java::Zowner'
+    model['symbols']['symbol:pets']['qualified_name'] = 'src/main/java/org/example/model/Owner.java::Zowner.pets()'
+    model['symbols']['symbol:owner'] = symbol('symbol:owner', 'Pet.owner()', 'src/main/java/org/example/model/Pet.java',
+                                              'field', ['ev:owner'])
+    model['evidence']['ev:owner'] = evidence('ev:owner', 'src/main/java/org/example/model/Pet.java', 7,
+                                             '@ManyToOne @JoinColumn(name = "owner_id") private Zowner owner;')
+    model['concepts']['concept:owner']['qualified_type_names'] = ['org.example.model.Zowner']
+    diagram = export.Entities(export.Model(model)).diagram(['concept:owner', 'concept:pet'])
+    assert 'Zowner "1" *-- "*" Pet : pets' in diagram
+    assert 'Pet "*" --> "1" Zowner' not in diagram
+
+
+def test_inherited_validation_is_listed_with_the_class_it_comes_from():
+    model = table_model()
+    person = 'src/main/java/org/example/model/Person.java'
+    model['symbols']['symbol:first'] = symbol('symbol:first', 'Person.firstName()', person, 'field', ['ev:first'])
+    model['evidence']['ev:first'] = evidence('ev:first', person, 4, '@NotEmpty private String firstName;')
+    model['edges']['edge:f7'] = edge('edge:f7', 'has_field', 'symbol:Person', 'symbol:first')
+    rows = export.Entities(export.Model(model)).constraints(['concept:owner'])
+    assert ('Owner', 'firstName (from Person)', ('NotEmpty',)) in rows
+
+
+def test_jpa_cascades_and_eager_fetches_are_drawn_as_implied_table_access():
+    model = table_model()
+    model['evidence']['ev:pets'] = evidence(
+        'ev:pets', 'src/main/java/org/example/model/Owner.java', 9,
+        '@OneToMany(cascade = CascadeType.ALL, mappedBy = "owner", fetch = FetchType.EAGER) private Set<Pet> pets;')
+    entities = export.Entities(export.Model(model))
+    assert entities.implied('owners', 'write') == [('pets', 'JPA cascade')]
+    assert entities.implied('owners', 'read') == [('pets', 'JPA eager fetch')]
+    assert entities.implied('vets', 'write') == [('vet_specialties', 'JPA join table')]
+    assert entities.implied('vets', 'read') == []
+    index = export.Model(model)
+    [(_, _, diagram)], _ = export.Sequences(index, entities).diagrams(index.activities['activity:add'])
+    assert re.search(r'P4-->>P\d+: write pets \(JPA cascade\)', diagram)
+    # A declared non-JPA profile turns the JPA behaviour off.
+    model['edges']['edge:write']['condition'] = 'spring.profiles.active=hsqldb,jdbc declared in x'
+    index = export.Model(model)
+    [(_, _, diagram)], _ = export.Sequences(index).diagrams(index.activities['activity:add'])
+    assert 'JPA cascade' not in diagram
+
+
+def test_an_alt_branch_with_no_calls_says_so(monkeypatch):
+    index = export.Model(service_model())
+    sequences = export.Sequences(index)
+
+    def with_empty_branch(steps):
+        messages = [step for step in steps if step[0] == 'message']
+        return [('alt', 'owner.isNew()'), *messages, ('else', '!(owner.isNew())'), ('end',)]
+    monkeypatch.setattr(sequences, '_alternatives', with_empty_branch)
+    [(_, _, diagram)], _ = sequences.diagrams(index.activities['activity:add'])
+    lines = [line.strip() for line in diagram.splitlines()]
+    assert lines[lines.index('else !(owner.isNew())') + 1] == 'Note over P1: no call traced on this branch'
+
+
+def test_record_ids_in_prose_become_names():
+    model = service_model()
+    model['ownerships'] = {'ownership:aade3cafac0b12b60afa6762': {
+        'id': 'ownership:aade3cafac0b12b60afa6762', 'concept_id': 'concept:x', 'domain_id': 'domain:owners',
+        'kind': 'maintains', 'support': 'partial', 'unresolved_questions': []}}
+    model['concepts'] = {'concept:x': {'id': 'concept:x', 'name': 'Vet specialty assignment', 'symbol_ids': [],
+                                       'qualified_type_names': []}}
+    model['traces']['trace:0123456789abcdef'] = dict(model['traces']['trace:post'], id='trace:0123456789abcdef')
+    index = export.Model(model)
+    readable = index.readable(
+        'See (ownership ownership:aade3cafac0b12b60afa6762); recording the visit (a record of child scope '
+        'scope:b156f70e7f083e27a5aa1788); no match (trace trace:0123456789abcdef has no edges).')
+    assert readable == ('See (Owner "Records" | <main>\'s maintains claim on Vet specialty assignment); '
+                        'recording the visit (a record from another discovery unit); '
+                        'no match (the call path from POST /owners has no steps).')

@@ -68,7 +68,7 @@ ACTORS = {'http': 'API client', 'ui': 'User', 'cli': 'Operator', 'event': 'Event
 # Sequence diagram limits, sized from PetClinic: after filtering, the largest
 # trace has 16 messages and 12 participants.
 MAX_MESSAGES = 30
-MAX_PARTICIPANTS = 10
+MAX_PARTICIPANTS = 12
 MAX_DEPTH = 6
 MAX_USE_CASES = 15
 SEQUENCE_KINDS = ('calls', 'reads_data', 'writes_data', 'selects_implementation',
@@ -198,6 +198,35 @@ class Model:
             return f"{self.name(ownership['concept_id'])} ({ownership['kind']})"
         return f'(missing ref {identifier})' if ':' in identifier else identifier
 
+    def readable(self, text: str) -> str:
+        """Replace record IDs the model wrote into prose with names."""
+        def ownership(identifier):
+            item = self.ownerships[identifier]
+            return (f"{self.name(item.get('domain_id', ''))}'s {item['kind']} claim on "
+                    f"{self.name(item['concept_id'])}")
+
+        def trace(identifier):
+            return f"the call path from {self.entry_point(self.traces[identifier]['anchor_id'])}"
+
+        def replace(match):
+            identifier = match.group('id')
+            if identifier in self.ownerships:
+                return ownership(identifier)
+            if identifier in self.traces:
+                return trace(identifier)
+            if identifier.startswith('scope:'):
+                return 'another discovery unit'
+            name = self.name(identifier)
+            return identifier if name.startswith('(missing ref') else name
+        text = re.sub(r'a record of child scope scope:[0-9a-f]+', 'a record from another discovery unit', text)
+        text = re.sub(r'\btrace (trace:[0-9a-f]+) has no edges',
+                      lambda match: (trace(match.group(1)) if match.group(1) in self.traces else 'its call path')
+                      + ' has no steps', text)
+        # 'ownership ownership:ab12…' names the kind twice; the replacement says it once.
+        return re.sub(r'\b(?:(?P<kind>scope|ownership|trace|activity|rule|concept|domain) (?=(?P=kind):))?'
+                      r'(?P<id>(?:scope|ownership|trace|activity|rule|concept|domain):[0-9a-f]{12,})\b',
+                      replace, text)
+
     def symbol_name(self, identifier: str) -> str:
         symbol = self.symbols.get(identifier)
         if not symbol:
@@ -309,6 +338,12 @@ class Model:
                     usage[concept_id][domain_id].add(use.get('access') or 'uses')
         return usage
 
+    def unresolved_usage(self) -> set:
+        """(concept id, domain id) pairs with a data access that is not fully resolved."""
+        return {(use.get('concept_id'), domain_id) for use in self.uses.values()
+                if use.get('resolution') != 'resolved'
+                for domain_id in self.activity_domains.get(use.get('activity_id'), ())}
+
     def owners(self, concept_id: str) -> list:
         return sorted({ownership['domain_id'] for ownership in self.ownerships.values()
                        if ownership['concept_id'] == concept_id and ownership.get('domain_id') in self.domains},
@@ -390,9 +425,19 @@ class Entities:
             generic = re.search(r'<\s*([\w.]+)\s*>', type_name)
             target = (generic.group(1) if generic else type_name).split('.')[-1]
         join_table = re.search(r'@JoinTable\s*\(\s*name\s*=\s*"(\w+)"', excerpt)
+        column = re.search(r'@Column\s*\(\s*name\s*=\s*"(\w+)"', excerpt)
+        join_column = re.search(r'@JoinColumn\s*\(\s*name\s*=\s*"(\w+)"', excerpt)
+        join_columns = re.findall(r'(?:joinColumns|inverseJoinColumns)\s*=\s*@JoinColumn\s*\(\s*name\s*=\s*"(\w+)"',
+                                  excerpt)
         return {'name': name, 'type': type_name, 'annotations': annotations,
                 'association': association, 'target': target,
                 'join_table': join_table.group(1) if join_table else None,
+                'join_columns': join_columns,
+                'column': column.group(1) if column else None,
+                'join_column': join_column.group(1) if join_column else None,
+                'cascade_all': re.search(r'cascade\s*=\s*(?:\{\s*)?CascadeType\.ALL', excerpt) is not None,
+                'eager': re.search(r'fetch\s*=\s*FetchType\.EAGER', excerpt) is not None,
+                'key': 'Id' in annotations,
                 'mapped_by': re.search(r'mappedBy\s*=\s*"(\w+)"', excerpt) is not None}
 
     def _table(self, symbol_id: str):
@@ -456,20 +501,32 @@ class Entities:
         for symbol_id in shown:
             if symbol_id not in table_of and self.classes[symbol_id]['table']:
                 table_of[symbol_id] = [self.classes[symbol_id]['table']]
-        associations, drawn = [], set()
+        associations, drawn = [], {}
         join_tables = {field['join_table'] for entity in self.classes.values() if entity
                        for field in entity['fields'] if field['join_table']}
+        # Both ends of an association become one line; the cascading owner's side
+        # wins, so a composition is drawn whichever class sorts first.
+        for symbol_id in sorted(shown, key=lambda key: names[key]):
+            for field in self.classes[symbol_id]['fields']:
+                target = by_name.get(field['target'])
+                if not (field['association'] and target in shown):
+                    continue
+                pair = frozenset((symbol_id, target))
+                composes = field['cascade_all'] and field['association'] == 'OneToMany'
+                if pair not in drawn or (composes and not drawn[pair][2]):
+                    drawn[pair] = (symbol_id, field['name'], composes)
         for symbol_id in sorted(shown, key=lambda key: names[key]):
             entity = self.classes[symbol_id]
             members = []
             for field in entity['fields']:
                 target = by_name.get(field['target'])
                 if field['association'] and target:
-                    if target in shown and frozenset((symbol_id, target)) not in drawn:
-                        drawn.add(frozenset((symbol_id, target)))
+                    if target in shown and drawn[frozenset((symbol_id, target))][:2] == (symbol_id, field['name']):
                         left, right = JPA_ASSOCIATIONS[field['association']]
                         via = f" via {field['join_table']}" if field['join_table'] else ''
-                        associations.append(f'  {names[symbol_id]} "{left}" --> "{right}" '
+                        # A cascaded one-to-many owns its parts' lifecycle: UML composition.
+                        arrow = '*--' if field['cascade_all'] and field['association'] == 'OneToMany' else '-->'
+                        associations.append(f'  {names[symbol_id]} "{left}" {arrow} "{right}" '
                                             f'{names[target]} : {field["name"]}{via}')
                     continue
                 type_name = (field['type'] or '').replace('<', '~').replace('>', '~')
@@ -501,20 +558,158 @@ class Entities:
                 lines.append('  }')
         return '\n'.join(lines) if len(lines) > 2 else ''
 
+    def _all_fields(self, symbol_id):
+        """Fields of a class and its mapped superclasses, nearest first."""
+        fields, seen = [], set()
+        while symbol_id and symbol_id not in seen and self.classes.get(symbol_id):
+            seen.add(symbol_id)
+            fields += self.classes[symbol_id]['fields']
+            symbol_id = self.classes[symbol_id]['parent']
+        return fields
+
+    def entity_classes(self):
+        """Classes mapped to a table, by table name."""
+        return {entity['table']: symbol_id for symbol_id, entity in sorted(self.classes.items())
+                if entity and entity['table']}
+
+    def er_diagram(self) -> str:
+        """A Mermaid erDiagram of the tables the entity classes map, or ''."""
+        tables = self.entity_classes()
+        if not tables:
+            return ''
+        by_name = {self.classes[symbol_id]['name']: table for table, symbol_id in tables.items()}
+
+        def kind(field):
+            return re.sub(r'\W', '', (field['type'] or 'value').split('<')[0]) or 'value'
+
+        keys = {}
+        for table, symbol_id in tables.items():
+            key = next((field for field in self._all_fields(symbol_id) if field['key']), None)
+            if key:
+                keys[table] = (kind(key), key['column'] or key['name'])
+        lines, relations, join_tables = ['erDiagram'], set(), {}
+        for table in sorted(tables):
+            primary, attributes, foreign = [], [], []
+            for field in self._all_fields(tables[table]):
+                target = by_name.get(field['target'])
+                if field['association'] == 'ManyToMany' and field['join_table']:
+                    if target:
+                        join_tables[field['join_table']] = (table, target, field['join_columns'])
+                    continue
+                if field['association'] in ('ManyToOne', 'OneToOne') and field['join_column']:
+                    foreign.append((keys.get(target, ('value',))[0], field['join_column'], 'FK'))
+                    if target:
+                        relations.add(f'  {target} ||--o{{ {table} : "{field["join_column"]}"')
+                    continue
+                if field['association']:
+                    continue
+                column = field['column'] or (field['name'] if field['key'] else None)
+                if column:
+                    (primary if field['key'] else attributes).append((kind(field), column, 'PK' if field['key'] else ''))
+            lines.append(f'  {table} {{')
+            for type_name, column, key in primary + attributes + foreign:
+                lines.append(f'    {type_name} {column}' + (f' {key}' if key else ''))
+            lines.append('  }')
+        for join_table, (left, right, columns) in sorted(join_tables.items()):
+            lines.append(f'  {join_table} {{')
+            for column, owner in zip(columns, (left, right)):
+                lines.append(f'    {keys.get(owner, ("value",))[0]} {column} FK')
+            lines.append('  }')
+            relations.add(f'  {left} ||--o{{ {join_table} : "{columns[0] if columns else left}"')
+            relations.add(f'  {right} ||--o{{ {join_table} : "{columns[1] if len(columns) > 1 else right}"')
+        lines += sorted(relations)
+        return '\n'.join(lines)
+
+    def implied(self, table: str, verb: str) -> list:
+        """(table, how) pairs JPA also reads or writes when an entity's table is read or written.
+
+        Writes follow CascadeType.ALL and the join tables of owned many-to-many
+        associations; reads follow associations declared fetch = FetchType.EAGER.
+        """
+        tables = self.entity_classes()
+        by_name = {self.classes[symbol_id]['name']: name for name, symbol_id in tables.items()}
+        result, pending, seen = [], [table], {table}
+        while pending:
+            symbol_id = tables.get(pending.pop(0))
+            for field in self._all_fields(symbol_id) if symbol_id else ():
+                target = by_name.get(field['target'])
+                if verb == 'write':
+                    follow = field['cascade_all'] and field['association'] in ('OneToMany', 'OneToOne')
+                    join = field['association'] == 'ManyToMany' and field['join_table']
+                    how = 'JPA cascade'
+                else:
+                    follow = field['eager'] and field['association']
+                    join = follow and field['join_table']
+                    how = 'JPA eager fetch'
+                if join and join not in seen:
+                    seen.add(join)
+                    result.append((join, 'JPA join table' if verb == 'write' else how))
+                if follow and target and target not in seen:
+                    seen.add(target)
+                    result.append((target, how))
+                    pending.append(target)
+        return result
+
+    def aggregates(self) -> list:
+        """Aggregate candidates from cascaded one-to-many associations.
+
+        Returns (root class, member classes, references to other roots) per
+        candidate, where a class no cascade owns is a root.
+        """
+        entities = {symbol_id: entity for symbol_id, entity in self.classes.items()
+                    if entity and entity['table']}
+        by_name = {entity['name']: symbol_id for symbol_id, entity in entities.items()}
+        owns = defaultdict(set)
+        refers = defaultdict(set)
+        for symbol_id in entities:
+            for field in self._all_fields(symbol_id):
+                target = by_name.get(field['target'])
+                if not target or target == symbol_id:
+                    continue
+                if field['cascade_all'] and field['association'] == 'OneToMany':
+                    owns[symbol_id].add(target)
+                elif field['association'] in ('ManyToOne', 'ManyToMany', 'OneToOne'):
+                    refers[symbol_id].add(target)
+        owned = {target for targets in owns.values() for target in targets}
+        result = []
+        for root in sorted((symbol_id for symbol_id in entities if symbol_id not in owned),
+                           key=lambda key: entities[key]['name']):
+            members, pending = [], sorted(owns[root])
+            while pending:
+                member = pending.pop(0)
+                if member not in members:
+                    members.append(member)
+                    pending += sorted(owns[member])
+            inside = {root, *members}
+            outside = sorted({target for symbol_id in inside for target in refers[symbol_id]
+                              if target not in inside and target not in owned},
+                             key=lambda key: entities[key]['name'])
+            result.append((entities[root]['name'], [entities[member]['name'] for member in members],
+                           [entities[target]['name'] for target in outside]))
+        return result
+
     def constraints(self, concept_ids) -> list:
         """Rows of (class, field, annotations) for validation annotations on fields."""
         rows = []
         for concept_id in sorted(concept_ids):
             for symbol_id in self.by_concept.get(concept_id, ()):
                 entity = self.classes.get(symbol_id)
-                for field in (entity or {}).get('fields', ()):
+                if not entity:
+                    continue
+                declared, current, seen = [], symbol_id, set()
+                while current and current not in seen and self.classes.get(current):
+                    seen.add(current)
+                    suffix = '' if current == symbol_id else f" (from {self.classes[current]['name']})"
+                    declared += [(field, suffix) for field in self.classes[current]['fields']]
+                    current = self.classes[current]['parent']
+                for field, suffix in declared:
                     checks = [annotation for annotation in field['annotations']
                               if annotation not in JPA_ASSOCIATIONS
                               and annotation not in ('Column', 'JoinColumn', 'JoinTable', 'Id',
                                                      'GeneratedValue', 'Temporal', 'Transient',
                                                      'JsonIgnore', 'Override')]
                     if checks:
-                        rows.append((entity['name'], field['name'], checks))
+                        rows.append((entity['name'], field['name'] + suffix, checks))
         return sorted(set((name, field, tuple(checks)) for name, field, checks in rows))
 
 
@@ -523,8 +718,22 @@ class Entities:
 class Sequences:
     """Static call paths per entry point, rebuilt in source order."""
 
-    def __init__(self, index: Model):
+    def __init__(self, index: Model, entities: 'Entities' = None):
         self.index = index
+        self.entities = entities or Entities(index)
+        # Class-level calls each drawn trace makes, for the component diagrams.
+        self.links = defaultdict(set)
+        self.files = {}
+        # Each call edge cites only its own expression; the longest one-line excerpt
+        # on a line holds the whole statement, which shows how calls nest.
+        self.statements = {}
+        for item in index.evidence.values():
+            locator = item.get('locator') or {}
+            line = locator.get('start_line')
+            if line and locator.get('end_line') == line:
+                key = (locator.get('path'), line)
+                if len(item.get('excerpt') or '') > len(self.statements.get(key, '')):
+                    self.statements[key] = item['excerpt']
         # The extractor marks every profile-bound implementation as matching, so
         # the declared profiles come from spring.profiles.active.
         profiles = set()
@@ -532,6 +741,8 @@ class Sequences:
             for match in ACTIVE_PROFILES.finditer(edge.get('condition') or ''):
                 profiles.update(part.strip() for part in match.group(1).split(','))
         self.active_profiles = profiles
+        # Cascades and eager fetches are JPA behaviour; a declared non-JPA profile turns them off.
+        self.jpa = not profiles or any('jpa' in profile.lower() for profile in profiles)
 
     @staticmethod
     def _binding(edge):
@@ -553,6 +764,10 @@ class Sequences:
         bound = [edge for edge in choices if self._binding(edge)[0]]
         if bound and self.active_profiles:
             active = [edge for edge in bound if self._binding(edge)[0] in self.active_profiles]
+            # A class and its generated proxy can arrive as two targets with one name.
+            names = {self._binding(edge)[1] for edge in active}
+            if len(names) == 1 and None not in names:
+                active = sorted(active, key=lambda edge: edge['to_ref'].get('id') not in self.index.symbols)[:1]
             return active[0] if len(active) == 1 else None
         return choices[0] if len(choices) == 1 else None
 
@@ -589,6 +804,12 @@ class Sequences:
         if symbol.get('kind') == 'declarative_operation' and 'registration' not in symbol['qualified_name']:
             return ('contract', 'API contract (no implementation)')
         name = self.index.symbol_name(symbol['id'])
+        participant = self._symbol_participant(symbol, name)
+        self.files.setdefault(participant[1], symbol.get('file', ''))
+        return participant
+
+    @staticmethod
+    def _symbol_participant(symbol, name):
         if symbol.get('kind') in ('function', 'declarative_operation') or '.' not in name.split('(')[0]:
             path = Path(symbol.get('file', ''))
             stem = path.stem or name
@@ -615,6 +836,9 @@ class Sequences:
             return (edge['kind'] == 'routes_to', 10 ** 9, 0, edge['id'])
         span = min(spans, key=lambda item: item['locator'].get('start_line') or 0)
         excerpt = span.get('excerpt') or ''
+        statement = self.statements.get((span['locator'].get('path'), span['locator'].get('start_line')), '')
+        if excerpt in statement:
+            excerpt = statement
         method = self._method(edge.get('to_ref')).rstrip('()')
         position = excerpt.find(method + '(') if method else -1
         # An argument call runs before the call it is passed to; a chain runs left to right.
@@ -647,6 +871,60 @@ class Sequences:
         if len(guard) > 60:
             guard = guard[:60].rsplit(' ', 1)[0].rstrip(' ,(') + '…'
         return guard
+
+    @staticmethod
+    def _complement(first: str, second: str) -> bool:
+        def bare(text):
+            text = text.strip()
+            return text[2:-1].strip() if text.startswith('!(') and text.endswith(')') else None
+        return bare(second) == first.strip() or bare(first) == second.strip() \
+            or second.strip() == '!' + first.strip() or first.strip() == '!' + second.strip()
+
+    def _alternatives(self, steps):
+        """Merge an opt block followed by its negation into one alt/else block."""
+        def block_end(start):
+            depth = 0
+            for position in range(start, len(steps)):
+                if steps[position][0] in ('opt', 'alt'):
+                    depth += 1
+                elif steps[position][0] == 'end':
+                    depth -= 1
+                    if depth == 0:
+                        return position
+            return None
+        result, position = [], 0
+        while position < len(steps):
+            step = steps[position]
+            end = block_end(position) if step[0] == 'opt' else None
+            if end is not None and end + 1 < len(steps) and steps[end + 1][0] == 'opt' \
+                    and self._complement(step[1], steps[end + 1][1]):
+                other_end = block_end(end + 1)
+                if other_end is not None:
+                    result += [('alt', step[1]), *steps[position + 1:end], ('else', steps[end + 1][1]),
+                               *steps[end + 2:other_end], ('end',)]
+                    position = other_end + 1
+                    continue
+            result.append(step)
+            position += 1
+        return result
+
+    def layer(self, kind: str, name: str) -> str:
+        """The architectural layer of a participant, by its kind or class naming convention."""
+        if kind == 'table':
+            return 'Tables'
+        if kind in ('contract', 'endpoint'):
+            return 'API contract'
+        if Path(self.files.get(name, '')).suffix in ('.tsx', '.jsx', '.ts', '.js', '.vue', '.html'):
+            return 'User interface'
+        for suffixes, layer in ((('Controller', 'Resource', 'Endpoint'), 'Controllers'),
+                                (('Service', 'ServiceImpl', 'Facade', 'UseCase'), 'Application services'),
+                                (('Repository', 'RepositoryImpl', 'Dao', 'DaoImpl'), 'Repositories'),
+                                (('Mapper', 'Converter', 'Assembler'), 'Mappers')):
+            if name.endswith(suffixes):
+                return layer
+        if any(entity and entity['table'] and entity['name'] == name for entity in self.entities.classes.values()):
+            return 'Entities'
+        return 'Other classes'
 
     def _root(self, anchor: dict):
         for representation in anchor.get('representations') or ():
@@ -706,7 +984,10 @@ class Sequences:
                 label_name = name or (self._participant(edge.get('to_ref')) or (None, ''))[1]
                 if edge is chosen:
                     if len(implementations) > 1 and label_name:
-                        generated = target_id not in index.symbols
+                        # Spring Data's proxy shows up as a target with no source symbol.
+                        generated = any(other not in index.symbols and (
+                            self._binding(implementations[other])[1] or '') == (name or '')
+                            for other in implementations) if name else target_id not in index.symbols
                         facts[lifeline]['runs'].add(label_name + (', generated at runtime' if generated else ''))
                     if target_id in index.symbols:
                         walk(target_id, lifeline, depth + 1, branch)
@@ -736,6 +1017,11 @@ class Sequences:
                 if edge['kind'] in ('reads_data', 'writes_data'):
                     verb = 'read' if edge['kind'] == 'reads_data' else 'write'
                     message(lifeline, join(target), arrow, f'{verb} {target[1]}')
+                    if target[0] == 'table' and self.jpa:
+                        for table, how in self.entities.implied(target[1], verb):
+                            if not any(step[0] == 'message' and step[1] == lifeline and step[4].split(' (')[0]
+                                       == f'{verb} {table}' for step in steps):
+                                message(lifeline, join(('table', table)), '-->>', f'{verb} {table} ({how})')
                     continue
                 if ACCESSOR.search(index.symbol_name(target_id or '') + '('):
                     continue
@@ -764,9 +1050,13 @@ class Sequences:
                 tidy.pop()
                 continue
             tidy.append(step)
+        tidy = self._alternatives(tidy)
         messages = [step for step in tidy if step[0] == 'message']
         if not messages:
             return 'its call path has no step outside the entry point'
+        kinds = dict((name, kind) for kind, name in participants)
+        for _, source, target, _, _ in messages:
+            self.links[trace['id']].add(((kinds.get(source), source), (kinds.get(target), target)))
         actor = ACTORS.get(anchor.get('kind'), 'Caller')
         lines = ['sequenceDiagram', '  autonumber', f'  actor Client as {label(actor)}']
         ids = {}
@@ -775,11 +1065,24 @@ class Sequences:
             shown = f'{name} table' if kind == 'table' else name
             lines.append(f'  participant P{position} as {label(shown)}')
         lines.append(f'  Client->>{ids[first[1]]}: {label(index.entry_point(anchor["id"]))}')
-        depth = 0
+        # branch: None outside an alt; else (steps in the branch, steps drawn)
+        depth, branch = 0, None
         for step in tidy:
-            if step[0] == 'opt':
-                lines.append('  ' * (depth + 1) + f'opt {label(step[1])}')
+            if step[0] in ('else', 'end') and branch and not branch[1]:
+                text = 'steps on this branch not drawn' if branch[0] else 'no call traced on this branch'
+                lines.append('  ' * (depth + 1) + f'Note over {ids[first[1]]}: {text}')
+            if step[0] in ('alt', 'else'):
+                branch = [0, 0]
+            elif step[0] == 'end':
+                branch = None
+            elif step[0] == 'message' and branch:
+                branch[0] += 1
+                branch[1] += step[1] in ids and step[2] in ids
+            if step[0] in ('opt', 'alt'):
+                lines.append('  ' * (depth + 1) + f'{step[0]} {label(step[1])}')
                 depth += 1
+            elif step[0] == 'else':
+                lines.append('  ' * depth + f'else {label(step[1])}')
             elif step[0] == 'end':
                 depth = max(0, depth - 1)
                 lines.append('  ' * (depth + 1) + 'end')
@@ -796,15 +1099,22 @@ class Sequences:
         for lifeline in [name for _, name in participants if name in facts]:
             fact = facts[lifeline]
             parts = []
-            if fact['runs']:
-                parts.append('runs ' + ', '.join(sorted(fact['runs'])))
-            if fact['inactive']:
-                parts.append('not on the declared profile: ' + ', '.join(sorted(fact['inactive'])))
-            if fact['ambiguous']:
-                parts.append('several match the declared profile, not drawn: ' + ', '.join(sorted(fact['ambiguous'])))
-            if fact['by_profile']:
-                parts.append('chosen at runtime by profile, not drawn: ' + ', '.join(sorted(fact['by_profile'])))
-            unbound = fact['unbound'] - drawn_names
+            # The source class and its generated proxy can arrive as two targets with one name.
+            running = {name.split(', generated at runtime')[0] for name in fact['runs']}
+            runs = sorted(name + (', generated at runtime' if name + ', generated at runtime' in fact['runs'] else '')
+                          for name in running)
+            if runs:
+                parts.append('runs ' + ', '.join(runs))
+            inactive = fact['inactive'] - running
+            ambiguous = fact['ambiguous'] - running
+            by_profile = fact['by_profile'] - running
+            if inactive:
+                parts.append('not on the declared profile: ' + ', '.join(sorted(inactive)))
+            if ambiguous:
+                parts.append('several match the declared profile, not drawn: ' + ', '.join(sorted(ambiguous)))
+            if by_profile:
+                parts.append('chosen at runtime by profile, not drawn: ' + ', '.join(sorted(by_profile)))
+            unbound = fact['unbound'] - drawn_names - running
             if unbound:
                 parts.append('other implementations, not drawn: ' + ', '.join(sorted(unbound)))
             if parts and lifeline in ids:
@@ -895,11 +1205,75 @@ def model_banner(index: Model, link_gaps: bool = True) -> list:
     return lines
 
 
-def readme(index: Model, entities: Entities) -> str:
+def summary(index: Model) -> list:
+    """A plain-language summary: what the system does and what to watch."""
+    domains = [index.domains[domain_id] for domain_id in index.domain_order]
+    lines = ['## Summary', '',
+             f'The system splits into {plural(len(domains), "bounded context")}:', '']
+    lines += [f"- **{domain['name']}**: {first_sentence(domain['summary'])}" for domain in domains]
+    watch = []
+    pending = [item for item in index.raw.get('unassigned', ()) if item.get('status') == 'pending']
+    if pending:
+        watch.append(f"{plural(len(pending), 'entry point')} could not be modelled "
+                     f"({', '.join(index.name(item['subject_id']) for item in pending)}).")
+    verified = sum(rule.get('enforcement_status') == 'verified_on_trace' for rule in index.rules.values())
+    watch.append(f"{verified} of {plural(len(index.rules), 'business rule')} are verified on a traced path; "
+                 'the rest are declared or conditional.')
+    roles = [activity for activity in index.activities.values() if index.access(activity)[0]]
+    if roles and not any(index.access(activity)[1] for activity in roles):
+        watch.append('Every role check is declared but not proven enforced; see the Roles section of the glossary.')
+    writes = foreign_writes(index)
+    for (source, target), concepts in sorted(writes.items(), key=lambda item: (
+            index.domain_order.index(item[0][0]), index.domain_order.index(item[0][1]))):
+        watch.append(f"{index.domains[source]['name']} writes data owned by {index.domains[target]['name']} "
+                     f"({', '.join(f'{verb} {name}' for name, verbs in sorted(concepts.items()) for verb in sorted(verbs))}).")
+    conflicts = sum(claim.get('kind') in ('conflict', 'contradiction') for claim in index.claims.values())
+    if conflicts:
+        watch.append(f"The model records {plural(conflicts, 'disagreement')} between the code and its API "
+                     f"contract, tests or configuration; some describe the same place from two sources. "
+                     f"See [Gaps](gaps.md).")
+    lines += ['', '**Worth knowing:**', '', *[f'- {item}' for item in watch]]
+    return lines
+
+
+def relationships_table(index: Model) -> list:
+    """Context relationships with the DDD pattern each one suggests."""
+    order = index.domain_order.index
+    rows = []
+    groups = defaultdict(list)
+    for relationship in index.relationships.values():
+        source, target = relationship.get('from_domain_id'), relationship.get('to_domain_id')
+        if source in index.domains and target in index.domains and source != target:
+            groups[(source, target)].append(relationship)
+    for (source, target), items in sorted(groups.items(), key=lambda item: (order(item[0][0]), order(item[0][1]))):
+        traced = sum(bool(item.get('trace_ids')) for item in items)
+        rows.append((index.domains[source]['name'], index.domains[target]['name'],
+                     'customer/supplier: the first reads data the second produces (downstream of it)',
+                     f'{len(items)} links, {traced} traced'))
+    for (source, target), concepts in sorted(foreign_writes(index).items(),
+                                             key=lambda item: (order(item[0][0]), order(item[0][1]))):
+        rows.append((index.domains[source]['name'], index.domains[target]['name'],
+                     'boundary leak: the first writes data the second owns',
+                     '; '.join(f"{'/'.join(sorted(verbs))} {name}" for name, verbs in sorted(concepts.items()))))
+    for concept_id in sorted(index.concepts):
+        owners = index.owners(concept_id)
+        for position, first in enumerate(owners):
+            for second in owners[position + 1:]:
+                rows.append((index.domains[first]['name'], index.domains[second]['name'],
+                             'shared kernel candidate: both claim ownership', index.name(concept_id)))
+    if not rows:
+        return []
+    return ['## Context relationships', '',
+            'What each link on the context map means in DDD terms. The patterns are read from data use and '
+            'ownership; they are candidates for a design decision, not decisions.', '',
+            *table([('From', False), ('To', False), ('Relationship', False), ('Evidence', False)], rows), '']
+
+
+def readme(index: Model, entities: Entities, coverage=()) -> str:
     domains = [index.domains[domain_id] for domain_id in index.domain_order]
     lines = ['# Domain model', '',
              '_Generated by `speed discover domains --export ddd`. Regenerate it instead of editing it._',
-             '', *model_banner(index), '', '## At a glance', '',
+             '', *model_banner(index), '', *summary(index), '', '## At a glance', '',
              *table([('Bounded contexts', True), ('Use cases', True), ('Entities', True),
                      ('Business rules', True), ('Context links', True)],
                     [(len(domains), len(index.activities), len(index.concepts), len(index.rules),
@@ -908,24 +1282,52 @@ def readme(index: Model, entities: Entities) -> str:
              'Thin arrows point from a context to a context whose data it reads; dashed ones include '
              'links with no traced call path. Thick arrows mark a context that writes data another '
              'context owns, and two-way dotted arrows join contexts that both claim ownership of an entity.', '',
-             '```mermaid', context_map(index), '```', '', '## Bounded contexts', '']
+             '```mermaid', context_map(index), '```', '', *relationships_table(index), '## Bounded contexts', '']
     lines += table([('Context', False), ('What it does', False), ('Use cases', True), ('Entities', True),
                     ('Rules', True), ('Support', False)],
                    [(f"[{cell(domain['name'])}](contexts/{index.domain_pages[domain['id']]}.md)",
                      cell(first_sentence(domain['summary'])), len(domain['activity_memberships']),
                      len(domain.get('concepts', ())), len(domain.get('rules', ())),
                      badge(domain.get('support'), SUPPORT)) for domain in domains])
+    lines += ['', 'An entity or rule shared by several contexts is counted in each, so the columns can add up '
+                  'to more than the totals above.']
     diagram = entities.diagram(sorted(index.concepts))
     if diagram:
         lines += ['', '## Entity model', '',
-                  'Entity classes behind the concepts, with their fields, supertypes and JPA '
-                  'associations, read from the source declarations the model cites. Each title '
-                  'names the class and its table.', '', '```mermaid', diagram, '```']
+                  'Entity classes behind the concepts, with their fields, supertypes and JPA associations, read '
+                  'from the source declarations the model cites. Each title names the class and its table. A '
+                  'filled diamond (composition) marks a cascaded one-to-many: the parent owns its parts\' '
+                  'lifecycle.', '', '```mermaid', diagram, '```']
+    aggregates = entities.aggregates()
+    if aggregates:
+        lines += ['', '## Aggregates', '',
+                  'Aggregate candidates read from the JPA mappings: a cascaded one-to-many puts its parts inside '
+                  "the parent's aggregate, and other associations reference another aggregate. Choosing the "
+                  'final boundaries is a design decision.', '']
+        lines += table([('Aggregate root', False), ('Inside the aggregate', False),
+                        ('References other aggregates', False)],
+                       [(code(root), ', '.join(code(name) for name in members) or '-',
+                         ', '.join(code(name) for name in references) or '-')
+                        for root, members, references in aggregates])
+    er = entities.er_diagram()
+    if er:
+        lines += ['', '## Data model', '',
+                  'Tables, columns and foreign keys as the JPA entity classes map them (`@Table`, `@Column`, '
+                  '`@JoinColumn`, `@JoinTable`). The SQL schema scripts can differ by database; the rules catalog '
+                  'notes where the model found such differences.', '', '```mermaid', er, '```']
     lines += ['', '## Documents', '',
+              '- [index.html](index.html): all of these documents in one page with the diagrams drawn; open it '
+              'in a browser (it loads its Markdown and diagram libraries from a CDN)',
               '- [Business rules catalog](rules.md): every rule with its condition, outcome and where it is enforced',
               '- [Glossary](glossary.md): the ubiquitous language, with the code type and table behind each term',
-              '- [Gaps](gaps.md): what the model could not prove, entry points it did not model, and contract conflicts',
-              '', '## How to read the badges', '']
+              '- [Gaps](gaps.md): what the model could not prove, entry points it did not model, and contract conflicts']
+    if coverage:
+        lines += ['', '## Completeness check', '',
+                  'Every record of the model, checked against the text of the generated documents.', '']
+        lines += table([('Item', False), ('In the model', True), ('Found in the documents', True), ('', False)],
+                       [(item, expected, found, 'complete' if expected == found else 'MISSING')
+                        for item, expected, found in coverage])
+    lines += ['', '## How to read the badges', '']
     lines += table([('Badge', False), ('Meaning', False)], [
         ('supported / partially supported',
          'How fully traced code backs a context or use case. Partial means some of its call paths '
@@ -1027,6 +1429,37 @@ def use_case_diagrams(index: Model, domain: dict) -> list:
     return diagrams
 
 
+LAYERS = ('User interface', 'API contract', 'Controllers', 'Application services', 'Repositories',
+          'Mappers', 'Entities', 'Other classes', 'Tables')
+
+
+def component_diagram(sequences: 'Sequences', trace_ids) -> tuple:
+    """(Mermaid flowchart, {layer: names}) of the class-level calls on the given traces."""
+    links = set().union(*(sequences.links.get(trace_id, set()) for trace_id in trace_ids)) if trace_ids else set()
+    nodes = sorted({node for link in links for node in link}, key=lambda item: (item[1], str(item[0])))
+    if not nodes:
+        return '', {}
+    layers = defaultdict(list)
+    for kind, name in nodes:
+        layers[sequences.layer(kind, name)].append(name)
+    ids = {node: f'N{position}' for position, node in enumerate(nodes, 1)}
+    lines = ['flowchart LR']
+    for layer in LAYERS:
+        members = [node for node in nodes if sequences.layer(*node) == layer]
+        if not members:
+            continue
+        lines.append(f'  subgraph {slug(layer).replace("-", "_")}["{label(layer)}"]')
+        lines.append('    direction TB')
+        for kind, name in members:
+            shown = f'{name} table' if kind == 'table' else name
+            shape = f'[("{label(shown)}")]' if kind == 'table' else f'["{label(shown)}"]'
+            lines.append(f'    {ids[(kind, name)]}{shape}')
+        lines.append('  end')
+    for source, target in sorted(links, key=lambda link: (link[0][1], link[1][1])):
+        lines.append(f'  {ids[source]} --> {ids[target]}')
+    return '\n'.join(lines), {layer: sorted(set(layers[layer])) for layer in LAYERS if layers.get(layer)}
+
+
 def rule_line(rule: dict) -> str:
     return (f"[{rule['name']}](../rules.md#rule-{short(rule['id'])}) · "
             f"{rule.get('category', '-').replace('_', ' ')} · {rule_status(rule)}")
@@ -1088,24 +1521,33 @@ def context_page(index: Model, entities: Entities, sequences: Sequences, domain_
 
     concept_ids = sorted(set(domain.get('concepts', ())))
     usage = index.concept_usage()
+    # Entities this context's use cases touch without the model placing them here.
+    touched = sorted({concept_id for concept_id, domains in usage.items()
+                      if domain_id in domains and concept_id in index.concepts} - set(concept_ids))
     lines += ['', '## Entities', '']
-    if concept_ids:
+    if concept_ids or touched:
         owned = defaultdict(list)
         for ownership_id in domain.get('ownership_ids', ()):
             ownership = index.ownerships.get(ownership_id)
             if ownership:
                 owned[ownership['concept_id']].append(ownership)
         rows = []
-        for concept in index.sorted_records(index.concepts, concept_ids):
+        for concept in index.sorted_records(index.concepts, concept_ids + touched):
             types = ', '.join(code(name.split('.')[-1]) for name in concept.get('qualified_type_names', ())) \
                 or 'no code type (table)'
             ownership = '; '.join(f"{item['kind']} ({badge(item.get('support'), SUPPORT)})"
                                   for item in owned.get(concept['id'], ())) or 'used, not owned'
+            verbs = usage.get(concept['id'], {}).get(domain_id)
+            if verbs and ownership == 'used, not owned':
+                ownership += f" ({', '.join(sorted(verbs))})"
             others = sorted((set(usage.get(concept['id'], {})) | set(index.concept_domains[concept['id']]))
                             - {domain_id}, key=index.domain_order.index)
+            unresolved = index.unresolved_usage()
             used_by = ', '.join(
                 index.domains[other]['name']
-                + (f" ({', '.join(sorted(usage[concept['id']][other]))})" if usage.get(concept['id'], {}).get(other) else '')
+                + (f" ({', '.join(sorted(usage[concept['id']][other]))}"
+                   + ('; not fully resolved' if (concept['id'], other) in unresolved else '') + ')'
+                   if usage.get(concept['id'], {}).get(other) else '')
                 for other in others) or '-'
             rows.append((f"[{cell(concept['name'])}](../glossary.md#term-{short(concept['id'])})", types,
                          cell(', '.join(entities.concept_tables(concept['id']))), cell(ownership),
@@ -1147,6 +1589,24 @@ def context_page(index: Model, entities: Entities, sequences: Sequences, domain_
                          data[name]['resolved'] or '-', data[name]['unresolved'] or '-',
                          data[name]['ambiguous'] or '-') for name in sorted(data)])
 
+    sequence_sections, not_drawn, drawn_traces = [], [], []
+    for activity in activities:
+        diagrams, skipped = sequences.diagrams(activity)
+        for title, caption, diagram in diagrams:
+            sequence_sections += [f"### {activity['name']}: {title}", '', f'_{caption}_', '',
+                                  '```mermaid', diagram, '```', '']
+        drawn_traces += [trace_id for trace_id in activity.get('trace_ids', ())
+                         if sequences.links.get(trace_id)]
+        not_drawn += [(activity['name'], entry, reason) for entry, reason in skipped]
+    diagram, layers = component_diagram(sequences, drawn_traces)
+    if diagram:
+        lines += ['', '## Architecture', '',
+                  'Classes and tables the traced call paths of this context pass through, grouped into '
+                  'layers by kind and by class naming convention. An arrow means at least one traced call.', '',
+                  '```mermaid', diagram, '```', '']
+        lines += table([('Layer', False), ('Members', False)],
+                       [(layer, ', '.join(code(name) for name in names)) for layer, names in layers.items()])
+
     links = context_links(index, domain_id)
     if links:
         lines += ['', '## Links to other contexts', '', *links]
@@ -1155,15 +1615,8 @@ def context_page(index: Model, entities: Entities, sequences: Sequences, domain_
               'Rebuilt from the traced call graph in source order. They show the static path a request '
               'can take, not a recorded run. Conditional calls are drawn as `opt` blocks; other calls '
               'are listed in source order, so branches without a recorded condition are not told apart.', '']
-    drawn, not_drawn = False, []
-    for activity in activities:
-        diagrams, skipped = sequences.diagrams(activity)
-        for title, caption, diagram in diagrams:
-            drawn = True
-            lines += [f"### {activity['name']}: {title}", '', f'_{caption}_', '',
-                      '```mermaid', diagram, '```', '']
-        not_drawn += [(activity['name'], entry, reason) for entry, reason in skipped]
-    if not drawn:
+    lines += sequence_sections
+    if not sequence_sections:
         lines.append('No traced call path in this context has more than one step.')
     if not_drawn:
         lines += ['', 'Call paths not drawn:', '']
@@ -1226,6 +1679,27 @@ def context_links(index: Model, domain_id: str) -> list:
                      cell(', '.join(shared_data(index, relationship)) or '-'),
                      f"[{index.domains[other]['name']}]({index.domain_pages[other]}.md)",
                      'yes' if relationship.get('trace_ids') else 'no'))
+    # Writes into data another context owns are links too, though the model keeps them as data accesses.
+    for use in sorted(index.uses.values(), key=lambda item: item['id']):
+        concept_id = use.get('concept_id')
+        if use.get('access') not in WRITES or not concept_id:
+            continue
+        owners = index.owners(concept_id)
+        traced = 'yes' if use.get('resolution') == 'resolved' else 'no'
+        for writer in index.activity_domains.get(use.get('activity_id'), ()):
+            if not owners or writer in owners:
+                continue
+            for owner in owners:
+                if domain_id not in (writer, owner):
+                    continue
+                other = owner if writer == domain_id else writer
+                here = index.name(use['activity_id']) if writer == domain_id else '-'
+                there = '-' if writer == domain_id else index.name(use['activity_id'])
+                # creates / updates / deletes -> created / updated / deleted
+                direction = (f"{use['access']} data owned by" if writer == domain_id
+                             else f"has data {use['access'][:-1]}d by")
+                rows.append((here, direction, there, cell(index.name(concept_id)),
+                             f"[{index.domains[other]['name']}]({index.domain_pages[other]}.md)", traced))
     if not rows:
         return []
     return table([('Use case here', False), ('Link', False), ('Use case there', False), ('Data', False),
@@ -1377,6 +1851,15 @@ def gaps_page(index: Model) -> str:
                          len(domain.get('activity_memberships', ())), len(domain.get('rules', ())))
                         for domain in hidden])
         lines.append('')
+    homeless = index.sorted_records(index.activities, [activity_id for activity_id in index.activities
+                                                       if not index.activity_domains.get(activity_id)])
+    if homeless:
+        lines += ['## Use cases outside every context shown', '']
+        lines += table([('Use case', False), ('Entry points', False)],
+                       [(cell(activity['name']), cell(', '.join(index.entry_point(anchor_id)
+                                                               for anchor_id in activity.get('anchor_ids', ()))))
+                        for activity in homeless])
+        lines.append('')
     unassigned = sorted(model.get('unassigned', ()), key=lambda item: (item.get('status') != 'pending',
                                                                         index.name(item['subject_id'])))
     if unassigned:
@@ -1391,7 +1874,9 @@ def gaps_page(index: Model) -> str:
                        key=lambda claim: (index.name(claim['subject_id']), claim['id']))
     if conflicts:
         lines += ['## Contract and implementation disagreements', '',
-                  'Places where the code, its API contract, tests or configuration say different things.', '']
+                  'Places where the code, its API contract, tests or configuration say different things. '
+                  'Each row is one model record; two records can describe the same place from different '
+                  'sources.', '']
         lines += table([('About', False), ('Disagreement', False), ('Evidence', False)],
                        [(cell(index.name(claim['subject_id'])), cell(claim['text']),
                          index.cite(claim.get('evidence_ids'), every_kind=True)) for claim in conflicts])
@@ -1442,16 +1927,139 @@ def gaps_page(index: Model) -> str:
 
 # Entry points
 
+def coverage(index: Model, files: dict) -> list:
+    """(item, in the model, found in the documents) for every kind of record."""
+    pages = {domain_id: files.get(f'contexts/{index.domain_pages[domain_id]}.md', '')
+             for domain_id in index.domain_order}
+    everything = '\n'.join(files.values())
+    rows = [('Bounded contexts', len(index.domains), sum(bool(text) for text in pages.values()))]
+    use_cases = found = 0
+    for activity_id, activity in index.activities.items():
+        domains = index.activity_domains.get(activity_id, ())
+        use_cases += 1
+        targets = [pages[domain_id] for domain_id in domains] or [files.get('gaps.md', '')]
+        found += all(f"**{cell(activity['name'])}**" in text or cell(activity['name']) in text for text in targets)
+    rows.append(('Use cases', use_cases, found))
+    rows.append(('Entry points', len(index.anchors),
+                 sum(index.entry_point(anchor_id) in everything for anchor_id in index.anchors)))
+    rows.append(('Business rules', len(index.rules),
+                 sum(files.get('rules.md', '').count(f'<a id="rule-{short(rule_id)}">') == 1
+                     for rule_id in index.rules)))
+    rows.append(('Entities', len(index.concepts),
+                 sum(f'<a id="term-{short(concept_id)}">' in files.get('glossary.md', '')
+                     for concept_id in index.concepts)))
+    shown_ownerships = [item for item in index.ownerships.values() if item.get('domain_id') in index.domains]
+    rows.append(('Ownership claims', len(shown_ownerships),
+                 sum(f"**{index.name(item['concept_id'])}** ({item['kind']})" in pages[item['domain_id']]
+                     for item in shown_ownerships)))
+    shown_links = [item for item in index.relationships.values()
+                   if item.get('from_domain_id') in index.domains and item.get('to_domain_id') in index.domains
+                   and item.get('from_domain_id') != item.get('to_domain_id')]
+    rows.append(('Links between contexts', len(shown_links),
+                 sum(cell(index.name(item.get('from_activity_id') or '')) in pages[item['from_domain_id']]
+                     and cell(index.name(item.get('to_activity_id') or '')) in pages[item['from_domain_id']]
+                     for item in shown_links)))
+    conflicts = [claim for claim in index.claims.values() if claim.get('kind') in ('conflict', 'contradiction')]
+    rows.append(('Contract and code disagreements', len(conflicts),
+                 sum(cell(index.readable(claim['text'])) in files.get('gaps.md', '') for claim in conflicts)))
+    questions = [question for records in (index.domains.values(), index.activities.values(),
+                                          [item for item in index.ownerships.values()
+                                           if item.get('domain_id') in index.domains], index.rules.values())
+                 for record in records for question in record.get('unresolved_questions', ())]
+    questions = [index.readable(question) for question in questions]
+    rows.append(('Open questions', len(questions), sum(cell(question) in everything or question in everything
+                                                       for question in questions)))
+    traces = [trace_id for activity_id in index.activities if index.activity_domains.get(activity_id)
+              for trace_id in index.activities[activity_id].get('trace_ids', ()) if trace_id in index.traces]
+    accounted = 0
+    for trace_id in traces:
+        entry = index.entry_point(index.traces[trace_id]['anchor_id'])
+        accounted += any(entry in text for text in pages.values())
+    rows.append(('Call paths drawn or listed as not drawn', len(traces), accounted))
+    return rows
+
+
+def viewer(files: dict) -> str:
+    """One HTML page with every document and its diagrams drawn in the browser."""
+    order = ['README.md', *sorted(name for name in files if name.startswith('contexts/')),
+             'rules.md', 'glossary.md', 'gaps.md']
+    documents = json.dumps({name: files[name] for name in order if name in files}).replace('</', '<\\/')
+    return VIEWER.replace('__DOCUMENTS__', documents)
+
+
+VIEWER = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Domain model</title>
+<style>
+:root{--text:#1f2328;--muted:#59636e;--line:#d0d7de;--panel:#f6f8fa;--accent:#ddf4ff;--bg:#fff}
+@media (prefers-color-scheme: dark){:root{--text:#e6edf3;--muted:#9198a1;--line:#3d444d;--panel:#151b23;--accent:#1f3a5f;--bg:#0d1117}}
+body{margin:0;font:15px/1.6 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;color:var(--text);background:var(--bg);display:flex}
+nav{width:280px;flex:none;height:100vh;overflow:auto;position:sticky;top:0;background:var(--panel);border-right:1px solid var(--line);padding:16px;box-sizing:border-box}
+nav a{display:block;padding:6px 8px;border-radius:6px;color:var(--text);text-decoration:none;font-size:14px}
+nav a.on,nav a:hover{background:var(--accent)}
+main{flex:1;min-width:0;padding:24px 40px;max-width:1240px}
+table{border-collapse:collapse;display:block;overflow:auto;margin:12px 0}
+th,td{border:1px solid var(--line);padding:6px 10px;vertical-align:top}th{background:var(--panel)}
+code{background:var(--panel);padding:1px 5px;border-radius:4px;font-size:13px}
+blockquote{margin:12px 0;padding:6px 14px;border-left:4px solid var(--line);color:var(--muted)}
+.mermaid{margin:16px 0;overflow:auto;background:#fff;border:1px solid var(--line);border-radius:8px;padding:8px}
+h1{border-bottom:1px solid var(--line);padding-bottom:6px}
+@media (max-width:800px){body{display:block}nav{width:auto;height:auto;position:static}main{padding:16px}}
+</style></head>
+<body><nav id="nav"></nav><main id="doc"></main>
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js"></script>
+<script>
+const DOCUMENTS = __DOCUMENTS__;
+mermaid.initialize({startOnLoad: false, securityLevel: 'strict', maxTextSize: 200000, theme: 'default'});
+const nav = document.getElementById('nav'), doc = document.getElementById('doc');
+const escape = text => text.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+for (const name of Object.keys(DOCUMENTS)) {
+  const link = document.createElement('a');
+  const heading = DOCUMENTS[name].match(/^# (.+)$/m);
+  link.href = '#' + name; link.textContent = heading ? heading[1] : name; link.dataset.name = name;
+  nav.appendChild(link);
+}
+async function show() {
+  let [name, anchor] = decodeURIComponent(location.hash.slice(1) || 'README.md').split('#');
+  if (!DOCUMENTS[name]) name = 'README.md';
+  const renderer = new marked.Renderer();
+  renderer.code = (code, language) => language === 'mermaid'
+    ? '<pre class="mermaid">' + escape(code) + '</pre>' : '<pre><code>' + escape(code) + '</code></pre>';
+  doc.innerHTML = marked.parse(DOCUMENTS[name], {renderer});
+  const base = name.includes('/') ? name.split('/').slice(0, -1).join('/') + '/' : '';
+  doc.querySelectorAll('a[href]').forEach(link => {
+    const href = link.getAttribute('href');
+    if (/^[a-z]+:/i.test(href)) return;
+    if (href.startsWith('#')) { link.href = '#' + name + href; return; }
+    const [path, fragment] = href.split('#'), parts = [];
+    for (const part of (base + path).split('/')) { if (part === '..') parts.pop(); else if (part && part !== '.') parts.push(part); }
+    link.href = '#' + parts.join('/') + (fragment ? '#' + fragment : '');
+  });
+  nav.querySelectorAll('a').forEach(link => link.classList.toggle('on', link.dataset.name === name));
+  await mermaid.run({querySelector: '.mermaid'});
+  const target = anchor && document.getElementById(anchor);
+  if (target) target.scrollIntoView(); else window.scrollTo(0, 0);
+}
+window.addEventListener('hashchange', show);
+show();
+</script></body></html>
+"""
+
+
 def export_ddd(model: dict) -> dict:
     """Return the DDD documents for a published model as {relative path: text}."""
     index = Model(model)
     entities = Entities(index)
-    sequences = Sequences(index)
-    files = {'README.md': readme(index, entities), 'rules.md': rules_page(index),
-             'glossary.md': glossary_page(index, entities), 'gaps.md': gaps_page(index)}
+    sequences = Sequences(index, entities)
+    files = {'rules.md': rules_page(index), 'glossary.md': glossary_page(index, entities),
+             'gaps.md': gaps_page(index)}
     for domain_id in index.domain_order:
         files[f'contexts/{index.domain_pages[domain_id]}.md'] = context_page(
             index, entities, sequences, domain_id)
+    files = {name: index.readable(text) for name, text in files.items()}
+    files['README.md'] = index.readable(readme(index, entities, coverage(index, files)))
+    files['index.html'] = viewer(files)
     return files
 
 
