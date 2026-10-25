@@ -2407,11 +2407,12 @@ class Synthesis:
         limit = _repair_limit(graph)
         candidate, findings, report = state.candidate, state.findings, state.report
         seen = set(state.signatures)
+        whole_scope = False
         self._checkpoint(synthesis_request, state)
         for repair_attempt in range(
                 state.attempts + 1, limit + 1):
-            focus = self._repair_focus(graph, candidate, findings, report,
-                                       repair_attempt)
+            focus = (None if whole_scope else
+                     self._repair_focus(graph, candidate, findings, report, repair_attempt))
             repair_request = self.request_for(
                 'repair', graph, candidate, findings, report, focus=focus)
             try:
@@ -2509,6 +2510,14 @@ class Synthesis:
                 repaired_findings, repaired_report)
             stalled = signature in seen
             exhausted = repair_attempt == limit
+            if stalled and focus is not None and not exhausted:
+                # The focus may have left out what the fix needs; give the
+                # remaining rounds the whole scope before calling it stalled.
+                whole_scope, stalled = True, False
+                if self.recorder:
+                    self.recorder.progress('semantic',
+                        'Focused repair repeated the same defects; the next rounds '
+                        'see the whole scope', level='warning')
             if stalled or exhausted:
                 self._discard_checkpoint(synthesis_request)
                 reason = ('repeated the same blocking defect set' if stalled

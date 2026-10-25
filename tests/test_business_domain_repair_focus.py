@@ -392,3 +392,38 @@ def test_a_repair_answer_may_cite_its_own_candidate_records():
     synthesis_schema = wire_schema('CandidatePayload', graph)
     assert (synthesis_schema['$defs']['ActivityMembership']['properties']['claim_ids']
             == membership['claim_ids'])
+
+
+def test_a_stalled_focused_repair_gets_the_whole_scope_before_failing(tmp_path):
+    # The provider ignores the findings, so every repair repeats the same defects.
+    graph = evidence_graph()
+
+    class StubbornProvider(ProtocolProvider):
+        def generate(self, request, schema, *rest):
+            if request['operation'] == 'repair':
+                self.requests.append(copy.deepcopy(request))
+                from lib.context.business_domain_schema import DEFINITIONS
+                from tests.business_domains.provider_fixture import encode
+                candidate = copy.deepcopy(request['candidate'])
+                for activity in candidate['activities'].values():
+                    activity['description'] += ' Again.'
+                payload = record('RepairPayload',
+                                 parent_candidate_hash=request['parent_candidate_hash'],
+                                 candidate=candidate)
+                return encode(payload, DEFINITIONS['RepairPayload']), {
+                    'last': {'inputTokens': 10, 'outputTokens': 10}}
+            self.fail_after_repair = True
+            return super().generate(request, schema, *rest)
+
+    provider = StubbornProvider(graph)
+    import pytest
+    from lib.context.business_domain_schema import DomainError
+    with pytest.raises(DomainError) as raised:
+        synthesis(tmp_path, provider).run(graph, lambda value: validate_candidate(graph, value))
+    assert raised.value.code == 'SEMANTIC_VERIFICATION_FAILED'
+    repairs = [request for request in provider.requests if request['operation'] == 'repair']
+    # One focused round repeats the defects, so the next round sees the whole
+    # scope; only when that repeats them too is the unit given up.
+    assert len(repairs) == 2
+    assert 'provider_focus' in repairs[0]
+    assert 'provider_focus' not in repairs[1]
