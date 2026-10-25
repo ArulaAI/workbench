@@ -1,6 +1,7 @@
 """Support caps applied before Verify, and prompt-cache token accounting."""
 import copy
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -162,3 +163,28 @@ def test_the_reference_rule_is_stated_once():
     assert 'References must identify' not in schema
     assert 'Kind: ' in schema
     assert 'never a name or another kind of record' in PROJECTION_INSTRUCTIONS
+
+
+def test_verification_can_use_its_own_model(tmp_path):
+    graph = graph_scope(anchor_count=1)
+    runner = synthesis(tmp_path, ProtocolProvider(graph))
+    runner.provider = None
+    runner.agent_config = {'model': 'opus', 'verification_model': 'sonnet'}
+    assert runner._model_for('verify') == 'sonnet'
+    assert runner._model_for('synthesize') == 'opus'
+    assert runner._model_for('repair') == 'opus'
+    runner.agent_config = {'model': 'opus'}
+    assert runner._model_for('verify') == 'opus'
+
+
+def test_the_provider_config_lists_the_verification_model(tmp_path):
+    (tmp_path / 'speed.toml').write_text('[agent]\nsupport_model = "opus"\n')
+    command = ['bash', str(ROOT / 'lib/cmd/domains.sh'), 'config']
+    plain = json.loads(subprocess.run(command, cwd=tmp_path, capture_output=True, text=True,
+                                      check=True).stdout)
+    assert plain['verification_model'] == plain['model']
+    split = json.loads(subprocess.run(command, cwd=tmp_path, capture_output=True, text=True,
+                                      check=True, env={**os.environ,
+                                                       'SPEED_DISCOVER_VERIFICATION_MODEL': 'sonnet'}).stdout)
+    assert split['verification_model'] == 'sonnet'
+    assert 'sonnet' in split['models']

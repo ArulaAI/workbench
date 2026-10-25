@@ -331,7 +331,9 @@ _discover_domains() {
 }
 
 _domains_provider_config() {
-    local support_caps planning_caps
+    local support_caps planning_caps verification_caps
+    # Verification can run on its own model; it defaults to the support model.
+    local verification_model="${SPEED_DISCOVER_VERIFICATION_MODEL:-$MODEL_SUPPORT}"
 
     support_caps=$(provider_model_capabilities "$MODEL_SUPPORT") \
         || return "$EXIT_CONFIG_ERROR"
@@ -341,26 +343,32 @@ _domains_provider_config() {
         planning_caps=$(provider_model_capabilities "$MODEL_PLANNING") \
             || return "$EXIT_CONFIG_ERROR"
     fi
+    verification_caps=$(provider_model_capabilities "$verification_model") \
+        || return "$EXIT_CONFIG_ERROR"
 
     jq -n \
         --arg provider "$_PROVIDER_NAME" \
         --arg model "$MODEL_SUPPORT" \
         --arg planning_model "$MODEL_PLANNING" \
+        --arg verification_model "$verification_model" \
         --arg agent_file "$AGENT_FILE_PATH" \
         --argjson agent_timeout "$DEFAULT_AGENT_TIMEOUT" \
         --argjson kill_grace "$AGENT_KILL_GRACE" \
         --argjson support_caps "$support_caps" \
         --argjson planning_caps "$planning_caps" \
+        --argjson verification_caps "$verification_caps" \
         '{
             provider: $provider,
             model: $model,
             planning_model: $planning_model,
+            verification_model: $verification_model,
             agent_file: $agent_file,
             agent_timeout: $agent_timeout,
             kill_grace: $kill_grace,
             models: {
                 ($model): $support_caps,
-                ($planning_model): $planning_caps
+                ($planning_model): $planning_caps,
+                ($verification_model): $verification_caps
             }
         } + $support_caps'
 }

@@ -1967,8 +1967,7 @@ class Synthesis:
             verification_report=copy.deepcopy(verification_report),
             allowed_evidence_ids=allowed_evidence_ids(graph),
             output_schema={'$ref': f'#/$defs/{output_type}'},
-            model=(self.agent_config['model'] if self.provider is None
-                   else self.provider.model),
+            model=self._model_for(operation),
             max_output_tokens=self.effective_request_output_tokens,
             deadline_at=deadline_at, **extra)
         if focus is None:
@@ -1976,6 +1975,14 @@ class Synthesis:
             request.pop('provider_focus', None)
         validate(request, 'SemanticRequest')
         return request
+
+    def _model_for(self, operation):
+        """Return the model for an operation; verification may have its own."""
+        if self.provider is not None:
+            return self.provider.model
+        if operation == 'verify':
+            return self.agent_config.get('verification_model') or self.agent_config['model']
+        return self.agent_config['model']
 
     def alias_registry(self, graph):
         """Return the alias registry for a graph scope."""
