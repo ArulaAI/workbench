@@ -503,8 +503,10 @@ PROJECTION_INSTRUCTIONS = (
     'strings[N]; a negative integer -N-2 is the original nonnegative integer. '
     'Values named _ref:N are stable aliases '
     'for supplied record IDs. Reuse those aliases exactly in response reference '
-    'fields. New semantic record IDs must use their contract prefix and must not '
-    'use _ref:. Storage-only snapshot and integrity metadata, including '
+    'fields; a reference field holds a supplied ID of the kind its schema '
+    'description names, never a name or another kind of record. A record kept '
+    'from the supplied candidate keeps its _ref:N ID. New semantic record IDs '
+    'must use their contract prefix and must not use _ref:. Storage-only snapshot and integrity metadata, including '
     'record_refs content hashes, is intentionally local. Anchor '
     'representation/correspondence arrays contain IDs into their complete '
     'top-level maps.'
@@ -732,8 +734,9 @@ def wire_schema(type_name: str, packet=None) -> dict:
                 for name, child in result[key].items():
                     targets = REFERENCE_TARGETS.get(str(definition)+'.'+name,REFERENCE_TARGETS.get(name))
                     if targets:
-                        child['description'] = (child.get('description','')+' References must identify records of kind: '+
-                            ', '.join(targets)+'. Reuse exact supplied IDs; do not substitute names or another record kind.').strip()
+                        # The rule itself is stated once, in PROJECTION_INSTRUCTIONS.
+                        child['description'] = (child.get('description','')+' Kind: '+
+                            ', '.join(targets)+'.').strip()
             elif key in ('anyOf','oneOf'):
                 result['anyOf'] = [convert(child) for child in value]
             elif key == 'items':
@@ -746,7 +749,7 @@ def wire_schema(type_name: str, packet=None) -> dict:
         name = sorted(needed-set(definitions))[0]
         definitions[name] = convert(DEFINITIONS[name],name)
     if definitions:
-        _constrain_provider_record_ids(definitions)
+        _constrain_provider_record_ids(definitions, type_name == 'RepairPayload')
         result['$defs'] = definitions
     # Only the review workflow may set a review state, so keep it out of the
     # provider schema instead of rejecting it later.
@@ -907,13 +910,19 @@ def _set_record_id_pattern(shape, pattern):
             _set_record_id_pattern(variant, pattern)
 
 
-def _constrain_provider_record_ids(definitions):
-    """Constrain provider-created IDs to the expected prefix for each record type."""
+def _constrain_provider_record_ids(definitions, keeps_aliases=False):
+    """Constrain provider-created IDs to the expected prefix for each record type.
+
+    A repair answer returns the records it keeps under the `_ref:N` IDs the
+    request shows them with; decoding restores their canonical IDs, so those
+    IDs are allowed too.
+    """
     for record_type, prefix in ID_PREFIX_BY_TYPE.items():
         definition = definitions.get(record_type)
         if definition is not None:
             _set_record_id_pattern(
-                definition, f'^{prefix}:[^ ]+$')
+                definition, (f'^(?:{prefix}:[^ ]+|_ref:[0-9]+)$' if keeps_aliases
+                             else f'^{prefix}:[^ ]+$'))
 
 
 DEPENDENCY_GROUPS = (

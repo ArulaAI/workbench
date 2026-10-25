@@ -67,8 +67,9 @@ class RehearsalProvider(ReconcilingProvider):
     def generate(self, wire_request, schema, *rest):
         request, projection = self.exchanges[wire_request['request_id']]
         value, usage = self._answer(request, schema, *rest)
-        return _record_ids_keep_kind(projection._rewrite(value, projection.aliases),
-                                     projection), usage
+        # Kept records come back under the bare `_ref:N` IDs the request shows,
+        # which is what the real provider writes.
+        return projection._rewrite(value, projection.aliases), usage
 
     def _answer(self, request, schema, *rest):
         operation, graph = request['operation'], request['graph']
@@ -107,21 +108,6 @@ class RehearsalProvider(ReconcilingProvider):
             return encode(payload, DEFINITIONS['RepairPayload']), {
                 'last': {'inputTokens': 10, 'outputTokens': 10}}
         return super().generate(request, schema, *rest)
-
-
-def _record_ids_keep_kind(value, projection):
-    """Return continued record IDs as `<kind>:_ref:N`, as the real provider does."""
-    if isinstance(value, list):
-        return [_record_ids_keep_kind(item, projection) for item in value]
-    if not isinstance(value, dict):
-        return value
-    value = {key: _record_ids_keep_kind(item, projection) for key, item in value.items()}
-    identifier = value.get('id')
-    if isinstance(identifier, str) and identifier.startswith('_ref:'):
-        kind = projection.canonical_ids.get(identifier, '').partition(':')[0]
-        if kind:
-            value['id'] = f'{kind}:{identifier}'
-    return value
 
 
 def main():

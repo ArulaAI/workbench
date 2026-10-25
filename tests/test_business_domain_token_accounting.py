@@ -4,7 +4,7 @@ import json
 import subprocess
 from pathlib import Path
 
-from lib.context.business_domain_schema import DEFINITIONS, record
+from lib.context.business_domain_schema import DEFINITIONS, record, required_scope_subjects
 from lib.context.business_domain_synthesis import _reported_usage, normalize_ids
 from tests.test_business_domain_candidate_protocol import (
     ProtocolProvider, graph_scope, one_activity_candidate, synthesis, validate_candidate)
@@ -108,3 +108,57 @@ def test_usage_fields_are_optional_in_saved_responses():
     usage = DEFINITIONS['ProviderUsage']
     assert set(usage['required']) == {'input_tokens', 'output_tokens'}
     assert {'cache_read_input_tokens', 'cache_creation_input_tokens'} <= set(usage['properties'])
+
+
+# Repair answers keep their records' aliases
+
+def repair_id_pattern(record_type):
+    from lib.context.business_domain_synthesis import wire_schema
+    schema = wire_schema('RepairPayload', graph_scope(anchor_count=1))
+    return schema['$defs'][record_type]['properties']['id']['pattern']
+
+
+def test_a_repair_answer_may_keep_a_record_under_its_alias():
+    import re
+    pattern = repair_id_pattern('Activity')
+    assert re.match(pattern, '_ref:12')
+    assert re.match(pattern, 'activity:_ref:12')
+    assert re.match(pattern, 'activity:new-one')
+    assert not re.match(pattern, 'claim:new-one')
+    assert not re.match(pattern, 'Create orders')
+
+
+def test_new_synthesis_records_still_need_their_prefix():
+    import re
+    from lib.context.business_domain_synthesis import wire_schema
+    schema = wire_schema('CandidatePayload', graph_scope(anchor_count=1))
+    assert not re.match(schema['$defs']['Activity']['properties']['id']['pattern'], '_ref:12')
+
+
+def test_a_kept_alias_decodes_to_the_record_it_names(tmp_path):
+    from lib.context.business_domain_synthesis import wire_schema
+    graph = graph_scope()
+    runner = synthesis(tmp_path, ProtocolProvider(graph))
+    candidate = normalize_ids(one_activity_candidate(graph), graph)
+    activity_id = next(iter(candidate['activities']))
+    report = record('VerificationReport', scope_id=graph['scope_id'],
+                    input_fingerprint=graph['input_fingerprint'], verdict='fail',
+                    findings=[record('VerificationFinding', id='verification_finding:x',
+                                     category='incorrect_merge', severity='blocking',
+                                     message='Split it.', subject_ids=[activity_id])],
+                    checked_subject_ids=sorted(required_scope_subjects(graph)))
+    request = runner.request_for('repair', graph, candidate, (), report)
+    projected, _, projection = runner.project_exchange(
+        request, wire_schema('RepairPayload', graph))
+    shown = projected['candidate']['activities']
+    [alias] = [key for key in shown]
+    assert alias.startswith('_ref:') and shown[alias]['id'] == alias
+    assert projection.decode_response(projected['candidate']) == candidate
+
+
+def test_the_reference_rule_is_stated_once():
+    from lib.context.business_domain_synthesis import PROJECTION_INSTRUCTIONS, wire_schema
+    schema = json.dumps(wire_schema('RepairPayload', graph_scope(anchor_count=1)))
+    assert 'References must identify' not in schema
+    assert 'Kind: ' in schema
+    assert 'never a name or another kind of record' in PROJECTION_INSTRUCTIONS
