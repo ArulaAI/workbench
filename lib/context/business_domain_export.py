@@ -1991,8 +1991,9 @@ VIEWER = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Domain model</title>
 <style>
-:root{--text:#1f2328;--muted:#59636e;--line:#d0d7de;--panel:#f6f8fa;--accent:#ddf4ff;--bg:#fff}
-@media (prefers-color-scheme: dark){:root{--text:#e6edf3;--muted:#9198a1;--line:#3d444d;--panel:#151b23;--accent:#1f3a5f;--bg:#0d1117}}
+:root{--text:#1f2328;--muted:#59636e;--line:#d0d7de;--panel:#f6f8fa;--accent:#ddf4ff;--bg:#fff;--link:#0969da}
+@media (prefers-color-scheme: dark){:root{--text:#e6edf3;--muted:#9198a1;--line:#3d444d;--panel:#151b23;--accent:#1f3a5f;--bg:#0d1117;--link:#4493f8}}
+main a{color:var(--link)}
 body{margin:0;font:15px/1.6 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;color:var(--text);background:var(--bg);display:flex}
 nav{width:280px;flex:none;height:100vh;overflow:auto;position:sticky;top:0;background:var(--panel);border-right:1px solid var(--line);padding:16px;box-sizing:border-box}
 nav a{display:block;padding:6px 8px;border-radius:6px;color:var(--text);text-decoration:none;font-size:14px}
@@ -2013,6 +2014,7 @@ h1{border-bottom:1px solid var(--line);padding-bottom:6px}
 const DOCUMENTS = __DOCUMENTS__;
 mermaid.initialize({startOnLoad: false, securityLevel: 'strict', maxTextSize: 200000, theme: 'default'});
 const nav = document.getElementById('nav'), doc = document.getElementById('doc');
+let drawn = 0, showing = 0;
 const escape = text => text.replace(/&/g, '&amp;').replace(/</g, '&lt;');
 for (const name of Object.keys(DOCUMENTS)) {
   const link = document.createElement('a');
@@ -2021,11 +2023,15 @@ for (const name of Object.keys(DOCUMENTS)) {
   nav.appendChild(link);
 }
 async function show() {
+  const current = ++showing;
   let [name, anchor] = decodeURIComponent(location.hash.slice(1) || 'README.md').split('#');
   if (!DOCUMENTS[name]) name = 'README.md';
-  const renderer = new marked.Renderer();
+  // mermaid.run() reads innerHTML and does not decode &lt; &gt;, so each diagram is
+  // rendered from its source text instead.
+  const renderer = new marked.Renderer(), sources = [];
   renderer.code = (code, language) => language === 'mermaid'
-    ? '<pre class="mermaid">' + escape(code) + '</pre>' : '<pre><code>' + escape(code) + '</code></pre>';
+    ? '<div class="mermaid" data-source="' + (sources.push(code) - 1) + '"></div>'
+    : '<pre><code>' + escape(code) + '</code></pre>';
   doc.innerHTML = marked.parse(DOCUMENTS[name], {renderer});
   const base = name.includes('/') ? name.split('/').slice(0, -1).join('/') + '/' : '';
   doc.querySelectorAll('a[href]').forEach(link => {
@@ -2033,11 +2039,20 @@ async function show() {
     if (/^[a-z]+:/i.test(href)) return;
     if (href.startsWith('#')) { link.href = '#' + name + href; return; }
     const [path, fragment] = href.split('#'), parts = [];
+    if (!path.endsWith('.md')) return;
     for (const part of (base + path).split('/')) { if (part === '..') parts.pop(); else if (part && part !== '.') parts.push(part); }
     link.href = '#' + parts.join('/') + (fragment ? '#' + fragment : '');
   });
   nav.querySelectorAll('a').forEach(link => link.classList.toggle('on', link.dataset.name === name));
-  await mermaid.run({querySelector: '.mermaid'});
+  for (const block of doc.querySelectorAll('.mermaid')) {
+    if (current !== showing) return;
+    const source = sources[Number(block.dataset.source)];
+    try {
+      block.innerHTML = (await mermaid.render('diagram' + (++drawn), source)).svg;
+    } catch (error) {
+      block.innerHTML = '<p>This diagram could not be drawn. Its source:</p><pre><code>' + escape(source) + '</code></pre>';
+    }
+  }
   const target = anchor && document.getElementById(anchor);
   if (target) target.scrollIntoView(); else window.scrollTo(0, 0);
 }
