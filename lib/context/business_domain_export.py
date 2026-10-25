@@ -33,6 +33,12 @@ ENFORCEMENT = {
     'conditional': 'depends on preconditions',
     'unresolved': 'enforcement unresolved',
 }
+ENFORCEMENT_SHORT = {
+    'verified_on_trace': 'verified on a traced path',
+    'declared_only': 'declared in code',
+    'conditional': 'conditional',
+    'unresolved': 'unresolved',
+}
 EVIDENCE = {'supported': 'well evidenced', 'partial': 'partly evidenced',
             'insufficient': 'weakly evidenced'}
 IMPLEMENTATION = {
@@ -117,7 +123,9 @@ def first_sentence(text: str, limit: int = 220) -> str:
     text = (text or '').strip()
     match = re.match(r'(.+?[.!?])(\s|$)', text)
     sentence = match.group(1) if match else text
-    return sentence if len(sentence) <= limit else sentence[:limit - 1].rstrip() + '…'
+    if len(sentence) <= limit:
+        return sentence
+    return sentence[:limit - 1].rsplit(' ', 1)[0].rstrip(' ,;:(') + '…'
 
 
 def plural(count: int, word: str) -> str:
@@ -144,6 +152,8 @@ class Model:
         self.ownerships = model.get('ownerships', {})
         self.relationships = model.get('relationships', {})
         self.uses = model.get('information_uses', {})
+        self._paths = {(item.get('locator') or {}).get('path') for item in self.evidence.values()} - {None, ''}
+        self._short_paths = {}
         self.domains = {domain_id: domain for domain_id, domain in model.get('domains', {}).items()
                         if domain.get('review_state') != 'rejected'
                         and domain.get('support') != 'insufficient'}
@@ -215,10 +225,10 @@ class Model:
             if identifier in self.traces:
                 return trace(identifier)
             if identifier.startswith('scope:'):
-                return 'another discovery unit'
+                return 'another part of the model'
             name = self.name(identifier)
             return identifier if name.startswith('(missing ref') else name
-        text = re.sub(r'a record of child scope scope:[0-9a-f]+', 'a record from another discovery unit', text)
+        text = re.sub(r'a record of child scope scope:[0-9a-f]+', 'a record from another part of the model', text)
         text = re.sub(r'\btrace (trace:[0-9a-f]+) has no edges',
                       lambda match: (trace(match.group(1)) if match.group(1) in self.traces else 'its call path')
                       + ' has no steps', text)
@@ -247,6 +257,8 @@ class Model:
             name = operation.get('name') or ''
             if operation.get('method') == 'route':
                 return f'page {path}'.strip()
+            if name == 'unlabeled action':
+                name = 'UI action'
             return f'{name} on {path}' if path else name
         return operation.get('name') or anchor_id
 
@@ -270,17 +282,40 @@ class Model:
             rank = SOURCE_PREFERENCE.get(evidence.get('source_kind'), 3)
             if first_kind and evidence.get('source_kind') == first_kind:
                 rank = -1
-            found.append((rank, path, start or 0, f'{path}:{lines}' if start else path))
-        seen, result, kinds = set(), [], set()
+            found.append((rank, path, start or 0, lines if start else ''))
+        seen, picked, kinds = set(), [], set()
         ordered = sorted(found)
         if every_kind:
             ordered = ([item for item in ordered if item[0] not in kinds and not kinds.add(item[0])]
                        + ordered)
-        for _, path, start, text in ordered:
+        for _, path, start, lines in ordered:
             if (path, start) not in seen:
                 seen.add((path, start))
-                result.append(text)
-        return result[:limit]
+                picked.append((path, lines))
+        # Lines from one file are merged; each file is named by its shortest unique suffix.
+        merged = {}
+        for path, lines in picked[:limit]:
+            merged.setdefault(path, [])
+            if lines:
+                merged[path].append(lines)
+        def spans(lines):
+            parsed = sorted((int(a), int(b or a)) for a, _, b in (item.partition('-') for item in lines))
+            kept = []
+            for start, end in parsed:
+                if not any(start >= low and end <= high for low, high in kept):
+                    kept.append((start, end))
+            return [f'{start}' if start == end else f'{start}-{end}' for start, end in kept]
+        return [self.short_path(path) + (':' + ', '.join(spans(lines)) if lines else '') for path, lines in merged.items()]
+
+    def short_path(self, path: str) -> str:
+        if path not in self._short_paths:
+            parts = path.split('/')
+            for size in range(1, len(parts) + 1):
+                suffix = '/'.join(parts[-size:])
+                if sum(other == suffix or other.endswith('/' + suffix) for other in self._paths) <= 1:
+                    break
+            self._short_paths[path] = suffix
+        return self._short_paths[path]
 
     def cite(self, evidence_ids, limit: int = 2, every_kind: bool = False, first_kind=None) -> str:
         found = self.citations(evidence_ids, limit, every_kind, first_kind)
@@ -463,8 +498,11 @@ class Entities:
                               if self.index.resources.get(resource_id, {}).get('kind') == 'table')
         return sorted(tables)
 
-    def diagram(self, concept_ids) -> str:
-        """Return a Mermaid classDiagram for the given concepts, or '' if there is nothing to draw."""
+    def diagram(self, concept_ids, flatten_bases: bool = False) -> str:
+        """Return a Mermaid classDiagram for the given concepts, or '' if there is nothing to draw.
+
+        With `flatten_bases`, inherited fields are shown on each entity and the base classes are left out.
+        """
         index = self.index
         roots = {symbol_id for concept_id in concept_ids
                  for symbol_id in self.by_concept.get(concept_id, ())}
@@ -474,7 +512,7 @@ class Entities:
             if symbol_id in shown or not self.classes.get(symbol_id):
                 continue
             shown.add(symbol_id)
-            if self.classes[symbol_id]['parent']:
+            if self.classes[symbol_id]['parent'] and not flatten_bases:
                 pending.append(self.classes[symbol_id]['parent'])
         # An association target is resolved by simple name only when that name is unique.
         named = defaultdict(list)
@@ -506,8 +544,9 @@ class Entities:
                        for field in entity['fields'] if field['join_table']}
         # Both ends of an association become one line; the cascading owner's side
         # wins, so a composition is drawn whichever class sorts first.
+        fields_of = (lambda key: self._all_fields(key)) if flatten_bases else (lambda key: self.classes[key]['fields'])
         for symbol_id in sorted(shown, key=lambda key: names[key]):
-            for field in self.classes[symbol_id]['fields']:
+            for field in fields_of(symbol_id):
                 target = by_name.get(field['target'])
                 if not (field['association'] and target in shown):
                     continue
@@ -518,7 +557,7 @@ class Entities:
         for symbol_id in sorted(shown, key=lambda key: names[key]):
             entity = self.classes[symbol_id]
             members = []
-            for field in entity['fields']:
+            for field in fields_of(symbol_id):
                 target = by_name.get(field['target'])
                 if field['association'] and target:
                     if target in shown and drawn[frozenset((symbol_id, target))][:2] == (symbol_id, field['name']):
@@ -723,6 +762,8 @@ class Sequences:
         self.entities = entities or Entities(index)
         # Class-level calls each drawn trace makes, for the component diagrams.
         self.links = defaultdict(set)
+        # Per interface lifeline: implementations that run on the declared profile, and the others.
+        self.choices = defaultdict(lambda: {'runs': set(), 'inactive': set()})
         self.files = {}
         # Each call edge cites only its own expression; the longest one-line excerpt
         # on a line holds the whole statement, which shows how calls nest.
@@ -1007,7 +1048,7 @@ class Sequences:
                 target_id = (target_ref or {}).get('id')
                 target = self._participant(target_ref)
                 if not target and edge['kind'] == 'invokes_endpoint':
-                    target = ('endpoint', 'unresolved endpoint')
+                    target = ('endpoint', 'no matching server endpoint')
                     message(lifeline, join(target), '-->>', 'request (target not resolved)')
                     continue
                 if not target:
@@ -1058,11 +1099,42 @@ class Sequences:
         for _, source, target, _, _ in messages:
             self.links[trace['id']].add(((kinds.get(source), source), (kinds.get(target), target)))
         actor = ACTORS.get(anchor.get('kind'), 'Caller')
+        drawn_names = {name for _, name in participants}
+        notes, shown_as = {}, {}
+        for lifeline in [name for _, name in participants if name in facts]:
+            fact = facts[lifeline]
+            # The source class and its generated proxy can arrive as two targets with one name.
+            running = {name.split(', generated at runtime')[0] for name in fact['runs']}
+            runs = sorted(name + (', generated at runtime' if name + ', generated at runtime' in fact['runs'] else '')
+                          for name in running)
+            inactive = fact['inactive'] - running
+            ambiguous = fact['ambiguous'] - running
+            by_profile = fact['by_profile'] - running
+            unbound = fact['unbound'] - drawn_names - running
+            if runs or inactive:
+                self.choices[lifeline]['runs'].update(runs)
+                self.choices[lifeline]['inactive'].update(inactive)
+            parts = []
+            if len(runs) == 1 and not (ambiguous or by_profile or unbound):
+                # The implementation that runs is named on the lifeline; the others are listed once per page.
+                shown_as[lifeline] = f"{lifeline} → {runs[0].replace(', generated at runtime', ' (generated)')}"
+            elif runs:
+                parts.append('Runs ' + ' + '.join(item.replace(', generated at runtime', ' (generated)') for item in runs))
+            if ambiguous:
+                parts.append('several match the declared profile, not drawn: ' + ', '.join(sorted(ambiguous)))
+            if by_profile:
+                parts.append('chosen at runtime by profile, not drawn: ' + ', '.join(sorted(by_profile)))
+            if unbound:
+                parts.append('other implementations, not drawn: ' + ', '.join(sorted(unbound)))
+            if parts and lifeline not in shown_as and inactive:
+                parts.append('not on the declared profile: ' + ', '.join(sorted(inactive)))
+            if parts:
+                notes[lifeline] = '. '.join(part[:1].upper() + part[1:] for part in parts) + '.'
         lines = ['sequenceDiagram', '  autonumber', f'  actor Client as {label(actor)}']
         ids = {}
         for position, (kind, name) in enumerate(participants[:MAX_PARTICIPANTS], 1):
             ids[name] = f'P{position}'
-            shown = f'{name} table' if kind == 'table' else name
+            shown = f'{name} table' if kind == 'table' else shown_as.get(name, name)
             lines.append(f'  participant P{position} as {label(shown)}')
         lines.append(f'  Client->>{ids[first[1]]}: {label(index.entry_point(anchor["id"]))}')
         # branch: None outside an alt; else (steps in the branch, steps drawn)
@@ -1095,46 +1167,18 @@ class Sequences:
         while depth:
             depth -= 1
             lines.append('  ' * (depth + 1) + 'end')
-        drawn_names = {name for _, name in participants}
-        for lifeline in [name for _, name in participants if name in facts]:
-            fact = facts[lifeline]
-            parts = []
-            # The source class and its generated proxy can arrive as two targets with one name.
-            running = {name.split(', generated at runtime')[0] for name in fact['runs']}
-            runs = sorted(name + (', generated at runtime' if name + ', generated at runtime' in fact['runs'] else '')
-                          for name in running)
-            if runs:
-                parts.append('runs ' + ', '.join(runs))
-            inactive = fact['inactive'] - running
-            ambiguous = fact['ambiguous'] - running
-            by_profile = fact['by_profile'] - running
-            if inactive:
-                parts.append('not on the declared profile: ' + ', '.join(sorted(inactive)))
-            if ambiguous:
-                parts.append('several match the declared profile, not drawn: ' + ', '.join(sorted(ambiguous)))
-            if by_profile:
-                parts.append('chosen at runtime by profile, not drawn: ' + ', '.join(sorted(by_profile)))
-            unbound = fact['unbound'] - drawn_names - running
-            if unbound:
-                parts.append('other implementations, not drawn: ' + ', '.join(sorted(unbound)))
-            if parts and lifeline in ids:
-                lines.append(f'  Note over {ids[lifeline]}: {label("; ".join(parts))}')
+        for lifeline, text in notes.items():
+            if lifeline in ids:
+                lines.append(f'  Note over {ids[lifeline]}: {label(text)}')
         contract = 'API contract (no implementation)'
         if contract in ids:
             lines.append(f'  Note over {ids[contract]}: '
-                         + label('declared in the API contract; no server implementation is evidenced'))
+                         + label('Contract only: no server implementation evidenced'))
         if budget['omitted']:
             lines.append(f"  Note over {ids[first[1]]}: "
                          + label(f"at least {plural(budget['omitted'], 'more step')} not drawn (trace {short(trace['id'])})"))
-        profiled = any(fact['runs'] or fact['inactive'] for fact in facts.values())
         state = ' · '.join(part for part in (trace.get('completion'), trace.get('resolution')) if part)
-        caption = ('Static call path in source order, not observed runtime'
-                   + (f'; trace {state}' if state else '') + '.'
-                   + (f" Profile-bound implementations follow the declared profile "
-                      f"({', '.join(sorted(self.active_profiles))}, from spring.profiles.active); "
-                      f"a runtime override can change it." if profiled and self.active_profiles else '')
-                   + (' Dotted arrows are calls or data access the extractor could not fully resolve.'
-                      if any(step[3] == '-->>' for step in messages) else ''))
+        caption = f'Trace: {state}.' if state else ''
         return (index.entry_point(anchor['id']), caption, '\n'.join(lines))
 
 
@@ -1144,23 +1188,24 @@ def badge(value: str, names: dict) -> str:
     return names.get(value, value or '-')
 
 
-def rule_status(rule: dict) -> str:
+def rule_status(rule: dict, brief: bool = False) -> str:
     """Enforcement in words, saying where a declared rule is declared."""
+    names = ENFORCEMENT_SHORT if brief else ENFORCEMENT
     status = rule.get('enforcement_status')
     if status != 'declared_only':
-        return badge(status, ENFORCEMENT)
+        return badge(status, names)
     basis = set(rule.get('basis') or ())
     if 'source_observed' in basis:
-        return ENFORCEMENT['declared_only']
+        return names['declared_only']
     if 'contract_declared' in basis and 'test_expected' in basis:
-        return 'declared in the API contract and expected by tests'
+        return 'declared in contract + tests' if brief else 'declared in the API contract and expected by tests'
     if 'contract_declared' in basis:
-        return 'declared in the API contract only'
+        return 'declared in contract only' if brief else 'declared in the API contract only'
     if 'test_expected' in basis:
         return 'expected by tests only'
     if 'documented' in basis:
         return 'documented only'
-    return ENFORCEMENT['declared_only']
+    return names['declared_only']
 
 
 def table(header, rows) -> list:
@@ -1171,7 +1216,7 @@ def table(header, rows) -> list:
     return lines
 
 
-def model_banner(index: Model, link_gaps: bool = True) -> list:
+def model_banner(index: Model, link_gaps: bool = True, compact: bool = False) -> list:
     model = index.raw
     coverage = model.get('coverage') or {}
     traces = list(index.traces.values())
@@ -1183,14 +1228,23 @@ def model_banner(index: Model, link_gaps: bool = True) -> list:
     lines = [
         f"> **Model status: {model.get('status', 'unknown')}.** Generated from build "
         f"`{model.get('build_id', '-')}` on {str(model.get('generated_at', '-'))[:19].replace('T', ' ')} UTC.",
-        f"> Entry points: {coverage.get('anchors_processed', '-')} modelled, "
-        f"{coverage.get('anchors_excluded', 0)} excluded, {coverage.get('anchors_pending', 0)} pending "
-        f"of {coverage.get('anchors_total', '-')}. "
+        f"> Entry points: {coverage.get('anchors_processed', '-')} of {coverage.get('anchors_total', '-')} modelled "
+        f"({coverage.get('anchors_excluded', 0)} excluded, {coverage.get('anchors_pending', 0)} pending). "
         f"Call paths fully resolved: {len(traces) - open_traces} of {len(traces)}. "
         f"Data accesses fully resolved: {len(uses) - open_uses} of {len(uses)}."
         + (f" {plural(hidden, 'context')} with insufficient evidence or rejected in review not shown."
            if hidden else ''),
     ]
+    if compact:
+        when = str(model.get('generated_at', '-'))[:16].replace('T', ' ')
+        return [f"> **Model status: {model.get('status', 'unknown')}** · build `{str(model.get('build_id', '-'))[:8]}` · {when} UTC",
+                '>',
+                f"> Entry points: {coverage.get('anchors_processed', '-')} of {coverage.get('anchors_total', '-')} modelled "
+                f"({coverage.get('anchors_excluded', 0)} excluded, {coverage.get('anchors_pending', 0)} pending) · "
+                f"call paths fully resolved: {len(traces) - open_traces} of {len(traces)} · "
+                f"data accesses fully resolved: {len(uses) - open_uses} of {len(uses)} · [Gaps](gaps.md)"
+                + (f" · {plural(hidden, 'context')} with insufficient evidence or rejected in review not shown"
+                   if hidden else '')]
     if model.get('status') != 'complete':
         reasons = []
         if pending:
@@ -1202,38 +1256,46 @@ def model_banner(index: Model, link_gaps: bool = True) -> list:
         if reasons:
             lines.append('> Partial means: ' + '; '.join(reasons) + '.'
                          + (' See [Gaps](gaps.md).' if link_gaps else ''))
-    return lines
+    # A bare '>' keeps each line its own paragraph inside the quote.
+    return [part for line in lines for part in (line, '>')][:-1]
 
 
 def summary(index: Model) -> list:
-    """A plain-language summary: what the system does and what to watch."""
-    domains = [index.domains[domain_id] for domain_id in index.domain_order]
-    lines = ['## Summary', '',
-             f'The system splits into {plural(len(domains), "bounded context")}:', '']
-    lines += [f"- **{domain['name']}**: {first_sentence(domain['summary'])}" for domain in domains]
-    watch = []
+    """The findings a reader should know before the diagrams."""
+    findings = []
+    order = index.domain_order.index
+    for (source, target), concepts in sorted(foreign_writes(index).items(),
+                                             key=lambda item: (order(item[0][0]), order(item[0][1]))):
+        verbs = sorted({verb for verbs in concepts.values() for verb in verbs})
+        findings.append(f"{index.domains[source]['name']} {' and '.join(verbs)} {', '.join(sorted(concepts))}, "
+                        f"which {index.domains[target]['name']} owns (boundary leak).")
     pending = [item for item in index.raw.get('unassigned', ()) if item.get('status') == 'pending']
     if pending:
-        watch.append(f"{plural(len(pending), 'entry point')} could not be modelled "
-                     f"({', '.join(index.name(item['subject_id']) for item in pending)}).")
-    verified = sum(rule.get('enforcement_status') == 'verified_on_trace' for rule in index.rules.values())
-    watch.append(f"{verified} of {plural(len(index.rules), 'business rule')} are verified on a traced path; "
-                 'the rest are declared or conditional.')
+        findings.append(f"{', '.join(index.name(item['subject_id']) for item in pending)} "
+                        f"{'is' if len(pending) == 1 else 'are'} not modelled; see [Gaps](gaps.md).")
+    statuses = Counter(rule.get('enforcement_status') for rule in index.rules.values())
+    verified = statuses.pop('verified_on_trace', 0)
+    breakdown = ', '.join(f"{count} {'declared' if status == 'declared_only' else ENFORCEMENT_SHORT.get(status, status)}"
+                          for status, count in
+                          sorted(statuses.items(), key=lambda item: (-item[1], str(item[0]))))
+    findings.append(f"{'None' if not verified else verified} of the {plural(len(index.rules), 'rule')} "
+                    f"{'is' if verified <= 1 else 'are'} verified on a traced path"
+                    + (f': {breakdown}.' if breakdown else '.') + ' See [Rules](rules.md).')
     roles = [activity for activity in index.activities.values() if index.access(activity)[0]]
     if roles and not any(index.access(activity)[1] for activity in roles):
-        watch.append('Every role check is declared but not proven enforced; see the Roles section of the glossary.')
-    writes = foreign_writes(index)
-    for (source, target), concepts in sorted(writes.items(), key=lambda item: (
-            index.domain_order.index(item[0][0]), index.domain_order.index(item[0][1]))):
-        watch.append(f"{index.domains[source]['name']} writes data owned by {index.domains[target]['name']} "
-                     f"({', '.join(f'{verb} {name}' for name, verbs in sorted(concepts.items()) for verb in sorted(verbs))}).")
+        conditions = sorted({condition for activity in roles for condition in index.role_conditions(activity)},
+                            key=lambda text: (-len(text), text))
+        if conditions and on_method_security(conditions):
+            rest = security_rest(conditions[0])
+            text = ' They apply only when Spring method security is enabled' + (f'; {rest[:1].lower() + rest[1:]}' if rest else '') + '.'
+        else:
+            text = f' They apply only when: {conditions[0].rstrip(".")}.' if conditions else ''
+        findings.append('Role checks are declared, not proven enforced.' + text + ' See [Roles](glossary.md#roles).')
     conflicts = sum(claim.get('kind') in ('conflict', 'contradiction') for claim in index.claims.values())
     if conflicts:
-        watch.append(f"The model records {plural(conflicts, 'disagreement')} between the code and its API "
-                     f"contract, tests or configuration; some describe the same place from two sources. "
-                     f"See [Gaps](gaps.md).")
-    lines += ['', '**Worth knowing:**', '', *[f'- {item}' for item in watch]]
-    return lines
+        findings.append(f"{plural(conflicts, 'disagreement')} between the code and its API contract, tests or "
+                        'configuration (some overlap). See [Gaps](gaps.md).')
+    return ['## Key findings', '', *[f'- {item}' for item in findings]]
 
 
 def relationships_table(index: Model) -> list:
@@ -1248,62 +1310,70 @@ def relationships_table(index: Model) -> list:
     for (source, target), items in sorted(groups.items(), key=lambda item: (order(item[0][0]), order(item[0][1]))):
         traced = sum(bool(item.get('trace_ids')) for item in items)
         rows.append((index.domains[source]['name'], index.domains[target]['name'],
-                     'customer/supplier: the first reads data the second produces (downstream of it)',
-                     f'{len(items)} links, {traced} traced'))
+                     'Customer/supplier (From reads To)',
+                     f'{len(items)} links, {traced} traced'
+                     + (' · also reverse direction' if (target, source) in groups else '')))
     for (source, target), concepts in sorted(foreign_writes(index).items(),
                                              key=lambda item: (order(item[0][0]), order(item[0][1]))):
         rows.append((index.domains[source]['name'], index.domains[target]['name'],
-                     'boundary leak: the first writes data the second owns',
-                     '; '.join(f"{'/'.join(sorted(verbs))} {name}" for name, verbs in sorted(concepts.items()))))
+                     'Boundary leak (From writes data To owns)',
+                     ', '.join(f"{'/'.join(sorted(verbs))} {name}" for name, verbs in sorted(concepts.items()))))
     for concept_id in sorted(index.concepts):
         owners = index.owners(concept_id)
         for position, first in enumerate(owners):
             for second in owners[position + 1:]:
                 rows.append((index.domains[first]['name'], index.domains[second]['name'],
-                             'shared kernel candidate: both claim ownership', index.name(concept_id)))
+                             'Shared kernel candidate (both claim ownership)', index.name(concept_id)))
     if not rows:
         return []
     return ['## Context relationships', '',
-            'What each link on the context map means in DDD terms. The patterns are read from data use and '
-            'ownership; they are candidates for a design decision, not decisions.', '',
+            'DDD pattern suggested by each link (inferred from data use; not a design decision).', '',
             *table([('From', False), ('To', False), ('Relationship', False), ('Evidence', False)], rows), '']
 
 
 def readme(index: Model, entities: Entities, coverage=()) -> str:
     domains = [index.domains[domain_id] for domain_id in index.domain_order]
-    lines = ['# Domain model', '',
-             '_Generated by `speed discover domains --export ddd`. Regenerate it instead of editing it._',
-             '', *model_banner(index), '', *summary(index), '', '## At a glance', '',
-             *table([('Bounded contexts', True), ('Use cases', True), ('Entities', True),
-                     ('Business rules', True), ('Context links', True)],
-                    [(len(domains), len(index.activities), len(index.concepts), len(index.rules),
-                      len(index.relationships))]),
-             '', '## Context map', '',
-             'Thin arrows point from a context to a context whose data it reads; dashed ones include '
-             'links with no traced call path. Thick arrows mark a context that writes data another '
-             'context owns, and two-way dotted arrows join contexts that both claim ownership of an entity.', '',
-             '```mermaid', context_map(index), '```', '', *relationships_table(index), '## Bounded contexts', '']
-    lines += table([('Context', False), ('What it does', False), ('Use cases', True), ('Entities', True),
-                    ('Rules', True), ('Support', False)],
-                   [(f"[{cell(domain['name'])}](contexts/{index.domain_pages[domain['id']]}.md)",
-                     cell(first_sentence(domain['summary'])), len(domain['activity_memberships']),
-                     len(domain.get('concepts', ())), len(domain.get('rules', ())),
-                     badge(domain.get('support'), SUPPORT)) for domain in domains])
-    lines += ['', 'An entity or rule shared by several contexts is counted in each, so the columns can add up '
-                  'to more than the totals above.']
+    lines = ['# Domain model', '', *model_banner(index, compact=True), '',
+             '[Rules](rules.md) · [Glossary](glossary.md) · [Gaps](gaps.md) · '
+             '[index.html](index.html) (all pages with diagrams; needs a CDN)', '']
+    missing = [item for item, expected, found in coverage if expected != found]
+    if missing:
+        lines += [f"> **Incomplete export:** {', '.join(missing)} not fully present; see [Gaps](gaps.md).", '']
+    lines += ['## At a glance', '',
+              *table([('Bounded contexts', True), ('Use cases', True), ('Entities', True),
+                      ('Business rules', True), ('Context links', True)],
+                     [(len(domains), len(index.activities), len(index.concepts), len(index.rules),
+                       len(index.relationships))]),
+              '', *summary(index), '', '## Context map', '',
+              '**Legend:** solid → reads data from · dashed → reads, some links have no traced path · '
+              'thick ⇒ writes data another context owns · dotted ↔ both claim ownership.', '',
+              '```mermaid', context_map(index), '```', '', *relationships_table(index), '## Bounded contexts', '']
+    supports = {domain.get('support') for domain in domains}
+    states = {domain.get('review_state') for domain in domains}
+    columns = [('Context', False), ('What it does', False), ('Use cases', True), ('Entities', True), ('Rules', True)]
+    rows = [[f"[{cell(domain['name'])}](contexts/{index.domain_pages[domain['id']]}.md)",
+             cell(first_sentence(domain['summary'])), len(domain['activity_memberships']),
+             len(domain.get('concepts', ())), len(domain.get('rules', ()))] for domain in domains]
+    if len(supports) > 1:
+        columns.append(('Support', False))
+        for row, domain in zip(rows, domains):
+            row.append(badge(domain.get('support'), SUPPORT))
+    lines += table(columns, rows)
+    lines += ['']
+    if len(supports) == 1:
+        lines.append(f"All contexts: {badge(next(iter(supports)), SUPPORT)}"
+                     + (f"; review state {next(iter(states))}" if len(states) == 1 and None not in states else '') + '.')
+    lines.append('Shared entities and rules count once per context.')
     diagram = entities.diagram(sorted(index.concepts))
     if diagram:
         lines += ['', '## Entity model', '',
-                  'Entity classes behind the concepts, with their fields, supertypes and JPA associations, read '
-                  'from the source declarations the model cites. Each title names the class and its table. A '
-                  'filled diamond (composition) marks a cascaded one-to-many: the parent owns its parts\' '
-                  'lifecycle.', '', '```mermaid', diagram, '```']
+                  "Classes shown as `Class (table)`. ◆ = cascaded one-to-many; the parent owns its parts' lifecycle.",
+                  '', '```mermaid', diagram, '```']
     aggregates = entities.aggregates()
     if aggregates:
         lines += ['', '## Aggregates', '',
-                  'Aggregate candidates read from the JPA mappings: a cascaded one-to-many puts its parts inside '
-                  "the parent's aggregate, and other associations reference another aggregate. Choosing the "
-                  'final boundaries is a design decision.', '']
+                  'Candidates from JPA cascades: cascaded children sit inside the root; other associations are '
+                  'references.', '']
         lines += table([('Aggregate root', False), ('Inside the aggregate', False),
                         ('References other aggregates', False)],
                        [(code(root), ', '.join(code(name) for name in members) or '-',
@@ -1312,40 +1382,37 @@ def readme(index: Model, entities: Entities, coverage=()) -> str:
     er = entities.er_diagram()
     if er:
         lines += ['', '## Data model', '',
-                  'Tables, columns and foreign keys as the JPA entity classes map them (`@Table`, `@Column`, '
-                  '`@JoinColumn`, `@JoinTable`). The SQL schema scripts can differ by database; the rules catalog '
-                  'notes where the model found such differences.', '', '```mermaid', er, '```']
-    lines += ['', '## Documents', '',
-              '- [index.html](index.html): all of these documents in one page with the diagrams drawn; open it '
-              'in a browser (it loads its Markdown and diagram libraries from a CDN)',
-              '- [Business rules catalog](rules.md): every rule with its condition, outcome and where it is enforced',
-              '- [Glossary](glossary.md): the ubiquitous language, with the code type and table behind each term',
-              '- [Gaps](gaps.md): what the model could not prove, entry points it did not model, and contract conflicts']
-    if coverage:
-        lines += ['', '## Completeness check', '',
-                  'Every record of the model, checked against the text of the generated documents.', '']
-        lines += table([('Item', False), ('In the model', True), ('Found in the documents', True), ('Status', False)],
-                       [(item, expected, found, 'complete' if expected == found else 'MISSING')
-                        for item, expected, found in coverage])
-    lines += ['', '## How to read the badges', '']
+                  'Tables as mapped by JPA. SQL schema scripts can differ by database; see [Rules](rules.md).',
+                  '', '```mermaid', er, '```']
+    lines += ['', '<details><summary>Badge legend</summary>', '']
     lines += table([('Badge', False), ('Meaning', False)], [
-        ('supported / partially supported',
-         'How fully traced code backs a context or use case. Partial means some of its call paths '
-         'end at framework or generated code.'),
-        ('well / partly / weakly evidenced',
-         "How fully the cited evidence backs a rule's description. It says nothing about whether the rule runs."),
-        ('declared in code, not proven on a traced path',
-         'The check is in the source, but no traced call path proves it runs.'),
-        ('declared in the API contract only / expected by tests only',
-         'The rule comes from the API contract or from tests, not from implementation code.'),
-        ('depends on preconditions',
-         'The rule applies only under a condition, such as an enabled profile or setting.'),
-        ('implementation not fully traced',
-         'The model marks the use case unresolved: its path to storage is not proven end to end.'),
-        ('role (declared)',
-         'The code declares the role, for example with @PreAuthorize, but no traced path proves it is enforced.'),
+        ('supported / partially supported', 'How fully traced code backs a context or use case; partial = some call '
+                                            'paths end at framework or generated code.'),
+        ('well / partly / weakly evidenced', 'Strength of the cited evidence for a rule, not proof it runs.'),
+        ('declared in code', 'The check is in source; no traced call path proves it runs.'),
+        ('declared in contract + tests / contract only / expected by tests only',
+         'The rule comes from the API contract or tests, not implementation code.'),
+        ('conditional', 'Applies only under a precondition, such as a profile or setting.'),
+        ('unresolved', 'The model could not tell where or whether the rule is enforced.'),
+        ('implementation not fully traced', 'The path to storage is not proven end to end.'),
+        ('role (declared)', 'Declared, for example with @PreAuthorize; no traced path proves it is enforced.'),
     ])
+    lines += ['', '</details>', '', '_Generated by `speed discover domains --export ddd`; do not edit._']
     return '\n'.join(lines) + '\n'
+
+
+def completeness(coverage) -> list:
+    """The export's self-check, collapsed at the end of the gaps page."""
+    if not coverage:
+        return []
+    complete = sum(expected == found for _, expected, found in coverage)
+    header = [('Item', False), ('In the model', True), ('Found in the documents', True)]
+    rows = [(item, expected, found) for item, expected, found in coverage]
+    if complete < len(coverage):
+        header.append(('Status', False))
+        rows = [row + ('complete' if row[1] == row[2] else 'MISSING',) for row in rows]
+    return ['', f'<details><summary>Export completeness: {complete} of {len(coverage)} record types fully present'
+                '</summary>', '', *table(header, rows), '', '</details>']
 
 
 def context_map(index: Model) -> str:
@@ -1364,12 +1431,12 @@ def context_map(index: Model) -> str:
     for (source, target, kind), items in sorted(groups.items(), key=lambda item: (
             order(item[0][0]), order(item[0][1]), item[0][2])):
         dashed = any(not item.get('trace_ids') for item in items)
-        text = label(f'{kind.replace("_", " ")} ({len(items)})')
+        text = label(f'{"reads" if kind == "uses_information_from" else kind.replace("_", " ")} ({len(items)})')
         arrow = f'-. "{text}" .->' if dashed else f'-- "{text}" -->'
         lines.append(f'  {node("D", source)} {arrow} {node("D", target)}')
     for (source, target), concepts in sorted(foreign_writes(index).items(),
                                              key=lambda item: (order(item[0][0]), order(item[0][1]))):
-        text = '; '.join(f"{'/'.join(sorted(verbs))} {name}" for name, verbs in sorted(concepts.items()))
+        text = ', '.join(f"{'/'.join(sorted(verbs))} {name}" for name, verbs in sorted(concepts.items()))
         lines.append(f'  {node("D", source)} == "{label(text)}" ==> {node("D", target)}')
     shared = defaultdict(list)
     for concept_id in sorted(index.concepts):
@@ -1461,25 +1528,47 @@ def component_diagram(sequences: 'Sequences', trace_ids) -> tuple:
 
 
 def rule_line(rule: dict) -> str:
-    return (f"[{rule['name']}](../rules.md#rule-{short(rule['id'])}) · "
-            f"{rule.get('category', '-').replace('_', ' ')} · {rule_status(rule)}")
+    return f"[{rule['name']}](../rules.md#rule-{short(rule['id'])}) · {rule_status(rule, brief=True)}"
+
+
+NOT_DRAWN = {
+    'its call path has no step outside the entry point': 'Page only, no server call traced',
+    'no call path starts at its entry point': 'No call path starts here',
+}
+HTTP_ENTRY = re.compile(r'^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) ')
+METHOD_SECURITY = re.compile(r'method security|security\.enable', re.I)
+
+
+def security_rest(condition: str) -> str:
+    """The part of a method-security condition after "Spring method security is enabled"."""
+    return re.sub(r'^\s*(Spring\s+)?method security is enabled[.;,]?\s*', '', condition or '', flags=re.I).rstrip('.')
+
+
+def on_method_security(conditions) -> bool:
+    """True when every given precondition is about Spring method security."""
+    conditions = list(conditions)
+    return bool(conditions) and all(METHOD_SECURITY.search(condition) for condition in conditions)
 
 
 def context_page(index: Model, entities: Entities, sequences: Sequences, domain_id: str) -> str:
     domain = index.domains[domain_id]
+    support = domain.get('support')
     activities = index.sorted_records(index.activities,
                                       [item['activity_id'] for item in domain['activity_memberships']])
     lines = [f"# {domain['name']}", '',
-             f"_Bounded context · {badge(domain.get('support'), SUPPORT)} · review state "
-             f"{domain.get('review_state', '-')}_", '',
+             f"_Bounded context · {badge(support, SUPPORT)}_", '',
              '[Back to the domain model](../README.md)', '',
              domain.get('summary') or '', '',
              '## Why this boundary', '', domain.get('boundary_rationale') or '-', '']
     if domain.get('alternatives'):
         lines += ['### Boundaries considered and not chosen', '']
         for item in domain['alternatives']:
-            subjects = ', '.join(index.name(subject) for subject in item.get('subject_ids', ()))
-            lines.append(f"- **{subjects or 'Alternative'}**: {item.get('explanation', '')}")
+            subjects = [index.name(subject) for subject in item.get('subject_ids', ())]
+            if len(subjects) > 3:
+                lines += [f"- **{subjects[0]} and {len(subjects) - 1} other use cases**: {item.get('explanation', '')}",
+                          f"  <details><summary>All {len(subjects)} use cases</summary>{cell(', '.join(subjects))}</details>"]
+            else:
+                lines.append(f"- **{', '.join(subjects) or 'Alternative'}**: {item.get('explanation', '')}")
         lines.append('')
     if domain.get('exclusions'):
         lines += ['### Deliberately left out', '']
@@ -1488,34 +1577,53 @@ def context_page(index: Model, entities: Entities, sequences: Sequences, domain_
             lines.append(f"- **{subjects}**: {item.get('explanation', '')}")
         lines.append('')
     if domain.get('unresolved_questions'):
-        lines += ['> **Open questions**', '>']
-        lines += [f'> - {question}' for question in domain['unresolved_questions']]
-        lines.append('')
+        lines += [f"See [Gaps](../gaps.md#open-questions) for {plural(len(domain['unresolved_questions']), 'open question')}.", '']
 
     lines += ['## Use cases', '']
     for diagram in use_case_diagrams(index, domain):
         lines += ['```mermaid', diagram, '```', '']
-    lines += ['Dashed use cases are ones the model marks unresolved. Solid ones are marked implemented, '
-              'but their call path may still end at framework or generated code; each sequence caption '
-              'says how far it was traced. Dashed role arrows mean the role is declared, not proven '
-              'enforced.', '']
-    rows = []
+    qualifiers = {}
     for activity in activities:
         roles, enforced = index.access(activity)
-        qualifier = '' if enforced else (' (declared, conditional)' if index.role_conditions(activity)
-                                         else ' (declared)')
-        role_text = ', '.join(roles) + qualifier if roles else NO_ROLE
+        if roles:
+            qualifiers[activity['id']] = '' if enforced else (' (declared, conditional)' if index.role_conditions(activity)
+                                                              else ' (declared)')
+    common = set(qualifiers.values())
+    uniform = len(common) == 1 and common != {''}
+    security = on_method_security(condition for activity in activities for condition in index.role_conditions(activity))
+    role_note = ('declared, conditional on method security, not proven enforced' if uniform and common == {' (declared, conditional)'} and security
+                 else 'declared and conditional, not proven enforced' if uniform and common == {' (declared, conditional)'}
+                 else 'declared, not proven enforced')
+    lines += [f'Dashed box: implementation not fully traced. Dashed arrow'
+              + (' and Roles column' if uniform else '') + f': role {role_note}.', '']
+    rows, details = [], []
+    for activity in activities:
+        roles, _ = index.access(activity)
+        role_text = (', '.join(roles) + ('' if uniform else qualifiers.get(activity['id'], ''))) if roles else NO_ROLE
         entry = '<br>'.join(cell(index.entry_point(anchor_id)) for anchor_id in sorted(
             activity['anchor_ids'], key=index.entry_point))
-        rows.append((f"**{cell(activity['name'])}**<br>{cell(activity.get('description'))}", entry,
-                     f"{cell(role_text)} via {index.channel(activity)}",
-                     f"{badge(activity.get('implementation_status'), IMPLEMENTATION)}, "
-                     f"{badge(activity.get('support'), SUPPORT)}", index.cite(activity.get('evidence_ids'))))
-    lines += table([('Use case', False), ('Entry points', False), ('Roles', False), ('Status', False),
+        status = badge(activity.get('implementation_status'), IMPLEMENTATION)
+        if activity.get('support') != support:
+            status += f", {badge(activity.get('support'), SUPPORT)}"
+        description = activity.get('description') or ''
+        brief = first_sentence(description, 160)
+        rest = description.strip()
+        while brief and HTTP_ENTRY.match(brief) and len(brief) < 70 and rest[len(brief):].strip():
+            rest = rest[len(brief):].strip()
+            brief = first_sentence(rest, 160)
+        rows.append((f"**{cell(activity['name'])}**" + (f"<br>{cell(brief)}" if brief else ''), entry,
+                     cell(role_text), status, index.cite(activity.get('evidence_ids'))))
+        if description and description.strip() != brief:
+            details.append(f"- **{activity['name']}**: {description}")
+    lines += table([('Use case', False), ('Entry points', False), ('Roles', False), ('Implementation', False),
                     ('Evidence', False)], rows)
+    if activities and all(activity.get('support') == support for activity in activities):
+        lines += ['', f'All use cases here: {badge(support, SUPPORT)}.']
+    if details:
+        lines += ['', '<details><summary>Use case details</summary>', '', *details, '', '</details>']
     callers = sorted({activity.get('actor') for activity in activities if activity.get('actor')})
     if callers:
-        lines += ['', '<details><summary>Callers as the model describes them</summary>', '']
+        lines += ['', '<details><summary>Callers</summary>', '']
         lines += [f'- {caller}' for caller in callers]
         lines += ['', '</details>']
 
@@ -1531,21 +1639,23 @@ def context_page(index: Model, entities: Entities, sequences: Sequences, domain_
             ownership = index.ownerships.get(ownership_id)
             if ownership:
                 owned[ownership['concept_id']].append(ownership)
+        unresolved = index.unresolved_usage()
         rows = []
         for concept in index.sorted_records(index.concepts, concept_ids + touched):
             types = ', '.join(code(name.split('.')[-1]) for name in concept.get('qualified_type_names', ())) \
-                or 'no code type (table)'
-            ownership = '; '.join(f"{item['kind']} ({badge(item.get('support'), SUPPORT)})"
-                                  for item in owned.get(concept['id'], ())) or 'used, not owned'
-            verbs = usage.get(concept['id'], {}).get(domain_id)
-            if verbs and ownership == 'used, not owned':
-                ownership += f" ({', '.join(sorted(verbs))})"
+                or 'none (table only)'
+            ownership = '; '.join(item['kind'] + (f" ({badge(item.get('support'), SUPPORT)})"
+                                                  if item.get('support') != support else '')
+                                  for item in owned.get(concept['id'], ()))
+            if not ownership:
+                verbs = usage.get(concept['id'], {}).get(domain_id) or set()
+                ownership = 'reads only' if verbs == {'reads'} else \
+                    f'used, not owned ({verbs_text(verbs)})' if verbs else 'used, not owned'
             others = sorted((set(usage.get(concept['id'], {})) | set(index.concept_domains[concept['id']]))
                             - {domain_id}, key=index.domain_order.index)
-            unresolved = index.unresolved_usage()
             used_by = ', '.join(
                 index.domains[other]['name']
-                + (f" ({', '.join(sorted(usage[concept['id']][other]))}"
+                + (f" ({verbs_text(usage[concept['id']][other])}"
                    + ('; not fully resolved' if (concept['id'], other) in unresolved else '') + ')'
                    if usage.get(concept['id'], {}).get(other) else '')
                 for other in others) or '-'
@@ -1554,12 +1664,15 @@ def context_page(index: Model, entities: Entities, sequences: Sequences, domain_
                          cell(used_by)))
         lines += table([('Entity', False), ('Code type', False), ('Table', False),
                         ('Ownership here', False), ('Also used by', False)], rows)
-        diagram = entities.diagram(concept_ids)
+        claims = [item for items in owned.values() for item in items]
+        if claims and all(item.get('support') == support for item in claims):
+            lines += ['', f'Ownership claims here: {badge(support, SUPPORT)}.']
+        diagram = entities.diagram(concept_ids, flatten_bases=True)
         if diagram:
             lines += ['', '```mermaid', diagram, '```']
         constraints = entities.constraints(concept_ids)
         if constraints:
-            lines += ['', 'Field constraints declared in the entity classes:', '']
+            lines += ['', 'Field constraints:', '']
             lines += table([('Class', False), ('Field', False), ('Constraints', False)],
                            [(name, field, ', '.join(code('@' + item) for item in checks))
                             for name, field, checks in constraints])
@@ -1568,8 +1681,10 @@ def context_page(index: Model, entities: Entities, sequences: Sequences, domain_
         if reasons:
             lines += ['', '<details><summary>Why this context owns its data</summary>', '']
             for item in sorted(reasons, key=lambda item: index.name(item['concept_id'])):
-                lines.append(f"- **{index.name(item['concept_id'])}** ({item['kind']}): {item.get('rationale', '')}")
-                lines += [f'  - Open question: {question}' for question in item.get('unresolved_questions', ())]
+                questions = len(item.get('unresolved_questions', ()))
+                lines.append(f"- **{index.name(item['concept_id'])}** ({item['kind']}): {item.get('rationale', '')}"
+                             + (f" ({plural(questions, 'open question')} in [Gaps](../gaps.md#open-questions))"
+                                if questions else ''))
             lines += ['', '</details>']
     else:
         lines.append('No entities are attributed to this context.')
@@ -1578,9 +1693,17 @@ def context_page(index: Model, entities: Entities, sequences: Sequences, domain_
     if data:
         used = [access for access in ACCESS_ORDER if any(row[access] for row in data.values())]
         lines += ['', '## Data it reads and writes', '',
-                  'Counts of data accesses by its use cases. Resolved accesses are traced to their statement. '
-                  'For unresolved ones the model could not establish the statement, its completion or which '
-                  'implementation performs it; ambiguous ones may not happen at all.', '']
+                  "Data accesses by this context's use cases. Resolved = traced to the statement; "
+                  'ambiguous = may not happen.', '']
+
+        def total(row):
+            return row['resolved'] + row['unresolved'] + row['ambiguous']
+        lines += table([('Table', False), *[(access.capitalize(), True) for access in used], ('Resolved', True)],
+                       [(cell(name), *[data[name][access] or '-' for access in used],
+                         f"{data[name]['resolved']} of {total(data[name])}"
+                         + (f" ({data[name]['ambiguous']} ambiguous)" if data[name]['ambiguous'] else ''))
+                        for name in sorted(data)])
+        lines += ['', '<details><summary>Accesses by resolution</summary>', '']
         lines += table([('Table', False), *[(access.capitalize(), True) for access in used],
                         ('Resolved', True), ('Unresolved', True), ('Ambiguous', True)],
                        [(cell(name), *[(f"{data[name][access]} ({data[name][access + ':ambiguous']} ambiguous)"
@@ -1588,39 +1711,68 @@ def context_page(index: Model, entities: Entities, sequences: Sequences, domain_
                                         for access in used],
                          data[name]['resolved'] or '-', data[name]['unresolved'] or '-',
                          data[name]['ambiguous'] or '-') for name in sorted(data)])
+        lines += ['', '</details>']
 
     sequence_sections, not_drawn, drawn_traces = [], [], []
+    captions = Counter(caption for activity in activities for _, caption, _ in sequences.diagrams(activity)[0])
+    usual = captions.most_common(1)[0][0] if captions else ''
     for activity in activities:
         diagrams, skipped = sequences.diagrams(activity)
+        has_page = any(not HTTP_ENTRY.match(title) for title, _, _ in diagrams)
         for title, caption, diagram in diagrams:
-            sequence_sections += [f"### {activity['name']}: {title}", '', f'_{caption}_', '',
-                                  '```mermaid', diagram, '```', '']
+            heading = f"{activity['name']}: {title}"
+            body = ['```mermaid', diagram, '```', '']
+            steps = sum('->>' in line and 'Client->>' not in line for line in diagram.splitlines())
+            if (has_page and HTTP_ENTRY.match(title)) or steps <= 2:
+                reason = 'API-only path' if has_page and HTTP_ENTRY.match(title) else 'Short path'
+                sequence_sections += [f'<details><summary>{reason}: {cell(heading)}</summary>', '',
+                                      *([f'_{caption}_', ''] if caption != usual else []), *body, '</details>', '']
+            else:
+                sequence_sections += [f"### {heading}", '', *([f'_{caption}_', ''] if caption != usual else []), *body]
         drawn_traces += [trace_id for trace_id in activity.get('trace_ids', ())
                          if sequences.links.get(trace_id)]
         not_drawn += [(activity['name'], entry, reason) for entry, reason in skipped]
-    diagram, layers = component_diagram(sequences, drawn_traces)
+    diagram, _ = component_diagram(sequences, drawn_traces)
     if diagram:
         lines += ['', '## Architecture', '',
-                  'Classes and tables the traced call paths of this context pass through, grouped into '
-                  'layers by kind and by class naming convention. An arrow means at least one traced call.', '',
-                  '```mermaid', diagram, '```', '']
-        lines += table([('Layer', False), ('Members', False)],
-                       [(layer, ', '.join(code(name) for name in names)) for layer, names in layers.items()])
+                  "Classes and tables on this context's traced call paths. Arrow = at least one traced call.", '',
+                  '```mermaid', diagram, '```']
 
     links = context_links(index, domain_id)
     if links:
         lines += ['', '## Links to other contexts', '', *links]
 
+    profiles = ', '.join(sorted(sequences.active_profiles))
     lines += ['', '## Call sequences', '',
-              'Rebuilt from the traced call graph in source order. They show the static path a request '
-              'can take, not a recorded run. Conditional calls are drawn as `opt` blocks; other calls '
-              'are listed in source order, so branches without a recorded condition are not told apart.', '']
+              'Static call paths rebuilt from source, not recorded runs. Calls appear in source order; only '
+              'branches with a known condition are drawn (opt/alt). Dotted arrow = call or data access not fully '
+              'resolved.'
+              + (f' Repository implementations follow the declared profile ({profiles}, from spring.profiles.active);'
+                 ' a runtime override can change this.' if profiles else '')
+              + ' "bounded" = the trace stopped at a size or depth limit.'
+              + (f' Every trace below is {usual[len("Trace: "):].rstrip(".")} unless its caption says otherwise.'
+                 if usual else ''), '']
+    names = {name for trace_id in drawn_traces for link in sequences.links.get(trace_id, ()) for _, name in link}
+    choices = {name: sequences.choices[name] for name in sorted(names) if name in sequences.choices}
+    if choices:
+        lines += ['<details><summary>Implementations on the declared profile</summary>', '']
+        lines += table([('Interface', False), ('Runs', False), ('Other implementations', False)],
+                       [(code(name), '; '.join(item.replace(', generated at runtime', ' (generated)')
+                                               for item in sorted(choice['runs'])) or '-',
+                         ', '.join(sorted(choice['inactive'] - choice['runs'])) or '-')
+                        for name, choice in choices.items()])
+        lines += ['', '</details>', '']
     lines += sequence_sections
     if not sequence_sections:
         lines.append('No traced call path in this context has more than one step.')
     if not_drawn:
-        lines += ['', 'Call paths not drawn:', '']
-        lines += [f'- {name}, {entry}: {reason}' for name, entry, reason in not_drawn]
+        grouped = defaultdict(list)
+        for name, entry, reason in not_drawn:
+            grouped[NOT_DRAWN.get(reason, reason[:1].upper() + reason[1:])].append(f'{name} ({entry})')
+        lines += ['', f'<details><summary>Call paths not drawn ({len(not_drawn)})</summary>', '']
+        for reason, items in grouped.items():
+            lines.append(f"- **{reason}:** {'; '.join(items)}")
+        lines += ['', '</details>']
 
     rules = index.sorted_records(index.rules, domain.get('rules', ()))
     lines += ['', '## Business rules', '']
@@ -1629,12 +1781,29 @@ def context_page(index: Model, entities: Entities, sequences: Sequences, domain_
         for rule in rules:
             by_category[rule.get('category') or 'unclassified'].append(rule)
         for category in sorted(by_category, key=category_key):
-            lines += [f"**{category.replace('_', ' ').capitalize()}**", '']
-            lines += [f'- {rule_line(rule)}' for rule in by_category[category]]
-            lines.append('')
+            group = by_category[category]
+            title = category_label(category)
+            if category == 'authorization' and all(rule.get('enforcement_status') == 'conditional' for rule in group):
+                security = on_method_security(condition for rule in group for condition in rule.get('preconditions') or ())
+                lines += [f"**{title} ({len(group)}):** all conditional"
+                          + (' on method security.' if security else '.'),
+                          '', '<details><summary>The rules</summary>', '']
+                lines += [f'- {rule_line(rule)}' for rule in group]
+                lines += ['', '</details>', '']
+            else:
+                lines += [f"**{title}**", '']
+                lines += [f'- {rule_line(rule)}' for rule in group]
+                lines.append('')
     else:
         lines.append('No rules are attributed to this context.')
     return '\n'.join(lines).rstrip() + '\n'
+
+
+CATEGORY_LABELS = {'cross_record_constraint': 'Cross-record constraint', 'unclassified': 'Other'}
+
+
+def category_label(category: str) -> str:
+    return CATEGORY_LABELS.get(category, category.replace('_', ' ').capitalize())
 
 
 def category_key(category: str):
@@ -1702,8 +1871,26 @@ def context_links(index: Model, domain_id: str) -> list:
                              f"[{index.domains[other]['name']}]({index.domain_pages[other]}.md)", traced))
     if not rows:
         return []
-    return table([('Use case here', False), ('Link', False), ('Use case there', False), ('Data', False),
-                  ('Context', False), ('Traced', False)], sorted(set(rows)))
+    rows = sorted(set(rows))
+    total = len(index.domains[domain_id]['activity_memberships'])
+    groups = defaultdict(lambda: (set(), set(), set()))
+    for here, direction, there, data, context, traced in rows:
+        group = groups[(direction, data, context)]
+        group[0].add(here)
+        group[1].add(there)
+        group[2].add(traced)
+
+    def names(found):
+        found = sorted(found - {'-'})
+        return '-' if not found else f'All {total} use cases' if len(found) == total and total > 2 else ', '.join(found)
+    grouped = [(names(heres), direction, names(theres), data, context,
+                'yes' if traced == {'yes'} else 'no' if traced == {'no'} else 'partly')
+               for (direction, data, context), (heres, theres, traced) in sorted(groups.items())]
+    header = [('Use cases here', False), ('Link', False), ('Use cases there', False), ('Data', False),
+              ('Context', False), ('Traced', False)]
+    return [*table(header, grouped), '', f'<details><summary>All links ({len(rows)})</summary>', '',
+            *table([('Use case here', False), ('Link', False), ('Use case there', False), ('Data', False),
+                    ('Context', False), ('Traced', False)], rows), '', '</details>']
 
 
 def shared_data(index: Model, relationship: dict) -> list:
@@ -1725,97 +1912,137 @@ def shared_data(index: Model, relationship: dict) -> list:
 def rules_page(index: Model) -> str:
     rules = sorted(index.rules.values(), key=lambda rule: (category_key(rule.get('category') or ''),
                                                           rule['name'], rule['id']))
-    lines = ['# Business rules catalog', '', '_Generated by `speed discover domains --export ddd`._', '',
-             '[Back to the domain model](README.md)', '']
+    lines = ['# Business rules catalog', '', '[Back to the domain model](README.md)', '']
     if not rules:
         return '\n'.join(lines + ['No rules were extracted.']) + '\n'
-    statuses = sorted({rule_status(rule) for rule in rules})
-    counts = Counter((rule.get('category') or 'unclassified', rule_status(rule)) for rule in rules)
+    statuses = sorted({rule_status(rule, brief=True) for rule in rules})
+    counts = Counter((rule.get('category') or 'unclassified', rule_status(rule, brief=True)) for rule in rules)
     categories = sorted({rule.get('category') or 'unclassified' for rule in rules}, key=category_key)
-    lines += [f'{plural(len(rules), "rule")} extracted from the source. Each rule lists the condition '
-              'it checks, the outcome, where the code enforces it and the evidence behind it.', '']
-    lines += table([('Category', False), *[(status, True) for status in statuses], ('Total', True)],
-                   [(category.replace('_', ' '), *[counts[(category, status)] or '-' for status in statuses],
+    verified = sum(rule.get('enforcement_status') == 'verified_on_trace' for rule in rules)
+    lines += [f'{plural(len(rules), "rule")} from code, API contract and tests. '
+              + ('None is verified on a traced path; "declared" means written down, not proven to run.'
+                 if not verified else f'{verified} verified on a traced path.'), '']
+
+    title = category_label
+    lines += table([('Category', False), *[(status[:1].upper() + status[1:], True) for status in statuses], ('Total', True)],
+                   [(f'[{title(category)}](#{slug(title(category))})',
+                     *[counts[(category, status)] or '-' for status in statuses],
                      sum(counts[(category, status)] for status in statuses)) for category in categories])
-    if not any(rule.get('enforcement_status') == 'verified_on_trace' for rule in rules):
-        lines += ['', '> No rule is verified on a traced path. "Declared" means the check is written '
-                  'down, in code, the API contract or tests, but no traced call path proves it runs.']
     lines.append('')
-    current = None
+    same_check = defaultdict(list)
+    for rule in rules:
+        if rule.get('category') != 'authorization' and rule.get('predicate_or_formula'):
+            same_check[rule['predicate_or_formula'].strip()].append(rule)
+    current, shared_note = None, False
     for rule in rules:
         category = rule.get('category') or 'unclassified'
         if category != current:
             current = category
-            lines += [f"## {current.replace('_', ' ').capitalize()}", '']
+            lines += [f"## {title(current)}", '']
+            group = [item for item in rules if (item.get('category') or 'unclassified') == current]
+            conditions = [condition for item in group for condition in item.get('preconditions') or ()]
+            shared_note = (current == 'authorization' and on_method_security(conditions)
+                           and all(item.get('preconditions') for item in group))
+            if shared_note:
+                rest = security_rest(max(conditions, key=len))
+                lines += [f"All {len(group)} role checks are conditional on Spring method security"
+                          + (f"; {rest[:1].lower() + rest[1:]}" if rest else '') + '.', '']
         domains = ', '.join(f"[{index.domains[domain_id]['name']}](contexts/{index.domain_pages[domain_id]}.md)"
                             for domain_id in index.rule_domains.get(rule['id'], ())) or '-'
         lines += [f'<a id="rule-{short(rule["id"])}"></a>', f"### {rule['name']}", '',
-                  f"{rule_status(rule)} · {badge(rule.get('support'), EVIDENCE)}", '']
-        if rule.get('description'):
-            lines += [rule['description'], '']
-        lines.append(f'- **Context:** {domains}')
-        if rule.get('preconditions'):
+                  f"{rule_status(rule, brief=True)} · {badge(rule.get('support'), EVIDENCE)}", '',
+                  f'- **Context:** {domains}']
+        if rule.get('preconditions') and not shared_note:
             lines.append(f"- **Applies when:** {'; '.join(rule['preconditions'])}")
         kind = 'Formula' if rule.get('evaluation_kind') == 'formula' else 'Checks'
-        lines.append(f"- **{kind}:** {code(rule.get('predicate_or_formula'))}")
+        if rule.get('predicate_or_formula'):
+            lines.append(f"- **{kind}:** {code(rule.get('predicate_or_formula'))}")
+        elif rule.get('description'):
+            lines.append(f"- **Rule:** {first_sentence(rule['description'])}")
         lines.append(f"- **Outcome:** {rule.get('outcome') or '-'}")
+        others = [item for item in same_check.get((rule.get('predicate_or_formula') or '').strip(), ())
+                  if item['id'] != rule['id']]
+        if others:
+            lines.append('- **Same check as:** ' + ', '.join(f"[{item['name']}](#rule-{short(item['id'])})"
+                                                             for item in others))
+        questions = rule.get('unresolved_questions', ())
+        lines += ['', f"<details><summary>Where and why"
+                      + (f" · {plural(len(questions), 'open question')}" if questions else '') + '</summary>', '']
+        if rule.get('description'):
+            lines += [rule['description'], '']
+        if rule.get('preconditions') and shared_note:
+            lines.append(f"- **Applies when:** {'; '.join(rule['preconditions'])}")
         activities = index.sorted_records(index.activities, rule.get('activity_ids', ()))
         if activities:
             lines.append('- **Use cases:** ' + ', '.join(activity['name'] for activity in activities))
-        sites = []
+        sites, cited = [], set()
         for site in rule.get('enforcement_sites', ()):
-            citation = index.cite(site.get('evidence_ids'), 1)
-            sites.append(f"{code(index.name(site.get('source_id', '')))} at {citation}"
+            found = index.citations(site.get('evidence_ids'), 1)
+            cited.update(found)
+            sites.append(f"{code(index.name(site.get('source_id', '')))} at {', '.join(code(item) for item in found) or '-'}"
                          + (f" when {code(site['condition'])}" if site.get('condition') else ''))
-        lines.append('- **Enforced at:** ' + ('; '.join(sites) if sites else 'no enforcement site in the traced code'))
+        lines.append('- **Enforced at:** ' + ('; '.join(sites) if sites else 'no site in traced code'))
         scope = rule.get('scope') or {}
-        scoped = [f'{key} {value}' for key, value in sorted(scope.items()) if value and key != 'entrypoint_ids']
+        predicate = rule.get('predicate_or_formula') or ''
+        scoped = [f'{key} {value}' for key, value in sorted(scope.items())
+                  if value and key != 'entrypoint_ids' and str(value) not in predicate]
         if scoped:
             lines.append('- **Scope:** ' + ', '.join(scoped))
         lines.append('- **Basis:** ' + (', '.join(item.replace('_', ' ') for item in rule.get('basis', ())) or '-'))
         basis = set(rule.get('basis') or ())
         first = 'configuration' if 'contract_declared' in basis and 'source_observed' not in basis else None
-        lines.append(f"- **Evidence:** {index.cite(rule.get('evidence_ids'), 3, every_kind=True, first_kind=first)}")
+        evidence = [item for item in index.citations(rule.get('evidence_ids'), 3, every_kind=True, first_kind=first)
+                    if item not in cited]
+        if evidence:
+            lines.append(f"- **Evidence:** {', '.join(code(item) for item in evidence)}")
         if rule.get('conflicts'):
             lines.append('- **Conflicts with:** ' + ', '.join(index.name(item) for item in rule['conflicts']))
-        for question in rule.get('unresolved_questions', ()):
+        for question in questions:
             lines.append(f'- **Open question:** {question}')
-        lines.append('')
+        lines += ['', '</details>', '']
     return '\n'.join(lines).rstrip() + '\n'
 
 
+def verbs_text(verbs) -> str:
+    verbs = set(verbs)
+    return 'CRUD' if {'creates', 'reads', 'updates', 'deletes'} <= verbs and len(verbs) == 4 \
+        else ', '.join(sorted(verbs))
+
+
 def glossary_page(index: Model, entities: Entities) -> str:
-    lines = ['# Glossary', '', '_Generated by `speed discover domains --export ddd`._', '',
-             '[Back to the domain model](README.md)', '',
-             'The ubiquitous language of the system: the terms its code and its contexts use, '
-             'and the code behind each.', '', '## Entities', '']
+    names = [name for concept in index.concepts.values() for name in concept.get('qualified_type_names', ())]
+    packages = {name.rsplit('.', 1)[0] for name in names if '.' in name}
+    package = next(iter(packages)) if len(packages) == 1 else None
+    lines = ['# Glossary', '', '[Back to the domain model](README.md)', '',
+             'Business terms with the class and table behind each.'
+             + (f' All classes are in `{package}`.' if package else ''), '', '## Entities', '']
     usage = index.concept_usage()
     for concept in index.sorted_records(index.concepts, index.concepts):
-        types = ', '.join(code(name) for name in concept.get('qualified_type_names', ())) \
-            or 'no code type; it exists as a table'
-        tables = ', '.join(code(name) for name in entities.concept_tables(concept['id'])) or '-'
+        types = ', '.join(code(name.rsplit('.', 1)[-1] if package and name.startswith(package + '.') else name)
+                          for name in concept.get('qualified_type_names', ())) or 'none (table only)'
+        concept_tables = entities.concept_tables(concept['id'])
+        tables = ', '.join(code(name) for name in concept_tables) or '-'
         owners = [f"{index.domains[ownership['domain_id']]['name']} ({ownership['kind']})"
                   for ownership in sorted(index.ownerships.values(), key=lambda item: item['id'])
                   if ownership['concept_id'] == concept['id'] and ownership.get('domain_id') in index.domains]
         contexts = sorted(set(index.concept_domains[concept['id']]) | set(usage.get(concept['id'], {})),
                           key=index.domain_order.index)
         used = ', '.join(index.domains[domain_id]['name']
-                         + (f" ({', '.join(sorted(usage[concept['id']][domain_id]))})"
+                         + (f" ({verbs_text(usage[concept['id']][domain_id])})"
                             if usage.get(concept['id'], {}).get(domain_id) else '')
                          for domain_id in contexts)
         definition = next((claim['text'] for claim in index.claims_about.get(concept['id'], ())), None)
+        # "Pet is persisted in the pets table" only repeats the Table line below.
+        if definition and concept.get('qualified_type_names') and any(table in definition for table in concept_tables):
+            definition = None
         lines += [f'<a id="term-{short(concept["id"])}"></a>', f"### {concept['name']}", '']
         if definition:
             lines += [definition, '']
         lines += [f'- **Code type:** {types}', f'- **Table:** {tables}',
-                  f"- **Owned by:** {', '.join(owners) or 'no owning context'}",
-                  f"- **Used in:** {used or '-'}" + (' (shared across contexts)' if len(contexts) > 1 else ''), '']
-    lines += ['## Bounded contexts', '']
-    for domain_id in index.domain_order:
-        domain = index.domains[domain_id]
-        lines.append(f"- **[{domain['name']}](contexts/{index.domain_pages[domain_id]}.md)**: "
-                     f"{first_sentence(domain['summary'])}")
-    lines += ['', '## Roles', '']
+                  f"- **Owned by:** {', '.join(owners) or 'no owning context'}"
+                  + (' · shared-kernel candidate ([context map](README.md#context-map))' if len(owners) > 1 else ''),
+                  f"- **Used in:** {used or '-'}", '']
+    lines += ['## Roles', '']
     roles = defaultdict(lambda: [0, False, set()])
     for activity in index.activities.values():
         names, enforced = index.access(activity)
@@ -1823,23 +2050,45 @@ def glossary_page(index: Model, entities: Entities) -> str:
             roles[role][0] += 1
             roles[role][1] |= enforced
             roles[role][2].update(index.role_conditions(activity))
-    for role in sorted(roles):
-        count, enforced, conditions = roles[role]
-        condition = max(sorted(conditions), key=len) if conditions else None
-        lines.append(f"- **{role}**: declared on {plural(count, 'use case')}"
-                     + ('' if enforced else '; no traced path proves it is enforced')
-                     + (f'. Enforced only when: {condition}' if condition and not enforced else ''))
+    conditions = sorted({condition for _, _, found in roles.values() for condition in found},
+                        key=lambda text: (-len(text), text))
+    if roles and not any(enforced for _, enforced, _ in roles.values()):
+        rest = security_rest(conditions[0]) if conditions else ''
+        lines += [('Roles are declared and apply only when Spring method security is enabled'
+                   + (f'; {rest[:1].lower() + rest[1:]}' if rest else '') if on_method_security(conditions)
+                   else 'Roles are declared' + (f'; they apply only when: {conditions[0].rstrip(".")}' if conditions else ''))
+                  + '. No traced path proves enforcement.', '']
+    rows = [(role + (' (enforced)' if enforced else ''), count) for role, (count, enforced, _) in sorted(roles.items())]
     unspecified = sum(not index.access(activity)[0] for activity in index.activities.values())
     if unspecified:
-        lines.append(f"- {plural(unspecified, 'use case')} declare no role")
+        rows.append((NO_ROLE, unspecified))
+    if rows:
+        lines += table([('Role', False), ('Use cases', True)], rows)
+        lines += ['', 'A use case can declare several roles.']
+    if conditions:
+        lines += ['', '<details><summary>Conditions as declared</summary>', '']
+        lines += [f"- **{role}**: {max(sorted(found), key=len)}" for role, (_, _, found) in sorted(roles.items()) if found]
+        lines += ['', '</details>']
     return '\n'.join(lines).rstrip() + '\n'
+
+
+RETURNED_STATUS = re.compile(r'returns?\s+(?:HTTP\s+)?(?:status\s+)?(\d{3})')
+ANALYSIS_LIMITS = (
+    (re.compile(r'(active|declared|selected|chosen|Spring) profiles?\b|profile-selected|by profile', re.I),
+     'Which repository implementation runs depends on the Spring profile'),
+    (re.compile(r'@PreAuthorize|method security|security\.enable', re.I), 'Role checks depend on method security being on'),
+    (re.compile(r'\bcommit(s|ted)?\b', re.I), 'Whether a write is committed is not proven'),
+    (re.compile(r'MapStruct|generated (repository|implementation|code|mapper|query)', re.I),
+     'Generated code (MapStruct, Spring Data) is not traced'),
+)
+# A question that names a status code, the contract or a constraint is about behaviour, whatever else it mentions.
+BEHAVIOUR = re.compile(r'\b(4\d\d|20\d)\b|contract|foreign key|flush|JDBC path|correctly owned', re.I)
 
 
 def gaps_page(index: Model) -> str:
     model = index.raw
-    lines = ['# Gaps', '', '_Generated by `speed discover domains --export ddd`._', '',
-             '[Back to the domain model](README.md)', '',
-             'What the model could not prove. Read this before relying on the other documents.', '',
+    lines = ['# Gaps', '', '[Back to the domain model](README.md)', '',
+             'What the analysis could not confirm from the code.', '',
              *model_banner(index, link_gaps=False), '']
     hidden = [domain for domain_id, domain in sorted(model.get('domains', {}).items())
               if domain_id not in index.domains]
@@ -1860,68 +2109,113 @@ def gaps_page(index: Model) -> str:
                                                                for anchor_id in activity.get('anchor_ids', ()))))
                         for activity in homeless])
         lines.append('')
-    unassigned = sorted(model.get('unassigned', ()), key=lambda item: (item.get('status') != 'pending',
-                                                                        index.name(item['subject_id'])))
+    unassigned = sorted(model.get('unassigned', ()), key=lambda item: index.name(item['subject_id']))
+    pending = [item for item in unassigned if item.get('status') == 'pending']
+    excluded = [item for item in unassigned if item.get('status') != 'pending']
     if unassigned:
         lines += ['## Entry points not modelled', '']
-        lines += table([('Entry point', False), ('Status', False), ('Reason', False)],
-                       [(cell(index.name(item['subject_id'])),
-                         'not modelled yet' if item.get('status') == 'pending' else 'excluded',
-                         cell(item.get('reason'))) for item in unassigned])
+        if pending:
+            lines += table([('Entry point', False), ('Reason', False)],
+                           [(cell(index.name(item['subject_id'])),
+                             cell(index.readable(item.get('reason') or '').replace(
+                                 f"the call path from {index.name(item['subject_id'])}", 'its call path')))
+                            for item in pending])
+        else:
+            lines.append('Every business entry point is modelled.')
+        if excluded:
+            lines += ['', f'<details><summary>Excluded as non-business ({len(excluded)})</summary>', '']
+            lines += table([('Entry point', False), ('Reason', False)],
+                           [(cell(index.name(item['subject_id'])), cell(item.get('reason'))) for item in excluded])
+            lines += ['', '</details>']
         lines.append('')
     conflicts = sorted((claim for claim in index.claims.values()
                         if claim.get('kind') in ('conflict', 'contradiction')),
                        key=lambda claim: (index.name(claim['subject_id']), claim['id']))
     if conflicts:
-        lines += ['## Contract and implementation disagreements', '',
-                  'Places where the code, its API contract, tests or configuration say different things. '
-                  'Each row is one model record; two records can describe the same place from different '
-                  'sources.', '']
+        lines += ['## Contract and implementation disagreements', '']
+        patterns, other = defaultdict(set), []
+        for claim in conflicts:
+            status = RETURNED_STATUS.search(claim['text'])
+            if status and 'contract' in claim['text']:
+                patterns[status.group(1)].add(index.name(claim['subject_id']))
+            else:
+                other.append(claim)
+        rows = [(f'Code returns {status}; the contract does not declare it', len(names), cell(', '.join(sorted(names))))
+                for status, names in sorted(patterns.items())]
+        rows += [(cell(claim['text']), 1, cell(index.name(claim['subject_id']))) for claim in other]
+        lines += table([('Pattern', False), ('Use cases', True), ('Which', False)], rows)
+        lines += ['', f'<details><summary>All disagreements ({len(conflicts)})</summary>', '']
         lines += table([('About', False), ('Disagreement', False), ('Evidence', False)],
                        [(cell(index.name(claim['subject_id'])), cell(claim['text']),
                          index.cite(claim.get('evidence_ids'), every_kind=True)) for claim in conflicts])
-        lines.append('')
+        lines += ['', '</details>', '']
     questions = []
     for domain_id in index.domain_order:
         domain = index.domains[domain_id]
         questions += [(domain['name'], question) for question in domain.get('unresolved_questions', ())]
     for ownership in sorted(index.ownerships.values(), key=lambda item: item['id']):
         if ownership.get('domain_id') in index.domains:
-            subject = (f"{index.name(ownership['concept_id'])} (ownership: {ownership['kind']}, "
-                       f"{index.domains[ownership['domain_id']]['name']})")
+            subject = f"{index.name(ownership['concept_id'])} data ({index.domains[ownership['domain_id']]['name']})"
             questions += [(subject, question) for question in ownership.get('unresolved_questions', ())]
     for activity in index.sorted_records(index.activities, index.activities):
         questions += [(activity['name'], question) for question in activity.get('unresolved_questions', ())]
     if questions:
         lines += ['## Open questions', '']
+        limits, behaviour = Counter(), []
+        for subject, question in questions:
+            limit = None if BEHAVIOUR.search(question) else next(
+                (name for pattern, name in ANALYSIS_LIMITS if pattern.search(question)), None)
+            if limit:
+                limits[limit] += 1
+            else:
+                behaviour.append((subject, question))
+        if behaviour:
+            lines += [f'### Behaviour questions ({len(behaviour)})', '']
+            lines += table([('About', False), ('Question', False)],
+                           [(cell(subject), cell(question)) for subject, question in behaviour])
+            lines.append('')
+        if limits:
+            lines += ['### Analysis limits', '']
+            lines += table([('Limit', False), ('Questions', True)],
+                           [(name, limits[name]) for _, name in ANALYSIS_LIMITS if limits[name]])
+            lines.append('')
+        rule_questions = sum(len(rule.get('unresolved_questions', ())) for rule in index.rules.values())
+        lines += ([f'Questions about individual rules ({rule_questions}) are on the [Rules](rules.md) page.', '']
+                  if rule_questions else [])
+        lines += [f'<details><summary>All questions about contexts, data and use cases ({len(questions)})</summary>', '']
         lines += table([('About', False), ('Question', False)],
                        [(cell(subject), cell(question)) for subject, question in questions])
-        lines.append('')
+        lines += ['', '</details>', '']
     open_uses = defaultdict(list)
     for use in index.uses.values():
         if use.get('resolution') != 'resolved':
             for resource_id in use.get('resource_ids', ()):
                 open_uses[(index.name(resource_id), use.get('access') or '-', use.get('resolution'))].append(use)
     if open_uses:
+        unresolved = sum(use.get('resolution') != 'resolved' for use in index.uses.values())
         lines += ['## Data access not fully resolved', '',
-                  'The table is known; the statement, its completion, which implementation performs it '
-                  'or whether it happens at all is not.', '']
+                  f'{unresolved} of {len(index.uses)} data accesses are not fully resolved: the table is known, '
+                  'but the statement, its completion, the implementation that performs it or whether it happens '
+                  'is not.', '', '<details><summary>By table</summary>', '']
         rows = []
         for (table_name, access, resolution), uses in sorted(open_uses.items()):
-            reasons = sorted({first_sentence(use.get('reason') or '', 140) for use in uses if use.get('reason')})
+            reasons = sorted({first_sentence(re.sub(r'^(The operation facts of this use are unresolved:|Unresolved:)\s*',
+                                                    '', use.get('reason') or ''), 140)
+                              for use in uses if use.get('reason')})
             text = '<br>'.join(cell(reason) for reason in reasons[:3])
             if len(reasons) > 3:
                 text += f'<br>and {len(reasons) - 3} more reasons'
             rows.append((cell(table_name), access, resolution, len(uses), text or '-'))
         lines += table([('Table', False), ('Access', False), ('Resolution', False), ('Count', True),
                         ('Reasons', False)], rows)
-        lines.append('')
+        lines += ['', '</details>', '']
     warnings = Counter(item.get('code') for item in model.get('warnings', ()))
     if warnings:
-        lines += ['## Extraction warnings', '']
+        lines += ['<details><summary>Analyzer warnings</summary>', '']
         lines += table([('Code', False), ('Count', True)],
                        [(code(name), count) for name, count in sorted(warnings.items(),
                                                                       key=lambda item: (-item[1], item[0]))])
+        lines += ['', '</details>']
     return '\n'.join(lines).rstrip() + '\n'
 
 
@@ -2091,7 +2385,7 @@ main{min-width:0;padding:40px 52px 90px}
 .doc em{color:var(--muted)}
 .doc a{color:var(--accent);text-decoration:none;border-bottom:1px solid color-mix(in srgb,var(--accent) 35%,transparent)}
 .doc a:hover{border-bottom-color:var(--accent)}
-.doc code{font:500 .86em "JetBrains Mono",ui-monospace,monospace;background:var(--code-bg);padding:2px 6px;border-radius:6px;word-break:break-word}
+.doc code{font:500 .86em "JetBrains Mono",ui-monospace,monospace;background:var(--code-bg);padding:2px 6px;border-radius:6px;word-break:break-word}.doc td code{white-space:nowrap;word-break:normal}
 .doc pre.code{background:var(--surface-solid);border:1px solid var(--border);border-radius:12px;padding:14px 16px;overflow:auto}
 .doc pre.code code{background:none;padding:0}
 .doc ul,.doc ol{padding-left:1.3em}
@@ -2103,7 +2397,7 @@ main{min-width:0;padding:40px 52px 90px}
 .doc blockquote p{margin:.3em 0;color:var(--muted)}
 .doc blockquote strong{color:var(--text)}
 .doc details{margin:14px 0;border:1px solid var(--border);border-radius:12px;background:var(--surface);padding:10px 16px}
-.doc details summary{cursor:pointer;font-weight:600;color:var(--text)}
+.doc details summary{cursor:pointer;font-weight:600;color:var(--muted);font-size:14px}.doc details[open] summary{color:var(--text);margin-bottom:8px}.doc li details{display:inline-block;margin:4px 0;padding:4px 10px}
 .table-wrap{margin:16px 0 22px;overflow:auto;border:1px solid var(--border);border-radius:14px;background:var(--surface);box-shadow:var(--shadow);backdrop-filter:blur(8px)}
 .doc table{width:100%;border-collapse:separate;border-spacing:0;font-size:13.8px;line-height:1.55}
 .doc th{position:sticky;top:0;z-index:1;text-align:left;padding:11px 14px;background:var(--surface-solid);color:var(--muted);font:600 11px/1.3 "JetBrains Mono",monospace;letter-spacing:.08em;text-transform:uppercase;border-bottom:1px solid var(--border-strong);white-space:nowrap}
@@ -2420,6 +2714,10 @@ function card(figure, title) {
     event.preventDefault(); setScale(figure, figure.scale * (event.deltaY < 0 ? 1.1 : 1 / 1.1));
   }, {passive: false});
 }
+// Diagrams inside a closed <details> are drawn at zero width; fit them when it opens.
+document.addEventListener('toggle', event => {
+  if (event.target.open) event.target.querySelectorAll('figure.diagram').forEach(figure => figure.baseWidth && fit(figure));
+}, true);
 document.addEventListener('fullscreenchange', () => {
   document.querySelectorAll('figure.diagram').forEach(figure => figure.baseWidth && fit(figure));
 });
@@ -2559,13 +2857,18 @@ def export_ddd(model: dict) -> dict:
     index = Model(model)
     entities = Entities(index)
     sequences = Sequences(index, entities)
+    # Every diagram is built once up front, so each page's implementations table sees the whole model.
+    for activity in index.activities.values():
+        sequences.diagrams(activity)
     files = {'rules.md': rules_page(index), 'glossary.md': glossary_page(index, entities),
              'gaps.md': gaps_page(index)}
     for domain_id in index.domain_order:
         files[f'contexts/{index.domain_pages[domain_id]}.md'] = context_page(
             index, entities, sequences, domain_id)
     files = {name: index.readable(text) for name, text in files.items()}
-    files['README.md'] = index.readable(readme(index, entities, coverage(index, files)))
+    checked = coverage(index, files)
+    files['README.md'] = index.readable(readme(index, entities, checked))
+    files['gaps.md'] = files['gaps.md'].rstrip('\n') + '\n' + '\n'.join(completeness(checked)) + '\n'
     files['index.html'] = viewer(files)
     return files
 

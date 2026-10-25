@@ -111,10 +111,11 @@ def service_model():
 
 def test_a_call_sequence_follows_source_lines_and_the_active_profile():
     index = export.Model(service_model())
-    [(title, caption, diagram)], skipped = export.Sequences(index).diagrams(index.activities['activity:add'])
+    sequences = export.Sequences(index)
+    [(title, caption, diagram)], skipped = sequences.diagrams(index.activities['activity:add'])
     assert skipped == []
     assert title == 'POST /owners'
-    assert 'not observed runtime' in caption
+    assert caption == 'Trace: bounded · unresolved.'
     lines = diagram.splitlines()
     messages = [line.strip() for line in lines if '->>' in line and not line.strip().startswith('Client')]
     # toOwner (line 20) comes before saveOwner (line 30); getId() is an accessor and is left out.
@@ -123,9 +124,13 @@ def test_a_call_sequence_follows_source_lines_and_the_active_profile():
     # The write is unresolved, so it is dotted; the profile-bound JDBC path is not drawn.
     assert messages[-1].split(':')[0].endswith('-->>P5')
     assert 'KeyHolder' not in diagram
-    assert ('runs SpringDataOwnerRepository, generated at runtime#59; '
-            'not on the declared profile: JdbcOwnerRepositoryImpl') in diagram
-    assert 'declared profile (hsqldb, spring-data-jpa, from spring.profiles.active)' in caption
+    # The implementation that runs is named on the lifeline; the inactive one is listed once per page.
+    assert 'participant P4 as OwnerRepository → SpringDataOwnerRepository (generated)' in diagram
+    assert 'Note over P4' not in diagram
+    assert sequences.choices['OwnerRepository']['inactive'] == {'JdbcOwnerRepositoryImpl'}
+    page = export.export_ddd(service_model())['contexts/owner-records-main.md']
+    assert 'declared profile (hsqldb, spring-data-jpa, from spring.profiles.active)' in page
+    assert '| `OwnerRepository` | SpringDataOwnerRepository (generated) | JdbcOwnerRepositoryImpl |' in page
     # The single implementation of ClinicService is followed on the interface's lifeline.
     assert 'participant P3 as ClinicService' in diagram
     assert 'participant P5 as owners table' in diagram
@@ -138,7 +143,7 @@ def test_without_a_profile_the_sequence_stops_at_the_interface():
     [(_, _, diagram)], _ = export.Sequences(index).diagrams(index.activities['activity:add'])
     assert 'KeyHolder' not in diagram
     assert 'declared profile' not in diagram
-    assert 'chosen at runtime by profile, not drawn: JdbcOwnerRepositoryImpl, SpringDataOwnerRepository' in diagram
+    assert 'Chosen at runtime by profile, not drawn: JdbcOwnerRepositoryImpl, SpringDataOwnerRepository.' in diagram
 
 
 def test_an_implementation_the_model_says_it_activates_is_followed():
@@ -292,7 +297,7 @@ def test_export_is_byte_identical_and_independent_of_insertion_order():
 
 def test_every_page_carries_the_model_status_and_no_unescaped_mermaid():
     files = export.export_ddd(entity_model())
-    assert '**Model status: partial.**' in files['README.md']
+    assert '**Model status: partial**' in files['README.md']
     assert '**Model status: partial.**' in files['gaps.md']
     for text in files.values():
         for block in re.findall(r'```mermaid\n(.*?)\n```', text, re.S):
@@ -397,7 +402,9 @@ def test_petclinic_export():
     contexts = [name for name in files if name.startswith('contexts/')]
     assert len(contexts) == len(model['domains'])
     assert files['rules.md'].count('<a id="rule-') == len(model['rules'])
-    assert 'runs SpringData' in ''.join(files[name] for name in contexts)
+    text = ''.join(files[name] for name in contexts)
+    assert 'Repository → SpringData' in text and 'Implementations on the declared profile' in text
+    assert 'Export completeness: 10 of 10 record types fully present' in files['gaps.md']
 
 
 def test_a_dense_trace_renders_quickly_and_says_steps_were_left_out():
@@ -427,7 +434,7 @@ def test_an_unresolved_api_call_from_a_page_is_drawn_dotted():
     index = export.Model(model)
     [(_, _, diagram)], _ = export.Sequences(index).diagrams(index.activities['activity:add'])
     assert re.search(r'P1-->>P\d+: request \(target not resolved\)', diagram)
-    assert 'as unresolved endpoint' in diagram
+    assert 'as no matching server endpoint' in diagram
 
 
 def test_conflicting_role_rules_are_not_merged():
@@ -579,7 +586,7 @@ def test_a_class_and_its_generated_proxy_are_one_implementation():
     model['traces']['trace:post']['edge_ids'].append('edge:sd')
     index = export.Model(model)
     [(_, _, diagram)], _ = export.Sequences(index).diagrams(index.activities['activity:add'])
-    assert 'runs SpringDataOwnerRepository, generated at runtime#59;' in diagram
+    assert 'OwnerRepository → SpringDataOwnerRepository (generated)' in diagram
     assert 'SpringDataOwnerRepository, SpringDataOwnerRepository' not in diagram
     assert 'several match' not in diagram and 'chosen at runtime' not in diagram
 
@@ -589,7 +596,8 @@ def test_the_completeness_check_finds_every_record_and_the_viewer_holds_every_pa
     files = export.export_ddd(model)
     rows = export.coverage(export.Model(model), files)
     assert rows and all(found == total for _, total, found in rows), rows
-    assert '## Completeness check' in files['README.md']
+    assert '## Completeness check' not in files['README.md']
+    assert 'Export completeness: 10 of 10 record types fully present' in files['gaps.md']
     page = files['index.html']
     documents = json.loads(re.search(r'const DOCUMENTS = (\{.*?\});\n', page, re.S).group(1).replace('<\\/', '</'))
     assert set(documents) == set(files) - {'index.html'}
@@ -692,5 +700,5 @@ def test_record_ids_in_prose_become_names():
         'See (ownership ownership:aade3cafac0b12b60afa6762); recording the visit (a record of child scope '
         'scope:b156f70e7f083e27a5aa1788); no match (trace trace:0123456789abcdef has no edges).')
     assert readable == ('See (Owner "Records" | <main>\'s maintains claim on Vet specialty assignment); '
-                        'recording the visit (a record from another discovery unit); '
+                        'recording the visit (a record from another part of the model); '
                         'no match (the call path from POST /owners has no steps).')
