@@ -58,7 +58,7 @@ FIELD_DECLARATION = re.compile(
     r'([\w.]+(?:<[\w.<>, ?]+>)?(?:\[\])?)\s+(\w+)\s*[=;]')
 ROLE_PREDICATE = re.compile(r'has(?:Any)?Role\(([^)]*)\)')
 ROLE_TOKEN = re.compile(r'\b((?:[A-Z][A-Z0-9]*_)*ADMIN|[A-Z][A-Z0-9]*_[A-Z0-9_]*ROLE)\b')
-ACCESSOR = re.compile(r'\.(?:get|set|is)[A-Z]\w*\(')
+ACCESSOR = re.compile(r'\.(?:get|is)[A-Z]\w*\(')
 NO_ROLE = 'no role declared'
 CONFLICTING_ROLES = 'no single declared role allows every step'
 MERMAID_ESCAPES = {'#': '#35;', '"': '#quot;', ';': '#59;', '<': '#lt;', '>': '#gt;'}
@@ -82,6 +82,33 @@ SEQUENCE_KINDS = ('calls', 'reads_data', 'writes_data', 'selects_implementation'
 
 
 # Text helpers
+
+CLIENT = '__client__'
+
+
+def unwrap(text: str) -> str:
+    """Drop brackets that wrap the whole expression: '((a.b()))' -> 'a.b()'."""
+    while text.startswith('(') and text.endswith(')'):
+        depth = 0
+        for position, char in enumerate(text):
+            depth += char == '('
+            depth -= char == ')'
+            if depth == 0 and position < len(text) - 1:
+                return text
+        text = text[1:-1].strip()
+    return text
+
+
+def http_status(text: str) -> str:
+    """The 4xx status an outcome describes, e.g. 'HTTP 404' or 'NOT_FOUND', else ''."""
+    found = re.search(r'\b(4\d\d)\b', text)
+    if found:
+        return found.group(1)
+    for words, code in (('NOT_FOUND', '404'), ('Not Found', '404'), ('BAD_REQUEST', '400'), ('Bad Request', '400')):
+        if words in text:
+            return code
+    return ''
+
 
 def short(identifier: str) -> str:
     """Return the last eight characters of a record ID, stable across renders."""
@@ -262,7 +289,7 @@ class Model:
             return f'{name} on {path}' if path else name
         return operation.get('name') or anchor_id
 
-    def citations(self, evidence_ids, limit: int = 2, every_kind: bool = False, first_kind=None) -> list:
+    def citations(self, evidence_ids, limit: int = 2, every_kind: bool = False, first_kind=None, avoid=()) -> list:
         """Return up to `limit` distinct `path:lines` citations, source code first.
 
         With `every_kind`, the first citations cover each kind of evidence (source,
@@ -282,6 +309,8 @@ class Model:
             rank = SOURCE_PREFERENCE.get(evidence.get('source_kind'), 3)
             if first_kind and evidence.get('source_kind') == first_kind:
                 rank = -1
+            if avoid and Path(path).stem in avoid:
+                rank += 10
             found.append((rank, path, start or 0, lines if start else ''))
         seen, picked, kinds = set(), [], set()
         ordered = sorted(found)
@@ -317,8 +346,8 @@ class Model:
             self._short_paths[path] = suffix
         return self._short_paths[path]
 
-    def cite(self, evidence_ids, limit: int = 2, every_kind: bool = False, first_kind=None) -> str:
-        found = self.citations(evidence_ids, limit, every_kind, first_kind)
+    def cite(self, evidence_ids, limit: int = 2, every_kind: bool = False, first_kind=None, avoid=()) -> str:
+        found = self.citations(evidence_ids, limit, every_kind, first_kind, avoid)
         return ', '.join(code(item) for item in found) if found else '-'
 
     def access(self, activity: dict):
@@ -380,9 +409,12 @@ class Model:
                 for domain_id in self.activity_domains.get(use.get('activity_id'), ())}
 
     def owners(self, concept_id: str) -> list:
-        return sorted({ownership['domain_id'] for ownership in self.ownerships.values()
-                       if ownership['concept_id'] == concept_id and ownership.get('domain_id') in self.domains},
-                      key=self.domain_order.index)
+        claims = [ownership for ownership in self.ownerships.values()
+                  if ownership['concept_id'] == concept_id and ownership.get('domain_id') in self.domains]
+        # A 'shared' claim next to another context's own claim describes a writer, not a co-owner.
+        if any(claim.get('kind') != 'shared' for claim in claims):
+            claims = [claim for claim in claims if claim.get('kind') != 'shared']
+        return sorted({claim['domain_id'] for claim in claims}, key=self.domain_order.index)
 
 
 # Entities for class diagrams
@@ -439,6 +471,7 @@ class Entities:
             'fields': sorted(fields, key=lambda item: item['name']),
             'parent': self.inherits.get(symbol_id),
             'table': self._table(symbol_id),
+            'unique': self._unique(symbol_id),
         }
         if self.inherits.get(symbol_id):
             self._add(self.inherits[symbol_id])
@@ -471,7 +504,9 @@ class Entities:
                 'column': column.group(1) if column else None,
                 'join_column': join_column.group(1) if join_column else None,
                 'cascade_all': re.search(r'cascade\s*=\s*(?:\{\s*)?CascadeType\.ALL', excerpt) is not None,
-                'eager': re.search(r'fetch\s*=\s*FetchType\.EAGER', excerpt) is not None,
+                'eager': re.search(r'fetch\s*=\s*FetchType\.EAGER', excerpt) is not None
+                or (association in ('ManyToOne', 'OneToOne')
+                    and re.search(r'fetch\s*=\s*FetchType\.LAZY', excerpt) is None),
                 'key': 'Id' in annotations,
                 'mapped_by': re.search(r'mappedBy\s*=\s*"(\w+)"', excerpt) is not None}
 
@@ -482,6 +517,17 @@ class Entities:
                            if evidence_id in self.index.evidence)
         match = re.search(r'@Table\s*\(\s*name\s*=\s*"(\w+)"', excerpt)
         return match.group(1) if match else None
+
+    def _unique(self, symbol_id: str) -> set:
+        """Columns named in @Table(uniqueConstraints = ...) on the class."""
+        symbol = self.index.symbols[symbol_id]
+        excerpt = ' '.join(self.index.evidence[evidence_id].get('excerpt', '')
+                           for evidence_id in symbol.get('evidence_ids', ())
+                           if evidence_id in self.index.evidence)
+        found = set()
+        for block in re.findall(r'@UniqueConstraint\s*\(\s*columnNames\s*=\s*\{([^}]*)\}', excerpt):
+            found.update(re.findall(r'"(\w+)"', block))
+        return found
 
     def concept_tables(self, concept_id: str) -> list:
         """The tables behind a concept: its class's @Table, else the tables its data accesses name."""
@@ -498,7 +544,7 @@ class Entities:
                               if self.index.resources.get(resource_id, {}).get('kind') == 'table')
         return sorted(tables)
 
-    def diagram(self, concept_ids, flatten_bases: bool = False) -> str:
+    def diagram(self, concept_ids, flatten_bases: bool = False, external=()) -> str:
         """Return a Mermaid classDiagram for the given concepts, or '' if there is nothing to draw.
 
         With `flatten_bases`, inherited fields are shown on each entity and the base classes are left out.
@@ -506,7 +552,14 @@ class Entities:
         index = self.index
         roots = {symbol_id for concept_id in concept_ids
                  for symbol_id in self.by_concept.get(concept_id, ())}
-        shown, pending = set(), sorted(roots)
+        # Classes of other contexts drawn as stubs: given ones, and those that point at a class here.
+        outside = {symbol_id for concept_id in external for symbol_id in self.by_concept.get(concept_id, ())} - roots
+        if flatten_bases:
+            names_here = {self.classes[key]['name'] for key in roots if self.classes.get(key)}
+            outside |= {key for key, entity in self.classes.items() if entity and entity['table'] and key not in roots
+                        and any(field['association'] and field['target'] in names_here for field in entity['fields'])}
+        roots_and_outside = roots | outside
+        shown, pending = set(), sorted(roots_and_outside)
         while pending:
             symbol_id = pending.pop()
             if symbol_id in shown or not self.classes.get(symbol_id):
@@ -539,7 +592,7 @@ class Entities:
         for symbol_id in shown:
             if symbol_id not in table_of and self.classes[symbol_id]['table']:
                 table_of[symbol_id] = [self.classes[symbol_id]['table']]
-        associations, drawn = [], {}
+        associations, drawn, ends = [], {}, {}
         join_tables = {field['join_table'] for entity in self.classes.values() if entity
                        for field in entity['fields'] if field['join_table']}
         # Both ends of an association become one line; the cascading owner's side
@@ -552,6 +605,7 @@ class Entities:
                     continue
                 pair = frozenset((symbol_id, target))
                 composes = field['cascade_all'] and field['association'] == 'OneToMany'
+                ends.setdefault(pair, []).append((symbol_id, field['name']))
                 if pair not in drawn or (composes and not drawn[pair][2]):
                     drawn[pair] = (symbol_id, field['name'], composes)
         for symbol_id in sorted(shown, key=lambda key: names[key]):
@@ -565,12 +619,17 @@ class Entities:
                         via = f" via {field['join_table']}" if field['join_table'] else ''
                         # A cascaded one-to-many owns its parts' lifecycle: UML composition.
                         arrow = '*--' if field['cascade_all'] and field['association'] == 'OneToMany' else '-->'
+                        back = [name for owner, name in ends.get(frozenset((symbol_id, target)), ()) if owner == target]
+                        role = field['name'] + (f" / {back[0]}" if back else '')
+                        eager = ' «eager»' if field['eager'] and field['association'] in ('OneToMany', 'ManyToMany') else ''
                         associations.append(f'  {names[symbol_id]} "{left}" {arrow} "{right}" '
-                                            f'{names[target]} : {field["name"]}{via}')
+                                            f'{names[target]} : {role}{via}{eager}')
                     continue
                 type_name = (field['type'] or '').replace('<', '~').replace('>', '~')
-                members.append(f'    +{type_name} {field["name"]}'.replace('+ ', '+'))
-            role = '<<entity>>' if symbol_id in roots else '<<base>>'
+                members.append(f'    +{type_name} {field["name"]}'.replace('+ ', '+') + (' «id»' if field['key'] else ''))
+            if symbol_id in outside:
+                members = []
+            role = '<<entity>>' if symbol_id in roots else '<<external>>' if symbol_id in outside else '<<base>>'
             title = entity['name'] + (f" ({', '.join(table_of[symbol_id])})" if table_of.get(symbol_id) else '')
             if len(named.get(entity['name'], ())) > 1:
                 title += f" · {self.index.symbols[symbol_id].get('file', '')}"
@@ -645,9 +704,11 @@ class Entities:
                 column = field['column'] or (field['name'] if field['key'] else None)
                 if column:
                     (primary if field['key'] else attributes).append((kind(field), column, 'PK' if field['key'] else ''))
+            unique = self.classes[tables[table]].get('unique') or set()
             lines.append(f'  {table} {{')
             for type_name, column, key in primary + attributes + foreign:
-                lines.append(f'    {type_name} {column}' + (f' {key}' if key else ''))
+                marks = ', '.join(part for part in (key, 'UK' if column in unique and key != 'PK' else '') if part)
+                lines.append(f'    {type_name} {column}' + (f' {marks}' if marks else ''))
             lines.append('  }')
         for join_table, (left, right, columns) in sorted(join_tables.items()):
             lines.append(f'  {join_table} {{')
@@ -660,10 +721,12 @@ class Entities:
         return '\n'.join(lines)
 
     def implied(self, table: str, verb: str) -> list:
-        """(table, how) pairs JPA also reads or writes when an entity's table is read or written.
+        """(table, how) pairs JPA also touches when an entity's table is accessed.
 
-        Writes follow CascadeType.ALL and the join tables of owned many-to-many
-        associations; reads follow associations declared fetch = FetchType.EAGER.
+        `verb` is read, delete or write. Reads follow eager associations (explicit
+        FetchType.EAGER, and to-one associations, which JPA fetches eagerly by
+        default). Deletes follow CascadeType.ALL, children first. Any write keeps
+        the join table of an owned many-to-many in step.
         """
         tables = self.entity_classes()
         by_name = {self.classes[symbol_id]['name']: name for name, symbol_id in tables.items()}
@@ -672,22 +735,23 @@ class Entities:
             symbol_id = tables.get(pending.pop(0))
             for field in self._all_fields(symbol_id) if symbol_id else ():
                 target = by_name.get(field['target'])
-                if verb == 'write':
-                    follow = field['cascade_all'] and field['association'] in ('OneToMany', 'OneToOne')
-                    join = field['association'] == 'ManyToMany' and field['join_table']
-                    how = 'JPA cascade'
-                else:
+                if verb == 'read':
                     follow = field['eager'] and field['association']
                     join = follow and field['join_table']
                     how = 'JPA eager fetch'
+                else:
+                    follow = verb == 'delete' and field['cascade_all'] and field['association'] in ('OneToMany', 'OneToOne')
+                    join = field['association'] == 'ManyToMany' and field['join_table']
+                    how = 'JPA cascade'
                 if join and join not in seen:
                     seen.add(join)
-                    result.append((join, 'JPA join table' if verb == 'write' else how))
+                    result.append((join, how if verb == 'read' else 'JPA join table'))
                 if follow and target and target not in seen:
                     seen.add(target)
                     result.append((target, how))
                     pending.append(target)
-        return result
+        # A cascaded delete removes the deepest children first.
+        return list(reversed(result)) if verb == 'delete' else result
 
     def aggregates(self) -> list:
         """Aggregate candidates from cascaded one-to-many associations.
@@ -724,8 +788,14 @@ class Entities:
                               if target not in inside and target not in owned},
                              key=lambda key: entities[key]['name'])
             result.append((entities[root]['name'], [entities[member]['name'] for member in members],
-                           [entities[target]['name'] for target in outside]))
+                           [entities[target]['name'] for target in outside],
+                           [entities[member]['name'] for member in members if self.has_repository(entities[member]['name'])]))
         return result
+
+    def has_repository(self, name: str) -> bool:
+        """True when a repository interface for the entity exists, so it can be written without its root."""
+        return any(symbol['qualified_name'].split('::')[-1] == f'{name}Repository'
+                   for symbol in self.index.symbols.values() if symbol.get('kind') in ('class', 'type', 'interface'))
 
     def constraints(self, concept_ids) -> list:
         """Rows of (class, field, annotations) for validation annotations on fields."""
@@ -782,8 +852,71 @@ class Sequences:
             for match in ACTIVE_PROFILES.finditer(edge.get('condition') or ''):
                 profiles.update(part.strip() for part in match.group(1).split(','))
         self.active_profiles = profiles
+        # The statement behind each data write, to tell inserts, updates and deletes apart.
+        self.effects = {effect['edge_id']: effect for effect in index.raw.get('effects', {}).values()
+                        if effect.get('edge_id')}
+        # The HTTP operation each controller method implements.
+        self.http_of = {}
+        for anchor_id, anchor in index.anchors.items():
+            if anchor.get('kind') == 'http':
+                for representation in anchor.get('representations') or ():
+                    if representation.get('role') == 'implementation' and representation.get('symbol_id'):
+                        self.http_of.setdefault(representation['symbol_id'], index.entry_point(anchor_id))
+        # Early returns the rules record: (line, condition, status) per method.
+        self.guards = defaultdict(list)
+        implementation = {anchor_id: representation['symbol_id'] for anchor_id, anchor in index.anchors.items()
+                          for representation in anchor.get('representations') or ()
+                          if representation.get('role') == 'implementation' and representation.get('symbol_id')}
+        for rule in index.rules.values():
+            outcome = rule.get('outcome') or ''
+            status = http_status(outcome)
+            # An outcome naming two statuses cannot say which one a condition returns.
+            if not status or len(set(re.findall(r'\b[45]\d\d\b', outcome))) > 1:
+                continue
+            for site in rule.get('enforcement_sites') or ():
+                condition = unwrap((site.get('condition') or '').strip())
+                source = implementation.get(site.get('source_id'), site.get('source_id'))
+                home = (index.symbols.get(source) or {}).get('file')
+                # Only a line in the method's own file can be placed among its calls.
+                lines = [index.evidence[item]['locator'].get('start_line') for item in site.get('evidence_ids') or ()
+                         if item in index.evidence and index.evidence[item]['locator'].get('start_line')
+                         and index.evidence[item]['locator'].get('path') == home]
+                if condition and lines and source and not condition.startswith('@'):
+                    entry = (min(lines), condition, status)
+                    if entry not in self.guards[source]:
+                        self.guards[source].append(entry)
+        for entries in self.guards.values():
+            entries.sort()
+        self._tx = {}
         # Cascades and eager fetches are JPA behaviour; a declared non-JPA profile turns them off.
         self.jpa = not profiles or any('jpa' in profile.lower() for profile in profiles)
+
+    def transaction(self, symbol_id: str) -> str:
+        """'tx' or 'tx readOnly' when the method is declared @Transactional, else ''."""
+        if symbol_id not in self._tx:
+            symbol = self.index.symbols.get(symbol_id) or {}
+            found = ''
+            for evidence_id in symbol.get('evidence_ids') or ():
+                excerpt = (self.index.evidence.get(evidence_id) or {}).get('excerpt') or ''
+                head = re.split(r'\b(?:public|protected|private)\b|\{', excerpt, maxsplit=1)[0]
+                match = re.search(r'@(?:\w+\.)*Transactional\b(\([^)]*readOnly\s*=\s*true[^)]*\))?', head)
+                if match:
+                    found = 'tx readOnly' if match.group(1) else 'tx'
+                    break
+            self._tx[symbol_id] = found
+        return self._tx[symbol_id]
+
+    def write_kind(self, edge: dict, symbol_id: str) -> str:
+        """insert, update or delete from the recorded statement, else from the method name."""
+        outcome = (self.effects.get(edge['id']) or {}).get('outcome') or ''
+        if re.search(r'\bDELETE\b|\.remove\(|\.delete\(', outcome, re.I):
+            return 'delete'
+        if re.search(r'\bINSERT\b|\.persist\(|executeAndReturnKey|\binsert\w*\.execute', outcome, re.I):
+            return 'insert'
+        if re.search(r'\bUPDATE\b|\.merge\(', outcome, re.I):
+            return 'update'
+        method = self.index.symbol_name(symbol_id).split('(')[0].rsplit('.', 1)[-1].lower()
+        return 'delete' if method.startswith(('delete', 'remove')) else 'write'
 
     @staticmethod
     def _binding(edge):
@@ -824,7 +957,7 @@ class Sequences:
             if len(drawn) == 3:
                 skipped.append((entry, 'only the first three call paths of a use case are drawn'))
                 continue
-            result = self.diagram(trace)
+            result = self.diagram(trace, activity)
             if isinstance(result, str):
                 skipped.append((entry, result))
             else:
@@ -953,8 +1086,10 @@ class Sequences:
         """The architectural layer of a participant, by its kind or class naming convention."""
         if kind == 'table':
             return 'Tables'
-        if kind in ('contract', 'endpoint'):
+        if kind == 'contract':
             return 'API contract'
+        if kind == 'endpoint':
+            return 'Unmatched client calls'
         if Path(self.files.get(name, '')).suffix in ('.tsx', '.jsx', '.ts', '.js', '.vue', '.html'):
             return 'User interface'
         for suffixes, layer in ((('Controller', 'Resource', 'Endpoint'), 'Controllers'),
@@ -973,7 +1108,7 @@ class Sequences:
                 return representation.get('symbol_id')
         return anchor.get('symbol_id')
 
-    def diagram(self, trace: dict):
+    def diagram(self, trace: dict, activity: dict = None):
         """Return (title, caption, mermaid), or the reason the trace is not drawn."""
         index = self.index
         anchor = index.anchors.get(trace['anchor_id'])
@@ -992,6 +1127,11 @@ class Sequences:
         first = self._participant({'kind': 'symbol', 'id': root})
         if not first:
             return 'its entry point has no code symbol'
+        # A page that calls a known endpoint does not also need the helper's unmatched request.
+        resolved_http = any(edge['kind'] in ('invokes_endpoint', 'routes_to') and edge.get('resolution') == 'resolved'
+                            and (edge.get('to_ref') or {}).get('kind') == 'symbol'
+                            for edges in outgoing.values() for edge in edges)
+        guards = list(self.guards.get(root, ()))
         participants, steps = [first], []
         facts = defaultdict(lambda: {'runs': set(), 'inactive': set(), 'unbound': set(), 'ambiguous': set(),
                                      'by_profile': set()})
@@ -1010,6 +1150,52 @@ class Sequences:
             budget['messages'] += 1
             steps.append(('message', source, target, arrow, text))
             return True
+
+        WRITES_ = ('write', 'insert', 'update', 'delete')
+        opened = {'count': 0}
+
+        def drawn(lifeline, table, verb):
+            kinds = ('read',) if verb == 'read' else WRITES_
+            return any(step[0] == 'message' and step[1] == lifeline and step[4].split(' (')[0].split(' ', 1)[-1] == table
+                       and step[4].split(' ', 1)[0] in kinds for step in steps)
+
+        def upgrade(lifeline, table, arrow):
+            """An explicit read of a table already drawn as an eager fetch replaces it."""
+            for position in range(len(steps) - 1, -1, -1):
+                step = steps[position]
+                if step[0] == 'message' and step[1] == lifeline and step[4] == f'read {table} (JPA eager fetch)':
+                    steps[position] = ('message', lifeline, step[2], arrow, f'read {table}')
+                    return True
+            return False
+
+        def open_guards(line, last=False):
+            """Early returns recorded before this call site become alt blocks.
+
+            A guard after the last call has nothing in its else branch unless the
+            success status is known, so it is drawn as opt.
+            """
+            while guards and guards[0][0] < line:
+                _, condition, code = guards.pop(0)
+                if last and not (guards or success_status()):
+                    steps.extend([('opt', condition), ('message', first[1], CLIENT, '-->>', code), ('end',)])
+                    continue
+                steps.append(('alt', condition))
+                message(first[1], CLIENT, '-->>', code)
+                steps.append(('else', 'otherwise'))
+                opened['count'] += 1
+
+        def success_status():
+            if anchor.get('kind') != 'http' or not activity:
+                return ''
+            operation = anchor.get('operation') or {}
+            entry = index.entry_point(anchor['id'])
+            for claim in index.claims_about.get(activity['id'], ()):
+                found = RETURNED_STATUS.search(claim.get('text') or '')
+                text = claim.get('text') or ''
+                if (claim.get('kind') in ('conflict', 'contradiction') and found and found.group(1).startswith('2')
+                        and (entry in text or (operation.get('name') and operation['name'] in text))):
+                    return f'{found.group(1)} (the contract does not declare it)'
+            return ''
 
         def walk(symbol_id, lifeline, depth, branch=()):
             if depth > MAX_DEPTH or (symbol_id, lifeline, branch) in expanded or budget['omitted']:
@@ -1047,7 +1233,11 @@ class Sequences:
                 target_ref = edge.get('to_ref')
                 target_id = (target_ref or {}).get('id')
                 target = self._participant(target_ref)
+                if depth == 0:
+                    open_guards(self._call_order(edge)[1])
                 if not target and edge['kind'] == 'invokes_endpoint':
+                    if resolved_http:
+                        continue
                     target = ('endpoint', 'no matching server endpoint')
                     message(lifeline, join(target), '-->>', 'request (target not resolved)')
                     continue
@@ -1056,13 +1246,22 @@ class Sequences:
                 arrow = '->>' if edge.get('resolution') == 'resolved' else '-->>'
                 guard = self._guard(edge.get('condition'))
                 if edge['kind'] in ('reads_data', 'writes_data'):
-                    verb = 'read' if edge['kind'] == 'reads_data' else 'write'
-                    message(lifeline, join(target), arrow, f'{verb} {target[1]}')
-                    if target[0] == 'table' and self.jpa:
-                        for table, how in self.entities.implied(target[1], verb):
-                            if not any(step[0] == 'message' and step[1] == lifeline and step[4].split(' (')[0]
-                                       == f'{verb} {table}' for step in steps):
-                                message(lifeline, join(('table', table)), '-->>', f'{verb} {table} ({how})')
+                    verb = 'read' if edge['kind'] == 'reads_data' else self.write_kind(edge, symbol_id)
+                    table = target[1]
+                    implied = self.entities.implied(table, 'read' if verb == 'read' else 'delete' if verb == 'delete'
+                                                    else 'write') if target[0] == 'table' and self.jpa else []
+                    if verb == 'read' and upgrade(lifeline, table, arrow):
+                        continue
+                    # A cascaded delete removes the children before the row that owns them.
+                    if verb == 'delete':
+                        for other, how in implied:
+                            if not drawn(lifeline, other, verb):
+                                message(lifeline, join(('table', other)), '-->>', f'{verb} {other} ({how})')
+                    message(lifeline, join(target), arrow, f'{verb} {table}')
+                    if verb != 'delete':
+                        for other, how in implied:
+                            if not drawn(lifeline, other, 'read' if verb == 'read' else 'write'):
+                                message(lifeline, join(('table', other)), '-->>', f"{'read' if verb == 'read' else 'write'} {other} ({how})")
                     continue
                 if ACCESSOR.search(index.symbol_name(target_id or '') + '('):
                     continue
@@ -1073,12 +1272,21 @@ class Sequences:
                     steps.append(('opt', guard))
                 if target[0] == 'contract':
                     message(lifeline, join(target), '-->>', index.symbol_name(target_id).split('::')[-1][:50])
-                elif message(lifeline, join(target), arrow, self._method(target_ref)):
+                elif message(lifeline, join(target), arrow,
+                             self.http_of[target_id] if edge['kind'] in ('invokes_endpoint', 'routes_to')
+                             and target_id in self.http_of
+                             else self._method(target_ref)
+                             + (f' «{self.transaction(target_id)}»' if self.transaction(target_id) else '')):
                     walk(target_id, target[1], depth + 1, branch + ((guard,) if guard else ()))
                 if guard:
                     steps.append(('end',))
 
         walk(root, first[1], 0)
+        open_guards(10 ** 9, last=True)
+        status = success_status()
+        if status:
+            message(first[1], CLIENT, '-->>', status)
+        steps.extend([('end',)] * opened['count'])
         # The interface and its implementation often record the same data access.
         tidy = []
         for step in steps:
@@ -1087,6 +1295,18 @@ class Sequences:
                 if step[3] == '->>':
                     tidy[-1] = step
                 continue
+            # The interface records a write; its implementation names the statement.
+            previous = tidy[-1] if tidy else None
+            if (step[0] == 'message' and previous and previous[0] == 'message' and previous[1:3] == step[1:3]
+                    and '(' not in step[4] and '(' not in previous[4]):
+                before, after = previous[4].split(' ', 1), step[4].split(' ', 1)
+                if (len(before) == len(after) == 2 and before[1] == after[1]
+                        and before[0] in WRITES_ and after[0] in WRITES_):
+                    verbs = [verb for verb in (before[0], after[0]) if verb != 'write']
+                    verb = ' or '.join(dict.fromkeys(verbs)) or 'write'
+                    arrow = '->>' if '->>' in (previous[3], step[3]) else '-->>'
+                    tidy[-1] = ('message', step[1], step[2], arrow, f'{verb} {after[1]}')
+                    continue
             if step[0] == 'end' and tidy and tidy[-1][0] == 'opt':
                 tidy.pop()
                 continue
@@ -1097,7 +1317,8 @@ class Sequences:
             return 'its call path has no step outside the entry point'
         kinds = dict((name, kind) for kind, name in participants)
         for _, source, target, _, _ in messages:
-            self.links[trace['id']].add(((kinds.get(source), source), (kinds.get(target), target)))
+            if CLIENT not in (source, target):
+                self.links[trace['id']].add(((kinds.get(source), source), (kinds.get(target), target)))
         actor = ACTORS.get(anchor.get('kind'), 'Caller')
         drawn_names = {name for _, name in participants}
         notes, shown_as = {}, {}
@@ -1115,9 +1336,10 @@ class Sequences:
                 self.choices[lifeline]['runs'].update(runs)
                 self.choices[lifeline]['inactive'].update(inactive)
             parts = []
-            if len(runs) == 1 and not (ambiguous or by_profile or unbound):
-                # The implementation that runs is named on the lifeline; the others are listed once per page.
-                shown_as[lifeline] = f"{lifeline} → {runs[0].replace(', generated at runtime', ' (generated)')}"
+            if runs and len(runs) <= 2 and not (ambiguous or by_profile or unbound):
+                # The implementations that run are named on the lifeline; the others are listed once per page.
+                shown_as[lifeline] = f"{lifeline} → " + ' + '.join(
+                    item.replace(', generated at runtime', ' (generated)') for item in runs)
             elif runs:
                 parts.append('Runs ' + ' + '.join(item.replace(', generated at runtime', ' (generated)') for item in runs))
             if ambiguous:
@@ -1136,7 +1358,12 @@ class Sequences:
             ids[name] = f'P{position}'
             shown = f'{name} table' if kind == 'table' else shown_as.get(name, name)
             lines.append(f'  participant P{position} as {label(shown)}')
+        ids[CLIENT] = 'Client'
         lines.append(f'  Client->>{ids[first[1]]}: {label(index.entry_point(anchor["id"]))}')
+        if self.transaction(root):
+            lines.append(f'  Note over {ids[first[1]]}: '
+                         + label(f"{self._method({'kind': 'symbol', 'id': root})} is @Transactional"
+                                 + (' (readOnly)' if self.transaction(root) == 'tx readOnly' else '')))
         # branch: None outside an alt; else (steps in the branch, steps drawn)
         depth, branch = 0, None
         for step in tidy:
@@ -1285,12 +1512,13 @@ def summary(index: Model) -> list:
     if roles and not any(index.access(activity)[1] for activity in roles):
         conditions = sorted({condition for activity in roles for condition in index.role_conditions(activity)},
                             key=lambda text: (-len(text), text))
-        if conditions and on_method_security(conditions):
-            rest = security_rest(conditions[0])
-            text = ' They apply only when Spring method security is enabled' + (f'; {rest[:1].lower() + rest[1:]}' if rest else '') + '.'
+        switched_off = security_off(conditions)
+        if switched_off and on_method_security(conditions):
+            findings.append(f'Role checks (@PreAuthorize) are not enforced under the declared default ({switched_off}); '
+                            'they apply only when Spring method security is enabled. See [Roles](glossary.md#roles).')
         else:
             text = f' They apply only when: {conditions[0].rstrip(".")}.' if conditions else ''
-        findings.append('Role checks are declared, not proven enforced.' + text + ' See [Roles](glossary.md#roles).')
+            findings.append('Role checks are declared, not proven enforced.' + text + ' See [Roles](glossary.md#roles).')
     conflicts = sum(claim.get('kind') in ('conflict', 'contradiction') for claim in index.claims.values())
     if conflicts:
         findings.append(f"{plural(conflicts, 'disagreement')} between the code and its API contract, tests or "
@@ -1308,10 +1536,15 @@ def relationships_table(index: Model) -> list:
         if source in index.domains and target in index.domains and source != target:
             groups[(source, target)].append(relationship)
     for (source, target), items in sorted(groups.items(), key=lambda item: (order(item[0][0]), order(item[0][1]))):
-        traced = sum(bool(item.get('trace_ids')) for item in items)
+        traces = {trace_id for item in items for trace_id in item.get('trace_ids') or ()}
+        untraced = sum(not item.get('trace_ids') for item in items)
+        readers = len({item.get('from_activity_id') for item in items})
+        writers = len({item.get('to_activity_id') for item in items})
         rows.append((index.domains[source]['name'], index.domains[target]['name'],
                      'Customer/supplier (From reads To)',
-                     f'{len(items)} links, {traced} traced'
+                     f'{plural(readers, "use case")} read{"s" if readers == 1 else ""} data written by {writers}; '
+                     f'{plural(len(traces), "traced call path")}'
+                     + (f', {untraced} links untraced' if untraced else '')
                      + (' · also reverse direction' if (target, source) in groups else '')))
     for (source, target), concepts in sorted(foreign_writes(index).items(),
                                              key=lambda item: (order(item[0][0]), order(item[0][1]))):
@@ -1375,10 +1608,14 @@ def readme(index: Model, entities: Entities, coverage=()) -> str:
                   'Candidates from JPA cascades: cascaded children sit inside the root; other associations are '
                   'references.', '']
         lines += table([('Aggregate root', False), ('Inside the aggregate', False),
-                        ('References other aggregates', False)],
+                        ('References other aggregates', False), ('Members with their own repository', False)],
                        [(code(root), ', '.join(code(name) for name in members) or '-',
-                         ', '.join(code(name) for name in references) or '-')
-                        for root, members, references in aggregates])
+                         ', '.join(code(name) for name in references) or '-',
+                         ', '.join(code(name) for name in direct) or '-')
+                        for root, members, references, direct in aggregates])
+        if any(direct for _, _, _, direct in aggregates):
+            lines += ['', 'A member with its own repository can be saved or deleted without going through its root, '
+                          'so the aggregate boundary is not enforced in code.']
     er = entities.er_diagram()
     if er:
         lines += ['', '## Data model', '',
@@ -1431,7 +1668,10 @@ def context_map(index: Model) -> str:
     for (source, target, kind), items in sorted(groups.items(), key=lambda item: (
             order(item[0][0]), order(item[0][1]), item[0][2])):
         dashed = any(not item.get('trace_ids') for item in items)
-        text = label(f'{"reads" if kind == "uses_information_from" else kind.replace("_", " ")} ({len(items)})')
+        readers = len({item.get('from_activity_id') for item in items})
+        writers = len({item.get('to_activity_id') for item in items})
+        text = label(f'{plural(readers, "use case")} read{"s" if readers == 1 else ""} data from {writers}' if kind == 'uses_information_from'
+                     else f'{kind.replace("_", " ")} ({len(items)})')
         arrow = f'-. "{text}" .->' if dashed else f'-- "{text}" -->'
         lines.append(f'  {node("D", source)} {arrow} {node("D", target)}')
     for (source, target), concepts in sorted(foreign_writes(index).items(),
@@ -1496,7 +1736,7 @@ def use_case_diagrams(index: Model, domain: dict) -> list:
     return diagrams
 
 
-LAYERS = ('User interface', 'API contract', 'Controllers', 'Application services', 'Repositories',
+LAYERS = ('User interface', 'API contract', 'Unmatched client calls', 'Controllers', 'Application services', 'Repositories',
           'Mappers', 'Entities', 'Other classes', 'Tables')
 
 
@@ -1537,6 +1777,15 @@ NOT_DRAWN = {
 }
 HTTP_ENTRY = re.compile(r'^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) ')
 METHOD_SECURITY = re.compile(r'method security|security\.enable', re.I)
+
+
+def security_off(conditions) -> str:
+    """The 'x.enable=false' setting a precondition says is declared, else ''."""
+    for condition in conditions:
+        found = re.search(r'([\w.]*security[\w.]*\s*=\s*false)', condition or '', re.I)
+        if found:
+            return found.group(1).replace(' ', '')
+    return ''
 
 
 def security_rest(condition: str) -> str:
@@ -1590,13 +1839,20 @@ def context_page(index: Model, entities: Entities, sequences: Sequences, domain_
                                                               else ' (declared)')
     common = set(qualifiers.values())
     uniform = len(common) == 1 and common != {''}
-    security = on_method_security(condition for activity in activities for condition in index.role_conditions(activity))
-    role_note = ('declared, conditional on method security, not proven enforced' if uniform and common == {' (declared, conditional)'} and security
+    conditions = [condition for activity in activities for condition in index.role_conditions(activity)]
+    security = on_method_security(conditions)
+    switched_off = security_off(conditions)
+    role_note = (f'declared with @PreAuthorize; not enforced under the declared default ({switched_off})'
+                 if uniform and switched_off
+                 else 'declared, conditional on method security, not proven enforced' if uniform and common == {' (declared, conditional)'} and security
                  else 'declared and conditional, not proven enforced' if uniform and common == {' (declared, conditional)'}
                  else 'declared, not proven enforced')
-    lines += [f'Dashed box: implementation not fully traced. Dashed arrow'
+    dashed = any(activity.get('implementation_status') != 'implemented' for activity in activities)
+    lines += [('Dashed box: implementation not fully traced. ' if dashed else '') + 'Dashed arrow'
               + (' and Roles column' if uniform else '') + f': role {role_note}.', '']
     rows, details = [], []
+    # Files of implementations the declared profile does not run are cited last.
+    inactive = {name for choice in sequences.choices.values() for name in choice['inactive'] - choice['runs']}
     for activity in activities:
         roles, _ = index.access(activity)
         role_text = (', '.join(roles) + ('' if uniform else qualifiers.get(activity['id'], ''))) if roles else NO_ROLE
@@ -1612,7 +1868,7 @@ def context_page(index: Model, entities: Entities, sequences: Sequences, domain_
             rest = rest[len(brief):].strip()
             brief = first_sentence(rest, 160)
         rows.append((f"**{cell(activity['name'])}**" + (f"<br>{cell(brief)}" if brief else ''), entry,
-                     cell(role_text), status, index.cite(activity.get('evidence_ids'))))
+                     cell(role_text), status, index.cite(activity.get('evidence_ids'), avoid=inactive)))
         if description and description.strip() != brief:
             details.append(f"- **{activity['name']}**: {description}")
     lines += table([('Use case', False), ('Entry points', False), ('Roles', False), ('Implementation', False),
@@ -1667,7 +1923,7 @@ def context_page(index: Model, entities: Entities, sequences: Sequences, domain_
         claims = [item for items in owned.values() for item in items]
         if claims and all(item.get('support') == support for item in claims):
             lines += ['', f'Ownership claims here: {badge(support, SUPPORT)}.']
-        diagram = entities.diagram(concept_ids, flatten_bases=True)
+        diagram = entities.diagram(concept_ids, flatten_bases=True, external=touched)
         if diagram:
             lines += ['', '```mermaid', diagram, '```']
         constraints = entities.constraints(concept_ids)
@@ -1693,7 +1949,8 @@ def context_page(index: Model, entities: Entities, sequences: Sequences, domain_
     if data:
         used = [access for access in ACCESS_ORDER if any(row[access] for row in data.values())]
         lines += ['', '## Data it reads and writes', '',
-                  "Data accesses by this context's use cases. Resolved = traced to the statement; "
+                  "Data accesses the model records for this context's use cases, across all repository profiles "
+                  '(the sequences below show the declared profile only). Resolved = traced to the statement; '
                   'ambiguous = may not happen.', '']
 
         def total(row):
@@ -1785,8 +2042,10 @@ def context_page(index: Model, entities: Entities, sequences: Sequences, domain_
             title = category_label(category)
             if category == 'authorization' and all(rule.get('enforcement_status') == 'conditional' for rule in group):
                 security = on_method_security(condition for rule in group for condition in rule.get('preconditions') or ())
+                switched_off = security_off(condition for rule in group for condition in rule.get('preconditions') or ())
                 lines += [f"**{title} ({len(group)}):** all conditional"
-                          + (' on method security.' if security else '.'),
+                          + (f' on method security; not enforced under the declared default ({switched_off}).' if security and switched_off
+                             else ' on method security.' if security else '.'),
                           '', '<details><summary>The rules</summary>', '']
                 lines += [f'- {rule_line(rule)}' for rule in group]
                 lines += ['', '</details>', '']
@@ -1944,9 +2203,9 @@ def rules_page(index: Model) -> str:
             shared_note = (current == 'authorization' and on_method_security(conditions)
                            and all(item.get('preconditions') for item in group))
             if shared_note:
-                rest = security_rest(max(conditions, key=len))
-                lines += [f"All {len(group)} role checks are conditional on Spring method security"
-                          + (f"; {rest[:1].lower() + rest[1:]}" if rest else '') + '.', '']
+                switched_off = security_off(conditions)
+                lines += [f"All {len(group)} role checks are @PreAuthorize annotations, conditional on Spring method security"
+                          + (f"; not enforced under the declared default ({switched_off})" if switched_off else '') + '.', '']
         domains = ', '.join(f"[{index.domains[domain_id]['name']}](contexts/{index.domain_pages[domain_id]}.md)"
                             for domain_id in index.rule_domains.get(rule['id'], ())) or '-'
         lines += [f'<a id="rule-{short(rule["id"])}"></a>', f"### {rule['name']}", '',
@@ -2053,11 +2312,14 @@ def glossary_page(index: Model, entities: Entities) -> str:
     conditions = sorted({condition for _, _, found in roles.values() for condition in found},
                         key=lambda text: (-len(text), text))
     if roles and not any(enforced for _, enforced, _ in roles.values()):
-        rest = security_rest(conditions[0]) if conditions else ''
-        lines += [('Roles are declared and apply only when Spring method security is enabled'
-                   + (f'; {rest[:1].lower() + rest[1:]}' if rest else '') if on_method_security(conditions)
-                   else 'Roles are declared' + (f'; they apply only when: {conditions[0].rstrip(".")}' if conditions else ''))
-                  + '. No traced path proves enforcement.', '']
+        switched_off = security_off(conditions)
+        lines += [(f'Roles are declared with @PreAuthorize and are not enforced under the declared default '
+                   f'({switched_off}); they apply only when Spring method security is enabled.'
+                   if switched_off and on_method_security(conditions)
+                   else 'Roles are declared and apply only when Spring method security is enabled. No traced path proves enforcement.'
+                   if on_method_security(conditions)
+                   else 'Roles are declared' + (f'; they apply only when: {conditions[0].rstrip(".")}' if conditions else '')
+                   + '. No traced path proves enforcement.'), '']
     rows = [(role + (' (enforced)' if enforced else ''), count) for role, (count, enforced, _) in sorted(roles.items())]
     unspecified = sum(not index.access(activity)[0] for activity in index.activities.values())
     if unspecified:

@@ -540,10 +540,10 @@ def test_a_cascaded_collection_is_a_composition_and_an_aggregate():
     index = export.Model(table_model())
     entities = export.Entities(index)
     assert 'Owner "1" *-- "*" Pet : pets' in entities.diagram(['concept:owner', 'concept:pet'])
-    assert ('Owner', ['Pet'], []) in entities.aggregates()
+    assert ('Owner', ['Pet'], [], []) in entities.aggregates()
     # Pet belongs to Owner's aggregate, so it is not a root of its own.
-    assert all(root != 'Pet' for root, _, _ in entities.aggregates())
-    assert ('Vet', [], ['Specialty']) in entities.aggregates()
+    assert all(root != 'Pet' for root, _, _, _ in entities.aggregates())
+    assert ('Vet', [], ['Specialty'], []) in entities.aggregates()
 
 
 def test_an_opt_followed_by_its_negation_becomes_alt_else():
@@ -660,18 +660,50 @@ def test_jpa_cascades_and_eager_fetches_are_drawn_as_implied_table_access():
         'ev:pets', 'src/main/java/org/example/model/Owner.java', 9,
         '@OneToMany(cascade = CascadeType.ALL, mappedBy = "owner", fetch = FetchType.EAGER) private Set<Pet> pets;')
     entities = export.Entities(export.Model(model))
-    assert entities.implied('owners', 'write') == [('pets', 'JPA cascade')]
+    # A delete cascades to children first; a save of a new entity has no children to write.
+    assert entities.implied('owners', 'delete') == [('pets', 'JPA cascade')]
+    assert entities.implied('owners', 'write') == []
     assert entities.implied('owners', 'read') == [('pets', 'JPA eager fetch')]
+    # A to-one association is eager by default, so loading a pet loads its owner.
+    assert entities.implied('pets', 'read') == [('owners', 'JPA eager fetch')]
     assert entities.implied('vets', 'write') == [('vet_specialties', 'JPA join table')]
-    assert entities.implied('vets', 'read') == []
     index = export.Model(model)
     [(_, _, diagram)], _ = export.Sequences(index, entities).diagrams(index.activities['activity:add'])
-    assert re.search(r'P4-->>P\d+: write pets \(JPA cascade\)', diagram)
+    assert 'JPA cascade' not in diagram
+    # The same write as a delete removes the children before the owner row.
+    model['symbols']['symbol:repo']['qualified_name'] = 'src/OwnerRepository.java::OwnerRepository.delete(Owner)'
+    index = export.Model(model)
+    [(_, _, diagram)], _ = export.Sequences(index, export.Entities(index)).diagrams(index.activities['activity:add'])
+    lines = [line.strip() for line in diagram.splitlines()]
+    cascade = next(position for position, line in enumerate(lines) if line.endswith('delete pets (JPA cascade)'))
+    owners = next(position for position, line in enumerate(lines) if line.endswith('delete owners'))
+    assert cascade < owners
     # A declared non-JPA profile turns the JPA behaviour off.
     model['edges']['edge:write']['condition'] = 'spring.profiles.active=hsqldb,jdbc declared in x'
     index = export.Model(model)
     [(_, _, diagram)], _ = export.Sequences(index).diagrams(index.activities['activity:add'])
     assert 'JPA cascade' not in diagram
+
+
+def test_rule_guards_become_alt_blocks_and_writes_name_their_statement():
+    model = service_model()
+    model['evidence']['ev:guard'] = evidence('ev:guard', 'src/OwnerRestController.java', 25, 'if (owner == null)')
+    model['rules']['rule:exists'] = {
+        'id': 'rule:exists', 'name': 'Owner must exist', 'category': 'validation', 'activity_ids': ['activity:add'],
+        'predicate_or_formula': 'owner == null', 'outcome': 'HTTP 404', 'enforcement_status': 'declared_only',
+        'support': 'supported', 'basis': ['source_observed'], 'evidence_ids': [], 'scope': {},
+        'enforcement_sites': [{'source_id': 'symbol:root', 'condition': '(owner == null)', 'evidence_ids': ['ev:guard']}],
+        'evaluation_kind': 'predicate', 'conflicts': [], 'unresolved_questions': []}
+    model['effects'] = {'effect:1': {'id': 'effect:1', 'edge_id': 'edge:write', 'kind': 'data_write',
+                                     'outcome': 'this.em.persist(owner)'}}
+    index = export.Model(model)
+    [(_, _, diagram)], _ = export.Sequences(index).diagrams(index.activities['activity:add'])
+    lines = [line.strip() for line in diagram.splitlines()]
+    # The guard at line 25 sits between toOwner (line 20) and saveOwner (line 30).
+    assert lines.index('alt owner == null') > next(i for i, line in enumerate(lines) if 'toOwner()' in line)
+    assert lines[lines.index('alt owner == null') + 1] == 'P1-->>Client: 404'
+    assert lines.index('else otherwise') < next(i for i, line in enumerate(lines) if 'saveOwner()' in line)
+    assert 'insert owners' in diagram and 'write owners' not in diagram
 
 
 def test_an_alt_branch_with_no_calls_says_so(monkeypatch):
