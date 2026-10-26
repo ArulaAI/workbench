@@ -25,26 +25,28 @@ from .business_domain_schema import DomainError
 EXPORT_DIRECTORY = '.speed/context/business-domain-ddd'
 MANIFEST = 'manifest.json'
 
-SUPPORT = {'supported': 'supported', 'partial': 'partially supported',
-           'insufficient': 'insufficient evidence'}
+SUPPORT = {'supported': 'backed by code', 'partial': 'partly backed by code',
+           'insufficient': 'not enough evidence'}
 ENFORCEMENT = {
-    'verified_on_trace': 'verified on a traced path',
-    'declared_only': 'declared in code, not proven on a traced path',
-    'conditional': 'depends on preconditions',
-    'unresolved': 'enforcement unresolved',
+    'verified_on_trace': 'confirmed on a call path we followed',
+    'declared_only': 'written in the code, but not confirmed to run',
+    'conditional': 'applies only under some settings',
+    'unresolved': 'unknown where or whether this is enforced',
 }
+PLAIN_STATUS = {'declared_only': 'written but not confirmed to run', 'conditional': 'apply only under some settings',
+                'unresolved': 'with unknown enforcement'}
 ENFORCEMENT_SHORT = {
-    'verified_on_trace': 'verified on a traced path',
-    'declared_only': 'declared in code',
-    'conditional': 'conditional',
-    'unresolved': 'unresolved',
+    'verified_on_trace': 'confirmed to run',
+    'declared_only': 'in code, not confirmed',
+    'conditional': 'only under some settings',
+    'unresolved': 'enforcement unknown',
 }
-EVIDENCE = {'supported': 'well evidenced', 'partial': 'partly evidenced',
-            'insufficient': 'weakly evidenced'}
+EVIDENCE = {'supported': 'strong evidence', 'partial': 'some evidence',
+            'insufficient': 'little evidence'}
 IMPLEMENTATION = {
     'implemented': 'implemented',
-    'documented_only': 'documented only',
-    'implementation_unresolved': 'implementation not fully traced',
+    'documented_only': 'described in docs only, no code found',
+    'implementation_unresolved': 'code path not fully followed',
 }
 ACCESS_ORDER = ('creates', 'reads', 'updates', 'deletes', 'references')
 SOURCE_PREFERENCE = {'source': 0, 'test': 1, 'configuration': 2}
@@ -59,8 +61,8 @@ FIELD_DECLARATION = re.compile(
 ROLE_PREDICATE = re.compile(r'has(?:Any)?Role\(([^)]*)\)')
 ROLE_TOKEN = re.compile(r'\b((?:[A-Z][A-Z0-9]*_)*ADMIN|[A-Z][A-Z0-9]*_[A-Z0-9_]*ROLE)\b')
 ACCESSOR = re.compile(r'\.(?:get|is)[A-Z]\w*\(')
-NO_ROLE = 'no role declared'
-CONFLICTING_ROLES = 'no single declared role allows every step'
+NO_ROLE = 'no role named in the code'
+CONFLICTING_ROLES = 'no one role named in the code is allowed every step'
 MERMAID_ESCAPES = {'#': '#35;', '"': '#quot;', ';': '#59;', '<': '#lt;', '>': '#gt;'}
 WRITES = ('creates', 'updates', 'deletes')
 ACTIVE_PROFILES = re.compile(r'spring\.profiles\.active\s*=\s*([\w.\-]+(?:\s*,\s*[\w.\-]+)*)')
@@ -84,6 +86,63 @@ SEQUENCE_KINDS = ('calls', 'reads_data', 'writes_data', 'selects_implementation'
 # Text helpers
 
 CLIENT = '__client__'
+# Recurring analysis jargon in model-written prose, with plain words that keep the meaning.
+# Order matters: specific phrases come before the general ones they contain.
+PLAIN_WORDS = [(re.compile(pattern), replacement) for pattern, replacement in (
+    (r'Every cited write use is unresolved, both for transaction commit and for the profile-selected repository\.',
+     'For every write listed, it is unknown whether the transaction commits and which repository the active Spring '
+     'profile uses.'),
+    (r'\b(?:is|are) not (?:established|determined) statically\b', 'cannot be confirmed from the code alone'),
+    (r'\b(is|are) not established\b', r'\1 not confirmed'),
+    (r'\b(is|are) established statically\b', r'\1 confirmed from the code alone'),
+    (r'\bcannot be determined statically\b', 'cannot be confirmed from the code alone'),
+    (r'\b(is|are|be) established\b', r'\1 confirmed'),
+    (r'Static analysis does not establish whether', 'The code alone does not show whether'),
+    (r'\bis unresolved\.', 'is unknown.'),
+    (r'\bthe (?:analyzed (?:source(?: snapshot)?|snapshot)|snapshot)\b', 'the code that was analyzed'),
+    (r'\(profile-selected VisitRepository insert or update\)',
+     '(insert or update by the VisitRepository chosen by the active Spring profile)'),
+    (r'the profile-selected repository implementation', 'the repository implementation chosen by the active Spring profile'),
+    (r'The profile-selected implementation of (\w+)', r'The implementation of \1 chosen by the active Spring profile'),
+    (r'\b([Ww])hich profile-selected repository\b', r'\1hich repository (chosen by the active Spring profile)'),
+    (r'\b([Tt])he profile-selected repository\b', r'\1he repository chosen by the active Spring profile'),
+    (r'\b([Tt])he profile-selected (\w+)', r'\1he \2 chosen by the active Spring profile'),
+    (r'\bon the declared default profile\b', 'on the default profile in the configuration'),
+    (r'\bby declared default\b', 'by default'),
+    (r'\b([Tt])he declared default\b', r'\1he default setting'),
+    (r'\bdeclared default\b', 'default setting'),
+    (r'\(the merge candidate\)', '(the suggested merge)'),
+    (r'These controllers answer the merge candidates, but they are technical signals and are not the basis of the boundary\.',
+     'The boundary is not based on which controller declares the endpoints.'),
+    (r'the declared petclinic\.security\.enable=false', 'the petclinic.security.enable=false setting in the configuration'),
+    (r'\b([Nn]o (?:role check|server implementation|server read)) is evidenced\b', r'\1 is found in the code'),
+    (r'\bno evidenced (PUT )?implementation\b', r'no \1implementation in the code'),
+    (r'the evidenced implementation', 'the implementation found in the code'),
+    (r'\b([Tt])he verifier reports\b', r'\1he automated check reports'),
+    (r'\b(is|are) not among the evidence cited here\b', r'\1 not part of the evidence listed here'),
+    (r'\bno evidence IDs? for (that test|them) (?:is|are) available to cite here', r'there is no evidence link for \1 here'),
+    (r'\b([Tt])his candidate\b', r'\1his rule'),
+    (r'the flush order', 'the order in which the changes are written to the database'),
+    (r'reportedly declares', 'is reported to set'),
+    (r'would leave this annotation unenforced under the default configuration',
+     'would mean this annotation is not enforced in the default configuration'),
+    (r'The trace is incomplete', 'The call path is incomplete'),
+    (r'could not be listed and are left to derivation', 'could not be listed and still need to be worked out'),
+    (r'Four further input bindings reachable through the trace of', 'Four more inputs on the call path of'),
+    (r'so their server-side link is unresolved', 'so which server code handles them is unknown'),
+    (r'has only a contract representation', 'exists only in the API contract'),
+    (r'depends on the runtime entity mapping', 'depends on how the entities are mapped when the app runs'),
+    (r'\bno-op UPDATE\b', 'UPDATE that changes nothing'),
+    (r'\be\.g\. ', 'for example '),
+    (r'\bi\.e\. ', 'that is, '),
+    (r"is not part of this anchor's trace", "is not part of this entry point's call path"),
+    (r'they are separate anchors and traces', 'they start from separate entry points with separate call paths'),
+    (r'from one child scope sit in the same domain as the writers from the other child scopes',
+     'in one part of the model sit in the same domain as the writers in the other parts'),
+)]
+TRACE_WORDS = {'bounded': 'cut short at a size or depth limit', 'incomplete': 'incomplete', 'complete': 'complete',
+               'resolved': 'every step confirmed', 'unresolved': 'some steps not confirmed',
+               'ambiguous': 'some steps may not happen'}
 
 
 def unwrap(text: str) -> str:
@@ -236,7 +295,9 @@ class Model:
         return f'(missing ref {identifier})' if ':' in identifier else identifier
 
     def readable(self, text: str) -> str:
-        """Replace record IDs the model wrote into prose with names."""
+        """Replace record IDs the model wrote into prose with names, and its jargon with plain words."""
+        for pattern, replacement in PLAIN_WORDS:
+            text = pattern.sub(replacement, text)
         def ownership(identifier):
             item = self.ownerships[identifier]
             return (f"{self.name(item.get('domain_id', ''))}'s {item['kind']} claim on "
@@ -1343,13 +1404,13 @@ class Sequences:
             elif runs:
                 parts.append('Runs ' + ' + '.join(item.replace(', generated at runtime', ' (generated)') for item in runs))
             if ambiguous:
-                parts.append('several match the declared profile, not drawn: ' + ', '.join(sorted(ambiguous)))
+                parts.append('several match the configured Spring profile, not drawn: ' + ', '.join(sorted(ambiguous)))
             if by_profile:
-                parts.append('chosen at runtime by profile, not drawn: ' + ', '.join(sorted(by_profile)))
+                parts.append('picked at startup by the Spring profile, not drawn: ' + ', '.join(sorted(by_profile)))
             if unbound:
                 parts.append('other implementations, not drawn: ' + ', '.join(sorted(unbound)))
             if parts and lifeline not in shown_as and inactive:
-                parts.append('not on the declared profile: ' + ', '.join(sorted(inactive)))
+                parts.append('not used with the configured Spring profile: ' + ', '.join(sorted(inactive)))
             if parts:
                 notes[lifeline] = '. '.join(part[:1].upper() + part[1:] for part in parts) + '.'
         lines = ['sequenceDiagram', '  autonumber', f'  actor Client as {label(actor)}']
@@ -1368,7 +1429,7 @@ class Sequences:
         depth, branch = 0, None
         for step in tidy:
             if step[0] in ('else', 'end') and branch and not branch[1]:
-                text = 'steps on this branch not drawn' if branch[0] else 'no call traced on this branch'
+                text = 'steps on this branch not drawn' if branch[0] else 'no calls found on this branch'
                 lines.append('  ' * (depth + 1) + f'Note over {ids[first[1]]}: {text}')
             if step[0] in ('alt', 'else'):
                 branch = [0, 0]
@@ -1400,12 +1461,12 @@ class Sequences:
         contract = 'API contract (no implementation)'
         if contract in ids:
             lines.append(f'  Note over {ids[contract]}: '
-                         + label('Contract only: no server implementation evidenced'))
+                         + label('Only in the API contract: no server code found for it'))
         if budget['omitted']:
             lines.append(f"  Note over {ids[first[1]]}: "
                          + label(f"at least {plural(budget['omitted'], 'more step')} not drawn (trace {short(trace['id'])})"))
-        state = ' · '.join(part for part in (trace.get('completion'), trace.get('resolution')) if part)
-        caption = f'Trace: {state}.' if state else ''
+        state = ' · '.join(TRACE_WORDS.get(part, part) for part in (trace.get('completion'), trace.get('resolution')) if part)
+        caption = f'Call path: {state}.' if state else ''
         return (index.entry_point(anchor['id']), caption, '\n'.join(lines))
 
 
@@ -1425,13 +1486,13 @@ def rule_status(rule: dict, brief: bool = False) -> str:
     if 'source_observed' in basis:
         return names['declared_only']
     if 'contract_declared' in basis and 'test_expected' in basis:
-        return 'declared in contract + tests' if brief else 'declared in the API contract and expected by tests'
+        return 'in contract + tests' if brief else 'written in the API contract and expected by tests'
     if 'contract_declared' in basis:
-        return 'declared in contract only' if brief else 'declared in the API contract only'
+        return 'in contract only' if brief else 'written in the API contract only'
     if 'test_expected' in basis:
-        return 'expected by tests only'
+        return 'in tests only' if brief else 'expected by tests only'
     if 'documented' in basis:
-        return 'documented only'
+        return 'in docs only' if brief else 'described in docs only'
     return names['declared_only']
 
 
@@ -1457,9 +1518,9 @@ def model_banner(index: Model, link_gaps: bool = True, compact: bool = False) ->
         f"`{model.get('build_id', '-')}` on {str(model.get('generated_at', '-'))[:19].replace('T', ' ')} UTC.",
         f"> Entry points: {coverage.get('anchors_processed', '-')} of {coverage.get('anchors_total', '-')} modelled "
         f"({coverage.get('anchors_excluded', 0)} excluded, {coverage.get('anchors_pending', 0)} pending). "
-        f"Call paths fully resolved: {len(traces) - open_traces} of {len(traces)}. "
-        f"Data accesses fully resolved: {len(uses) - open_uses} of {len(uses)}."
-        + (f" {plural(hidden, 'context')} with insufficient evidence or rejected in review not shown."
+        f"Call paths fully confirmed: {len(traces) - open_traces} of {len(traces)}. "
+        f"Database reads and writes fully confirmed: {len(uses) - open_uses} of {len(uses)}."
+        + (f" {plural(hidden, 'context')} not shown (not enough evidence, or rejected by a reviewer)."
            if hidden else ''),
     ]
     if compact:
@@ -1468,18 +1529,18 @@ def model_banner(index: Model, link_gaps: bool = True, compact: bool = False) ->
                 '>',
                 f"> Entry points: {coverage.get('anchors_processed', '-')} of {coverage.get('anchors_total', '-')} modelled "
                 f"({coverage.get('anchors_excluded', 0)} excluded, {coverage.get('anchors_pending', 0)} pending) · "
-                f"call paths fully resolved: {len(traces) - open_traces} of {len(traces)} · "
-                f"data accesses fully resolved: {len(uses) - open_uses} of {len(uses)} · [Gaps](gaps.md)"
-                + (f" · {plural(hidden, 'context')} with insufficient evidence or rejected in review not shown"
+                f"call paths fully confirmed: {len(traces) - open_traces} of {len(traces)} · "
+                f"database reads and writes fully confirmed: {len(uses) - open_uses} of {len(uses)} · [Gaps](gaps.md)"
+                + (f" · {plural(hidden, 'context')} not shown (not enough evidence, or rejected by a reviewer)"
                    if hidden else '')]
     if model.get('status') != 'complete':
         reasons = []
         if pending:
             reasons.append(plural(len(pending), 'entry point') + ' not modelled')
         if open_traces:
-            reasons.append('call paths that end at framework or generated code')
+            reasons.append('some call paths stop at framework or generated code')
         if any(item.get('support') != 'supported' for item in index.activities.values()):
-            reasons.append('use cases only partly backed by traced evidence')
+            reasons.append('some use cases only partly backed by the code we followed')
         if reasons:
             lines.append('> Partial means: ' + '; '.join(reasons) + '.'
                          + (' See [Gaps](gaps.md).' if link_gaps else ''))
@@ -1502,11 +1563,11 @@ def summary(index: Model) -> list:
                         f"{'is' if len(pending) == 1 else 'are'} not modelled; see [Gaps](gaps.md).")
     statuses = Counter(rule.get('enforcement_status') for rule in index.rules.values())
     verified = statuses.pop('verified_on_trace', 0)
-    breakdown = ', '.join(f"{count} {'declared' if status == 'declared_only' else ENFORCEMENT_SHORT.get(status, status)}"
+    breakdown = ', '.join(f"{count} {PLAIN_STATUS.get(status, status)}"
                           for status, count in
                           sorted(statuses.items(), key=lambda item: (-item[1], str(item[0]))))
     findings.append(f"{'None' if not verified else verified} of the {plural(len(index.rules), 'rule')} "
-                    f"{'is' if verified <= 1 else 'are'} verified on a traced path"
+                    f"{'is' if verified <= 1 else 'are'} confirmed to run on a call path we followed"
                     + (f': {breakdown}.' if breakdown else '.') + ' See [Rules](rules.md).')
     roles = [activity for activity in index.activities.values() if index.access(activity)[0]]
     if roles and not any(index.access(activity)[1] for activity in roles):
@@ -1514,11 +1575,12 @@ def summary(index: Model) -> list:
                             key=lambda text: (-len(text), text))
         switched_off = security_off(conditions)
         if switched_off and on_method_security(conditions):
-            findings.append(f'Role checks (@PreAuthorize) are not enforced under the declared default ({switched_off}); '
+            findings.append(f'Role checks (@PreAuthorize) are switched off by the default setting ({switched_off}); '
                             'they apply only when Spring method security is enabled. See [Roles](glossary.md#roles).')
         else:
             text = f' They apply only when: {conditions[0].rstrip(".")}.' if conditions else ''
-            findings.append('Role checks are declared, not proven enforced.' + text + ' See [Roles](glossary.md#roles).')
+            findings.append('Role checks are written in the code but not confirmed to be enforced.' + text
+                            + ' See [Roles](glossary.md#roles).')
     conflicts = sum(claim.get('kind') in ('conflict', 'contradiction') for claim in index.claims.values())
     if conflicts:
         findings.append(f"{plural(conflicts, 'disagreement')} between the code and its API contract, tests or "
@@ -1543,8 +1605,8 @@ def relationships_table(index: Model) -> list:
         rows.append((index.domains[source]['name'], index.domains[target]['name'],
                      'Customer/supplier (From reads To)',
                      f'{plural(readers, "use case")} read{"s" if readers == 1 else ""} data written by {writers}; '
-                     f'{plural(len(traces), "traced call path")}'
-                     + (f', {untraced} links untraced' if untraced else '')
+                     f'{plural(len(traces), "call path")} followed'
+                     + (f', {plural(untraced, "link")} with no call path found' if untraced else '')
                      + (' · also reverse direction' if (target, source) in groups else '')))
     for (source, target), concepts in sorted(foreign_writes(index).items(),
                                              key=lambda item: (order(item[0][0]), order(item[0][1]))):
@@ -1578,7 +1640,7 @@ def readme(index: Model, entities: Entities, coverage=()) -> str:
                      [(len(domains), len(index.activities), len(index.concepts), len(index.rules),
                        len(index.relationships))]),
               '', *summary(index), '', '## Context map', '',
-              '**Legend:** solid → reads data from · dashed → reads, some links have no traced path · '
+              '**Legend:** solid → reads data from · dashed → reads, but for some links no call path was found · '
               'thick ⇒ writes data another context owns · dotted ↔ both claim ownership.', '',
               '```mermaid', context_map(index), '```', '', *relationships_table(index), '## Bounded contexts', '']
     supports = {domain.get('support') for domain in domains}
@@ -1621,18 +1683,20 @@ def readme(index: Model, entities: Entities, coverage=()) -> str:
         lines += ['', '## Data model', '',
                   'Tables as mapped by JPA. SQL schema scripts can differ by database; see [Rules](rules.md).',
                   '', '```mermaid', er, '```']
-    lines += ['', '<details><summary>Badge legend</summary>', '']
-    lines += table([('Badge', False), ('Meaning', False)], [
-        ('supported / partially supported', 'How fully traced code backs a context or use case; partial = some call '
-                                            'paths end at framework or generated code.'),
-        ('well / partly / weakly evidenced', 'Strength of the cited evidence for a rule, not proof it runs.'),
-        ('declared in code', 'The check is in source; no traced call path proves it runs.'),
-        ('declared in contract + tests / contract only / expected by tests only',
-         'The rule comes from the API contract or tests, not implementation code.'),
-        ('conditional', 'Applies only under a precondition, such as a profile or setting.'),
-        ('unresolved', 'The model could not tell where or whether the rule is enforced.'),
-        ('implementation not fully traced', 'The path to storage is not proven end to end.'),
-        ('role (declared)', 'Declared, for example with @PreAuthorize; no traced path proves it is enforced.'),
+    lines += ['', '<details><summary>What the labels mean</summary>', '']
+    lines += table([('Label', False), ('Meaning', False)], [
+        ('backed by code / partly backed by code', 'How much of a context or use case we could follow through the code. '
+                                                   '"Partly" means some call paths stop at framework or generated code.'),
+        ('strong / some / little evidence', 'How well the cited code, contract or tests support a rule. It does not '
+                                            'mean the rule is confirmed to run.'),
+        ('in code, not confirmed', 'The check is written in the code, but we could not show that it runs.'),
+        ('in contract + tests / in contract only / in tests only',
+         'The rule comes from the API contract or from tests, not from the application code.'),
+        ('only under some settings', 'The rule applies only with a certain setting or profile.'),
+        ('enforcement unknown', 'We could not tell where, or whether, the rule is enforced.'),
+        ('code path not fully followed', 'We could not follow the use case all the way to the database.'),
+        ('role (in code)', 'The role is named in the code (for example with @PreAuthorize), but that does not prove it is '
+                           'checked when the app runs.'),
     ])
     lines += ['', '</details>', '', '_Generated by `speed discover domains --export ddd`; do not edit._']
     return '\n'.join(lines) + '\n'
@@ -1716,7 +1780,7 @@ def use_case_diagrams(index: Model, domain: dict) -> list:
         for role in roles:
             declared = all(not access[activity['id']][1] for activity in chunk
                            if role in index.roles(activity)) and role != NO_ROLE
-            shown = f'{role} (declared)' if declared else role
+            shown = f'{role} (in code)' if declared else role
             lines.append(f'  R_{slug(role).replace("-", "_")}["{label(shown)}"]:::actor')
         title = domain['name'] + (f' (part {part} of {len(chunks)})' if len(chunks) > 1 else '')
         lines.append(f'  subgraph {node("S", domain["id"])}{part}["{label(title)}"]')
@@ -1835,20 +1899,22 @@ def context_page(index: Model, entities: Entities, sequences: Sequences, domain_
     for activity in activities:
         roles, enforced = index.access(activity)
         if roles:
-            qualifiers[activity['id']] = '' if enforced else (' (declared, conditional)' if index.role_conditions(activity)
-                                                              else ' (declared)')
+            qualifiers[activity['id']] = '' if enforced else (' (in code, only under some settings)' if index.role_conditions(activity)
+                                                              else ' (in code, not confirmed)')
     common = set(qualifiers.values())
     uniform = len(common) == 1 and common != {''}
     conditions = [condition for activity in activities for condition in index.role_conditions(activity)]
     security = on_method_security(conditions)
     switched_off = security_off(conditions)
-    role_note = (f'declared with @PreAuthorize; not enforced under the declared default ({switched_off})'
+    role_note = (f'written in the code with @PreAuthorize, but switched off by the default setting ({switched_off})'
                  if uniform and switched_off
-                 else 'declared, conditional on method security, not proven enforced' if uniform and common == {' (declared, conditional)'} and security
-                 else 'declared and conditional, not proven enforced' if uniform and common == {' (declared, conditional)'}
-                 else 'declared, not proven enforced')
+                 else 'written in code, applies only when Spring method security is on, not confirmed to be enforced'
+                 if uniform and common == {' (in code, only under some settings)'} and security
+                 else 'written in code, applies only under some settings, not confirmed to be enforced'
+                 if uniform and common == {' (in code, only under some settings)'}
+                 else 'written in code, not confirmed to be enforced')
     dashed = any(activity.get('implementation_status') != 'implemented' for activity in activities)
-    lines += [('Dashed box: implementation not fully traced. ' if dashed else '') + 'Dashed arrow'
+    lines += [('Dashed box: code path not fully followed. ' if dashed else '') + 'Dashed arrow'
               + (' and Roles column' if uniform else '') + f': role {role_note}.', '']
     rows, details = [], []
     # Files of implementations the declared profile does not run are cited last.
@@ -1949,21 +2015,21 @@ def context_page(index: Model, entities: Entities, sequences: Sequences, domain_
     if data:
         used = [access for access in ACCESS_ORDER if any(row[access] for row in data.values())]
         lines += ['', '## Data it reads and writes', '',
-                  "Data accesses the model records for this context's use cases, across all repository profiles "
-                  '(the sequences below show the declared profile only). Resolved = traced to the statement; '
-                  'ambiguous = may not happen.', '']
+                  "Database reads and writes found for this context's use cases, across every storage setup "
+                  '(the call sequences below show only the configured Spring profile). Confirmed = we found the exact '
+                  'database statement; may not happen = the step is possible but not certain.', '']
 
         def total(row):
             return row['resolved'] + row['unresolved'] + row['ambiguous']
-        lines += table([('Table', False), *[(access.capitalize(), True) for access in used], ('Resolved', True)],
+        lines += table([('Table', False), *[(access.capitalize(), True) for access in used], ('Confirmed', True)],
                        [(cell(name), *[data[name][access] or '-' for access in used],
                          f"{data[name]['resolved']} of {total(data[name])}"
-                         + (f" ({data[name]['ambiguous']} ambiguous)" if data[name]['ambiguous'] else ''))
+                         + (f" ({data[name]['ambiguous']} may not happen)" if data[name]['ambiguous'] else ''))
                         for name in sorted(data)])
-        lines += ['', '<details><summary>Accesses by resolution</summary>', '']
+        lines += ['', '<details><summary>Reads and writes by how sure we are</summary>', '']
         lines += table([('Table', False), *[(access.capitalize(), True) for access in used],
-                        ('Resolved', True), ('Unresolved', True), ('Ambiguous', True)],
-                       [(cell(name), *[(f"{data[name][access]} ({data[name][access + ':ambiguous']} ambiguous)"
+                        ('Confirmed', True), ('Not confirmed', True), ('May not happen', True)],
+                       [(cell(name), *[(f"{data[name][access]} ({data[name][access + ':ambiguous']} may not happen)"
                                          if data[name].get(access + ':ambiguous') else data[name][access] or '-')
                                         for access in used],
                          data[name]['resolved'] or '-', data[name]['unresolved'] or '-',
@@ -1992,7 +2058,7 @@ def context_page(index: Model, entities: Entities, sequences: Sequences, domain_
     diagram, _ = component_diagram(sequences, drawn_traces)
     if diagram:
         lines += ['', '## Architecture', '',
-                  "Classes and tables on this context's traced call paths. Arrow = at least one traced call.", '',
+                  "Classes and tables on the call paths we followed for this context. Arrow = at least one call found.", '',
                   '```mermaid', diagram, '```']
 
     links = context_links(index, domain_id)
@@ -2001,18 +2067,17 @@ def context_page(index: Model, entities: Entities, sequences: Sequences, domain_
 
     profiles = ', '.join(sorted(sequences.active_profiles))
     lines += ['', '## Call sequences', '',
-              'Static call paths rebuilt from source, not recorded runs. Calls appear in source order; only '
-              'branches with a known condition are drawn (opt/alt). Dotted arrow = call or data access not fully '
-              'resolved.'
-              + (f' Repository implementations follow the declared profile ({profiles}, from spring.profiles.active);'
-                 ' a runtime override can change this.' if profiles else '')
-              + ' "bounded" = the trace stopped at a size or depth limit.'
-              + (f' Every trace below is {usual[len("Trace: "):].rstrip(".")} unless its caption says otherwise.'
+              'These call paths were worked out by reading the source code, not recorded from a running app. Calls '
+              'are shown in the order they appear in the code; a branch is drawn only when its condition is known '
+              '(opt/alt). Dotted arrow = a call or database step we could not fully confirm.'
+              + (f' The database code shown is the version the configured Spring profile uses ({profiles}, from '
+                 'spring.profiles.active); a different setting at startup can change this.' if profiles else '')
+              + (f' Every call path below is {usual[len("Call path: "):].rstrip(".")} unless its caption says otherwise.'
                  if usual else ''), '']
     names = {name for trace_id in drawn_traces for link in sequences.links.get(trace_id, ()) for _, name in link}
     choices = {name: sequences.choices[name] for name in sorted(names) if name in sequences.choices}
     if choices:
-        lines += ['<details><summary>Implementations on the declared profile</summary>', '']
+        lines += ['<details><summary>Which code runs with the configured Spring profile</summary>', '']
         lines += table([('Interface', False), ('Runs', False), ('Other implementations', False)],
                        [(code(name), '; '.join(item.replace(', generated at runtime', ' (generated)')
                                                for item in sorted(choice['runs'])) or '-',
@@ -2043,9 +2108,10 @@ def context_page(index: Model, entities: Entities, sequences: Sequences, domain_
             if category == 'authorization' and all(rule.get('enforcement_status') == 'conditional' for rule in group):
                 security = on_method_security(condition for rule in group for condition in rule.get('preconditions') or ())
                 switched_off = security_off(condition for rule in group for condition in rule.get('preconditions') or ())
-                lines += [f"**{title} ({len(group)}):** all conditional"
-                          + (f' on method security; not enforced under the declared default ({switched_off}).' if security and switched_off
-                             else ' on method security.' if security else '.'),
+                lines += [f"**{title} ({len(group)}):** all apply only "
+                          + (f'when Spring method security is on, which the default setting ({switched_off}) switches off.'
+                             if security and switched_off
+                             else 'when Spring method security is on.' if security else 'under some settings.'),
                           '', '<details><summary>The rules</summary>', '']
                 lines += [f'- {rule_line(rule)}' for rule in group]
                 lines += ['', '</details>', '']
@@ -2179,8 +2245,9 @@ def rules_page(index: Model) -> str:
     categories = sorted({rule.get('category') or 'unclassified' for rule in rules}, key=category_key)
     verified = sum(rule.get('enforcement_status') == 'verified_on_trace' for rule in rules)
     lines += [f'{plural(len(rules), "rule")} from code, API contract and tests. '
-              + ('None is verified on a traced path; "declared" means written down, not proven to run.'
-                 if not verified else f'{verified} verified on a traced path.'), '']
+              + ('None is confirmed to run on a call path we followed; "in code, not confirmed" means the check exists '
+                 'in the code but we could not show that it runs.'
+                 if not verified else f'{verified} confirmed to run on a call path we followed.'), '']
 
     title = category_label
     lines += table([('Category', False), *[(status[:1].upper() + status[1:], True) for status in statuses], ('Total', True)],
@@ -2204,8 +2271,9 @@ def rules_page(index: Model) -> str:
                            and all(item.get('preconditions') for item in group))
             if shared_note:
                 switched_off = security_off(conditions)
-                lines += [f"All {len(group)} role checks are @PreAuthorize annotations, conditional on Spring method security"
-                          + (f"; not enforced under the declared default ({switched_off})" if switched_off else '') + '.', '']
+                lines += [f"All {len(group)} role checks are @PreAuthorize annotations that apply only when Spring method "
+                          "security is on" + (f"; the default setting ({switched_off}) switches it off" if switched_off else '')
+                          + '.', '']
         domains = ', '.join(f"[{index.domains[domain_id]['name']}](contexts/{index.domain_pages[domain_id]}.md)"
                             for domain_id in index.rule_domains.get(rule['id'], ())) or '-'
         lines += [f'<a id="rule-{short(rule["id"])}"></a>', f"### {rule['name']}", '',
@@ -2240,7 +2308,7 @@ def rules_page(index: Model) -> str:
             cited.update(found)
             sites.append(f"{code(index.name(site.get('source_id', '')))} at {', '.join(code(item) for item in found) or '-'}"
                          + (f" when {code(site['condition'])}" if site.get('condition') else ''))
-        lines.append('- **Enforced at:** ' + ('; '.join(sites) if sites else 'no site in traced code'))
+        lines.append('- **Enforced at:** ' + ('; '.join(sites) if sites else 'not found in the code we followed'))
         scope = rule.get('scope') or {}
         predicate = rule.get('predicate_or_formula') or ''
         scoped = [f'{key} {value}' for key, value in sorted(scope.items())
@@ -2313,8 +2381,8 @@ def glossary_page(index: Model, entities: Entities) -> str:
                         key=lambda text: (-len(text), text))
     if roles and not any(enforced for _, enforced, _ in roles.values()):
         switched_off = security_off(conditions)
-        lines += [(f'Roles are declared with @PreAuthorize and are not enforced under the declared default '
-                   f'({switched_off}); they apply only when Spring method security is enabled.'
+        lines += [(f'Roles are written in the code with @PreAuthorize, but they are switched off by the default '
+                   f'setting ({switched_off}); they apply only when Spring method security is on.'
                    if switched_off and on_method_security(conditions)
                    else 'Roles are declared and apply only when Spring method security is enabled. No traced path proves enforcement.'
                    if on_method_security(conditions)
@@ -2455,10 +2523,10 @@ def gaps_page(index: Model) -> str:
                 open_uses[(index.name(resource_id), use.get('access') or '-', use.get('resolution'))].append(use)
     if open_uses:
         unresolved = sum(use.get('resolution') != 'resolved' for use in index.uses.values())
-        lines += ['## Data access not fully resolved', '',
-                  f'{unresolved} of {len(index.uses)} data accesses are not fully resolved: the table is known, '
-                  'but the statement, its completion, the implementation that performs it or whether it happens '
-                  'is not.', '', '<details><summary>By table</summary>', '']
+        lines += ['## Database reads and writes not fully confirmed', '',
+                  f'{unresolved} of {len(index.uses)} database reads and writes are not fully confirmed: we know the '
+                  'table, but not the exact statement, whether it completes, which code runs it, or whether it '
+                  'happens at all.', '', '<details><summary>By table</summary>', '']
         rows = []
         for (table_name, access, resolution), uses in sorted(open_uses.items()):
             reasons = sorted({first_sentence(re.sub(r'^(The operation facts of this use are unresolved:|Unresolved:)\s*',
@@ -2467,8 +2535,9 @@ def gaps_page(index: Model) -> str:
             text = '<br>'.join(cell(reason) for reason in reasons[:3])
             if len(reasons) > 3:
                 text += f'<br>and {len(reasons) - 3} more reasons'
-            rows.append((cell(table_name), access, resolution, len(uses), text or '-'))
-        lines += table([('Table', False), ('Access', False), ('Resolution', False), ('Count', True),
+            rows.append((cell(table_name), access, {'ambiguous': 'may not happen'}.get(resolution, 'not confirmed'),
+                         len(uses), text or '-'))
+        lines += table([('Table', False), ('Access', False), ('How sure', False), ('Count', True),
                         ('Reasons', False)], rows)
         lines += ['', '</details>', '']
     warnings = Counter(item.get('code') for item in model.get('warnings', ()))

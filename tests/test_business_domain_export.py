@@ -115,7 +115,7 @@ def test_a_call_sequence_follows_source_lines_and_the_active_profile():
     [(title, caption, diagram)], skipped = sequences.diagrams(index.activities['activity:add'])
     assert skipped == []
     assert title == 'POST /owners'
-    assert caption == 'Trace: bounded · unresolved.'
+    assert caption == 'Call path: cut short at a size or depth limit · some steps not confirmed.'
     lines = diagram.splitlines()
     messages = [line.strip() for line in lines if '->>' in line and not line.strip().startswith('Client')]
     # toOwner (line 20) comes before saveOwner (line 30); getId() is an accessor and is left out.
@@ -129,7 +129,7 @@ def test_a_call_sequence_follows_source_lines_and_the_active_profile():
     assert 'Note over P4' not in diagram
     assert sequences.choices['OwnerRepository']['inactive'] == {'JdbcOwnerRepositoryImpl'}
     page = export.export_ddd(service_model())['contexts/owner-records-main.md']
-    assert 'declared profile (hsqldb, spring-data-jpa, from spring.profiles.active)' in page
+    assert 'configured Spring profile uses (hsqldb, spring-data-jpa, from spring.profiles.active)' in page
     assert '| `OwnerRepository` | SpringDataOwnerRepository (generated) | JdbcOwnerRepositoryImpl |' in page
     # The single implementation of ClinicService is followed on the interface's lifeline.
     assert 'participant P3 as ClinicService' in diagram
@@ -143,7 +143,7 @@ def test_without_a_profile_the_sequence_stops_at_the_interface():
     [(_, _, diagram)], _ = export.Sequences(index).diagrams(index.activities['activity:add'])
     assert 'KeyHolder' not in diagram
     assert 'declared profile' not in diagram
-    assert 'Chosen at runtime by profile, not drawn: JdbcOwnerRepositoryImpl, SpringDataOwnerRepository.' in diagram
+    assert 'Picked at startup by the Spring profile, not drawn: JdbcOwnerRepositoryImpl, SpringDataOwnerRepository.' in diagram
 
 
 def test_an_implementation_the_model_says_it_activates_is_followed():
@@ -201,7 +201,7 @@ def test_roles_come_from_authorization_predicates():
     index = export.Model(model)
     assert index.roles(index.activities['activity:add']) == ['OWNER_ADMIN']
     model['activities']['activity:add']['actor'] = 'A clinic user'
-    assert export.Model(model).roles(model['activities']['activity:add']) == ['no role declared']
+    assert export.Model(model).roles(model['activities']['activity:add']) == ['no role named in the code']
 
 
 def test_labels_and_ids_are_safe_for_mermaid():
@@ -268,10 +268,10 @@ def test_the_class_diagram_reads_fields_associations_and_tables():
 
 def test_rules_say_where_a_declared_rule_comes_from():
     rule = {'enforcement_status': 'declared_only', 'basis': ['contract_declared']}
-    assert export.rule_status(rule) == 'declared in the API contract only'
+    assert export.rule_status(rule) == 'written in the API contract only'
     assert export.rule_status(dict(rule, basis=['test_expected'])) == 'expected by tests only'
-    assert export.rule_status(dict(rule, basis=['source_observed', 'test_expected'])).startswith('declared in code')
-    assert export.rule_status({'enforcement_status': 'conditional'}) == 'depends on preconditions'
+    assert export.rule_status(dict(rule, basis=['source_observed', 'test_expected'])).startswith('written in the code')
+    assert export.rule_status({'enforcement_status': 'conditional'}) == 'applies only under some settings'
 
 
 def test_a_model_without_rules_or_data_renders_clean_tables():
@@ -403,7 +403,7 @@ def test_petclinic_export():
     assert len(contexts) == len(model['domains'])
     assert files['rules.md'].count('<a id="rule-') == len(model['rules'])
     text = ''.join(files[name] for name in contexts)
-    assert 'Repository → SpringData' in text and 'Implementations on the declared profile' in text
+    assert 'Repository → SpringData' in text and 'Which code runs with the configured Spring profile' in text
     assert 'Export completeness: 10 of 10 record types fully present' in files['gaps.md']
 
 
@@ -448,7 +448,7 @@ def test_conflicting_role_rules_are_not_merged():
 
 def test_contract_and_test_basis_is_named_as_both():
     rule = {'enforcement_status': 'declared_only', 'basis': ['contract_declared', 'test_expected']}
-    assert export.rule_status(rule) == 'declared in the API contract and expected by tests'
+    assert export.rule_status(rule) == 'written in the API contract and expected by tests'
 
 
 def test_a_foreign_manifest_is_not_trusted(tmp_path, capsys):
@@ -716,7 +716,7 @@ def test_an_alt_branch_with_no_calls_says_so(monkeypatch):
     monkeypatch.setattr(sequences, '_alternatives', with_empty_branch)
     [(_, _, diagram)], _ = sequences.diagrams(index.activities['activity:add'])
     lines = [line.strip() for line in diagram.splitlines()]
-    assert lines[lines.index('else !(owner.isNew())') + 1] == 'Note over P1: no call traced on this branch'
+    assert lines[lines.index('else !(owner.isNew())') + 1] == 'Note over P1: no calls found on this branch'
 
 
 def test_record_ids_in_prose_become_names():
