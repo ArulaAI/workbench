@@ -115,7 +115,7 @@ def test_a_call_sequence_follows_source_lines_and_the_active_profile():
     [(title, caption, diagram)], skipped = sequences.diagrams(index.activities['activity:add'])
     assert skipped == []
     assert title == 'POST /owners'
-    assert caption == 'Call path: cut short at a size or depth limit · some steps not confirmed.'
+    assert caption == 'The analysis stopped following this path at its size limit; later steps may be missing.'
     lines = diagram.splitlines()
     messages = [line.strip() for line in lines if '->>' in line and not line.strip().startswith('Client')]
     # toOwner (line 20) comes before saveOwner (line 30); getId() is an accessor and is left out.
@@ -662,14 +662,15 @@ def test_jpa_cascades_and_eager_fetches_are_drawn_as_implied_table_access():
     entities = export.Entities(export.Model(model))
     # A delete cascades to children first; a save of a new entity has no children to write.
     assert entities.implied('owners', 'delete') == [('pets', 'JPA cascade')]
-    assert entities.implied('owners', 'write') == []
+    assert entities.implied('owners', 'write') == [('pets', 'JPA cascade, only if any are attached')]
     assert entities.implied('owners', 'read') == [('pets', 'JPA eager fetch')]
     # A to-one association is eager by default, so loading a pet loads its owner.
     assert entities.implied('pets', 'read') == [('owners', 'JPA eager fetch')]
     assert entities.implied('vets', 'write') == [('vet_specialties', 'JPA join table')]
     index = export.Model(model)
     [(_, _, diagram)], _ = export.Sequences(index, entities).diagrams(index.activities['activity:add'])
-    assert 'JPA cascade' not in diagram
+    # A save writes children only if any are attached; it says so.
+    assert 'write pets (JPA cascade, only if any are attached)' in diagram
     # The same write as a delete removes the children before the owner row.
     model['symbols']['symbol:repo']['qualified_name'] = 'src/OwnerRepository.java::OwnerRepository.delete(Owner)'
     index = export.Model(model)
@@ -700,8 +701,9 @@ def test_rule_guards_become_alt_blocks_and_writes_name_their_statement():
     [(_, _, diagram)], _ = export.Sequences(index).diagrams(index.activities['activity:add'])
     lines = [line.strip() for line in diagram.splitlines()]
     # The guard at line 25 sits between toOwner (line 20) and saveOwner (line 30).
-    assert lines.index('alt owner == null') > next(i for i, line in enumerate(lines) if 'toOwner()' in line)
-    assert lines[lines.index('alt owner == null') + 1] == 'P1-->>Client: 404'
+    # Conditions read in words; replies the code returns are solid arrows.
+    assert lines.index('alt owner not found') > next(i for i, line in enumerate(lines) if 'toOwner()' in line)
+    assert lines[lines.index('alt owner not found') + 1] == 'P1->>Client: 404'
     assert lines.index('else otherwise') < next(i for i, line in enumerate(lines) if 'saveOwner()' in line)
     assert 'insert owners' in diagram and 'write owners' not in diagram
 
@@ -732,5 +734,38 @@ def test_record_ids_in_prose_become_names():
         'See (ownership ownership:aade3cafac0b12b60afa6762); recording the visit (a record of child scope '
         'scope:b156f70e7f083e27a5aa1788); no match (trace trace:0123456789abcdef has no edges).')
     assert readable == ('See (Owner "Records" | <main>\'s maintains claim on Vet specialty assignment); '
-                        'recording the visit (a record from another part of the model); '
+                        'recording the visit; '
                         'no match (the call path from POST /owners has no steps).')
+
+
+def test_conditions_read_in_plain_words():
+    assert export.plain_condition('(vet == null)') == 'vet not found'
+    assert export.plain_condition('vets.isEmpty()') == 'no vets found'
+    assert export.plain_condition('!(owner.isNew)') == 'editing an existing owner'
+    assert export.plain_condition('editablePet.isNew') == 'new pet'
+    assert export.plain_condition('lastName != null') == 'last name given'
+    assert export.plain_condition('a > b && c') == 'a > b && c'
+
+
+def test_branches_are_read_from_the_method_code():
+    code = (
+        "public ResponseEntity<List<OwnerDto>> listOwners(String lastName) {\n"
+        "    if (lastName != null) {\n"
+        "        owners = this.clinicService.findOwnerByLastName(lastName);\n"
+        "    } else {\n"
+        "        owners = this.clinicService.findAllOwners();\n"
+        "    }\n"
+        "    if (owners.isEmpty()) {\n"
+        "        return new ResponseEntity<>(HttpStatus.NOT_FOUND);\n"
+        "    }\n"
+        "    for (Owner owner : owners) {\n"
+        "        mapper.toOwnerDto(owner);\n"
+        "    }\n")
+    branches = export.code_branches(code, 70)
+    block = next(b for b in branches if b['kind'] == 'block')
+    assert (block['line'], block['condition'], block['then'], block['else']) == (
+        71, 'lastName != null', ['findOwnerByLastName'], ['findAllOwners'])
+    guard = next(b for b in branches if b['kind'] == 'return')
+    assert (guard['line'], guard['condition'], guard['status']) == (76, 'owners.isEmpty()', '404')
+    loop = next(b for b in branches if b['kind'] == 'loop')
+    assert loop['label'] == 'for each owner' and loop['then'] == ['toOwnerDto']
