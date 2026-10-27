@@ -897,6 +897,15 @@ def test_report_mode_still_fails_a_crashing_scanner(project):
     project.toml('[ci]\nsecurity_mode = "report"\n[security]\nsast_cmd = "exit 2"\n')
     project.commit()
     assert project.run().returncode == 2
+    assert step(project.report(), "sast")["status"] == "fail"
+
+
+def test_report_mode_does_not_relax_the_secrets_scan(project):
+    (project.root / "settings.py").write_text(f'KEY = "{AWS_KEY}"\n')
+    project.toml('[ci]\nsecurity_mode = "report"\n')
+    project.commit()
+    assert project.run().returncode == 2
+    assert step(project.report(), "secrets")["status"] == "fail"
 
 
 def test_an_unknown_security_mode_is_rejected(project):
@@ -1123,7 +1132,7 @@ def test_init_with_parallel_runs_each_check_as_its_own_job(project):
     run_step = next(item for item in check["steps"] if str(item.get("name", "")).startswith("Run "))
     assert '--only "${{ matrix.check }}"' in run_step["run"]
     final = workflow["jobs"]["speed-ci"]
-    assert final["needs"] == "check" and final["if"] == "always()"
+    assert final["needs"] == ["check"] and final["if"] == "${{ !cancelled() }}"
     combine = next(item for item in final["steps"] if item.get("name") == "Combine the results")
     assert "ci_tools.py merge merged reports/speed-ci-check-eval" in combine["run"] and "reports/speed-ci-check-api" in combine["run"]
     upload = next(item for item in check["steps"] if item.get("name") == "Upload this check's report")
@@ -1354,3 +1363,151 @@ def test_numeric_speed_refs_stay_strings_in_the_workflow(project):
     workflow, _ = load_workflow(project)
     speed = next(item for item in workflow["jobs"]["speed-ci"]["steps"] if item.get("name") == "Check out SPEED")
     assert speed["with"]["ref"] == "1.10"
+
+
+
+# ── Phase 2 final-round fixes ──
+
+def test_the_generated_database_workflow_passes_the_secrets_scan(project):
+    project.toml('[ci]\nservices = ["postgres", "mysql", "redis"]\n')
+    project.commit()
+    assert project.run("init", "--speed-repo", "acme/speed", "--speed-ref", "v2").returncode == 0
+    project.commit("add workflow")
+    assert project.run().returncode == 0
+    assert step(project.report(), "secrets")["status"] == "pass"
+    (project.root / "deploy.yml").write_text("url: postgresql://admin:hunter22@db.example.com/prod\n")
+    project.commit("a real one")
+    assert project.run().returncode == 2
+
+
+def test_scanner_raw_output_and_logs_never_keep_secret_text(project):
+    semgrep = {"results": [{"check_id": "secrets.aws", "path": "app.py", "start": {"line": 1},
+                            "extra": {"severity": "ERROR", "message": "AWS key", "lines": f'KEY = "{AWS_KEY}"'}}]}
+    (project.root / "semgrep.json").write_text(json.dumps(semgrep))
+    (project.root / "tool.sh").write_text(f"echo 'found {AWS_KEY}' >&2\necho '{{\"version\":\"2.1.0\",\"runs\":[]}}'\n")
+    project.toml('[security]\nsast_cmd = "cat semgrep.json"\n[ci.tools.leaky]\nformat = "sarif"\ncmd = "sh tool.sh"\n')
+    project.commit()
+    project.run()
+    for path in (project.root / ".speed").rglob("*"):
+        assert not path.is_file() or AWS_KEY not in path.read_text(errors="replace"), path
+    assert "[redacted]" in (project.root / ".speed/ci/logs/leaky.log").read_text()
+
+
+def test_an_interrupted_tool_leaves_no_raw_output(project, tmp_path):
+    import signal
+    import time
+    tmpdir = tmp_path / "tmpd"
+    tmpdir.mkdir()
+    (project.root / "leaks.json").write_text(json.dumps([{"RuleID": "aws", "File": "x", "StartLine": 1, "Secret": AWS_KEY}]))
+    project.toml('[ci.tools.gitleaks]\ncmd = "cat leaks.json; sleep 30"\n')
+    project.commit()
+    env = {key: value for key, value in os.environ.items() if not key.endswith("_API_KEY")}
+    env.update(SPEED_PROJECT_ROOT=str(project.root), SPEED_PYTHON=sys.executable, TMPDIR=str(tmpdir),
+               PATH=f"{project.tools}{os.pathsep}{env['PATH']}", CLAUDE_BIN=str(project.tools / "claude"))
+    proc = subprocess.Popen(["bash", str(project.cli), "ci", "--only", "gitleaks"], env=env, cwd=project.root,
+                            start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    time.sleep(3)
+    os.killpg(proc.pid, signal.SIGTERM)
+    proc.wait(timeout=30)
+    leftovers = [path for path in tmpdir.rglob("speed-ci-*") if AWS_KEY in path.read_text(errors="replace")]
+    assert leftovers == []
+
+
+def test_gate_lines_with_spaces_are_refused_unless_ignored(project):
+    (project.root / "AGENTS.md").write_text("# P\n\n## Quality Gates\n\n- test: true\n- unit tests: exit 1\n")
+    project.commit()
+    result = project.run()
+    assert result.returncode == 3 and "'unit tests' is not a valid check name" in result.stderr
+    project.toml('[ci]\nignore_gates = ["unit tests"]\n')
+    project.commit()
+    assert project.run().returncode == 0
+
+
+def test_only_and_skip_match_check_names_without_case(project):
+    project.gates(test="true", Smoke_Check="exit 1")
+    project.commit()
+    assert project.run("--only", "smoke_check").returncode == 2
+    assert step(project.report(), "Smoke_Check")["status"] == "fail"
+    assert project.run("--skip", "SMOKE_CHECK").returncode == 0
+
+
+def test_token_names_must_be_valid_github_secrets(project):
+    for token in ("snyk_token", "GITHUB_TOKEN", "PATH", "SPEED_CI_SECRETS_UNAVAILABLE"):
+        project.toml(f'[ci.tools.snyk]\ntoken_env = "{token}"\n')
+        project.commit()
+        result = project.run()
+        assert result.returncode == 3 and "token_env" in result.stderr, token
+
+
+def test_default_tool_commands_run_the_real_tool_names(project, tmp_path):
+    fake = project.tools / "trivy"
+    fake.write_text(f'#!/bin/sh\necho "$@" > {shlex.quote(str(tmp_path / "trivy-args"))}\n'
+                    'echo \'{"SchemaVersion": 2, "Results": []}\'\n')
+    fake.chmod(0o755)
+    project.toml("[ci.tools.trivy]\n")
+    project.commit()
+    assert project.run().returncode == 0
+    assert (tmp_path / "trivy-args").read_text().split() == ["fs", "--format", "json", "--quiet", "--scanners",
+                                                            "vuln,misconfig,secret", "."]
+    project.toml("[ci.tools.codeql]\n")
+    project.commit()
+    result = project.run()
+    assert result.returncode == 3 and "needs format" in result.stderr
+
+
+def test_sonarqube_gate_read_retries_and_timeouts_and_empty_gates_fail(project):
+    sonar = PollingSonar(["PENDING"])
+    try:
+        sonar_project(project, sonar)
+        project.toml((project.root / "speed.toml").read_text().replace('wait_timeout = "10"', 'wait_timeout = "1"'))
+        project.commit()
+        assert project.run(extra_env={"SONAR_TOKEN": "tok"}).returncode == 2
+        assert "did not finish within 1s" in step(project.report(), "sonarqube")["summary"]
+    finally:
+        sonar.close()
+    sonar = PollingSonar(["SUCCESS"], gate="NONE")
+    try:
+        sonar_project(project, sonar)
+        assert project.run(extra_env={"SONAR_TOKEN": "tok"}).returncode == 2
+        assert "no quality gate result" in step(project.report(), "sonarqube")["summary"]
+    finally:
+        sonar.close()
+
+
+def test_pr_body_links_the_sonarqube_dashboard(project, feature_branches):
+    sonar = FakeSonar("OK")
+    try:
+        sonar_project(project, sonar)
+        project.git("push", "-q", "origin", "main")
+        assert project.run("--pr", extra_env={"SONAR_TOKEN": "tok"}).returncode == 0
+        assert "[dashboard](" in (project.root / ".speed/ci/pr-body.md").read_text()
+    finally:
+        sonar.close()
+
+
+def test_parallel_databases_only_start_for_checks_that_test(project):
+    project.gates(test="true", integration="true")
+    project.toml('[ci]\nparallel = true\nservices = ["postgres"]\n[ci.tools.trivy]\n')
+    project.commit()
+    assert project.run("init", "--speed-repo", "acme/speed", "--speed-ref", "v2").returncode == 0
+    workflow, _ = load_workflow(project)
+    plain, with_db = workflow["jobs"]["check"], workflow["jobs"]["check-db"]
+    assert "services" not in plain and set(with_db["services"]) == {"postgres"}
+    assert with_db["strategy"]["matrix"]["check"] == ["test", "e2e", "integration"]
+    assert "trivy" in plain["strategy"]["matrix"]["check"] and "lint" in plain["strategy"]["matrix"]["check"]
+    assert workflow["jobs"]["speed-ci"]["needs"] == ["check", "check-db"]
+    install = next(item for item in plain["steps"] if item.get("name") == "Install trivy")
+    assert install["if"] == "matrix.check == 'trivy'"
+
+
+def test_sarif_names_a_real_file_for_dependency_findings(project):
+    audit = {"vulnerabilities": {"lodash": {"severity": "high", "via": [{"title": "Prototype pollution"}]}}}
+    (project.root / "audit.json").write_text(json.dumps(audit))
+    (project.root / "package-lock.json").write_text("{}")
+    project.toml('[security]\nsca_cmd = "cat audit.json; exit 1"\n')
+    project.commit()
+    project.run()
+    runs = json.loads((project.root / ".speed/ci/speed-ci.sarif").read_text())["runs"]
+    result = next(run for run in runs if run["tool"]["driver"]["name"] == "speed-ci/sca")["results"][0]
+    assert result["locations"][0]["physicalLocation"]["artifactLocation"]["uri"] == "package-lock.json"
+    assert result["message"]["text"].count("lodash") == 1

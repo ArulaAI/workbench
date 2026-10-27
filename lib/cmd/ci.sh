@@ -18,6 +18,9 @@ CI_SECRETS_ALWAYS_EXCLUDE=(package-lock.json npm-shrinkwrap.json yarn.lock pnpm-
 # At most this many secret findings are kept in the report (the count is always exact).
 CI_SECRETS_KEEP=200
 
+# Lines carrying this mark hold the generated workflow's throwaway database credentials.
+CI_TEST_CREDENTIAL_MARK="speed-ci: test service credential"
+
 # The counts line used in summaries, the PR body and the commit status.
 _CI_COUNTS='"\(.summary.pass) passed, \(.summary.fail) failed, " + (if (.summary.warn // 0) > 0 then "\(.summary.warn) warning(s), " else "" end) + "\(.summary.skipped) skipped"'
 
@@ -54,7 +57,7 @@ _ci_record() {
         warn) mark="${COLOR_WARN}!${RESET}" ;;
         *)    mark="${COLOR_DIM}-${RESET}" ;;
     esac
-    printf '  %b %-10s %s\n' "$mark" "$1" "$3"
+    printf "  %b %-${_CI_WIDTH:-10}s %s\n" "$mark" "$1" "$3"
 }
 
 # 0 when the check should run; otherwise records why it does not run.
@@ -82,6 +85,24 @@ _ci_python() {
     "$(_context_python)" "${LIB_DIR}/ci_tools.py" "$@"
 }
 
+# Scanners print what they found; their logs keep it only with secret-pattern matches removed.
+_ci_redact_log() {
+    _secrets_pattern_pairs | _ci_python redact "$1" 2>/dev/null || true
+}
+
+# The check name matching $1 without regard to case, or nothing.
+_ci_canonical() {
+    local want step
+    want=$(_ci_lower "$1")
+    for step in "${_CI_AVAILABLE[@]}"; do
+        if [[ "$(_ci_lower "$step")" == "$want" ]]; then
+            echo "$step"
+            return 0
+        fi
+    done
+    return 1
+}
+
 # Run a project command in the project root with a time limit. The JSON output
 # descriptor is closed so a command can never write into the report stream.
 # Args: command stdout_file stderr_file. Returns the command's exit code (124 on timeout).
@@ -93,8 +114,12 @@ _ci_run_command() {
     # so the command runs in the background and an interrupt stops it explicitly.
     ( cd "$PROJECT_ROOT" && exec "${limit[@]+"${limit[@]}"}" bash -c "$cmd" ) > "$out" 2> "$err" < /dev/null 3>&- &
     _CI_CHILD=$!
-    trap 'kill -TERM "$_CI_CHILD" 2>/dev/null; wait "$_CI_CHILD" 2>/dev/null; exit 130' INT
-    trap 'kill -TERM "$_CI_CHILD" 2>/dev/null; wait "$_CI_CHILD" 2>/dev/null; exit 143' TERM
+    # An interrupted scan also removes its raw output, which can hold what the scanner found.
+    # errexit applies inside traps, and wait returns the killed command's status, hence || true.
+    trap 'kill -TERM "$_CI_CHILD" 2>/dev/null || true; wait "$_CI_CHILD" 2>/dev/null || true
+          rm -f "${_CI_RAW:-}" "${_CI_RAW_ERR:-}"; exit 130' INT
+    trap 'kill -TERM "$_CI_CHILD" 2>/dev/null || true; wait "$_CI_CHILD" 2>/dev/null || true
+          rm -f "${_CI_RAW:-}" "${_CI_RAW_ERR:-}"; exit 143' TERM
     wait "$_CI_CHILD" || rc=$?
     trap - INT TERM
     _CI_CHILD=""
@@ -181,6 +206,7 @@ _ci_secrets_step() {
     # entry must not hide a key). -z keeps file names exact; -h on the second pass
     # leaves only line numbers, so the matched text is never read back.
     local -a grep_opts=(-c color.grep=never -c core.quotePath=false grep --no-color --text -E)
+    local -a skip_mark=(--and --not -e "$CI_TEST_CREDENTIAL_MARK")
     local name regex rc file count line
     local listing="${_CI_DIR}/secrets-files.tmp" hits="${_CI_DIR}/secrets-hits.jsonl"
     : > "$hits"
@@ -188,7 +214,7 @@ _ci_secrets_step() {
         [[ -n "$name" && -n "$regex" ]] || continue
         rc=0
         # Output is "<file>\0<count>\n" per matching file.
-        _git "${grep_opts[@]}" -z -c -e "$regex" -- "${pathspec[@]}" > "$listing" 2>/dev/null || rc=$?
+        _git "${grep_opts[@]}" -z -c -e "$regex" "${skip_mark[@]}" -- "${pathspec[@]}" > "$listing" 2>/dev/null || rc=$?
         if [[ "$rc" -gt 1 ]]; then
             rm -f "$listing" "$hits"
             _ci_record secrets fail "Secret pattern '${name}' could not be searched" $((SECONDS - started))
@@ -199,7 +225,7 @@ _ci_secrets_step() {
             while IFS= read -r line; do
                 jq -nc --arg name "$name" --arg file "$file" --argjson line "${line:-0}" \
                     '{pattern:$name, file:$file, line:$line}' >> "$hits"
-            done < <(_git "${grep_opts[@]}" -h -n -e "$regex" -- ":(literal)${file}" 2>/dev/null | cut -d: -f1 \
+            done < <(_git "${grep_opts[@]}" -h -n -e "$regex" "${skip_mark[@]}" -- ":(literal)${file}" 2>/dev/null | cut -d: -f1 \
                      | grep -E '^[0-9]+$' || echo 0)
         done < "$listing"
     done < <(_secrets_pattern_pairs)
@@ -239,10 +265,24 @@ _ci_scan_step() {
         _ci_record "$kind" skipped "No ${kind}_cmd in the [security] section of speed.toml" 0
         return 0
     fi
-    local raw="${_CI_DIR}/${kind}-output.json" normalized="${_CI_DIR}/${kind}-findings.json"
+    # Raw scanner output can hold code snippets and secrets, so it is written outside
+    # .speed/ci (which CI uploads) and deleted on every path; the findings are kept.
+    local raw step_rc=0
+    raw=$(mktemp "${TMPDIR:-/tmp}/speed-ci-${kind}.XXXXXX")
+    _CI_RAW="$raw"
+    _ci_scan_read "$kind" "$cmd" "$parser" "$started" "$raw" || step_rc=$?
+    rm -f "$raw"
+    _CI_RAW=""
+    return "$step_rc"
+}
+
+_ci_scan_read() {
+    local kind="$1" cmd="$2" parser="$3" started="$4" raw="$5"
+    local normalized="${_CI_DIR}/${kind}-findings.json"
     local log="${_CI_DIR}/logs/${kind}.log" rc=0 elapsed
-    rm -f "$raw" "$normalized"
+    rm -f "$normalized"
     _ci_run_command "$cmd" "$raw" "$log" || rc=$?
+    _ci_redact_log "$log"
     elapsed() { echo $((SECONDS - started)); }
     if [[ "$rc" -eq 124 ]]; then
         _ci_record "$kind" fail "The scanner timed out after ${_CI_TIMEOUT}s" "$(elapsed)"
@@ -257,7 +297,7 @@ _ci_scan_step() {
     # Per-file warnings (Semgrep level "warn", Bandit parse errors) are kept as notes.
     if jq -e 'type == "object" and (.error != null or any((.errors // [])[]; (.level // "") == "error"))' \
             "$raw" > /dev/null 2>&1; then
-        _ci_record "$kind" fail "The scanner reported an error (exit ${rc}); see ${raw#"${PROJECT_ROOT}"/}" "$(elapsed)"
+        _ci_record "$kind" fail "The scanner reported an error (exit ${rc}): $(jq -r '[.error.summary? // .error.code? // .error?, (.errors // [])[]?.message?] | map(select(. != null and . != "")) | map(tostring) | .[0] // "see its output"' "$raw" 2>/dev/null | head -c 200)" "$(elapsed)"
         return 1
     fi
     if ! _ci_scan_format_ok "$kind" "$raw"; then
@@ -340,20 +380,34 @@ _ci_tool_step() {
     local raw normalized="${_CI_DIR}/${name}-findings.json"
     local log="${_CI_DIR}/logs/${name}.log" rc=0 err
     raw=$(mktemp "${TMPDIR:-/tmp}/speed-ci-${name}.XXXXXX")
+    _CI_RAW="$raw"
     rm -f "$normalized"
-    _ci_run_command "$cmd" "$raw" "$log" || rc=$?
+    if [[ "$fmt" == gitleaks ]]; then
+        # Verbose gitleaks prints each secret to stderr, so its stderr is not kept at all.
+        _CI_RAW_ERR=$(mktemp "${TMPDIR:-/tmp}/speed-ci-${name}-err.XXXXXX")
+        _ci_run_command "$cmd" "$raw" "$_CI_RAW_ERR" || rc=$?
+        echo "gitleaks exited ${rc}; its stderr ($(wc -l < "$_CI_RAW_ERR" | tr -d ' ') lines) is not kept" > "$log"
+        rm -f "$_CI_RAW_ERR"
+        _CI_RAW_ERR=""
+    else
+        _ci_run_command "$cmd" "$raw" "$log" || rc=$?
+        _ci_redact_log "$log"
+    fi
     if [[ "$rc" -eq 124 ]]; then
         rm -f "$raw"
+        _CI_RAW=""
         _ci_record "$name" fail "${name} timed out after ${_CI_TIMEOUT}s" $((SECONDS - started))
         return 1
     fi
     if ! err=$(_ci_python parse "$fmt" "$raw" "$normalized" 2>&1); then
         rm -f "$raw"
+        _CI_RAW=""
         _ci_record "$name" fail "Could not read the ${name} output (exit ${rc}): ${err}; see ${log#"${PROJECT_ROOT}"/}" \
             $((SECONDS - started))
         return 1
     fi
     rm -f "$raw"
+    _CI_RAW=""
     local total
     total=$(jq 'length' "$normalized")
     if [[ "$rc" -ne 0 && "$total" -eq 0 ]]; then
@@ -797,7 +851,7 @@ _ci_pr_body() {
         echo ""
         echo "| Check | Result | Detail |"
         echo "|---|---|---|"
-        jq -r '.steps[] | "| \(.name) | \(.status) | \(.summary | gsub("\\|"; "/")) |"' "$report"
+        jq -r '.steps[] | "| \(.name) | \(.status) | \(.summary | gsub("\\|"; "/"))\(if .dashboard_url then " ([dashboard](\(.dashboard_url)))" else "" end) |"' "$report"
         echo ""
         echo "Checked at commit \`$(jq -r '.commit' "$report")\`. Opened by \`speed ci --pr\`; the checks made no model calls."
     }
@@ -899,17 +953,26 @@ _ci_settings() {
     if [[ "$(jq -r '.sonarqube != null' <<< "$_CI_CONFIG")" == true ]]; then
         _CI_AVAILABLE+=(sonarqube)
     fi
+    _CI_WIDTH=10
+    for name in "${_CI_AVAILABLE[@]}" clean-tree; do
+        if [[ ${#name} -ge $_CI_WIDTH ]]; then
+            _CI_WIDTH=$((${#name} + 1))
+        fi
+    done
+    return 0
 }
 
-# Check names given to --skip or --only must be checks this project has.
+# Names given to --skip or --only must be checks this project has; they match without case.
+# Prints the matching check names, one per line.
 _ci_check_names() {
-    local option="$1" step
+    local option="$1" step found
     shift
     for step in "$@"; do
-        if [[ " ${_CI_AVAILABLE[*]} " != *" ${step} "* ]]; then
-            _ci_reject "$EXIT_CONFIG_ERROR" "Unknown check for ${option}: ${step} (checks: ${_CI_AVAILABLE[*]})"
+        if ! found=$(_ci_canonical "$step"); then
+            _ci_reject "$EXIT_CONFIG_ERROR" "Unknown check for ${option}: ${step} (checks: ${_CI_AVAILABLE[*]})" >&2
             return
         fi
+        echo "$found"
     done
 }
 
@@ -1258,8 +1321,17 @@ cmd_ci() (
         esac
     done
     _ci_settings || exit
-    _ci_check_names --skip "${_CI_SKIP[@]+"${_CI_SKIP[@]}"}" || exit
-    _ci_check_names --only "${_CI_ONLY[@]+"${_CI_ONLY[@]}"}" || exit
+    local canonical
+    canonical=$(_ci_check_names --skip "${_CI_SKIP[@]+"${_CI_SKIP[@]}"}") || exit
+    _CI_SKIP=()
+    while IFS= read -r step; do
+        if [[ -n "$step" ]]; then _CI_SKIP+=("$step"); fi
+    done <<< "$canonical"
+    canonical=$(_ci_check_names --only "${_CI_ONLY[@]+"${_CI_ONLY[@]}"}") || exit
+    _CI_ONLY=()
+    while IFS= read -r step; do
+        if [[ -n "$step" ]]; then _CI_ONLY+=("$step"); fi
+    done <<< "$canonical"
     if [[ ${#_CI_SKIP[@]} -gt 0 && ${#_CI_ONLY[@]} -gt 0 ]]; then
         _ci_reject "$EXIT_CONFIG_ERROR" "Use --skip or --only, not both"
         exit

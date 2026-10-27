@@ -73,7 +73,14 @@ SERVICES = {
 }
 NAME = re.compile(r"^[a-z][a-z0-9_-]{0,39}$")
 GATE_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,39}$")
-ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+# GitHub upper-cases secret names and reserves GITHUB_; the others would break the job.
+TOKEN_NAME = re.compile(r"^[A-Z][A-Z0-9_]*$")
+TOKEN_RESERVED_PREFIXES = ("GITHUB_", "RUNNER_", "ACTIONS_", "SPEED_")
+TOKEN_RESERVED = {"PATH", "HOME", "CI", "SHELL", "USER", "PWD", "TMPDIR", "LANG"}
+# Marks the throwaway database credentials in the generated workflow, which SPEED's
+# secrets scan skips; a real secret on such a line would still be in a file under review.
+TEST_CREDENTIAL_MARK = "speed-ci: test service credential"
+GATE_LINE = re.compile(r"^-\s*([^:`]+?):\s*\S")
 # Names speed ci itself uses for checks, steps or artifacts.
 RESERVED = set(BUILTIN_STEPS) | {"sonarqube", "clean-tree", "merge-jobs", "merge-commit", "report", "check"}
 # Pinned installers for tools whose default command the workflow runs.
@@ -82,7 +89,7 @@ TOOL_INSTALL = {
               " | sudo sh -s -- -b /usr/local/bin v0.56.2"],
     "gitleaks": ["curl -sfL https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz"
                  " | sudo tar -xz -C /usr/local/bin gitleaks"],
-    "snyk": ["npm install -g snyk"],
+    "snyk": ["npm install -g snyk@1.1308.3"],
 }
 SONAR_SCANNER = "6.2.1.4610"
 
@@ -130,8 +137,10 @@ def ci_config(toml_path: str) -> dict:
         if not cmd:
             raise Unjudgeable(f"[ci.tools.{name}] needs cmd = the command that prints its {fmt} output")
         token = str(settings.get("token_env", "SNYK_TOKEN" if fmt == "snyk" else "")).strip()
-        if token and not ENV_NAME.match(token):
-            raise Unjudgeable(f"[ci.tools.{name}] token_env must be an environment variable name, not {token!r}")
+        if token and (not TOKEN_NAME.match(token) or token in TOKEN_RESERVED
+                      or token.startswith(TOKEN_RESERVED_PREFIXES)):
+            raise Unjudgeable(f"[ci.tools.{name}] token_env must be an upper-case secret name such as SNYK_TOKEN, "
+                              f"not {token!r} (GITHUB_, RUNNER_, ACTIONS_, SPEED_ and PATH, HOME, CI are reserved)")
         tools[name] = {"format": fmt, "cmd": cmd, "token_env": token,
                        "default_cmd": cmd == DEFAULT_TOOL_COMMANDS.get(name)}
 
@@ -184,6 +193,31 @@ def ci_config(toml_path: str) -> dict:
             "ignore_gates": ignore, "tools": tools, "sonarqube": sonar, "codecov": codecov}
 
 
+def _gate_like_names(agent: Path) -> list[str]:
+    """Names of '- name: command' bullets in ## Quality Gates, including ones read_gates cannot parse."""
+    names, in_section, fence = [], False, ""
+    for raw in agent.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if fence:
+            if line.startswith(fence) and set(line) == {fence[0]}:
+                fence = ""
+            continue
+        opening = re.match(r"^(`{3,}|~{3,})", line)
+        if opening:
+            fence = opening[1]
+            continue
+        heading = re.match(r"^(#{1,6})(?:\s|$)", line)
+        if not in_section:
+            in_section = bool(re.match(r"^##\s+Quality\s+Gates\s*$", line, re.I))
+            continue
+        if heading and len(heading[1]) != 3:
+            break
+        match = GATE_LINE.match(line)
+        if match:
+            names.append(match[1].strip())
+    return names
+
+
 def custom_gates(agent_file: str, ignore: list[str], tools: list[str]) -> dict:
     """Quality Gates names beyond lint, typecheck, test and e2e, in file order and as written,
     plus every name that cannot run as its own check, with the reason."""
@@ -192,6 +226,10 @@ def custom_gates(agent_file: str, ignore: list[str], tools: list[str]) -> dict:
     ignored = {name.lower() for name in ignore}
     taken = {name.lower() for name in tools}
     names, seen, problems = [], set(), []
+    readable = {row["gate"] for row in read_gates(Path(agent_file))}
+    for name in _gate_like_names(Path(agent_file)):
+        if name not in readable and name.lower() not in ignored:
+            problems.append(f"'{name}' is not a valid check name (letters, digits, - and _, starting with a letter)")
     for row in read_gates(Path(agent_file)):
         name, key = row["gate"], row["gate"].lower()
         if key in ignored or name in names:
@@ -266,7 +304,9 @@ def _snyk_findings(project: dict) -> list[dict]:
     groups = [(project, project.get("displayTargetFile"))]
     for app in project.get("applications") or []:
         if isinstance(app, dict):
-            groups.append((app, app.get("displayTargetFile") or app.get("targetFile")))
+            target = app.get("displayTargetFile") or app.get("targetFile")
+            # Container scans name files inside the image, which are not in the repository.
+            groups.append((app, None if str(target or "").startswith("/") else target))
     for group, target in groups:
         for item in group.get("vulnerabilities") or []:
             key = (item.get("id"), item.get("packageName"), item.get("version"), target)
@@ -402,13 +442,34 @@ def sonar_wait(host: str, report_task: str, timeout: int) -> dict:
         time.sleep(2)
     if not status.get("analysisId"):
         raise Unjudgeable("the SonarQube analysis finished without an analysisId")
-    gate = _sonar_get(host, "/api/qualitygates/project_status", {"analysisId": status["analysisId"]},
-                      token).get("projectStatus", {})
+    while True:
+        try:
+            gate = _sonar_get(host, "/api/qualitygates/project_status", {"analysisId": status["analysisId"]},
+                              token).get("projectStatus", {})
+            break
+        except _Transient:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(2)
     failed = [{"metric": item.get("metricKey"), "actual": item.get("actualValue"),
                "comparator": item.get("comparator"), "threshold": item.get("errorThreshold")}
               for item in gate.get("conditions") or [] if item.get("status") == "ERROR"]
     return {"status": gate.get("status", "NONE"), "dashboard_url": task.get("dashboardUrl", ""),
             "failed_conditions": failed}
+
+
+def redact(path: str, patterns: list[tuple[str, str]]) -> None:
+    """Replace every secret-pattern match in a log with [redacted]."""
+    try:
+        text = Path(path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return
+    for _, regex in patterns:
+        try:
+            text = re.sub(regex, "[redacted]", text)
+        except re.error:
+            continue
+    Path(path).write_text(text, encoding="utf-8")
 
 
 # ── Reports ────────────────────────────────────────────────────────────────────
@@ -418,9 +479,15 @@ SARIF_LEVEL = {"critical": "error", "high": "error", "unknown": "error", "medium
 SARIF_SCORE = {"critical": "9.5", "high": "8.0", "unknown": "8.0", "medium": "5.5", "low": "2.0", "info": "0.0"}
 
 
+MANIFESTS = ("package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml", "package.json",
+             "poetry.lock", "Pipfile.lock", "uv.lock", "requirements.txt", "pyproject.toml", "go.sum", "Cargo.lock")
+
+
 def sarif(ci_dir: str) -> dict:
     """One SARIF run per check that has findings, for GitHub's Security tab."""
     runs = []
+    root = Path(ci_dir).resolve().parent.parent
+    manifest = next((name for name in MANIFESTS if (root / name).is_file()), "")
     for path in sorted(Path(ci_dir).glob("*-findings.json")):
         check = path.name[: -len("-findings.json")]
         try:
@@ -439,15 +506,18 @@ def sarif(ci_dir: str) -> dict:
                              f"{check}/{item.get('rule') or item.get('pattern') or title}/{level}")[:160]
             rules.setdefault(rule_id, {"id": rule_id, "shortDescription": {"text": title[:200]},
                                        "properties": {"security-severity": SARIF_SCORE[level]}})
-            result = {"ruleId": rule_id, "level": SARIF_LEVEL[level],
-                      "message": {"text": f"{title} ({level})" + (f" in {item['package']}" if item.get("package") else "")}}
-            location = item.get("file") or item.get("package")
-            if item.get("file"):
-                region = {"startLine": int(item["line"])} if str(item.get("line", "")).isdigit() and int(item["line"]) > 0 else {}
-                result["locations"] = [{"physicalLocation": {"artifactLocation": {"uri": item["file"]},
+            text = str(item.get("message") or title)
+            if item.get("message") and title not in text:
+                text = f"{title}: {text}"
+            if item.get("package") and str(item["package"]) not in text:
+                text += f" in {item['package']}"
+            result = {"ruleId": rule_id, "level": SARIF_LEVEL[level], "message": {"text": f"{text} ({level})"}}
+            uri = item.get("file") or (manifest if item.get("package") else "")
+            if uri:
+                region = {"startLine": int(item["line"])} if item.get("file") and str(item.get("line", "")).isdigit() \
+                    and int(item["line"]) > 0 else {}
+                result["locations"] = [{"physicalLocation": {"artifactLocation": {"uri": uri},
                                                              **({"region": region} if region else {})}}]
-            elif location:
-                result["locations"] = [{"physicalLocation": {"artifactLocation": {"uri": "dependencies"}}}]
             results.append(result)
         runs.append({"tool": {"driver": {"name": f"speed-ci/{check}", "rules": list(rules.values())}},
                      "automationDetails": {"id": f"speed-ci/{check}/"}, "results": results})
@@ -620,7 +690,8 @@ def workflow(settings: dict) -> str:
     def job_env(indent: str) -> list[str]:
         if not env:
             return []
-        return [f"{indent}env:"] + [f"{indent}  {key}: {_q(value)}" for key, value in env.items()]
+        return [f"{indent}env:"] + [f"{indent}  {key}: {_q(value)}  # {TEST_CREDENTIAL_MARK}, not a secret"
+                                    for key, value in env.items()]
 
     def job_services(indent: str) -> list[str]:
         if not services:
@@ -631,7 +702,7 @@ def workflow(settings: dict) -> str:
             lines += [f"{indent}  {name}:", f"{indent}    image: {spec['image']}"]
             if spec["env"]:
                 lines.append(f"{indent}    env:")
-                lines += [f"{indent}      {key}: {_q(value)}" for key, value in spec["env"].items()]
+                lines += [f"{indent}      {key}: {_q(value)}  # {TEST_CREDENTIAL_MARK}" for key, value in spec["env"].items()]
             lines.append(f"{indent}    ports:")
             lines += [f"{indent}      - {_q(port)}" for port in spec["ports"]]
             lines.append(f"{indent}    options: >-")
@@ -731,19 +802,34 @@ def workflow(settings: dict) -> str:
                   "            ${{ runner.temp }}/speed-ci-report.json", "            .speed/ci/",
                   "          include-hidden-files: true", "          if-no-files-found: warn"]
         return "\n".join(lines) + "\n"
-    matrix = ", ".join(_q(check) for check in checks)
-    lines = header + ["  check:", "    name: ${{ matrix.check }}", "    runs-on: ubuntu-latest", "    timeout-minutes: 60",
-                      "    strategy:", "      fail-fast: false", "      matrix:", f"        check: [{matrix}]"]
-    lines += job_services("    ") + job_env("    ") + ["    steps:"] + install
-    lines += ["      - name: Run ${{ matrix.check }}"] + run_env(True)
-    lines += ["        run: speed --json ci --only \"${{ matrix.check }}\" > \"$RUNNER_TEMP/speed-ci-report.json\"", ""]
-    if codecov:
-        lines += codecov_step(f"always() && matrix.check == '{codecov['check']}'")
-    lines += ["      - name: Upload this check's report", "        if: always()", "        uses: actions/upload-artifact@v4",
-              "        with:", "          name: speed-ci-check-${{ matrix.check }}", "          path: .speed/ci/",
-              "          include-hidden-files: true", "          if-no-files-found: warn", ""]
+    # With databases, the test, e2e and custom checks run in a job that has them; the rest
+    # do not start containers they never use.
+    db_checks = [check for check in checks
+                 if services and (check in ("test", "e2e") or check not in BUILTIN_STEPS + tuple(config.get("tools", {}))
+                                  and check != "sonarqube")]
+    groups = [("check", [check for check in checks if check not in db_checks], False)]
+    if db_checks:
+        groups.append(("check-db", db_checks, True))
+    lines = list(header)
+    for job_name, job_checks, with_services in groups:
+        if not job_checks:
+            continue
+        matrix = ", ".join(_q(check) for check in job_checks)
+        lines += [f"  {job_name}:", "    name: ${{ matrix.check }}", "    runs-on: ubuntu-latest", "    timeout-minutes: 60",
+                  "    strategy:", "      fail-fast: false", "      matrix:", f"        check: [{matrix}]"]
+        lines += (job_services("    ") + job_env("    ") if with_services else []) + ["    steps:"] + install
+        lines += ["      - name: Run ${{ matrix.check }}"] + run_env(True)
+        lines += ["        run: speed --json ci --only \"${{ matrix.check }}\" > \"$RUNNER_TEMP/speed-ci-report.json\"", ""]
+        if codecov:
+            lines += codecov_step(f"always() && matrix.check == '{codecov['check']}'")
+        lines += ["      - name: Upload this check's report", "        if: always()", "        uses: actions/upload-artifact@v4",
+                  "        with:", "          name: speed-ci-check-${{ matrix.check }}", "          path: .speed/ci/",
+                  "          include-hidden-files: true", "          if-no-files-found: warn", ""]
+    needs = [job_name for job_name, job_checks, _ in groups if job_checks]
     lines += ["  speed-ci:", "    # The one status check to require: it passes only when every check passed.",
-              "    name: speed-ci", "    needs: check", "    if: always()", "    runs-on: ubuntu-latest", "    steps:",
+              "    name: speed-ci", f"    needs: [{', '.join(needs)}]",
+              "    # Runs when checks failed, but not when a newer push cancelled this run.",
+              "    if: ${{ !cancelled() }}", "    runs-on: ubuntu-latest", "    steps:",
               "      - name: Check out SPEED", "        uses: actions/checkout@v4", "        with:",
               f"          repository: {_q(repo)}", f"          ref: {_q(ref)}", "          path: .speed-tool",
               "          persist-credentials: false", "          token: ${{ secrets.SPEED_REPO_TOKEN || github.token }}",
@@ -786,6 +872,9 @@ def main(argv: list[str]) -> int:
             if text.lstrip()[end:].strip():
                 raise Unjudgeable("the tool printed more than one JSON document")
             Path(out).write_text(json.dumps(parse_tool(fmt, data)), encoding="utf-8")
+        elif command == "redact":
+            pairs = [tuple(line.split("\t", 1)) for line in sys.stdin.read().splitlines() if "\t" in line]
+            redact(args[0], pairs)
         elif command == "sonar-wait":
             print(json.dumps(sonar_wait(args[0], args[1], int(args[2]))))
         elif command == "sarif":
