@@ -69,6 +69,8 @@ if [[ -f "$SPEED_TOML" ]]; then
 
         if [[ $_toml_rc -ne 0 ]]; then
             echo "Warning: could not parse ${SPEED_TOML}; using defaults${_toml_err:+: ${_toml_err}}" >&2
+            # speed ci refuses to run on defaults it was not asked for.
+            SPEED_TOML_INVALID=1
         elif [[ -n "$_toml_err" ]]; then
             echo "Warning: ${_toml_err}" >&2
             eval "$_toml_out"

@@ -91,11 +91,14 @@ _ci_exec() {
     local rc=0
     _ci_run_command "$cmd" "$log" "$log.err" || rc=$?
     cat "$log.err" >> "$log" && rm -f "$log.err"
+    # Failure details are printed under the check's line, once the check is recorded.
     if [[ "$rc" -eq 124 ]]; then
-        echo "    ${cmd} timed out after ${_CI_TIMEOUT}s" >&2
+        echo "    ${cmd} timed out after ${_CI_TIMEOUT}s" >> "${_CI_DIR}/logs/.details"
     elif [[ "$rc" -ne 0 ]]; then
-        echo "    ${cmd} exited ${rc}; last lines of ${log#"${PROJECT_ROOT}"/}:" >&2
-        tail -n 20 "$log" | sed 's/^/      /' >&2
+        {
+            echo "    ${cmd} exited ${rc}; last lines of ${log#"${PROJECT_ROOT}"/}:"
+            tail -n 20 "$log" | sed 's/^/      /'
+        } >> "${_CI_DIR}/logs/.details"
     fi
     echo "$rc $log"
 }
@@ -130,6 +133,8 @@ _ci_gate_step() {
     details=$(jq -c '{commands:.}' <<< "$runs")
     if [[ "$failed" -gt 0 ]]; then
         _ci_record "$gate" fail "${failed} of ${count} command(s) failed" $((SECONDS - started)) "$details"
+        cat "${_CI_DIR}/logs/.details" >&2 2>/dev/null || true
+        rm -f "${_CI_DIR}/logs/.details"
         return 1
     fi
     _ci_record "$gate" pass "${count} command(s) passed" $((SECONDS - started)) "$details"
@@ -331,6 +336,9 @@ _ci_eval_step() {
             rc=0
             out=$(JSON_OUTPUT=true GLOBAL_FEATURE="$feature" cmd_eval 2>> "$log") || rc=$?
             reason=$(jq -r '.error // empty' <<< "$out" 2>/dev/null || true)
+            # Keep each evaluated feature's summary with the CI report, which outlives a --pr worktree.
+            mkdir -p "${_CI_DIR}/eval"
+            cp "${PROJECT_ROOT}/${summary}" "${_CI_DIR}/eval/${feature}-summary.md" 2>/dev/null || true
             if [[ "$rc" -eq 0 ]]; then
                 status=pass
             elif [[ "$rc" -eq "$EXIT_CONFIG_ERROR" && "$reason" == "No test spec found"* && "$configured" != true ]]; then
@@ -338,9 +346,7 @@ _ci_eval_step() {
             else
                 status=fail
                 if [[ -z "$reason" ]]; then
-                    # Keep the summary with the CI report, which outlives a --pr worktree.
-                    mkdir -p "${_CI_DIR}/eval"
-                    if cp "${PROJECT_ROOT}/${summary}" "${_CI_DIR}/eval/${feature}-summary.md" 2>/dev/null; then
+                    if [[ -f "${_CI_DIR}/eval/${feature}-summary.md" ]]; then
                         reason="Not accepted; see .speed/ci/eval/${feature}-summary.md"
                     else
                         reason="Not accepted"
@@ -670,6 +676,10 @@ _ci_link_dependencies() {
 
 # Threshold and command timeout, read from the project's speed.toml.
 _ci_settings() {
+    if [[ "${SPEED_TOML_INVALID:-}" == 1 ]]; then
+        _ci_reject "$EXIT_CONFIG_ERROR" "speed.toml could not be parsed; fix it so CI does not run on default settings"
+        return
+    fi
     local threshold
     threshold=$(tr '[:upper:]' '[:lower:]' <<< "${TOML_SECURITY_SEVERITY_THRESHOLD:-high}")
     [[ "$threshold" == moderate ]] && threshold=medium
@@ -688,7 +698,7 @@ _ci_settings() {
 # taken from there, as a fresh CI checkout would.
 _ci_check_worktree() (
     local root="$1" excludes="$2"
-    unset $(compgen -v TOML_ || true)
+    unset $(compgen -v TOML_ || true) SPEED_TOML_INVALID
     [[ -z "${_SPEED_USER_AGENT_FILE:-}" ]] && unset SPEED_AGENT_FILE
     export SPEED_PROJECT_ROOT="$root"
     # shellcheck source=/dev/null

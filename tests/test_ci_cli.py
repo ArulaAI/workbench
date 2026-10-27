@@ -831,3 +831,30 @@ def test_pr_and_a_plain_run_cannot_overlap(project, feature_branches):
     finally:
         sleeper.kill()
         sleeper.wait()
+
+
+def test_an_unreadable_speed_toml_stops_ci(project):
+    project.toml("[ci]\ncommand_timeout = abc\n")
+    project.commit()
+    result = project.run()
+    assert result.returncode == 3 and "speed.toml could not be parsed" in result.stderr
+
+
+def test_failure_details_follow_the_failed_check(project):
+    (project.root / "tests/test_app.py").write_text("def test_broken():\n    assert 1 == 2\n")
+    project.commit()
+    result = project.run()
+    lines = (result.stdout + result.stderr).splitlines()
+    # stdout and stderr are captured separately, so check order within stderr against the ✗ line on stdout.
+    assert "test" in next(line for line in result.stdout.splitlines() if "✗" in line)
+    assert any("exited 1; last lines of .speed/ci/logs/test-1.log" in line for line in lines)
+
+
+def test_an_accepted_features_summary_is_kept_with_the_report(project):
+    spec = project.root / "specs/tests/adding.md"
+    spec.parent.mkdir(parents=True)
+    spec.write_text(SPEC)
+    project.commit()
+    write_feature(project, "adding")
+    assert project.run().returncode == 0
+    assert "ACCEPTED" in (project.root / ".speed/ci/eval/adding-summary.md").read_text()
