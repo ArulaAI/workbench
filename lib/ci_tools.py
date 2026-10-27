@@ -80,7 +80,7 @@ TOKEN_RESERVED = {"PATH", "HOME", "CI", "SHELL", "USER", "PWD", "TMPDIR", "LANG"
 # Marks the throwaway database credentials in the generated workflow, which SPEED's
 # secrets scan skips; a real secret on such a line would still be in a file under review.
 TEST_CREDENTIAL_MARK = "speed-ci: test service credential"
-GATE_LINE = re.compile(r"^-\s*([^:`]+?):\s*\S")
+GATE_LINE = re.compile(r"^(?P<bullet>[-*+]\s*)?(?P<name>[^:]+?):\s*\S")
 # Names speed ci itself uses for checks, steps or artifacts.
 RESERVED = set(BUILTIN_STEPS) | {"sonarqube", "clean-tree", "merge-jobs", "merge-commit", "report", "check"}
 # Pinned installers for tools whose default command the workflow runs.
@@ -213,8 +213,8 @@ def _gate_like_names(agent: Path) -> list[str]:
         if heading and len(heading[1]) != 3:
             break
         match = GATE_LINE.match(line)
-        if match:
-            names.append(match[1].strip())
+        if match and "://" not in match["name"]:
+            names.append((match["name"].strip(), (match["bullet"] or "").strip()))
     return names
 
 
@@ -227,8 +227,15 @@ def custom_gates(agent_file: str, ignore: list[str], tools: list[str]) -> dict:
     taken = {name.lower() for name in tools}
     names, seen, problems = [], set(), []
     readable = {row["gate"] for row in read_gates(Path(agent_file))}
-    for name in _gate_like_names(Path(agent_file)):
-        if name not in readable and name.lower() not in ignored:
+    for name, bullet in _gate_like_names(Path(agent_file)):
+        plain = name.strip("`*_ ")
+        if (name in readable and bullet in ("", "-")) or name.lower() in ignored or plain.lower() in ignored:
+            continue
+        if bullet in ("*", "+"):
+            problems.append(f"'{name}' uses a '{bullet}' bullet; only '- {plain}: command' lines run")
+        elif plain != name:
+            problems.append(f"'{name}' must be written without backticks or bold, as '- {plain}: command'")
+        else:
             problems.append(f"'{name}' is not a valid check name (letters, digits, - and _, starting with a letter)")
     for row in read_gates(Path(agent_file)):
         name, key = row["gate"], row["gate"].lower()
@@ -464,11 +471,17 @@ def redact(path: str, patterns: list[tuple[str, str]]) -> None:
         text = Path(path).read_text(encoding="utf-8", errors="replace")
     except OSError:
         return
+    posix = {"[:upper:]": "A-Z", "[:lower:]": "a-z", "[:digit:]": "0-9", "[:alpha:]": "A-Za-z",
+             "[:alnum:]": "A-Za-z0-9", "[:space:]": "\\s", "[:xdigit:]": "0-9A-Fa-f", "[:punct:]": "!-/:-@\\[-`{-~"}
     for _, regex in patterns:
+        for name, replacement in posix.items():
+            regex = regex.replace(name, replacement)
         try:
             text = re.sub(regex, "[redacted]", text)
         except re.error:
-            continue
+            # A pattern SPEED cannot apply here could leave a secret in the log, so drop the log.
+            text = "This log was not kept: a [security] secrets_patterns entry could not be applied to it.\n"
+            break
     Path(path).write_text(text, encoding="utf-8")
 
 
@@ -480,7 +493,10 @@ SARIF_SCORE = {"critical": "9.5", "high": "8.0", "unknown": "8.0", "medium": "5.
 
 
 MANIFESTS = ("package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml", "package.json",
-             "poetry.lock", "Pipfile.lock", "uv.lock", "requirements.txt", "pyproject.toml", "go.sum", "Cargo.lock")
+             "poetry.lock", "Pipfile.lock", "uv.lock", "requirements.txt", "pyproject.toml", "go.sum", "go.mod",
+             "Cargo.lock", "pom.xml", "build.gradle", "build.gradle.kts", "Gemfile.lock", "composer.lock", "Dockerfile")
+# GitHub code scanning needs a location on every result; these are tried when nothing better is known.
+FALLBACK_FILES = ("speed.toml", "AGENTS.md", "CLAUDE.md", "README.md")
 
 
 def sarif(ci_dir: str) -> dict:
@@ -488,6 +504,7 @@ def sarif(ci_dir: str) -> dict:
     runs = []
     root = Path(ci_dir).resolve().parent.parent
     manifest = next((name for name in MANIFESTS if (root / name).is_file()), "")
+    fallback = next((name for name in FALLBACK_FILES if (root / name).is_file()), "README.md")
     for path in sorted(Path(ci_dir).glob("*-findings.json")):
         check = path.name[: -len("-findings.json")]
         try:
@@ -512,7 +529,7 @@ def sarif(ci_dir: str) -> dict:
             if item.get("package") and str(item["package"]) not in text:
                 text += f" in {item['package']}"
             result = {"ruleId": rule_id, "level": SARIF_LEVEL[level], "message": {"text": f"{text} ({level})"}}
-            uri = item.get("file") or (manifest if item.get("package") else "")
+            uri = item.get("file") or (manifest if item.get("package") else "") or manifest or fallback
             if uri:
                 region = {"startLine": int(item["line"])} if item.get("file") and str(item.get("line", "")).isdigit() \
                     and int(item["line"]) > 0 else {}

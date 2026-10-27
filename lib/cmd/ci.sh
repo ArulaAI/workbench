@@ -206,7 +206,11 @@ _ci_secrets_step() {
     # entry must not hide a key). -z keeps file names exact; -h on the second pass
     # leaves only line numbers, so the matched text is never read back.
     local -a grep_opts=(-c color.grep=never -c core.quotePath=false grep --no-color --text -E)
+    # The generated workflow's database settings carry a mark; it is honoured in that file only.
+    local workflow_file=".github/workflows/speed-ci.yml"
     local -a skip_mark=(--and --not -e "$CI_TEST_CREDENTIAL_MARK")
+    local -a workflow_spec=(":(literal)${workflow_file}")
+    pathspec+=(":(exclude,literal)${workflow_file}")
     local name regex rc file count line
     local listing="${_CI_DIR}/secrets-files.tmp" hits="${_CI_DIR}/secrets-hits.jsonl"
     : > "$hits"
@@ -214,7 +218,13 @@ _ci_secrets_step() {
         [[ -n "$name" && -n "$regex" ]] || continue
         rc=0
         # Output is "<file>\0<count>\n" per matching file.
-        _git "${grep_opts[@]}" -z -c -e "$regex" "${skip_mark[@]}" -- "${pathspec[@]}" > "$listing" 2>/dev/null || rc=$?
+        _git "${grep_opts[@]}" -z -c -e "$regex" -- "${pathspec[@]}" > "$listing" 2>/dev/null || rc=$?
+        if [[ "$rc" -le 1 ]] && _git ls-files --error-unmatch -- "$workflow_file" > /dev/null 2>&1; then
+            local wf_rc=0
+            _git "${grep_opts[@]}" -z -c -e "$regex" "${skip_mark[@]}" -- "${workflow_spec[@]}" >> "$listing" 2>/dev/null \
+                || wf_rc=$?
+            [[ "$wf_rc" -gt 1 ]] && rc=$wf_rc
+        fi
         if [[ "$rc" -gt 1 ]]; then
             rm -f "$listing" "$hits"
             _ci_record secrets fail "Secret pattern '${name}' could not be searched" $((SECONDS - started))
@@ -222,10 +232,12 @@ _ci_secrets_step() {
         fi
         while IFS= read -r -d '' file && IFS= read -r count; do
             [[ -n "$file" ]] || continue
+            local -a line_filter=()
+            if [[ "$file" == "$workflow_file" ]]; then line_filter=("${skip_mark[@]}"); fi
             while IFS= read -r line; do
                 jq -nc --arg name "$name" --arg file "$file" --argjson line "${line:-0}" \
                     '{pattern:$name, file:$file, line:$line}' >> "$hits"
-            done < <(_git "${grep_opts[@]}" -h -n -e "$regex" "${skip_mark[@]}" -- ":(literal)${file}" 2>/dev/null | cut -d: -f1 \
+            done < <(_git "${grep_opts[@]}" -h -n -e "$regex" "${line_filter[@]+"${line_filter[@]}"}" -- ":(literal)${file}" 2>/dev/null | cut -d: -f1 \
                      | grep -E '^[0-9]+$' || echo 0)
         done < "$listing"
     done < <(_secrets_pattern_pairs)
@@ -456,8 +468,10 @@ _ci_sonar_step() {
     local status details failed
     status=$(jq -r '.status' <<< "$result")
     details=$(jq -c '{dashboard_url, failed_conditions}' <<< "$result")
-    failed=$(jq -r '[.failed_conditions[] | "\(.metric) \(.actual) (needs \(.comparator) \(.threshold))"] | join(", ")' \
-        <<< "$result")
+    # SonarQube's comparator names the failing side: LT 80 fails below 80, so the metric needs at least 80.
+    failed=$(jq -r '[.failed_conditions[] | "\(.metric) \(.actual) (needs " +
+        ({"LT": "at least", "GT": "at most", "EQ": "not", "NE": "exactly"}[.comparator] // .comparator) +
+        " \(.threshold))"] | join(", ")' <<< "$result")
     case "$status" in
         OK)
             _ci_record sonarqube pass "Quality gate passed" $((SECONDS - started)) "$details" ;;
@@ -807,7 +821,7 @@ _ci_init() {
         [[ -n "$name" ]] && secrets+=("$name")
     done < <(jq -r '[.tools[].token_env | select(. != "")] | unique[]' <<< "$_CI_CONFIG")
     if [[ ${#secrets[@]} -gt 0 ]]; then
-        log_info "Add these repository secrets on GitHub: ${secrets[*]}"
+        log_info "Add these repository secrets on GitHub: $(printf '%s\n' "${secrets[@]}" | awk '!seen[$0]++' | tr '\n' ' ')"
     fi
     if [[ "$(jq -r '.parallel' <<< "$_CI_CONFIG")" == true ]]; then
         log_info "Checks run as ${#_CI_AVAILABLE[@]} parallel jobs; require the speed-ci status check, which combines them"
@@ -851,7 +865,7 @@ _ci_pr_body() {
         echo ""
         echo "| Check | Result | Detail |"
         echo "|---|---|---|"
-        jq -r '.steps[] | "| \(.name) | \(.status) | \(.summary | gsub("\\|"; "/"))\(if .dashboard_url then " ([dashboard](\(.dashboard_url)))" else "" end) |"' "$report"
+        jq -r '.steps[] | "| \(.name) | \(.status) | \(.summary | gsub("\\|"; "/"))\(if (.dashboard_url // "") != "" then " ([dashboard](\(.dashboard_url)))" else "" end) |"' "$report"
         echo ""
         echo "Checked at commit \`$(jq -r '.commit' "$report")\`. Opened by \`speed ci --pr\`; the checks made no model calls."
     }

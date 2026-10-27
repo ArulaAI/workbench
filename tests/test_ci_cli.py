@@ -1031,7 +1031,7 @@ def test_a_failed_sonarqube_gate_blocks_unless_set_to_warn(project):
     try:
         sonar_project(project, sonar)
         assert project.run(extra_env={"SONAR_TOKEN": "tok"}).returncode == 2
-        assert "new_coverage 41.0 (needs LT 80)" in step(project.report(), "sonarqube")["summary"]
+        assert "new_coverage 41.0 (needs at least 80)" in step(project.report(), "sonarqube")["summary"]
         sonar_project(project, sonar, blocking="false")
         assert project.run(extra_env={"SONAR_TOKEN": "tok"}).returncode == 0
         assert step(project.report(), "sonarqube")["status"] == "warn"
@@ -1511,3 +1511,99 @@ def test_sarif_names_a_real_file_for_dependency_findings(project):
     result = next(run for run in runs if run["tool"]["driver"]["name"] == "speed-ci/sca")["results"][0]
     assert result["locations"][0]["physicalLocation"]["artifactLocation"]["uri"] == "package-lock.json"
     assert result["message"]["text"].count("lodash") == 1
+
+
+# ── Phase 2 confirmation-round fixes ──
+
+def test_the_test_credential_mark_only_counts_in_the_generated_workflow(project):
+    (project.root / "config.py").write_text(f'KEY = "{AWS_KEY}"  # speed-ci: test service credential\n')
+    project.commit()
+    assert project.run("--only", "secrets").returncode == 2
+    assert step(project.report(), "secrets")["findings"][0]["file"] == "config.py"
+
+
+def test_other_gate_bullet_forms_are_refused_not_dropped(project):
+    for line, expected in (("* smoke: exit 1", "uses a '*' bullet"), ("- `smoke`: exit 1", "without backticks"),
+                           ("api.v2: exit 1", "not a valid check name")):
+        (project.root / "AGENTS.md").write_text(f"# P\n\n## Quality Gates\n\n- test: true\n{line}\n")
+        project.commit()
+        result = project.run()
+        assert result.returncode == 3 and expected in result.stderr, (line, result.stderr)
+
+
+def test_log_redaction_understands_posix_classes(project):
+    project.toml('[security]\nsecrets_patterns = ["CorpToken|CORPTOKEN-[[:upper:][:digit:]]{8}"]\n'
+                 'sast_cmd = "echo debug CORPTOKEN-ABCD1234 >&2; echo \'{\\"results\\": []}\'"\n')
+    project.commit()
+    project.run()
+    assert "CORPTOKEN-ABCD1234" not in (project.root / ".speed/ci/logs/sast.log").read_text()
+
+
+def test_every_sarif_result_has_a_location(project):
+    audit = {"vulnerabilities": {"lodash": {"severity": "high", "via": [{"title": "Prototype pollution"}]}}}
+    (project.root / "audit.json").write_text(json.dumps(audit))
+    project.toml('[security]\nsca_cmd = "cat audit.json; exit 1"\n')
+    project.commit()
+    project.run()
+    for run in json.loads((project.root / ".speed/ci/speed-ci.sarif").read_text())["runs"]:
+        for result in run["results"]:
+            assert result["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
+
+
+def test_sonarqube_failures_say_what_the_metric_needs(project):
+    sonar = FakeSonar("ERROR", [{"status": "ERROR", "metricKey": "new_coverage", "actualValue": "41.0",
+                                 "comparator": "LT", "errorThreshold": "80"}])
+    try:
+        sonar_project(project, sonar)
+        project.run(extra_env={"SONAR_TOKEN": "tok"})
+        assert "new_coverage 41.0 (needs at least 80)" in step(project.report(), "sonarqube")["summary"]
+    finally:
+        sonar.close()
+
+
+def test_default_gitleaks_and_snyk_commands(project, tmp_path):
+    for name, payload in (("gitleaks", "[]"), ("snyk", '{"ok": true, "vulnerabilities": []}')):
+        fake = project.tools / name
+        fake.write_text(f'#!/bin/sh\necho "$@" > {shlex.quote(str(tmp_path / (name + "-args")))}\necho \'{payload}\'\n')
+        fake.chmod(0o755)
+    project.toml("[ci.tools.gitleaks]\n[ci.tools.snyk]\n")
+    project.commit()
+    assert project.run(extra_env={"SNYK_TOKEN": "t"}).returncode == 0
+    assert (tmp_path / "gitleaks-args").read_text().split() == ["detect", "--no-banner", "--redact", "--report-format",
+                                                               "json", "--report-path", "/dev/stdout"]
+    assert (tmp_path / "snyk-args").read_text().split() == ["test", "--json"]
+
+
+def test_sonarqube_scanner_failure_and_custom_report_task(project):
+    sonar = FakeSonar("OK")
+    try:
+        sonar_project(project, sonar)
+        (project.root / "fake-scanner.sh").write_text("#!/bin/sh\nexit 1\n")
+        project.commit()
+        assert project.run(extra_env={"SONAR_TOKEN": "tok"}).returncode == 2
+        assert "scanner exited 1" in step(project.report(), "sonarqube")["summary"]
+        (project.root / "fake-scanner.sh").write_text(
+            "#!/bin/sh\nmkdir -p target/sonar\nprintf 'ceTaskId=T1\\n' > target/sonar/report-task.txt\n")
+        project.toml((project.root / "speed.toml").read_text() + 'report_task = "target/sonar/report-task.txt"\n')
+        (project.root / ".gitignore").write_text(".speed/\n__pycache__/\n.pytest_cache/\n.scannerwork/\ntarget/\n")
+        project.commit()
+        assert project.run(extra_env={"SONAR_TOKEN": "tok"}).returncode == 0
+    finally:
+        sonar.close()
+
+
+def test_merge_keeps_every_jobs_sarif_runs(project, tmp_path):
+    (project.root / "settings.py").write_text(f'KEY = "{AWS_KEY}"\n')
+    (project.root / "trivy.json").write_text(json.dumps({"SchemaVersion": 2, "Results": [{"Target": "x", "Vulnerabilities": [
+        {"VulnerabilityID": "CVE-1", "PkgName": "p", "Severity": "LOW"}]}]}))
+    project.toml('[ci.tools.trivy]\ncmd = "cat trivy.json"\n')
+    project.commit()
+    jobs = []
+    for check in ("secrets", "trivy"):
+        project.run("--only", check)
+        job = tmp_path / f"job-{check}"
+        subprocess.check_call(["cp", "-R", str(project.root / ".speed/ci"), str(job)])
+        jobs.append(str(job))
+    project.run("merge", *jobs)
+    names = {run["tool"]["driver"]["name"] for run in json.loads((project.root / ".speed/ci/speed-ci.sarif").read_text())["runs"]}
+    assert {"speed-ci/secrets", "speed-ci/trivy"} <= names
