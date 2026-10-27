@@ -619,7 +619,7 @@ speed_check_deps() {
     _check_python_version        || fail=1
     _check_provider              || fail=1
     _check_agent_files           || fail=1
-    _check_worktree_symlinks     || fail=1
+    [[ "${SPEED_CI:-}" == 1 ]] || _check_worktree_symlinks || fail=1
     _check_data_files            || fail=1
     _check_ast_grep              || fail=1
     _check_sgconfig              || fail=1

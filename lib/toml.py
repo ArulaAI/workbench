@@ -284,6 +284,15 @@ def emit(data: dict) -> None:
                 var_name = f"TOML_SECURITY_{key.upper()}"
                 print(f"{var_name}='{shell_escape(joined)}'")
 
+    # [ci] section
+    ci = data.get("ci", {})
+    if isinstance(ci, dict):
+        for key in ("status_context", "command_timeout"):
+            val = ci.get(key)
+            if val is not None:
+                var_name = f"TOML_CI_{key.upper()}"
+                print(f"{var_name}='{shell_escape(str(val))}'")
+
     # [diagnose] section
     diagnose = data.get("diagnose", {})
     if isinstance(diagnose, dict):

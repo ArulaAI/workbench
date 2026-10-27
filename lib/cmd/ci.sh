@@ -1,0 +1,1036 @@
+#!/usr/bin/env bash
+# ci.sh — speed ci: verify the whole project without calling a model.
+#
+#   speed ci                 Run evals, lint, typecheck, tests, e2e and security scans
+#   speed ci init            Write a GitHub Actions workflow that runs speed ci
+#   speed ci --pr            Assemble a feature branch, run the checks, open a PR
+#                            and post the result as a commit status
+#
+# Exit codes: 0 every check passed, 2 a check failed, 3 the checks could not run,
+# 4 a task branch conflicted while assembling the PR branch.
+
+CI_STEPS=(eval lint typecheck test e2e secrets sast sca)
+
+# Files that hold hashes or checksums, which look like secrets to the patterns.
+CI_SECRETS_ALWAYS_EXCLUDE=(package-lock.json npm-shrinkwrap.json yarn.lock pnpm-lock.yaml
+    poetry.lock Pipfile.lock uv.lock Cargo.lock go.sum composer.lock Gemfile.lock)
+
+# At most this many secret findings are kept in the report (the count is always exact).
+CI_SECRETS_KEEP=200
+
+# Replace every provider entry point so nothing reached from speed ci can call a model.
+_ci_forbid_models() {
+    local fn
+    for fn in $(compgen -A function | grep -E '^_?provider_' || true); do
+        eval "${fn}() { log_error 'speed ci never calls a model (${fn} was called)'; return ${EXIT_CONFIG_ERROR}; }"
+    done
+    PROVIDER_BIN=false
+    export SPEED_CI=1
+}
+
+_ci_reject() {
+    local code="$1" reason="$2"
+    log_error "$reason"
+    if [[ "${JSON_OUTPUT:-false}" == true ]]; then
+        jq -n --arg reason "$reason" --argjson code "$code" \
+            '{passed:false, error:$reason, exit_code:$code, steps:[]}' >&3
+    fi
+    return "$code"
+}
+
+# Append one step result. Args: name status summary duration [details_json]
+_ci_record() {
+    jq -nc --arg name "$1" --arg status "$2" --arg summary "$3" --argjson duration "$4" \
+        --argjson details "${5:-{\}}" \
+        '{name:$name, status:$status, summary:$summary, duration_s:$duration} + $details' \
+        >> "$_CI_STEPS_FILE"
+    local mark
+    case "$2" in
+        pass) mark="${COLOR_SUCCESS}${SYM_CHECK}${RESET}" ;;
+        fail) mark="${COLOR_ERROR}${SYM_CROSS}${RESET}" ;;
+        *)    mark="${COLOR_DIM}-${RESET}" ;;
+    esac
+    printf '  %b %-10s %s\n' "$mark" "$1" "$3"
+}
+
+_ci_skipped() {
+    local step
+    for step in "${_CI_SKIP[@]:-}"; do
+        [[ "$step" == "$1" ]] && return 0
+    done
+    return 1
+}
+
+# Run a project command in the project root with a time limit. The JSON output
+# descriptor is closed so a command can never write into the report stream.
+# Args: command stdout_file stderr_file. Returns the command's exit code (124 on timeout).
+_ci_run_command() {
+    local cmd="$1" out="$2" err="$3" rc=0 started=$SECONDS
+    local -a limit=()
+    [[ -n "${_TIMEOUT_CMD:-}" ]] && limit=("$_TIMEOUT_CMD" -k 10 "$_CI_TIMEOUT")
+    # timeout puts the command in its own process group, where Ctrl+C does not reach it,
+    # so the command runs in the background and an interrupt stops it explicitly.
+    ( cd "$PROJECT_ROOT" && exec "${limit[@]+"${limit[@]}"}" bash -c "$cmd" ) > "$out" 2> "$err" < /dev/null 3>&- &
+    _CI_CHILD=$!
+    trap 'kill -TERM "$_CI_CHILD" 2>/dev/null; wait "$_CI_CHILD" 2>/dev/null; exit 130' INT
+    trap 'kill -TERM "$_CI_CHILD" 2>/dev/null; wait "$_CI_CHILD" 2>/dev/null; exit 143' TERM
+    wait "$_CI_CHILD" || rc=$?
+    trap - INT TERM
+    _CI_CHILD=""
+    # timeout -k ends a command that ignores TERM with KILL (137); that is still a timeout.
+    if [[ "$rc" -eq 137 && -n "${limit[*]:-}" && $((SECONDS - started)) -ge "$_CI_TIMEOUT" ]]; then
+        rc=124
+    fi
+    return "$rc"
+}
+
+# Run one quality-gate command. Prints "exit_code log_path".
+_ci_exec() {
+    local name="$1" cmd="$2"
+    local log="${_CI_DIR}/logs/${name}.log"
+    local rc=0
+    _ci_run_command "$cmd" "$log" "$log.err" || rc=$?
+    cat "$log.err" >> "$log" && rm -f "$log.err"
+    if [[ "$rc" -eq 124 ]]; then
+        echo "    ${cmd} timed out after ${_CI_TIMEOUT}s" >&2
+    elif [[ "$rc" -ne 0 ]]; then
+        echo "    ${cmd} exited ${rc}; last lines of ${log#"${PROJECT_ROOT}"/}:" >&2
+        tail -n 20 "$log" | sed 's/^/      /' >&2
+    fi
+    echo "$rc $log"
+}
+
+# lint, typecheck, test and e2e come from the project's ## Quality Gates section.
+_ci_gate_step() {
+    local gate="$1" started=$SECONDS
+    if _ci_skipped "$gate"; then
+        _ci_record "$gate" skipped "skipped with --skip" 0
+        return 0
+    fi
+    local cmds
+    cmds=$(gates_get_config "$gate" both)
+    if [[ -z "$cmds" ]]; then
+        if [[ "$gate" == test ]]; then
+            _ci_record test fail "No test command in the Quality Gates section of ${AGENT_FILE:-AGENTS.md}" 0
+            return 1
+        fi
+        _ci_record "$gate" skipped "No ${gate} command in the Quality Gates section" 0
+        return 0
+    fi
+    local runs="[]" failed=0 count=0 cmd rc log
+    while IFS= read -r cmd; do
+        [[ -z "$cmd" ]] && continue
+        count=$((count + 1))
+        read -r rc log < <(_ci_exec "${gate}-${count}" "$cmd")
+        runs=$(jq -c --arg cmd "$cmd" --argjson rc "$rc" --arg log "${log#"${PROJECT_ROOT}"/}" \
+            '. + [{command:$cmd, exit_code:$rc, log:$log} + (if $rc == 124 then {timed_out:true} else {} end)]' <<< "$runs")
+        [[ "$rc" -ne 0 ]] && failed=$((failed + 1))
+    done <<< "$cmds"
+    local details
+    details=$(jq -c '{commands:.}' <<< "$runs")
+    if [[ "$failed" -gt 0 ]]; then
+        _ci_record "$gate" fail "${failed} of ${count} command(s) failed" $((SECONDS - started)) "$details"
+        return 1
+    fi
+    _ci_record "$gate" pass "${count} command(s) passed" $((SECONDS - started)) "$details"
+}
+
+# Whole-repository secrets scan over tracked files. Matched text is never printed.
+_ci_secrets_step() {
+    local started=$SECONDS
+    if _ci_skipped secrets; then
+        _ci_record secrets skipped "skipped with --skip" 0
+        return 0
+    fi
+    # A committed .env is the most common leak, so unlike the task-diff scan this
+    # one does not exclude .env files unless the project says so.
+    local -a pathspec=(.)
+    local pattern
+    set -f
+    # shellcheck disable=SC2206
+    local -a excludes=(${TOML_SECURITY_SECRETS_EXCLUDE:-*.example tests/fixtures/**} "${CI_SECRETS_ALWAYS_EXCLUDE[@]}")
+    set +f
+    for pattern in "${excludes[@]}"; do
+        if [[ "$pattern" == */* ]]; then
+            pathspec+=(":(exclude,glob)${pattern}")
+        else
+            pathspec+=(":(exclude,glob)**/${pattern}")
+        fi
+    done
+    # --text searches files git would call binary (a NUL byte or a .gitattributes
+    # entry must not hide a key). -z keeps file names exact; -h on the second pass
+    # leaves only line numbers, so the matched text is never read back.
+    local -a grep_opts=(-c color.grep=never -c core.quotePath=false grep --no-color --text -E)
+    local name regex rc file count line
+    local listing="${_CI_DIR}/secrets-files.tmp" hits="${_CI_DIR}/secrets-hits.jsonl"
+    : > "$hits"
+    while IFS=$'\t' read -r name regex; do
+        [[ -n "$name" && -n "$regex" ]] || continue
+        rc=0
+        # Output is "<file>\0<count>\n" per matching file.
+        _git "${grep_opts[@]}" -z -c -e "$regex" -- "${pathspec[@]}" > "$listing" 2>/dev/null || rc=$?
+        if [[ "$rc" -gt 1 ]]; then
+            rm -f "$listing" "$hits"
+            _ci_record secrets fail "Secret pattern '${name}' could not be searched" $((SECONDS - started))
+            return 1
+        fi
+        while IFS= read -r -d '' file && IFS= read -r count; do
+            [[ -n "$file" ]] || continue
+            while IFS= read -r line; do
+                jq -nc --arg name "$name" --arg file "$file" --argjson line "${line:-0}" \
+                    '{pattern:$name, file:$file, line:$line}' >> "$hits"
+            done < <(_git "${grep_opts[@]}" -h -n -e "$regex" -- ":(literal)${file}" 2>/dev/null | cut -d: -f1 \
+                     | grep -E '^[0-9]+$' || echo 0)
+        done < "$listing"
+    done < <(_secrets_pattern_pairs)
+    rm -f "$listing"
+    local total details
+    total=$(wc -l < "$hits" | tr -d ' ')
+    details=$(jq -sc --argjson keep "$CI_SECRETS_KEEP" '{total_findings:length, findings:.[:$keep]}' "$hits")
+    if [[ "$total" -gt 0 ]]; then
+        _ci_record secrets fail "${total} possible secret(s) in tracked files" $((SECONDS - started)) "$details"
+        jq -r '"    \(.pattern) at \(.file):\(.line)"' "$hits" | head -n 50 >&2
+        rm -f "$hits"
+        return 1
+    fi
+    rm -f "$hits"
+    _ci_record secrets pass "No secrets in tracked files" $((SECONDS - started))
+}
+
+# The JSON shape each parser understands. Anything else is reported, never read as zero findings.
+_ci_scan_format_ok() {
+    local kind="$1" raw="$2"
+    if [[ "$kind" == sast ]]; then
+        # Semgrep and Bandit both put findings in a top-level results array.
+        jq -e 'type == "object" and (.results | type == "array")' "$raw" > /dev/null 2>&1
+    else
+        # npm audit 7+, pip-audit 2.x, pip-audit 1.x.
+        jq -e '(type == "object" and ((.vulnerabilities | type == "object") or (.dependencies | type == "array")))
+               or (type == "array" and all(.[]; type == "object" and has("name")))' "$raw" > /dev/null 2>&1
+    fi
+}
+
+# SAST or SCA: run the configured scanner and fail on findings at or above the threshold.
+_ci_scan_step() {
+    local kind="$1" cmd="$2" parser="$3" started=$SECONDS
+    if _ci_skipped "$kind"; then
+        _ci_record "$kind" skipped "skipped with --skip" 0
+        return 0
+    fi
+    if [[ -z "$cmd" ]]; then
+        _ci_record "$kind" skipped "No ${kind}_cmd in the [security] section of speed.toml" 0
+        return 0
+    fi
+    local raw="${_CI_DIR}/${kind}-output.json" normalized="${_CI_DIR}/${kind}-findings.json"
+    local log="${_CI_DIR}/logs/${kind}.log" rc=0 elapsed
+    rm -f "$raw" "$normalized"
+    _ci_run_command "$cmd" "$raw" "$log" || rc=$?
+    elapsed() { echo $((SECONDS - started)); }
+    if [[ "$rc" -eq 124 ]]; then
+        _ci_record "$kind" fail "The scanner timed out after ${_CI_TIMEOUT}s" "$(elapsed)"
+        return 1
+    fi
+    if ! jq -s -e 'length == 1 and (.[0] | type == "object" or type == "array")' "$raw" > /dev/null 2>&1; then
+        _ci_record "$kind" fail "The scanner did not print exactly one JSON document (exit ${rc}); see ${log#"${PROJECT_ROOT}"/}" \
+            "$(elapsed)"
+        return 1
+    fi
+    # Fatal scanner errors: npm audit's {"error": ...}, or a Semgrep error with level "error".
+    # Per-file warnings (Semgrep level "warn", Bandit parse errors) are kept as notes.
+    if jq -e 'type == "object" and (.error != null or any((.errors // [])[]; (.level // "") == "error"))' \
+            "$raw" > /dev/null 2>&1; then
+        _ci_record "$kind" fail "The scanner reported an error (exit ${rc}); see ${raw#"${PROJECT_ROOT}"/}" "$(elapsed)"
+        return 1
+    fi
+    if ! _ci_scan_format_ok "$kind" "$raw"; then
+        _ci_record "$kind" fail "Unsupported scanner output (exit ${rc}); ${kind} supports $(
+            [[ "$kind" == sast ]] && echo "Semgrep and Bandit JSON" || echo "npm audit 7+ and pip-audit JSON")" "$(elapsed)"
+        return 1
+    fi
+    if ! "$parser" "$raw" "$normalized" > /dev/null 2>> "$log" || ! jq -e 'type == "array"' "$normalized" > /dev/null 2>&1; then
+        _ci_record "$kind" fail "Could not read the scanner output; see ${log#"${PROJECT_ROOT}"/}" "$(elapsed)"
+        return 1
+    fi
+    local total warnings
+    total=$(jq 'length' "$normalized")
+    warnings=$(jq 'if type == "object" then ((.errors // []) | length) else 0 end' "$raw")
+    # Scanners exit non-zero when they find something; a non-zero exit with nothing
+    # SPEED can read means the scan itself failed.
+    if [[ "$rc" -ne 0 && "$total" -eq 0 ]]; then
+        _ci_record "$kind" fail "The scanner exited ${rc} without reporting any finding" "$(elapsed)"
+        return 1
+    fi
+    # A severity SPEED does not recognise is treated as blocking, never as harmless.
+    local threshold="$_CI_THRESHOLD" blocking
+    blocking=$(jq -c --arg threshold "$threshold" '
+        {critical:5, high:4, medium:3, low:2, info:1} as $rank
+        | [.[] | select(($rank[.severity // ""] // 5) >= $rank[$threshold])
+               | {severity, title, file, line, package} | with_entries(select(.value != null))]' "$normalized")
+    local count details
+    count=$(jq 'length' <<< "$blocking")
+    details=$(jq -c --argjson total "$total" --argjson warnings "$warnings" --arg threshold "$threshold" \
+        '{threshold:$threshold, total_findings:$total, scanner_warnings:$warnings, blocking_findings:.[:50]}' <<< "$blocking")
+    if [[ "$count" -gt 0 ]]; then
+        _ci_record "$kind" fail "${count} finding(s) at or above ${threshold} (${total} in all)" "$(elapsed)" "$details"
+        jq -r '.[:20][] | "    [\(.severity)] \(.title) \(.file // .package // "")\(if .line then ":\(.line)" else "" end)"' \
+            <<< "$blocking" >&2
+        return 1
+    fi
+    _ci_record "$kind" pass "No findings at or above ${threshold} (${total} in all)" "$(elapsed)" "$details"
+}
+
+# One feature's task statuses, whether a test spec is configured, and where its
+# evaluation summary goes: "<statuses> <configured> <summary_path>".
+_ci_feature_state() (
+    feature_activate "$1" > /dev/null 2>&1 || exit 1
+    # In a fresh multi-player checkout the local lock directory does not exist yet.
+    mkdir -p "$(dirname "$SPEED_LOCK")" 2>/dev/null || true
+    local statuses=""
+    if compgen -G "${TASKS_DIR}/*.json" > /dev/null; then
+        statuses=$(jq -r '.status // "unknown"' "${TASKS_DIR}"/*.json | sort -u | tr '\n' ',')
+    fi
+    local configured=false
+    [[ -s "${FEATURE_DIR}/test_spec_path" ]] && configured=true
+    echo "${statuses:-none} ${configured} ${FEATURE_DIR#"${PROJECT_ROOT}"/}/eval/summary.md"
+)
+
+# Run speed eval for every feature (or the one given with --feature).
+_ci_eval_step() {
+    local started=$SECONDS
+    if _ci_skipped eval; then
+        _ci_record eval skipped "skipped with --skip" 0
+        return 0
+    fi
+    local -a features=()
+    if [[ -n "${GLOBAL_FEATURE:-}" ]]; then
+        features=("$GLOBAL_FEATURE")
+    else
+        local name
+        while IFS= read -r name; do
+            [[ -n "$name" ]] && features+=("$name")
+        done < <(feature_list)
+    fi
+    if [[ ${#features[@]} -eq 0 ]]; then
+        _ci_record eval skipped "No SPEED features in this checkout" 0
+        return 0
+    fi
+    local results="[]" feature out rc status reason passed=0 failed=0 statuses configured summary
+    local log="${_CI_DIR}/logs/eval.log"
+    for feature in "${features[@]}"; do
+        reason=""
+        read -r statuses configured summary < <(_ci_feature_state "$feature" || echo "missing false -")
+        if [[ "$statuses" == missing ]]; then
+            status=fail; reason="Feature ${feature} could not be loaded"
+        elif [[ "$statuses" == none ]]; then
+            status=skipped; reason="No tasks yet"
+        elif [[ ",${statuses}" == *",failed,"* || ",${statuses}" == *",blocked,"* ]]; then
+            status=fail; reason="Some tasks are failed or blocked (${statuses%,})"
+        elif [[ "$statuses" != "done," ]]; then
+            status=skipped; reason="Work in progress (${statuses%,})"
+        else
+            rc=0
+            out=$(JSON_OUTPUT=true GLOBAL_FEATURE="$feature" cmd_eval 2>> "$log") || rc=$?
+            reason=$(jq -r '.error // empty' <<< "$out" 2>/dev/null || true)
+            if [[ "$rc" -eq 0 ]]; then
+                status=pass
+            elif [[ "$rc" -eq "$EXIT_CONFIG_ERROR" && "$reason" == "No test spec found"* && "$configured" != true ]]; then
+                status=skipped; reason="No test spec for this feature"
+            else
+                status=fail
+                if [[ -z "$reason" ]]; then
+                    # Keep the summary with the CI report, which outlives a --pr worktree.
+                    mkdir -p "${_CI_DIR}/eval"
+                    if cp "${PROJECT_ROOT}/${summary}" "${_CI_DIR}/eval/${feature}-summary.md" 2>/dev/null; then
+                        reason="Not accepted; see .speed/ci/eval/${feature}-summary.md"
+                    else
+                        reason="Not accepted"
+                    fi
+                fi
+            fi
+        fi
+        case "$status" in
+            pass) passed=$((passed + 1)) ;;
+            fail) failed=$((failed + 1)) ;;
+        esac
+        results=$(jq -c --arg f "$feature" --arg s "$status" --arg r "$reason" \
+            '. + [{feature:$f, status:$s} + (if $r == "" then {} else {reason:$r} end)]' <<< "$results")
+    done
+    local details
+    details=$(jq -c '{features:.}' <<< "$results")
+    if [[ "$failed" -gt 0 ]]; then
+        _ci_record eval fail "${failed} feature(s) failed, ${passed} accepted" $((SECONDS - started)) "$details"
+        jq -r '.[] | select(.status == "fail") | "    \(.feature): \(.reason)"' <<< "$results" >&2
+        return 1
+    fi
+    if [[ "$passed" -eq 0 ]]; then
+        _ci_record eval skipped "No feature is ready to evaluate" $((SECONDS - started)) "$details"
+        return 0
+    fi
+    _ci_record eval pass "${passed} feature(s) accepted" $((SECONDS - started)) "$details"
+}
+
+# Fail when the checks changed tracked files: the commit being reported on is then
+# not the tree that was checked (for example a formatter run as lint).
+_ci_clean_tree_step() {
+    local changed
+    changed=$(_git status --porcelain --untracked-files=no -- . ':(exclude).speed' 2>/dev/null | cut -c4- | head -n 20)
+    if [[ -n "$changed" ]]; then
+        _ci_record clean-tree fail "The checks changed tracked files: $(tr '\n' ' ' <<< "$changed")" 0
+        return 1
+    fi
+    _ci_record clean-tree pass "The checks left tracked files unchanged" 0
+}
+
+# Only one speed ci run may use .speed/ci at a time.
+_ci_lock() {
+    local lock="${_CI_DIR}/.lock"
+    mkdir -p "$_CI_DIR"
+    if ! mkdir "$lock" 2>/dev/null; then
+        local holder
+        holder=$(cat "${lock}/pid" 2>/dev/null || echo "")
+        if [[ -z "$holder" ]]; then
+            # The owner writes its pid right after creating the lock; give it a moment.
+            sleep 1
+            holder=$(cat "${lock}/pid" 2>/dev/null || echo "")
+        fi
+        if [[ -n "$holder" ]] && kill -0 "$holder" 2>/dev/null; then
+            return 1
+        fi
+        rm -rf "$lock"
+        mkdir "$lock" 2>/dev/null || return 1
+    fi
+    echo "$BASHPID" > "${lock}/pid"
+}
+
+_ci_unlock() {
+    rm -rf "${_CI_DIR}/.lock"
+}
+
+# Run every check and write .speed/ci/report.json. Returns 0, EXIT_GATE_FAILURE,
+# or EXIT_CONFIG_ERROR when another run holds the lock.
+_ci_run_checks() {
+    _CI_DIR="${STATE_DIR}/ci"
+    if ! _ci_lock; then
+        _ci_reject "$EXIT_CONFIG_ERROR" "Another speed ci is running in this project"
+        return
+    fi
+    trap '_ci_unlock' EXIT
+    rm -rf "${_CI_DIR}/logs"
+    mkdir -p "${_CI_DIR}/logs"
+    _CI_STEPS_FILE="${_CI_DIR}/steps.jsonl"
+    : > "$_CI_STEPS_FILE"
+    local started_at
+    started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    echo -e "${BOLD}SPEED CI${RESET}  (no model calls)"
+    # Evals run first, on the tree exactly as checked out: later commands can leave
+    # files behind, and an evaluation must describe a clean tree.
+    _ci_eval_step || true
+    local gate
+    for gate in lint typecheck test e2e; do
+        _ci_gate_step "$gate" || true
+    done
+    _ci_secrets_step || true
+    _ci_scan_step sast "${TOML_SECURITY_SAST_CMD:-}" security_sast_parse || true
+    _ci_scan_step sca "${TOML_SECURITY_SCA_CMD:-}" security_sca_parse || true
+    if [[ "${SPEED_CI_REQUIRE_CLEAN:-}" == 1 ]]; then
+        _ci_clean_tree_step || true
+    fi
+    local commit branch
+    commit=$(_git rev-parse HEAD 2>/dev/null || echo "")
+    branch=$(git_current_branch 2>/dev/null || echo "")
+    jq -s --arg started "$started_at" --arg finished "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        --arg commit "$commit" --arg branch "$branch" \
+        '{passed: (map(select(.status == "fail")) | length == 0),
+          commit:$commit, branch:$branch, started_at:$started, finished_at:$finished,
+          summary:{pass: map(select(.status == "pass")) | length,
+                   fail: map(select(.status == "fail")) | length,
+                   skipped: map(select(.status == "skipped")) | length},
+          steps:.}' "$_CI_STEPS_FILE" > "${_CI_DIR}/report.json"
+    rm -f "$_CI_STEPS_FILE"
+    local summary
+    summary=$(jq -r '"\(.summary.pass) passed, \(.summary.fail) failed, \(.summary.skipped) skipped"' "${_CI_DIR}/report.json")
+    if [[ "$(jq -r '.passed' "${_CI_DIR}/report.json")" == true ]]; then
+        echo -e "${COLOR_SUCCESS}${BOLD}PASSED${RESET}  ${summary}  (report: .speed/ci/report.json)"
+        return 0
+    fi
+    echo -e "${COLOR_ERROR}${BOLD}FAILED${RESET}  ${summary}  (report: .speed/ci/report.json)"
+    return "$EXIT_GATE_FAILURE"
+}
+
+# ── speed ci init ──────────────────────────────────────────────────────────────
+
+# Setup steps for the project's own toolchain, detected from its files.
+_ci_project_setup() {
+    local root="$PROJECT_ROOT"
+    if [[ -f "${root}/package.json" ]]; then
+        if [[ -f "${root}/pnpm-lock.yaml" ]]; then
+            printf '      - run: npm install -g pnpm && pnpm install --frozen-lockfile\n'
+        elif [[ -f "${root}/yarn.lock" ]]; then
+            printf '      - run: yarn install --frozen-lockfile\n'
+        elif [[ -f "${root}/package-lock.json" ]]; then
+            printf '      - run: npm ci\n'
+        else
+            # Without a lockfile, do not create one: an untracked file would make the tree dirty.
+            printf '      - run: npm install --no-package-lock\n'
+        fi
+    fi
+    if [[ -f "${root}/requirements.txt" || -f "${root}/pyproject.toml" ]]; then
+        local install="python -m pip install -q --upgrade pip"
+        [[ -f "${root}/requirements.txt" ]] && install+=" && pip install -q -r requirements.txt"
+        [[ -f "${root}/requirements-dev.txt" ]] && install+=" && pip install -q -r requirements-dev.txt"
+        [[ ! -f "${root}/requirements.txt" ]] && install+=" && pip install -q ."
+        printf '      - run: %s\n' "$install"
+    fi
+    if [[ -f "${root}/go.mod" ]]; then
+        printf '      - uses: actions/setup-go@v5\n        with:\n          go-version-file: go.mod\n'
+        printf '      - run: go mod download\n'
+    fi
+}
+
+# OWNER/REPO from a GitHub remote URL (https, ssh or git@ form).
+_ci_github_repo() {
+    local url="${1%.git}"
+    if [[ "$url" =~ github\.com[:/]+([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/?$ ]]; then
+        echo "${BASH_REMATCH[1]}"
+        return 0
+    fi
+    return 1
+}
+
+# The SPEED ref the workflow installs: the current branch's upstream, else the
+# remote's default branch. Both exist on the remote, unlike a local-only branch.
+_ci_speed_ref() {
+    local upstream
+    if upstream=$(git -C "$SPEED_DIR" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null); then
+        echo "${upstream#*/}"
+        return 0
+    fi
+    if upstream=$(git -C "$SPEED_DIR" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null); then
+        echo "${upstream#*/}"
+        return 0
+    fi
+    echo main
+}
+
+_ci_init() {
+    local force=false repo="" ref=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --force) force=true; shift ;;
+            --speed-repo|--speed-ref)
+                [[ $# -ge 2 && "$2" != --* ]] || { _ci_reject "$EXIT_CONFIG_ERROR" "$1 requires a value"; return; }
+                if [[ "$1" == --speed-repo ]]; then repo="$2"; else ref="$2"; fi
+                shift 2 ;;
+            *) _ci_reject "$EXIT_CONFIG_ERROR" "Unknown ci init option: $1"; return ;;
+        esac
+    done
+    # GitHub only reads workflows from the repository root.
+    local toplevel
+    toplevel=$(_git rev-parse --show-toplevel 2>/dev/null || echo "")
+    if [[ -z "$toplevel" ]]; then
+        _ci_reject "$EXIT_CONFIG_ERROR" "speed ci init must run inside a git repository"
+        return
+    fi
+    if [[ "$(cd "$toplevel" && pwd -P)" != "$(cd "$PROJECT_ROOT" && pwd -P)" ]]; then
+        _ci_reject "$EXIT_CONFIG_ERROR" "speed ci init must run at the repository root (${toplevel}); GitHub does not read workflows from subdirectories"
+        return
+    fi
+    local target="${PROJECT_ROOT}/.github/workflows/speed-ci.yml"
+    if [[ -e "$target" && "$force" != true ]]; then
+        _ci_reject "$EXIT_CONFIG_ERROR" ".github/workflows/speed-ci.yml already exists; pass --force to replace it"
+        return
+    fi
+    if [[ -z "$repo" ]] && ! repo=$(_ci_github_repo "$(git -C "$SPEED_DIR" config --get remote.origin.url 2>/dev/null)"); then
+        _ci_reject "$EXIT_CONFIG_ERROR" "Cannot tell which GitHub repository SPEED comes from; pass --speed-repo OWNER/REPO"
+        return
+    fi
+    if [[ ! "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+        _ci_reject "$EXIT_CONFIG_ERROR" "Invalid --speed-repo: ${repo} (expected OWNER/REPO)"
+        return
+    fi
+    local defaulted=false
+    if [[ -z "$ref" ]]; then
+        ref=$(_ci_speed_ref)
+        defaulted=true
+    fi
+    if [[ ! "$ref" =~ ^[A-Za-z0-9_./-]+$ ]]; then
+        _ci_reject "$EXIT_CONFIG_ERROR" "Invalid --speed-ref: ${ref}"
+        return
+    fi
+    local main_branch setup
+    main_branch=$(git_main_branch)
+    setup=$(_ci_project_setup)
+    if ! mkdir -p "$(dirname "$target")" 2>/dev/null; then
+        _ci_reject "$EXIT_CONFIG_ERROR" "Cannot create .github/workflows in ${PROJECT_ROOT}"
+        return
+    fi
+    if ! MAIN="$main_branch" REPO="$repo" REF="$ref" SETUP="$setup" "$(_context_python)" - \
+            "${SPEED_DIR}/templates/ci/github-actions.yml" "$target" <<'PYEOF'
+import os, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+setup = os.environ["SETUP"]
+for key, value in (("@MAIN_BRANCH@", os.environ["MAIN"]), ("@SPEED_REPOSITORY@", os.environ["REPO"]),
+                   ("@SPEED_REF@", os.environ["REF"]), ("@PROJECT_SETUP@\n", setup + "\n" if setup else "")):
+    text = text.replace(key, value)
+open(sys.argv[2], "w", encoding="utf-8").write(text)
+PYEOF
+    then
+        _ci_reject "$EXIT_CONFIG_ERROR" "Could not write .github/workflows/speed-ci.yml"
+        return
+    fi
+    log_success "Wrote .github/workflows/speed-ci.yml (SPEED ${repo}@${ref}, runs on pull requests and pushes to ${main_branch})"
+    if [[ "$defaulted" == true ]] \
+            && ! git -C "$SPEED_DIR" cat-file -e "origin/${ref}:lib/cmd/ci.sh" 2>/dev/null; then
+        log_warn "SPEED ${ref} on the remote may not include speed ci yet; pass --speed-ref with a branch or tag that does"
+    fi
+    if [[ -z "$setup" ]]; then
+        log_warn "No package.json, requirements.txt, pyproject.toml or go.mod found; add the project's setup steps to the workflow"
+    fi
+    log_info "Commit the file to turn it on. For a private SPEED repository, add a SPEED_REPO_TOKEN secret that can read it."
+    if [[ "${JSON_OUTPUT:-false}" == true ]]; then
+        jq -n --arg path ".github/workflows/speed-ci.yml" --arg repo "$repo" --arg ref "$ref" \
+            --arg branch "$main_branch" '{written:$path, speed_repository:$repo, speed_ref:$ref, main_branch:$branch}' >&3
+    fi
+}
+
+# ── speed ci --pr ──────────────────────────────────────────────────────────────
+
+_ci_pr_body() {
+    local feature="$1" tasks_json="$2" report="$3"
+    {
+        echo "## SPEED feature: ${feature}"
+        echo ""
+        echo "### Tasks"
+        jq -r '.[] | "- \(.id): \(.title) (`\(.branch)`)"' <<< "$tasks_json"
+        echo ""
+        echo "### speed ci"
+        echo ""
+        if [[ "$(jq -r '.passed' "$report")" == true ]]; then
+            echo "**Passed**: $(jq -r '"\(.summary.pass) passed, \(.summary.skipped) skipped"' "$report")"
+        else
+            echo "**Failed**: $(jq -r '"\(.summary.fail) failed, \(.summary.pass) passed, \(.summary.skipped) skipped"' "$report")"
+        fi
+        echo ""
+        echo "| Check | Result | Detail |"
+        echo "|---|---|---|"
+        jq -r '.steps[] | "| \(.name) | \(.status) | \(.summary | gsub("\\|"; "/")) |"' "$report"
+        echo ""
+        echo "Checked at commit \`$(jq -r '.commit' "$report")\`. Opened by \`speed ci --pr\`; the checks made no model calls."
+    }
+}
+
+# Commits on a tip that are not on the base or a task branch and are not merges.
+# speed ci --pr only ever adds merge commits, so anything here is someone's work.
+_ci_foreign_commits() {
+    local tip="$1" base="$2"
+    shift 2
+    local -a exclude=("^${base}")
+    local branch
+    for branch in "$@"; do
+        exclude+=("^${branch}")
+    done
+    _git rev-list --no-merges --max-count=5 "$tip" "${exclude[@]}" -- 2>/dev/null || true
+}
+
+_ci_lower() {
+    tr '[:upper:]' '[:lower:]' <<< "$1"
+}
+
+# Put the feature's SPEED state, as --pr checked it, into the assembly worktree. It
+# replaces any committed copy from the base, which can be behind the local state.
+_ci_copy_feature_state() {
+    local root="$1" dir rel name
+    for dir in "$FEATURE_DIR" "$TASKS_DIR"; do
+        rel="${dir#"${PROJECT_ROOT}"/}"
+        [[ "$rel" == "$dir" ]] && continue
+        rm -rf "${root:?}/${rel}"
+        mkdir -p "$(dirname "${root}/${rel}")"
+        cp -R "$dir" "${root}/${rel}"
+        rm -rf "${root}/${rel}/eval" "${root}/${rel}/logs" "${root}/${rel}/speed.lock"
+        # Absolute spec paths would point back into the user's checkout.
+        for name in spec_path test_spec_path; do
+            if [[ -f "${root}/${rel}/${name}" ]]; then
+                sed -i.bak "s|^${PROJECT_ROOT}/|${root}/|" "${root}/${rel}/${name}" && rm -f "${root}/${rel}/${name}.bak"
+            fi
+        done
+    done
+}
+
+# Link dependencies such as node_modules into the worktree, and write a git excludes
+# file that hides the links, so evals do not see them as uncommitted files.
+_ci_link_dependencies() {
+    local root="$1" top="$2" excludes="$3" link global
+    git_setup_worktree_deps "$root"
+    global=$(git config --path --get core.excludesFile 2>/dev/null || echo "${XDG_CONFIG_HOME:-$HOME/.config}/git/ignore")
+    { [[ -f "$global" ]] && cat "$global"; echo; } > "$excludes"
+    while IFS= read -r -d '' link; do
+        echo "/${link#"${top}"/}" >> "$excludes"
+    done < <(find "$top" -path "${top}/.git" -prune -o -type l -lname "${PROJECT_ROOT}/*" -print0 2>/dev/null)
+}
+
+# Threshold and command timeout, read from the project's speed.toml.
+_ci_settings() {
+    local threshold
+    threshold=$(tr '[:upper:]' '[:lower:]' <<< "${TOML_SECURITY_SEVERITY_THRESHOLD:-high}")
+    [[ "$threshold" == moderate ]] && threshold=medium
+    case "$threshold" in
+        critical|high|medium|low|info) _CI_THRESHOLD="$threshold" ;;
+        *) _ci_reject "$EXIT_CONFIG_ERROR" "Invalid [security] severity_threshold: ${TOML_SECURITY_SEVERITY_THRESHOLD} (use critical, high, medium, low or info)"; return ;;
+    esac
+    _CI_TIMEOUT="${TOML_CI_COMMAND_TIMEOUT:-1800}"
+    if [[ ! "$_CI_TIMEOUT" =~ ^[1-9][0-9]*$ ]]; then
+        _ci_reject "$EXIT_CONFIG_ERROR" "Invalid [ci] command_timeout: ${_CI_TIMEOUT} (seconds)"
+        return
+    fi
+}
+
+# Run the checks inside the assembly worktree, with every project path and setting
+# taken from there, as a fresh CI checkout would.
+_ci_check_worktree() (
+    local root="$1" excludes="$2"
+    unset $(compgen -v TOML_ || true)
+    [[ -z "${_SPEED_USER_AGENT_FILE:-}" ]] && unset SPEED_AGENT_FILE
+    export SPEED_PROJECT_ROOT="$root"
+    # shellcheck source=/dev/null
+    source "${LIB_DIR}/config.sh"
+    MP_ENABLED=false
+    mp_is_enabled && MP_ENABLED=true
+    _ci_settings || exit
+    export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.excludesFile GIT_CONFIG_VALUE_0="$excludes"
+    SPEED_CI_REQUIRE_CLEAN=1 _ci_run_checks
+)
+
+_ci_cleanup_worktree() {
+    rm -f "${_CI_EXCLUDES:-}"
+    [[ -n "${_CI_WORKTREE:-}" ]] || return 0
+    _git worktree remove --force "$_CI_WORKTREE" > /dev/null 2>&1 || rm -rf "$_CI_WORKTREE"
+    _git worktree prune > /dev/null 2>&1 || true
+}
+
+_ci_pr() {
+    local draft=false dry_run=false force=false base="" pr_branch="" remote="origin" repo=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --draft) draft=true; shift ;;
+            --dry-run) dry_run=true; shift ;;
+            --force) force=true; shift ;;
+            --base|--branch|--remote|--repo)
+                [[ $# -ge 2 && "$2" != --* ]] || { _ci_reject "$EXIT_CONFIG_ERROR" "$1 requires a value"; return; }
+                case "$1" in
+                    --base) base="$2" ;;
+                    --branch) pr_branch="$2" ;;
+                    --remote) remote="$2" ;;
+                    --repo) repo="$2" ;;
+                esac
+                shift 2 ;;
+            *) _ci_reject "$EXIT_CONFIG_ERROR" "Unknown ci --pr option: $1"; return ;;
+        esac
+    done
+    local feature
+    if ! feature=$(feature_resolve "${GLOBAL_FEATURE:-}"); then
+        _ci_reject "$EXIT_CONFIG_ERROR" "No feature context; use --feature NAME"
+        return
+    fi
+    feature_activate "$feature"
+    base="${base:-$(git_main_branch)}"
+    pr_branch="${pr_branch:-speed-ci/${feature}}"
+    if ! _git check-ref-format --branch "$pr_branch" > /dev/null 2>&1 \
+            || [[ "$pr_branch" =~ ^(refs|heads|remotes|tags)/ || "$pr_branch" == "${remote}/"* ]]; then
+        _ci_reject "$EXIT_CONFIG_ERROR" "Invalid PR branch name: ${pr_branch}"
+        return
+    fi
+    if ! git_branch_exists "$base"; then
+        _ci_reject "$EXIT_CONFIG_ERROR" "Base branch not found: ${base}"
+        return
+    fi
+    local pushed_repo=""
+    if [[ "$dry_run" != true ]]; then
+        if ! _git remote get-url "$remote" > /dev/null 2>&1; then
+            _ci_reject "$EXIT_CONFIG_ERROR" "Git remote not found: ${remote}"
+            return
+        fi
+        pushed_repo=$(_ci_github_repo "$(_git config --get "remote.${remote}.url")" || true)
+        if [[ -z "$pushed_repo" && -n "$repo" ]]; then
+            _ci_reject "$EXIT_CONFIG_ERROR" "Cannot tell which GitHub repository ${remote} is, so the PR head is unknown; use a github.com URL for ${remote}"
+            return
+        fi
+        repo="${repo:-$pushed_repo}"
+        if [[ -z "$repo" ]]; then
+            _ci_reject "$EXIT_CONFIG_ERROR" "Remote ${remote} is not a GitHub repository; pass --repo OWNER/REPO"
+            return
+        fi
+        if [[ ! "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+            _ci_reject "$EXIT_CONFIG_ERROR" "Invalid --repo: ${repo} (expected OWNER/REPO)"
+            return
+        fi
+        if ! command -v gh > /dev/null 2>&1; then
+            _ci_reject "$EXIT_CONFIG_ERROR" "The GitHub CLI (gh) is not installed; it is needed to open the PR"
+            return
+        fi
+        if ! gh auth status > /dev/null 2>&1; then
+            _ci_reject "$EXIT_CONFIG_ERROR" "gh is not logged in; run 'gh auth login'"
+            return
+        fi
+    fi
+
+    local ordered task_id status branch title tasks_json="[]" not_done=() task_file
+    local -a task_branches=()
+    if ! ordered=$(task_topo_sort); then
+        _ci_reject "$EXIT_CONFIG_ERROR" "The task graph has a dependency cycle"
+        return
+    fi
+    for task_id in $ordered; do
+        task_file="${TASKS_DIR}/${task_id}.json"
+        if ! status=$(jq -r '.status // "unknown"' "$task_file" 2>/dev/null) \
+                || ! branch=$(jq -r '.branch // empty' "$task_file") || ! title=$(jq -r '.title // ""' "$task_file"); then
+            _ci_reject "$EXIT_CONFIG_ERROR" "Task file is unreadable: ${task_file}"
+            return
+        fi
+        if [[ "$status" != done ]]; then
+            not_done+=("${task_id} (${status})")
+            continue
+        fi
+        if [[ -z "$branch" ]] || ! git_branch_exists "$branch"; then
+            _ci_reject "$EXIT_CONFIG_ERROR" "Task ${task_id} is done but its branch is missing: ${branch:-none}"
+            return
+        fi
+        task_branches+=("$branch")
+        tasks_json=$(jq -c --arg id "$task_id" --arg t "$title" --arg b "$branch" \
+            '. + [{id:$id, title:$t, branch:$b}]' <<< "$tasks_json")
+    done
+    if [[ ${#not_done[@]} -gt 0 ]]; then
+        _ci_reject "$EXIT_CONFIG_ERROR" "Every task must be done before opening a PR; not done: ${not_done[*]}"
+        return
+    fi
+    if [[ ${#task_branches[@]} -eq 0 ]]; then
+        _ci_reject "$EXIT_CONFIG_ERROR" "Feature ${feature} has no tasks"
+        return
+    fi
+    # The remote branch is rebuilt from scratch, so it must never be one that holds other work.
+    # Names are compared without case: on macOS refs/heads/MAIN is refs/heads/main.
+    local candidate current
+    current=$(_git symbolic-ref -q --short HEAD || echo "")
+    for candidate in "$base" "$current" "${task_branches[@]}"; do
+        if [[ -n "$candidate" && "$(_ci_lower "$pr_branch")" == "$(_ci_lower "$candidate")" ]]; then
+            _ci_reject "$EXIT_CONFIG_ERROR" "The PR branch cannot be ${pr_branch}: it is the base, the current branch or a task branch"
+            return
+        fi
+    done
+    if [[ -n "$(_git status --porcelain --untracked-files=no 2>/dev/null)" ]]; then
+        log_warn "Uncommitted changes are not part of the PR; only committed task branches are used"
+    fi
+
+    local base_ref="$base" remote_sha="" fetch_err foreign
+    if [[ "$dry_run" != true ]]; then
+        if ! fetch_err=$(_git fetch -q "$remote" "+refs/heads/${base}:refs/remotes/${remote}/${base}" 2>&1); then
+            _ci_reject "$EXIT_CONFIG_ERROR" "Could not fetch ${base} from ${remote}: ${fetch_err}"
+            return
+        fi
+        # The PR is built on the published base, never on unpushed local commits.
+        base_ref="refs/remotes/${remote}/${base}"
+        remote_sha=$(_git ls-remote --heads "$remote" "refs/heads/${pr_branch}" 2>/dev/null | cut -f1)
+        if [[ -n "$remote_sha" ]]; then
+            if ! fetch_err=$(_git fetch -q "$remote" "+refs/heads/${pr_branch}:refs/remotes/${remote}/${pr_branch}" 2>&1); then
+                _ci_reject "$EXIT_CONFIG_ERROR" "Could not fetch ${pr_branch} from ${remote}: ${fetch_err}"
+                return
+            fi
+            foreign=$(_ci_foreign_commits "$remote_sha" "$base_ref" "${task_branches[@]}")
+            if [[ -n "$foreign" && "$force" != true ]]; then
+                _ci_reject "$EXIT_CONFIG_ERROR" "${remote}/${pr_branch} has commits that did not come from the task branches ($(tr '\n' ' ' <<< "$foreign")); pass --force to replace them"
+                return
+            fi
+        fi
+    fi
+
+    # Assemble and check in a temporary worktree, so the user's checkout, uncommitted
+    # work and local branches are never touched.
+    _CI_DIR="${STATE_DIR}/ci"
+    if ! _ci_lock; then
+        _ci_reject "$EXIT_CONFIG_ERROR" "Another speed ci is running in this project"
+        return
+    fi
+    _CI_WORKTREE=$(mktemp -d "${TMPDIR:-/tmp}/speed-ci-pr.XXXXXX")
+    _CI_EXCLUDES=$(mktemp "${TMPDIR:-/tmp}/speed-ci-excludes.XXXXXX")
+    trap '_ci_cleanup_worktree; _ci_unlock' EXIT
+    local wt_err
+    if ! wt_err=$(_git worktree add -q --detach "$_CI_WORKTREE" "$base_ref" 2>&1); then
+        _ci_reject "$EXIT_CONFIG_ERROR" "Could not create a worktree for ${pr_branch}: ${wt_err}"
+        return
+    fi
+    log_step "Assembling ${pr_branch} from ${base}"
+    local merge_err
+    while IFS=$'\t' read -r task_id branch; do
+        if git -C "$_CI_WORKTREE" merge-base --is-ancestor "$branch" HEAD 2>/dev/null; then
+            continue
+        fi
+        if ! merge_err=$(git -C "$_CI_WORKTREE" merge -q --no-ff "$branch" -m "Merge ${branch} (task ${task_id})" 2>&1); then
+            local conflicting
+            conflicting=$(git -C "$_CI_WORKTREE" diff --name-only --diff-filter=U 2>/dev/null | tr '\n' ' ')
+            if [[ -n "$conflicting" ]]; then
+                _ci_reject "$EXIT_MERGE_CONFLICT" "Task ${task_id} (${branch}) conflicts with the branches merged before it: ${conflicting}"
+            else
+                _ci_reject "$EXIT_CONFIG_ERROR" "Could not merge ${branch}: $(head -n 3 <<< "$merge_err" | tr '\n' ' ')"
+            fi
+            return
+        fi
+    done < <(jq -r '.[] | [.id, .branch] | @tsv' <<< "$tasks_json")
+    log_success "Merged ${#task_branches[@]} task branch(es) into ${pr_branch}"
+
+    # A project in a subdirectory of the repository is checked in the same subdirectory.
+    local prefix check_root
+    prefix=$(_git rev-parse --show-prefix 2>/dev/null || echo "")
+    check_root="${_CI_WORKTREE}/${prefix%/}"
+    check_root="${check_root%/}"
+    _ci_copy_feature_state "$check_root"
+    _ci_link_dependencies "$check_root" "$_CI_WORKTREE" "$_CI_EXCLUDES"
+    local checks_rc=0
+    _ci_check_worktree "$check_root" "$_CI_EXCLUDES" || checks_rc=$?
+    local report="${check_root}/.speed/ci/report.json"
+    if [[ "$checks_rc" -eq "$EXIT_CONFIG_ERROR" || ! -f "$report" ]]; then
+        _ci_reject "$EXIT_CONFIG_ERROR" "The checks could not run in the assembly worktree"
+        return
+    fi
+    # Keep the report and logs in the user's project, where speed ci always writes them.
+    # This run holds the project's lock, so only its own lock entry is kept.
+    find "$_CI_DIR" -mindepth 1 -maxdepth 1 ! -name .lock -exec rm -rf {} +
+    rm -rf "${check_root}/.speed/ci/.lock"
+    cp -R "${check_root}/.speed/ci/." "$_CI_DIR/"
+    report="${_CI_DIR}/report.json"
+    local sha passed
+    sha=$(git -C "$_CI_WORKTREE" rev-parse HEAD)
+    passed=$(jq -r '.passed' "$report")
+
+    local body_file="${_CI_DIR}/pr-body.md"
+    _ci_pr_body "$feature" "$tasks_json" "$report" > "$body_file"
+    local state description pr_url="" title="SPEED: ${feature}"
+    if [[ "$passed" == true ]]; then
+        state=success; description="speed ci passed: $(jq -r '"\(.summary.pass) passed, \(.summary.skipped) skipped"' "$report")"
+    else
+        state=failure; description="speed ci failed: $(jq -r '"\(.summary.fail) failed, \(.summary.pass) passed"' "$report")"
+        draft=true
+    fi
+    local context="${TOML_CI_STATUS_CONTEXT:-speed/ci}"
+
+    if [[ "$dry_run" == true ]]; then
+        log_info "Dry run: not pushing ${pr_branch} or opening a PR (would post ${context}=${state} on ${sha:0:12})"
+    else
+        log_step "Pushing ${pr_branch} to ${remote}"
+        local push_err
+        if ! push_err=$(git -C "$_CI_WORKTREE" push -q "--force-with-lease=refs/heads/${pr_branch}:${remote_sha}" \
+                "$remote" "HEAD:refs/heads/${pr_branch}" 2>&1); then
+            _ci_reject "$EXIT_CONFIG_ERROR" "Could not push ${pr_branch} to ${remote}: $(head -n 3 <<< "$push_err" | tr '\n' ' ')"
+            return
+        fi
+        # A PR into another repository names its head as OWNER:branch.
+        local head="$pr_branch"
+        if [[ -n "$pushed_repo" && "$(_ci_lower "$pushed_repo")" != "$(_ci_lower "$repo")" ]]; then
+            head="${pushed_repo%%/*}:${pr_branch}"
+        fi
+        pr_url=$(gh pr view "$head" --repo "$repo" --json url,state --jq 'select(.state == "OPEN") | .url' 2>/dev/null || true)
+        if [[ -n "$pr_url" ]]; then
+            if ! gh pr edit "$head" --repo "$repo" --base "$base" --body-file "$body_file" > /dev/null 2>&1; then
+                _ci_reject "$EXIT_CONFIG_ERROR" "gh pr edit failed for ${pr_url}"
+                return
+            fi
+            local -a ready=(gh pr ready "$head" --repo "$repo")
+            [[ "$draft" == true ]] && ready+=(--undo)
+            "${ready[@]}" > /dev/null 2>&1 || log_warn "Could not change the draft state of ${pr_url}"
+            log_success "Updated ${pr_url}"
+        else
+            local -a create=(gh pr create --repo "$repo" --base "$base" --head "$head" --title "$title"
+                             --body-file "$body_file")
+            [[ "$draft" == true ]] && create+=(--draft)
+            if ! pr_url=$("${create[@]}" 2>/dev/null | tail -n 1) || [[ -z "$pr_url" ]]; then
+                _ci_reject "$EXIT_CONFIG_ERROR" "gh pr create failed after pushing ${pr_branch}; open the PR by hand or rerun"
+                return
+            fi
+            log_success "Opened ${pr_url}"
+        fi
+        if ! gh api --method POST "repos/${pushed_repo:-$repo}/statuses/${sha}" -f state="$state" -f context="$context" \
+                -f description="${description:0:140}" -f target_url="$pr_url" > /dev/null 2>&1; then
+            _ci_reject "$EXIT_CONFIG_ERROR" "Could not post the ${context} status to ${sha:0:12}"
+            return
+        fi
+        log_success "Posted ${context}: ${state}"
+    fi
+    if [[ "${JSON_OUTPUT:-false}" == true ]]; then
+        jq --arg feature "$feature" --arg branch "$pr_branch" --arg base "$base" --arg url "$pr_url" \
+            --arg state "$state" --argjson dry "$dry_run" \
+            '{feature:$feature, branch:$branch, base:$base, pr_url:$url, status:$state, dry_run:$dry} + .' \
+            "$report" >&3
+    fi
+    return "$checks_rc"
+}
+
+# ── Entry point ────────────────────────────────────────────────────────────────
+
+cmd_ci() (
+    if [[ "${JSON_OUTPUT:-false}" == true ]]; then
+        exec 3>&1
+        exec 1>&2
+    fi
+    _ci_forbid_models
+    if [[ "${1:-}" == init ]]; then
+        shift
+        _ci_init "$@"
+        exit
+    fi
+    local pr=false
+    _CI_SKIP=()
+    local -a pr_args=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --pr) pr=true; shift ;;
+            --skip)
+                [[ $# -ge 2 && "$2" != --* ]] || { _ci_reject "$EXIT_CONFIG_ERROR" "--skip requires a value"; exit; }
+                local step
+                for step in ${2//,/ }; do
+                    if [[ " ${CI_STEPS[*]} " != *" ${step} "* ]]; then
+                        _ci_reject "$EXIT_CONFIG_ERROR" "Unknown check for --skip: ${step} (checks: ${CI_STEPS[*]})"
+                        exit
+                    fi
+                    _CI_SKIP+=("$step")
+                done
+                shift 2 ;;
+            --draft|--dry-run|--force) pr_args+=("$1"); shift ;;
+            --base|--branch|--remote|--repo)
+                [[ $# -ge 2 ]] || { _ci_reject "$EXIT_CONFIG_ERROR" "$1 requires a value"; exit; }
+                pr_args+=("$1" "$2"); shift 2 ;;
+            -h|--help)
+                echo "Usage: speed ci [--skip CHECK[,CHECK]] | speed ci init [--force] | speed ci --pr [--draft] [--dry-run] [--base B] [--branch B]"
+                exit 0 ;;
+            *) _ci_reject "$EXIT_CONFIG_ERROR" "Unknown ci option: $1"; exit ;;
+        esac
+    done
+    _ci_settings || exit
+    if [[ -z "${_TIMEOUT_CMD:-}" ]]; then
+        log_warn "Neither timeout nor gtimeout is installed, so [ci] command_timeout cannot be enforced"
+    fi
+    if [[ -n "${GLOBAL_FEATURE:-}" ]] && ! feature_list | grep -qxF "$GLOBAL_FEATURE"; then
+        _ci_reject "$EXIT_CONFIG_ERROR" "Unknown feature: ${GLOBAL_FEATURE}"
+        exit
+    fi
+    if [[ "$pr" == true ]]; then
+        # A PR status must describe every check, so nothing can be left out.
+        if [[ ${#_CI_SKIP[@]} -gt 0 ]]; then
+            _ci_reject "$EXIT_CONFIG_ERROR" "--skip cannot be used with --pr; the PR status must cover every check"
+            exit
+        fi
+        _ci_pr "${pr_args[@]+"${pr_args[@]}"}"
+        exit
+    fi
+    if [[ ${#pr_args[@]} -gt 0 ]]; then
+        _ci_reject "$EXIT_CONFIG_ERROR" "${pr_args[0]} only applies with --pr"
+        exit
+    fi
+    if ! _git rev-parse --git-dir > /dev/null 2>&1; then
+        _ci_reject "$EXIT_CONFIG_ERROR" "speed ci must run inside a git repository"
+        exit
+    fi
+    local rc=0
+    _ci_run_checks || rc=$?
+    if [[ "${JSON_OUTPUT:-false}" == true && "$rc" -ne "$EXIT_CONFIG_ERROR" ]]; then
+        cat "${_CI_DIR}/report.json" >&3
+    fi
+    exit "$rc"
+)

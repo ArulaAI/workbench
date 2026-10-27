@@ -126,6 +126,36 @@ Runs quality gates manually against a specific task.
     *   `--full`: Grounding gates + all quality gates including tests. Passing gates on a failed task promotes it to "done".
 *   **Option**: `--worktree <path>`: Override the worktree path (auto-detected if omitted).
 
+### `ci`
+Verifies the whole project the way a CI server should, without calling a model. It runs the same way on a laptop and in GitHub Actions, needs no model CLI installed, and writes `.speed/ci/report.json` plus one log per command under `.speed/ci/logs/`. Only one `speed ci` runs in a project at a time.
+
+| Check | What it runs | When it fails |
+|---|---|---|
+| `eval` | `speed eval` for every feature, or the one given with `--feature`. Runs first, while the tree is exactly as checked out. | A finished feature is not accepted, a feature has failed or blocked tasks, or its configured test spec is missing. Features with work in progress, no tasks or no test spec are skipped. Under `speed ci` the checked-out commit counts as the integrated code, so evals need no local feature state; a task branch that exists (locally or as a remote-tracking ref) and is not in HEAD still fails. This relaxed verdict stays in the CI report and is never written to the feature's state. |
+| `lint`, `typecheck`, `test`, `e2e` | Every matching command in the `## Quality Gates` section of `AGENTS.md` or `CLAUDE.md` (for example `- e2e: npm run test:e2e`) | Any command exits non-zero or runs longer than `[ci] command_timeout` (default 1800 seconds). `test` also fails when no test command is configured; the others are skipped. The full suite runs, with no task-scoped fallback. |
+| `secrets` | The secret patterns over every tracked file, including committed `.env` files and files git treats as binary. Excludes `*.example` and `tests/fixtures/**` (or `[security] secrets_exclude`), and always lockfiles, whose hashes look like secrets. | Any match. Only the pattern name, file and line are reported, never the matched text. |
+| `sast`, `sca` | `[security] sast_cmd` and `sca_cmd`, which must print one Semgrep or Bandit (sast), or npm audit 7+ or pip-audit (sca), JSON document to stdout | A finding at or above `[security] severity_threshold` (default `high` for CI; a severity SPEED does not recognise counts as blocking). Also fails when the output is not exactly one supported JSON document, the scanner reports a fatal error, it exits non-zero without any finding, or it times out. Per-file scanner warnings are counted but do not fail the check. Skipped when the command is not set. |
+
+*   **Options**:
+    *   `--skip CHECK[,CHECK]`: Leave out checks, for example `--skip e2e,sca`. Not allowed with `--pr`.
+    *   `--feature NAME`: Evaluate only this feature (it must exist).
+    *   `--json`: Print the report as one JSON object on stdout.
+*   **Exit codes**: 0 every check passed or was skipped, 2 a check failed, 3 the checks could not run (another run is active, an invalid `severity_threshold` or `command_timeout`, an unknown feature).
+
+#### `ci init`
+Writes `.github/workflows/speed-ci.yml`, which runs `speed --json ci` on every pull request and every push to the main branch, then uploads the report and logs. Run it at the repository root, where GitHub reads workflows. It installs SPEED from its GitHub repository and adds setup steps for the project's toolchain when it finds `package.json`, `requirements.txt`, `pyproject.toml` or `go.mod`. Checkouts do not keep their tokens, so the project's own scripts cannot read them.
+*   **Options**:
+    *   `--speed-repo OWNER/REPO`, `--speed-ref REF`: Where to install SPEED from. Defaults to the origin remote of the SPEED checkout and the upstream of its current branch (or the remote's default branch). A private SPEED repository needs a `SPEED_REPO_TOKEN` secret that can read it.
+    *   `--force`: Replace an existing workflow file.
+
+#### `ci --pr`
+Takes a feature whose tasks are all done and, in a temporary worktree, merges its task branches in dependency order onto the published base (`origin/main`), with plain `git merge` and no model. It runs every check there, pushes the result to `speed-ci/<feature>`, opens or updates the pull request with `gh`, and posts the result as a commit status (`speed/ci`, or `[ci] status_context`). A failing run still opens the PR, as a draft, with a failure status; a later passing run marks it ready.
+*   **Your checkout is never touched**: no branch switch, no local branch created, and uncommitted work stays where it is (it is not part of the PR). Dependencies such as `node_modules` and `.venv` are linked into the worktree the same way `speed run` does (`[worktree.symlinks]`).
+*   **Requires**: a GitHub remote (or `--repo OWNER/REPO`) and `gh` logged in (`gh auth login`).
+*   **Safety**: the PR branch cannot be the base, the current branch or a task branch (compared without case). If the remote PR branch has commits that did not come from the task branches, the run stops unless you pass `--force`, and the push uses `--force-with-lease` against the tip it checked. The checks must leave tracked files unchanged (`clean-tree`), so the status always describes the pushed commit.
+*   **Options**: `--feature NAME`, `--base BRANCH`, `--branch NAME`, `--remote NAME` (default `origin`), `--repo OWNER/REPO` (a PR into another repository names its head `OWNER:branch`), `--draft`, `--force`, `--dry-run` (assemble and check locally from the local base, push nothing).
+*   **Exit codes**: 0 checks passed, 2 checks failed (the PR is still opened), 3 could not run, 4 a task branch conflicts.
+
 ### `guardian [file]`
 Runs the Product Guardian vision check. Two modes:
 *   **Ad-hoc**: `speed guardian <file>` evaluates any file against the product vision.

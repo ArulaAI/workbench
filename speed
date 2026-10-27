@@ -14,6 +14,7 @@
 #   status                  Show SPEED state and progress
 #   coherence [--resolve]    Check cross-task consistency before integration
 #   integrate               Merge completed branches into main
+#   ci [init|--pr]          Run every check without model calls; set up GitHub Actions; open a PR
 #   review [--task-id ID]   Run code review on completed tasks
 #   define feature|defects  Review findings or the defect portfolio
 #   defect <spec-file>      Run full defect pipeline (triage → fix → review)
@@ -56,6 +57,22 @@ done
 SCRIPT_DIR="$(cd "$(dirname "$_speed_source")" && pwd)"
 unset _speed_source _speed_link_dir
 export SPEED_CMD="${SCRIPT_DIR}/speed"
+
+# speed ci never calls a model or creates task worktrees, so it starts without a
+# model CLI and without the worktree symlink sources (a fresh CI runner has neither).
+_speed_skip_next=false
+for _speed_arg in "$@"; do
+    if [[ "$_speed_skip_next" == true ]]; then _speed_skip_next=false; continue; fi
+    case "$_speed_arg" in
+        --feature|-f) _speed_skip_next=true ;;
+        -*) ;;
+        ci) export SPEED_CI=1; break ;;
+        *) break ;;
+    esac
+done
+unset _speed_skip_next _speed_arg
+# config.sh exports the agent file it detects; remember whether the user chose one.
+_SPEED_USER_AGENT_FILE="${SPEED_AGENT_FILE:-}"
 
 source "${SCRIPT_DIR}/lib/config.sh"
 source "${SCRIPT_DIR}/lib/log.sh"
@@ -145,6 +162,9 @@ speed_help() {
     echo -e "    ${COLOR_STEP}security${RESET} [--create-defects]   Run security audit on completed task diffs"
     echo -e "    ${COLOR_STEP}new${RESET} <type> <name>           Scaffold a new spec from template"
     echo -e "    ${COLOR_STEP}gates${RESET}   --task ID             Run quality gates for a task (used by Developer Agent mid-task)"
+    echo -e "    ${COLOR_STEP}ci${RESET}      [--skip CHECKS]       Run lint, typecheck, tests, e2e, security scans and evals (no model calls)"
+    echo -e "    ${COLOR_STEP}ci init${RESET} [--force]             Write .github/workflows/speed-ci.yml so CI runs speed ci"
+    echo -e "    ${COLOR_STEP}ci --pr${RESET} [--draft] [--dry-run] Merge a feature's task branches, run speed ci, open a PR with a status check"
     echo -e "    ${COLOR_STEP}discover${RESET} domains [opts]       Discover business domains (--facts-only, --status, --cancel, --export ddd, --review FILE)"
     echo -e "    ${COLOR_STEP}add-language${RESET} <lang>          Generate ast-grep rules for a new language"
     echo -e "    ${COLOR_STEP}test-rules${RESET}  [lang|--all]     Verify ast-grep rules against fixture files"
@@ -323,6 +343,7 @@ main() {
         coherence) cmd_coherence "$@" ;;
         integrate) cmd_integrate "$@" ;;
         eval)      cmd_eval "$@" ;;
+        ci)        cmd_ci "$@" ;;
         review)    cmd_review "$@" ;;
         fix-nits)  cmd_fix_nits "$@" ;;
         retry)     cmd_retry "$@" ;;

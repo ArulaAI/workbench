@@ -249,6 +249,15 @@ Shell suites run on their own: `bash tests/test_multiplayer.sh`.
 # Merge completed branches into main
 ./speed/speed integrate
 
+# Run every check without model calls: lint, typecheck, tests, e2e, security scans, evals
+./speed/speed ci
+
+# Write a GitHub Actions workflow that runs speed ci on pull requests and pushes to main
+./speed/speed ci init
+
+# Merge a feature's task branches, run speed ci, open a PR with a pass/fail status check
+./speed/speed ci --pr --feature my-feature
+
 # Retry a failed task with human guidance
 ./speed/speed retry --task-id 3 --context "fix the import path"
 

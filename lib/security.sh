@@ -91,12 +91,15 @@ def _map_semgrep_category(check_id):
     return "other"
 
 def _map_semgrep_severity(raw):
-    mapping = {"ERROR": "high", "WARNING": "medium", "INFO": "low"}
-    return mapping.get(raw.upper(), "info")
+    # Newer Semgrep rules use CRITICAL/HIGH/MEDIUM/LOW alongside ERROR/WARNING/INFO.
+    mapping = {"ERROR": "high", "WARNING": "medium", "INFO": "low",
+               "CRITICAL": "critical", "HIGH": "high", "MEDIUM": "medium", "LOW": "low"}
+    # A severity no one recognises is kept visible as "unknown", never quietly downgraded.
+    return mapping.get(str(raw).upper(), "unknown")
 
 def _map_bandit_severity(raw):
     mapping = {"HIGH": "high", "MEDIUM": "medium", "LOW": "low"}
-    return mapping.get(raw.upper(), "info")
+    return mapping.get(str(raw).upper(), "unknown")
 
 findings = []
 
@@ -183,7 +186,7 @@ def _map_npm_severity(raw):
         "low": "low",
         "info": "info",
     }
-    return mapping.get(raw.lower(), "info")
+    return mapping.get(str(raw).lower(), "unknown")
 
 findings = []
 
@@ -201,6 +204,10 @@ except (json.JSONDecodeError, OSError):
     sys.exit(0)
 
 counter = 1
+
+# pip-audit 2.x wraps the package list: {"dependencies": [...], "fixes": [...]}
+if isinstance(data, dict) and "vulnerabilities" not in data and isinstance(data.get("dependencies"), list):
+    data = data["dependencies"]
 
 # npm audit format: {"vulnerabilities": {"pkg": {...}}}
 if isinstance(data, dict) and "vulnerabilities" in data:

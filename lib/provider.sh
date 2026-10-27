@@ -281,7 +281,7 @@ source "$_PROVIDER_FILE"
 # real binary before any agent calls. Catches missing installs early
 # with a clear message instead of a cryptic failure at first agent call.
 
-if ! command -v "$PROVIDER_BIN" &>/dev/null; then
+if [[ "${SPEED_CI:-}" != 1 ]] && ! command -v "$PROVIDER_BIN" &>/dev/null; then
     log_error_block \
         "Provider '${_PROVIDER_NAME}' binary not found: ${PROVIDER_BIN}" \
         "Install the binary or set the path via the provider's env var"
