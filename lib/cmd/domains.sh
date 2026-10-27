@@ -286,17 +286,25 @@ _domains_render_export() {
 
 _discover_domains() {
     local mode_flag=""
-    local export_format="" export_out=""
+    local export_format="" export_out="" review_file=""
     local json_output="${JSON_OUTPUT:-false}"
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --facts-only|--status|--cancel|--export)
+            --facts-only|--status|--cancel|--export|--review)
                 if [[ -n "$mode_flag" ]]; then
-                    log_error "Use only one of --facts-only, --status, --cancel, --export"
+                    log_error "Use only one of --facts-only, --status, --cancel, --export, --review"
                     exit "$EXIT_CONFIG_ERROR"
                 fi
                 mode_flag="$1"; shift
+                if [[ "$mode_flag" == "--review" ]]; then
+                    if [[ -z "${1:-}" || "$1" == --* ]]; then
+                        log_error "--review needs a JSON file of reviewed corrections"
+                        exit "$EXIT_CONFIG_ERROR"
+                    fi
+                    review_file="$1"; shift
+                    [[ "$review_file" == /* ]] || review_file="$PWD/$review_file"
+                fi
                 if [[ "$mode_flag" == "--export" ]]; then
                     if [[ "${1:-}" != "ddd" ]]; then
                         log_error "--export needs a format: --export ddd"
@@ -336,11 +344,12 @@ _discover_domains() {
                       log_step "Full pipeline: extraction, then model synthesis and verification..." >&2 ;;
         --facts-only) log_header "Business-domain facts" >&2 ;;
         --export)     log_header "Business-domain DDD export" >&2 ;;
+        --review)     log_header "Business-domain reviewed corrections" >&2 ;;
     esac
 
     PYTHONPATH="${SPEED_DIR:-$(cd "${LIB_DIR}/.." && pwd)}" "$(_context_python)" \
         -m lib.context.business_domain_cli --root "$PROJECT_ROOT" ${mode_flag:+"$mode_flag"} \
-        ${export_format:+"$export_format"} ${export_out:+--out "$export_out"} \
+        ${export_format:+"$export_format"} ${export_out:+--out "$export_out"} ${review_file:+"$review_file"} \
         > "$tmp_result" 2> >(_domains_render_progress) || rc=$?
 
     if [[ "$json_output" == "true" ]]; then
@@ -359,6 +368,8 @@ _discover_domains() {
         --status)     _domains_render_status "$tmp_result" ;;
         --cancel)     log_success "Cancellation requested for build $(jq -r '.build_id' "$tmp_result")." ;;
         --export)     _domains_render_export "$tmp_result" ;;
+        --review)     log_success "$(jq -r '"Applied \(.applied) reviewed correction(s), skipped \(.skipped) already applied; model build \(.build_id)."' "$tmp_result")"
+                      echo "Run 'speed discover domains --export ddd' to refresh the documents." ;;
         "")
             _domains_render_status "$tmp_result"
             log_info "Run log: $(jq -r '.log' "$tmp_result")" >&2

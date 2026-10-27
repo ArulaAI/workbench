@@ -769,3 +769,15 @@ def test_branches_are_read_from_the_method_code():
     assert (guard['line'], guard['condition'], guard['status']) == (76, 'owners.isEmpty()', '404')
     loop = next(b for b in branches if b['kind'] == 'loop')
     assert loop['label'] == 'for each owner' and loop['then'] == ['toOwnerDto']
+
+
+def test_callers_drop_guesses_about_role_checks_once_security_is_known_to_be_off():
+    actor = ('Clinic user on the vets page, or a direct API caller. '
+             'The endpoint declares @PreAuthorize VET_ADMIN; runtime enforcement is not confirmed.')
+    assert export.settled(actor, 'petclinic.security.enable=false') == (
+        'Clinic user on the vets page, or a direct API caller. The endpoint declares @PreAuthorize VET_ADMIN.')
+    assert export.settled(actor, '') == actor
+
+
+def test_a_reason_that_only_names_a_path_says_which_code_holds_the_statement():
+    assert export.tidy_reason('JDBC path only.') == 'This statement is only in the JDBC repository code.'

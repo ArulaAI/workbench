@@ -33,10 +33,12 @@ ENFORCEMENT = {
     'conditional': 'applies only under some settings',
     'unresolved': 'unknown where or whether this is enforced',
 }
-PLAIN_STATUS = {'declared_only': 'are written in the code but not traced end to end',
-                'conditional': 'apply only under some settings',
-                'switched_off': 'are role checks switched off by the default setting',
-                'unresolved': 'have unknown enforcement'}
+PLAIN_STATUS = {'declared_only': ('is written in the code but not traced end to end',
+                                  'are written in the code but not traced end to end'),
+                'conditional': ('applies only under some settings', 'apply only under some settings'),
+                'switched_off': ('is a role check switched off by the default setting',
+                                 'are role checks switched off by the default setting'),
+                'unresolved': ('has unknown enforcement', 'have unknown enforcement')}
 ENFORCEMENT_SHORT = {
     'verified_on_trace': 'confirmed to run',
     'declared_only': 'in code, not confirmed',
@@ -112,8 +114,9 @@ PLAIN_WORDS = [(re.compile(pattern), replacement) for pattern, replacement in (
     (r'\b([Tt])he profile-selected (\w+)', r'\1he \2 chosen by the active Spring profile'),
     (r'\bon the declared default profile\b', 'on the default profile in the configuration'),
     (r'\bby declared default\b', 'by default'),
-    (r'\b([Tt])he declared default\b', r'\1he default setting'),
-    (r'\bdeclared default\b', 'default setting'),
+    (r'\b([Tt])he declared default (?=is |disables)', r'\1he default setting '),
+    (r'\bdeclared default\b', 'default'),
+    (r'\bthe default setting (database|profile|schema)\b', r'the default \1'),
     (r'\(the merge candidate\)', '(the suggested merge)'),
     (r'These controllers answer the merge candidates, but they are technical signals and are not the basis of the boundary\.',
      'The boundary is not based on which controller declares the endpoints.'),
@@ -1918,7 +1921,7 @@ def summary(index: Model) -> list:
     statuses = Counter('switched_off' if rule_switched_off(rule, index.security_setting) else rule.get('enforcement_status')
                        for rule in index.rules.values())
     verified = statuses.pop('verified_on_trace', 0)
-    breakdown = ', '.join(f"{count} {PLAIN_STATUS.get(status, status)}"
+    breakdown = ', '.join(f"{count} {PLAIN_STATUS.get(status, (status, status))[count != 1]}"
                           for status, count in
                           sorted(statuses.items(), key=lambda item: (-item[1], str(item[0]))))
     findings.append(f"{'None' if not verified else verified} of the {plural(len(index.rules), 'rule')} "
@@ -2290,6 +2293,17 @@ def security_rest(condition: str) -> str:
     return re.sub(r'^\s*(Spring\s+)?method security is enabled[.;,]?\s*', '', condition or '', flags=re.I).rstrip('.')
 
 
+ENFORCEMENT_GUESS = re.compile(r'\benforce(?:d|ment)?\b|security\.enable', re.I)
+
+
+def settled(text: str, setting: str) -> str:
+    """Text without its guesses about whether role checks run, once the security setting is known."""
+    if not setting:
+        return text
+    parts = [part for part in re.split(r'(?<=[.;])\s+', text.strip()) if not ENFORCEMENT_GUESS.search(part)]
+    return re.sub(r';$', '.', ' '.join(parts)) or text
+
+
 def on_method_security(conditions) -> bool:
     """True when every given precondition is about Spring method security."""
     conditions = list(conditions)
@@ -2384,7 +2398,8 @@ def context_page(index: Model, entities: Entities, sequences: Sequences, domain_
         lines += ['', f'All use cases here: {badge(support, SUPPORT)}.']
     if details:
         lines += ['', '<details><summary>Use case details</summary>', '', *details, '', '</details>']
-    callers = sorted({activity.get('actor') for activity in activities if activity.get('actor')})
+    callers = sorted({settled(activity['actor'], index.security_setting) for activity in activities
+                      if activity.get('actor')})
     if callers and index.security_setting and any(index.access(activity)[0] for activity in activities):
         channels = sorted({kind for activity in activities for kind in index.channel(activity).split(' and ')})
         lines += ['', f"Callers: {' and '.join(channels)}. The code names the roles above, but the default setting "
@@ -2727,7 +2742,8 @@ def rules_page(index: Model) -> str:
         domains = ', '.join(f"[{index.domains[domain_id]['name']}](contexts/{index.domain_pages[domain_id]}.md)"
                             for domain_id in index.rule_domains.get(rule['id'], ())) or '-'
         lines += [f'<a id="rule-{short(rule["id"])}"></a>', f"### {rule['name']}", '',
-                  f"{rule_label(rule, index)} · {badge(rule.get('support'), EVIDENCE)}", '',
+                  f"{rule_label(rule, index)} · {badge(rule.get('support'), EVIDENCE)}"
+                  + (' · corrected after review' if 'user_asserted' in (rule.get('basis') or ()) else ''), '',
                   f'- **Context:** {domains}']
         if rule.get('preconditions') and not shared_note:
             lines.append(f"- **Applies when:** {'; '.join(rule['preconditions'])}")
@@ -2884,6 +2900,7 @@ def tidy_reason(text: str) -> str:
     if re.match(r'The operation facts of this use are unresolved\.?$', text):
         return 'The exact database statement could not be determined.'
     text = re.sub(r'^The operation facts of this use are unresolved:\s*', '', text)
+    text = re.sub(r'^(\w+) path only\.?$', r'This statement is only in the \1 repository code.', text)
     sentence = first_sentence(text, 400)
     return sentence[:1].upper() + sentence[1:] if sentence else ''
 

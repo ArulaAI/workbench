@@ -867,7 +867,14 @@ error: Error | null
 ### ReviewOperation
 
 ```text
-one of ({ operation: "accept" | "reject", domain_id: string }; { operation: "rename", domain_id: string, name: string }; { operation: "set_membership", domain_id: string, activity_ids: Array<string> }; { operation: "merge", domain_ids: Array<string>, name: string }; { operation: "split", domain_id: string, groups: Array<{ name: string, activity_ids: Array<string> }> })
+one of ({ operation: "accept" | "reject", domain_id: string }; { operation: "rename", domain_id: string, name: string }; { operation: "set_membership", domain_id: string, activity_ids: Array<string> }; { operation: "merge", domain_ids: Array<string>, name: string }; { operation: "split", domain_id: string, groups: Array<{ name: string, activity_ids: Array<string> }> }; { operation: "correct_rule", rule_id: string, set?: { name?, description?, outcome?, preconditions?, predicate_or_formula?, category?, enforcement_status?, unresolved_questions?, enforcement_sites?: Array<ReviewSite> }, drop_evidence_ids?: Array<string>, add_evidence_ids?: Array<string>, cite?: Array<ReviewSpan> }; { operation: "merge_rules", rule_ids: Array<string> (2 or more), set: object }; { operation: "correct_activity", activity_id: string, set: { name?, description?, unresolved_questions? } }; { operation: "correct_domain", domain_id: string, set: { summary?, boundary_rationale?, unresolved_questions?, alternatives?: Array<string> } })
+```
+
+The `correct_*` and `merge_rules` operations change record text only. They add `user_asserted` to the record basis and attach the review as evidence. They do not change call paths, links or counts.
+
+`ReviewSpan` is `{ path: string, start_line: integer >= 1, end_line: integer >= 1 }`, a line range of a repository file. The review reads those lines and records them as source evidence, so a correction can cite lines the analysis did not capture. `ReviewSite` is `{ source_id: string, condition: string | null, activity_ids?: Array<string>, evidence_ids?: Array<string>, cite?: Array<ReviewSpan> }` and replaces the rule's enforcement sites. `alternatives` rewrites the explanation of each listed alternative, in order, and must have one entry per alternative.
+
+```text
 ```
 
 ### Decision
@@ -881,6 +888,7 @@ recorded_at: string (date-time)
 explanation: string
 operation: ReviewOperation
 result_domain_ids: Array<string>
+result_record_ids?: Array<string>
 ```
 
 ### OverridesArtifact

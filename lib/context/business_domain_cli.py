@@ -448,6 +448,31 @@ def export(root, out=None):
     return {'mode': 'export', 'format': 'ddd', **write_export(root, model, out)}, 0
 
 
+def review_file(root, path):
+    """Apply the reviewed decisions in a JSON file to the published model, skipping ones already applied.
+
+    The file holds {"author": ..., "decisions": [{"explanation": ..., "operation": {...}}, ...]}.
+    """
+    from .business_domain_review import review_batch
+    from .business_domain_schema import read_json
+    try:
+        batch = json.loads(Path(path).read_text(encoding='utf-8'))
+    except (OSError, ValueError) as exc:
+        raise DomainError('INVALID_REVIEW', f'Cannot read the review file: {exc}') from exc
+    if not isinstance(batch, dict) or not isinstance(batch.get('decisions'), list) or not batch.get('author'):
+        raise DomainError('INVALID_REVIEW', 'The review file needs "author" and a "decisions" list')
+    overrides = read_json(paths(root)['overrides']) or {'decisions': []}
+    done = [(item['operation'], item['explanation']) for item in overrides.get('decisions', ())]
+    todo = [(item.get('operation'), item.get('explanation') or '') for item in batch['decisions']
+            if (item.get('operation'), (item.get('explanation') or '').strip()) not in done]
+    model, _ = load(root)
+    if model is None:
+        raise DomainError('DOMAIN_DISCOVERY_MISSING', 'No published domain model to review. Run: speed discover domains')
+    build_id = review_batch(root, model['build_id'], todo, batch['author']) if todo else model['build_id']
+    return {'mode': 'review', 'applied': len(todo), 'skipped': len(batch['decisions']) - len(todo),
+            'build_id': build_id}, 0
+
+
 MODES = {'run': run, 'facts': facts_only, 'status': status, 'cancel': cancel, 'export': export}
 
 
@@ -466,11 +491,15 @@ def main(argv=None):
         mode.add_argument(flag, dest='mode', action='store_const', const=name)
     mode.add_argument('--export', choices=['ddd'],
                       help='Write DDD documents and diagrams from the published model')
+    mode.add_argument('--review', metavar='FILE',
+                      help='Apply reviewed corrections from a JSON file to the published model')
     parser.add_argument('--out', help='Directory for --export (default .speed/context/business-domain-ddd)')
     parser.set_defaults(mode='run')
     args = parser.parse_args(argv)
     if args.export:
         args.mode = 'export'
+    elif args.review:
+        args.mode = 'review'
     elif args.out:
         parser.error('--out needs --export')
     root = Path(args.root).resolve()
@@ -480,6 +509,7 @@ def main(argv=None):
         if not root.is_dir():
             raise DomainError('INVALID_ROOT', 'Repository root does not exist')
         result, code = (export(root, args.out) if args.mode == 'export'
+                        else review_file(root, args.review) if args.mode == 'review'
                         else MODES[args.mode](root))
         result['ok'] = code == 0
     except KeyboardInterrupt:
