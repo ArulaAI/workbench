@@ -591,7 +591,7 @@ def test_pr_is_built_on_the_published_base_not_unpushed_commits(project, feature
 
 def test_pr_cannot_skip_checks(project, feature_branches):
     result = project.run("--pr", "--skip", "test")
-    assert result.returncode == 3 and "--skip cannot be used with --pr" in result.stderr
+    assert result.returncode == 3 and "--skip and --only cannot be used with --pr" in result.stderr
 
 
 def test_pr_branch_names_are_never_run_as_code(project, feature_branches, tmp_path):
@@ -858,3 +858,499 @@ def test_an_accepted_features_summary_is_kept_with_the_report(project):
     write_feature(project, "adding")
     assert project.run().returncode == 0
     assert "ACCEPTED" in (project.root / ".speed/ci/eval/adding-summary.md").read_text()
+
+
+# ── Phase 2: custom checks, security mode, tools, SonarQube, parallel jobs, reports ──
+
+def test_custom_quality_gates_run_as_their_own_checks(project):
+    project.gates(test="true", api="echo api ok", coverage="echo 'coverage 40%' && exit 1")
+    project.commit()
+    assert project.run().returncode == 2
+    report = project.report()
+    assert step(report, "api")["status"] == "pass"
+    assert step(report, "coverage")["status"] == "fail"
+    assert [item["name"] for item in report["steps"]].index("api") < [item["name"] for item in report["steps"]].index("secrets")
+    assert project.run("--skip", "coverage").returncode == 0
+
+
+def test_ignored_gates_are_not_run(project):
+    project.gates(test="true", deploy="exit 1")
+    project.toml('[ci]\nignore_gates = ["deploy"]\n')
+    project.commit()
+    assert project.run().returncode == 0
+    assert "deploy" not in {item["name"] for item in project.report()["steps"]}
+
+
+def test_report_mode_warns_on_findings_instead_of_failing(project):
+    (project.root / "semgrep.json").write_text(json.dumps(SEMGREP).replace("{severity}", "ERROR"))
+    project.toml('[ci]\nsecurity_mode = "report"\n[security]\nsast_cmd = "cat semgrep.json"\n')
+    project.commit()
+    result = project.run()
+    assert result.returncode == 0, result.stdout + result.stderr
+    sast = step(project.report(), "sast")
+    assert sast["status"] == "warn" and "report mode" in sast["summary"]
+    assert project.report()["summary"]["warn"] == 1
+    assert "1 warning(s)" in result.stdout
+
+
+def test_report_mode_still_fails_a_crashing_scanner(project):
+    project.toml('[ci]\nsecurity_mode = "report"\n[security]\nsast_cmd = "exit 2"\n')
+    project.commit()
+    assert project.run().returncode == 2
+
+
+def test_an_unknown_security_mode_is_rejected(project):
+    project.toml('[ci]\nsecurity_mode = "loose"\n')
+    project.commit()
+    result = project.run()
+    assert result.returncode == 3 and "security_mode" in result.stderr
+
+
+def tool(project, name, fmt, payload, exit_code=0, extra=""):
+    (project.root / f"{name}.json").write_text(json.dumps(payload))
+    return f'[ci.tools.{name}]\nformat = "{fmt}"\ncmd = "cat {name}.json; exit {exit_code}"\n{extra}'
+
+
+def test_trivy_gitleaks_and_sarif_tools_plug_in(project):
+    trivy = {"SchemaVersion": 2, "Results": [{"Target": "package-lock.json", "Vulnerabilities": [
+        {"VulnerabilityID": "CVE-2024-1", "PkgName": "lodash", "Severity": "CRITICAL", "Title": "Prototype pollution"}]}]}
+    gitleaks = [{"RuleID": "aws-access-token", "File": "settings.py", "StartLine": 3, "Secret": AWS_KEY, "Match": AWS_KEY}]
+    sarif_doc = {"version": "2.1.0", "runs": [{"tool": {"driver": {"name": "CodeQL", "rules": [
+        {"id": "py/sql-injection", "properties": {"security-severity": "8.8"}}]}}, "results": [
+        {"ruleId": "py/sql-injection", "level": "error", "message": {"text": "SQL built from user input"},
+         "locations": [{"physicalLocation": {"artifactLocation": {"uri": "app.py"}, "region": {"startLine": 2}}}]}]}]}
+    project.toml(tool(project, "trivy", "trivy", trivy) + tool(project, "gitleaks", "gitleaks", gitleaks, 1)
+                 + tool(project, "codeql", "sarif", sarif_doc))
+    project.commit()
+    result = project.run()
+    assert result.returncode == 2
+    report = project.report()
+    assert step(report, "trivy")["blocking_findings"][0] == {"severity": "critical", "title": "CVE-2024-1 Prototype pollution",
+                                                            "file": "package-lock.json", "package": "lodash"}
+    assert step(report, "gitleaks")["blocking_findings"][0]["file"] == "settings.py"
+    assert step(report, "codeql")["blocking_findings"][0] == {"severity": "high", "title": "py/sql-injection SQL built from user input",
+                                                             "file": "app.py", "line": 2}
+    everything = result.stdout + result.stderr + "".join(
+        path.read_text() for path in (project.root / ".speed/ci").rglob("*") if path.is_file())
+    assert AWS_KEY not in everything
+    assert "trivy" in project.run("--list").stdout.split()
+
+
+def test_a_tool_that_needs_a_token_fails_without_it(project):
+    snyk = {"ok": True, "vulnerabilities": []}
+    project.toml(tool(project, "snyk", "snyk", snyk))
+    project.commit()
+    result = project.run(extra_env={"SNYK_TOKEN": ""})
+    assert result.returncode == 2 and "SNYK_TOKEN is not set" in step(project.report(), "snyk")["summary"]
+    assert project.run(extra_env={"SNYK_TOKEN": "t"}).returncode == 0
+
+
+def test_tool_output_that_cannot_be_read_fails(project):
+    project.toml(tool(project, "trivy", "trivy", {"not": "trivy"}))
+    project.commit()
+    assert project.run().returncode == 2
+    assert "Could not read the trivy output" in step(project.report(), "trivy")["summary"]
+
+
+class FakeSonar:
+    """A local SonarQube API: /api/ce/task and /api/qualitygates/project_status."""
+
+    def __init__(self, gate_status, conditions=()):
+        import http.server
+        import threading
+        sonar = self
+        self.requests = []
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                sonar.requests.append((self.path, self.headers.get("Authorization")))
+                if self.path.startswith("/api/ce/task"):
+                    body = {"task": {"status": "SUCCESS", "analysisId": "A1"}}
+                elif self.path.startswith("/api/qualitygates/project_status"):
+                    body = {"projectStatus": {"status": gate_status, "conditions": list(conditions)}}
+                else:
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+                data = json.dumps(body).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(data)
+
+            def log_message(self, *args):
+                pass
+
+        self.server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.server.server_port}"
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.server.shutdown()
+
+
+def sonar_project(project, sonar, blocking="true"):
+    scanner = project.root / "fake-scanner.sh"
+    scanner.write_text("#!/bin/sh\nmkdir -p .scannerwork\necho \"$@\" > .scannerwork/args\n"
+                       "printf 'ceTaskId=T1\\ndashboardUrl=%s/dashboard?id=shop\\n' "
+                       f"{sonar.url} > .scannerwork/report-task.txt\n")
+    scanner.chmod(0o755)
+    (project.root / ".gitignore").write_text(".speed/\n__pycache__/\n.pytest_cache/\n.scannerwork/\n")
+    project.toml(f'[ci.sonarqube]\nhost_url = "{sonar.url}"\nproject_key = "shop"\n'
+                 f'scanner_cmd = "./fake-scanner.sh"\nblocking = "{blocking}"\nwait_timeout = "10"\n')
+    project.commit()
+
+
+def test_sonarqube_quality_gate_passes_and_links_the_dashboard(project):
+    sonar = FakeSonar("OK")
+    try:
+        sonar_project(project, sonar)
+        result = project.run(extra_env={"SONAR_TOKEN": "tok"})
+        assert result.returncode == 0, result.stdout + result.stderr
+        check = step(project.report(), "sonarqube")
+        assert check["status"] == "pass" and check["dashboard_url"].endswith("dashboard?id=shop")
+        assert all(auth == "Basic dG9rOg==" for _, auth in sonar.requests)
+        args = (project.root / ".scannerwork/args").read_text()
+        assert f"-Dsonar.host.url={sonar.url}" in args and "-Dsonar.projectKey=shop" in args and "tok" not in args
+    finally:
+        sonar.close()
+
+
+def test_a_failed_sonarqube_gate_blocks_unless_set_to_warn(project):
+    sonar = FakeSonar("ERROR", [{"status": "ERROR", "metricKey": "new_coverage", "actualValue": "41.0",
+                                 "comparator": "LT", "errorThreshold": "80"}])
+    try:
+        sonar_project(project, sonar)
+        assert project.run(extra_env={"SONAR_TOKEN": "tok"}).returncode == 2
+        assert "new_coverage 41.0 (needs LT 80)" in step(project.report(), "sonarqube")["summary"]
+        sonar_project(project, sonar, blocking="false")
+        assert project.run(extra_env={"SONAR_TOKEN": "tok"}).returncode == 0
+        assert step(project.report(), "sonarqube")["status"] == "warn"
+    finally:
+        sonar.close()
+
+
+def test_sonarqube_without_a_token_fails(project):
+    sonar = FakeSonar("OK")
+    try:
+        sonar_project(project, sonar)
+        assert project.run(extra_env={"SONAR_TOKEN": ""}).returncode == 2
+        assert "SONAR_TOKEN is not set" in step(project.report(), "sonarqube")["summary"]
+    finally:
+        sonar.close()
+
+
+def test_parallel_jobs_merge_into_one_result(project, tmp_path):
+    project.gates(lint="true", test="false")
+    project.commit()
+    jobs = []
+    for check in ("lint", "test"):
+        assert project.run("--only", check).returncode in (0, 2)
+        job = tmp_path / f"job-{check}"
+        subprocess.check_call(["cp", "-R", str(project.root / ".speed/ci"), str(job)])
+        jobs.append(str(job))
+    lint_only = json.loads((tmp_path / "job-lint/report.json").read_text())
+    assert step(lint_only, "test")["selected"] is False
+    result = project.run("merge", *jobs)
+    assert result.returncode == 2
+    merged = project.report()
+    assert step(merged, "lint")["status"] == "pass" and step(merged, "test")["status"] == "fail"
+    assert step(merged, "eval").get("summary") == "No job reported this check"
+    result = project.run("merge", jobs[0], str(tmp_path / "job-missing"))
+    assert result.returncode == 2 and "merge-jobs" in {item["name"] for item in project.report()["steps"]}
+
+
+def test_every_run_writes_sarif_junit_and_a_github_summary(project, tmp_path):
+    import xml.etree.ElementTree as ET
+    (project.root / "settings.py").write_text(f'KEY = "{AWS_KEY}"\n')
+    project.commit()
+    summary_file = tmp_path / "summary.md"
+    project.run(extra_env={"GITHUB_STEP_SUMMARY": str(summary_file)})
+    sarif_doc = json.loads((project.root / ".speed/ci/speed-ci.sarif").read_text())
+    assert sarif_doc["version"] == "2.1.0"
+    secrets_run = next(run for run in sarif_doc["runs"] if run["tool"]["driver"]["name"] == "speed-ci/secrets")
+    location = secrets_run["results"][0]["locations"][0]["physicalLocation"]
+    assert location["artifactLocation"]["uri"] == "settings.py" and location["region"]["startLine"] == 1
+    assert AWS_KEY not in json.dumps(sarif_doc)
+    suite = ET.parse(project.root / ".speed/ci/junit.xml").getroot()
+    assert suite.get("failures") == "1"
+    assert {case.get("name") for case in suite} >= {"eval", "test", "secrets"}
+    text = summary_file.read_text()
+    assert "## speed ci: Failed" in text and "| secrets | ❌ fail |" in text
+
+
+def load_workflow(project):
+    workflow = yaml.safe_load((project.root / ".github/workflows/speed-ci.yml").read_text())
+    return workflow, (workflow[True] if True in workflow else workflow["on"])
+
+
+def test_init_adds_services_secrets_sarif_upload_and_codecov(project):
+    sonar = '[ci.sonarqube]\nhost_url = "https://sonarcloud.io"\nproject_key = "acme_shop"\norganization = "acme"\n'
+    project.toml('[ci]\nservices = ["postgres", "redis"]\n[ci.codecov]\nfiles = "coverage.xml"\n'
+                 '[ci.tools.snyk]\n' + sonar)
+    project.commit()
+    result = project.run("init", "--speed-repo", "acme/speed", "--speed-ref", "v2")
+    assert result.returncode == 0, result.stderr
+    assert "SONAR_TOKEN" in result.stderr + result.stdout and "SNYK_TOKEN" in result.stderr + result.stdout
+    workflow, _ = load_workflow(project)
+    job = workflow["jobs"]["speed-ci"]
+    assert set(job["services"]) == {"postgres", "redis"}
+    assert job["services"]["postgres"]["image"] == "postgres:16"
+    assert job["env"]["DATABASE_URL"].startswith("postgresql://") and "SONAR_TOKEN" not in job["env"]
+    run_step = next(item for item in job["steps"] if item.get("name") == "Run speed ci")
+    assert run_step["env"]["SONAR_TOKEN"] == "${{ secrets.SONAR_TOKEN }}"
+    assert run_step["env"]["SNYK_TOKEN"] == "${{ secrets.SNYK_TOKEN }}"
+    assert "SPEED_CI_SECRETS_UNAVAILABLE" in run_step["env"]
+    checkout = job["steps"][0]
+    assert checkout["with"]["fetch-depth"] == 0
+    assert any(item.get("name") == "Install snyk" for item in job["steps"])
+    assert any(item.get("name") == "Install sonarqube" for item in job["steps"])
+    uses = [item.get("uses", "") for item in job["steps"]]
+    assert "github/codeql-action/upload-sarif@v3" in uses and "codecov/codecov-action@v4" in uses
+    assert workflow["permissions"] == {"contents": "read", "actions": "read", "security-events": "write"}
+
+
+def test_init_with_parallel_runs_each_check_as_its_own_job(project):
+    project.gates(test="true", api="true")
+    project.toml("[ci]\nparallel = true\n")
+    project.commit()
+    assert project.run("init", "--speed-repo", "acme/speed", "--speed-ref", "v2").returncode == 0
+    workflow, triggers = load_workflow(project)
+    assert "pull_request" in triggers
+    check = workflow["jobs"]["check"]
+    assert check["strategy"]["matrix"]["check"] == ["eval", "lint", "typecheck", "test", "e2e", "api", "secrets", "sast", "sca"]
+    assert check["strategy"]["fail-fast"] is False
+    run_step = next(item for item in check["steps"] if str(item.get("name", "")).startswith("Run "))
+    assert '--only "${{ matrix.check }}"' in run_step["run"]
+    final = workflow["jobs"]["speed-ci"]
+    assert final["needs"] == "check" and final["if"] == "always()"
+    combine = next(item for item in final["steps"] if item.get("name") == "Combine the results")
+    assert "ci_tools.py merge merged reports/speed-ci-check-eval" in combine["run"] and "reports/speed-ci-check-api" in combine["run"]
+    upload = next(item for item in check["steps"] if item.get("name") == "Upload this check's report")
+    assert upload["with"]["name"] == "speed-ci-check-${{ matrix.check }}"
+
+
+@pytest.mark.parametrize("parallel", [False, True])
+def test_generated_workflows_pass_actionlint(project, parallel):
+    import shutil
+    linter = shutil.which("actionlint") or str(Path(sys.executable).parent / "actionlint")
+    if not Path(linter).exists():
+        pytest.skip("actionlint is not installed")
+    project.gates(test="true", api="true")
+    project.toml("[ci]\nservices = [\"postgres\"]\n" + ("parallel = true\n" if parallel else "")
+                 + '[ci.codecov]\n[ci.tools.trivy]\n[ci.sonarqube]\nhost_url = "https://sonarcloud.io"\nproject_key = "a_b"\n')
+    project.commit()
+    assert project.run("init", "--speed-repo", "acme/speed", "--speed-ref", "v2").returncode == 0
+    result = subprocess.run([linter, str(project.root / ".github/workflows/speed-ci.yml")], capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+
+# ── Phase 2 review fixes ──
+
+def test_merge_keeps_the_most_severe_result_when_two_jobs_report_a_check(project, tmp_path):
+    project.gates(test="false")
+    project.commit()
+    project.run("--only", "test")
+    failing = tmp_path / "failing"
+    subprocess.check_call(["cp", "-R", str(project.root / ".speed/ci"), str(failing)])
+    project.gates(test="true")
+    project.run("--only", "test")
+    passing = tmp_path / "passing"
+    subprocess.check_call(["cp", "-R", str(project.root / ".speed/ci"), str(passing)])
+    for order in ((failing, passing), (passing, failing)):
+        assert project.run("merge", *map(str, order)).returncode == 2
+        assert step(project.report(), "test")["status"] == "fail"
+
+
+def test_merge_reports_an_unreadable_job_and_different_commits(project, tmp_path):
+    project.run()
+    good = tmp_path / "good"
+    subprocess.check_call(["cp", "-R", str(project.root / ".speed/ci"), str(good)])
+    broken = tmp_path / "broken"
+    broken.mkdir()
+    (broken / "report.json").write_text("")
+    other = tmp_path / "other"
+    subprocess.check_call(["cp", "-R", str(good), str(other)])
+    report = json.loads((other / "report.json").read_text())
+    (other / "report.json").write_text(json.dumps({**report, "commit": "0" * 40}))
+    result = project.run("merge", str(good), str(broken), str(other))
+    assert result.returncode == 2
+    names = {item["name"] for item in project.report()["steps"]}
+    assert {"merge-jobs", "merge-commit"} <= names
+    assert project.report()["branch"] == "main"
+
+
+def test_a_capitalised_custom_gate_runs(project):
+    project.gates(test="true", API="exit 1")
+    project.commit()
+    assert project.run().returncode == 2
+    assert step(project.report(), "API")["status"] == "fail"
+
+
+def test_gate_names_that_cannot_run_are_refused_not_dropped(project):
+    for gates, toml, expected in (({"test": "true", "secrets": "exit 1"}, "", "speed ci uses itself"),
+                                  ({"test": "true", "trivy": "exit 1"}, "[ci.tools.trivy]\n", "also a [ci.tools.trivy]"),
+                                  ({"test": "true", "api": "true", "Api": "true"}, "", "only by case"),
+                                  ({"TEST": "true"}, "", "must be written 'test'")):
+        project.gates(**gates)
+        project.toml(toml)
+        project.commit()
+        result = project.run()
+        assert result.returncode == 3 and expected in result.stderr, result.stderr
+
+
+def test_invalid_tool_and_codecov_settings_are_refused(project):
+    for toml, expected in (('[ci.tools.snyk]\ntoken_env = "a[$(touch PWNED)]"\n', "token_env"),
+                           ("[ci]\nparallel = true\n[ci.codecov]\ncheck = \"test'\"\n", "[ci.codecov] check"),
+                           ('[ci.sonarqube]\nhost_url = "http://sonar.example.com"\nproject_key = "a"\n', "https"),
+                           ('[ci.tools.report]\nformat = "sarif"\ncmd = "true"\n', "cannot be one of")):
+        project.toml(toml)
+        project.commit()
+        result = project.run()
+        assert result.returncode == 3 and expected in result.stderr, result.stderr
+    assert not (project.root / "PWNED").exists()
+    project.toml("[ci]\nparallel = true\n[ci.codecov]\ncheck = \"coverage\"\n")
+    project.commit()
+    result = project.run("init", "--speed-repo", "acme/speed", "--speed-ref", "v2")
+    assert result.returncode == 3 and "not one of this project's checks" in result.stderr
+
+
+def test_codeql_rules_in_extensions_keep_their_severity(project):
+    codeql = {"version": "2.1.0", "runs": [{"tool": {"driver": {"name": "CodeQL", "rules": []}, "extensions": [
+        {"name": "codeql/python-queries", "rules": [{"id": "py/sql-injection", "properties": {"security-severity": "9.8"}}]}]},
+        "results": [{"ruleId": "py/sql-injection", "rule": {"id": "py/sql-injection", "index": 0, "toolComponent": {"index": 0}},
+                     "message": {"text": "SQL from user input"},
+                     "locations": [{"physicalLocation": {"artifactLocation": {"uri": "app.py"}, "region": {"startLine": 4}}}]}]}]}
+    project.toml(tool(project, "codeql", "sarif", codeql))
+    project.commit()
+    assert project.run().returncode == 2
+    assert step(project.report(), "codeql")["blocking_findings"][0]["severity"] == "critical"
+
+
+def test_snyk_applications_are_read_and_paths_are_not_counted_twice(project):
+    vuln = {"id": "SNYK-JS-1", "title": "RCE", "severity": "high", "packageName": "minimist", "version": "1.0.0"}
+    snyk = {"ok": False, "vulnerabilities": [vuln, vuln], "applications": [
+        {"displayTargetFile": "app/package.json", "vulnerabilities": [dict(vuln, id="SNYK-JS-2", severity="critical")]}]}
+    project.toml(tool(project, "snyk", "snyk", snyk, 1))
+    project.commit()
+    assert project.run(extra_env={"SNYK_TOKEN": "t"}).returncode == 2
+    check = step(project.report(), "snyk")
+    assert check["total_findings"] == 2
+    assert {item["severity"] for item in check["blocking_findings"]} == {"high", "critical"}
+
+
+def test_a_timed_out_secret_scanner_leaves_no_raw_output(project):
+    leaks = [{"RuleID": "aws", "File": "x.py", "StartLine": 1, "Secret": AWS_KEY}]
+    (project.root / "leaks.json").write_text(json.dumps(leaks))
+    project.toml('[ci]\ncommand_timeout = 1\n[ci.tools.gitleaks]\ncmd = "cat leaks.json; sleep 30"\n')
+    project.commit()
+    assert project.run().returncode == 2
+    assert step(project.report(), "gitleaks")["summary"].startswith("gitleaks timed out")
+    for path in (project.root / ".speed").rglob("*"):
+        assert not path.is_file() or AWS_KEY not in path.read_text(errors="replace"), path
+
+
+def test_checks_needing_secrets_are_skipped_on_fork_pull_requests(project):
+    project.toml('[ci.tools.snyk]\n[ci.sonarqube]\nhost_url = "https://sonarcloud.io"\nproject_key = "a_b"\n')
+    project.commit()
+    result = project.run(extra_env={"SNYK_TOKEN": "", "SONAR_TOKEN": "", "SPEED_CI_SECRETS_UNAVAILABLE": "true"})
+    assert result.returncode == 0, result.stdout + result.stderr
+    for name in ("snyk", "sonarqube"):
+        assert step(project.report(), name)["status"] == "skipped"
+        assert "forks or Dependabot" in step(project.report(), name)["summary"]
+
+
+def test_an_empty_only_value_is_refused(project):
+    result = project.run("--only", ",")
+    assert result.returncode == 3 and "at least one check name" in result.stderr
+
+
+class PollingSonar(FakeSonar):
+    """Answers ce/task with the given sequence (status strings or HTTP codes), checks the ids sent."""
+
+    def __init__(self, sequence, gate="OK", redirect=None):
+        import http.server
+        import threading
+        import urllib.parse as up
+        sonar = self
+        self.requests = []
+        sequence = list(sequence)
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                url = up.urlparse(self.path)
+                query = dict(up.parse_qsl(url.query))
+                sonar.requests.append((url.path, query))
+                if redirect:
+                    self.send_response(302)
+                    self.send_header("Location", redirect)
+                    self.end_headers()
+                    return
+                if url.path == "/api/ce/task" and query.get("id") == "T1":
+                    item = sequence.pop(0) if len(sequence) > 1 else sequence[0]
+                    if isinstance(item, int):
+                        self.send_response(item)
+                        self.end_headers()
+                        return
+                    body = {"task": {"status": item, "analysisId": "A1"}}
+                elif url.path == "/api/qualitygates/project_status" and query.get("analysisId") == "A1":
+                    body = {"projectStatus": {"status": gate, "conditions": []}}
+                else:
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+                data = json.dumps(body).encode()
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(data)
+
+            def log_message(self, *args):
+                pass
+
+        self.server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.server.server_port}"
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+
+def test_sonarqube_polls_until_done_and_rides_out_a_busy_server(project):
+    sonar = PollingSonar(["PENDING", 503, "IN_PROGRESS", "SUCCESS"], gate="WARN")
+    try:
+        sonar_project(project, sonar)
+        result = project.run(extra_env={"SONAR_TOKEN": "tok"})
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert step(project.report(), "sonarqube")["status"] == "warn"
+        assert sum(path == "/api/ce/task" for path, _ in sonar.requests) >= 4
+        assert "-Dsonar.qualitygate.wait=false" in (project.root / ".scannerwork/args").read_text()
+    finally:
+        sonar.close()
+
+
+def test_sonarqube_failed_analysis_and_redirects_fail(project):
+    for sonar, expected in ((PollingSonar(["FAILED"]), "analysis failed"),
+                            (PollingSonar(["SUCCESS"], redirect="http://127.0.0.1:9/steal"), "redirected")):
+        try:
+            sonar_project(project, sonar)
+            assert project.run(extra_env={"SONAR_TOKEN": "tok"}).returncode == 2
+            assert expected in step(project.report(), "sonarqube")["summary"]
+        finally:
+            sonar.close()
+
+
+def test_pr_status_and_body_count_warnings(project, feature_branches, tmp_path):
+    (project.root / "semgrep.json").write_text(json.dumps(SEMGREP).replace("{severity}", "ERROR"))
+    project.toml('[ci]\nsecurity_mode = "report"\n[security]\nsast_cmd = "cat semgrep.json"\n')
+    project.commit()
+    project.git("push", "-q", "origin", "main")
+    assert project.run("--pr").returncode == 0
+    status = next(call for call in gh_calls(tmp_path) if call.startswith("api"))
+    assert "1 warning(s)" in status and "state=success" in status
+    body = (project.root / ".speed/ci/pr-body.md").read_text()
+    assert "1 warning(s)" in body and "review them before merging" in body
+
+
+def test_numeric_speed_refs_stay_strings_in_the_workflow(project):
+    assert project.run("init", "--speed-repo", "acme/speed", "--speed-ref", "1.10").returncode == 0
+    workflow, _ = load_workflow(project)
+    speed = next(item for item in workflow["jobs"]["speed-ci"]["steps"] if item.get("name") == "Check out SPEED")
+    assert speed["with"]["ref"] == "1.10"

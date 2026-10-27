@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # ci.sh — speed ci: verify the whole project without calling a model.
 #
-#   speed ci                 Run evals, lint, typecheck, tests, e2e and security scans
+#   speed ci                 Run evals, lint, typecheck, tests, e2e, custom checks,
+#                            security scans, tool integrations and SonarQube
 #   speed ci init            Write a GitHub Actions workflow that runs speed ci
 #   speed ci --pr            Assemble a feature branch, run the checks, open a PR
 #                            and post the result as a commit status
+#   speed ci merge DIR...    Combine the reports of checks run as parallel jobs
 #
 # Exit codes: 0 every check passed, 2 a check failed, 3 the checks could not run,
 # 4 a task branch conflicted while assembling the PR branch.
-
-CI_STEPS=(eval lint typecheck test e2e secrets sast sca)
 
 # Files that hold hashes or checksums, which look like secrets to the patterns.
 CI_SECRETS_ALWAYS_EXCLUDE=(package-lock.json npm-shrinkwrap.json yarn.lock pnpm-lock.yaml
@@ -17,6 +17,9 @@ CI_SECRETS_ALWAYS_EXCLUDE=(package-lock.json npm-shrinkwrap.json yarn.lock pnpm-
 
 # At most this many secret findings are kept in the report (the count is always exact).
 CI_SECRETS_KEEP=200
+
+# The counts line used in summaries, the PR body and the commit status.
+_CI_COUNTS='"\(.summary.pass) passed, \(.summary.fail) failed, " + (if (.summary.warn // 0) > 0 then "\(.summary.warn) warning(s), " else "" end) + "\(.summary.skipped) skipped"'
 
 # Replace every provider entry point so nothing reached from speed ci can call a model.
 _ci_forbid_models() {
@@ -48,17 +51,35 @@ _ci_record() {
     case "$2" in
         pass) mark="${COLOR_SUCCESS}${SYM_CHECK}${RESET}" ;;
         fail) mark="${COLOR_ERROR}${SYM_CROSS}${RESET}" ;;
+        warn) mark="${COLOR_WARN}!${RESET}" ;;
         *)    mark="${COLOR_DIM}-${RESET}" ;;
     esac
     printf '  %b %-10s %s\n' "$mark" "$1" "$3"
 }
 
-_ci_skipped() {
-    local step
+# 0 when the check should run; otherwise records why it does not run.
+_ci_selected() {
+    local name="$1" step wanted=false
+    if [[ ${#_CI_ONLY[@]} -gt 0 ]]; then
+        for step in "${_CI_ONLY[@]}"; do
+            [[ "$step" == "$name" ]] && wanted=true
+        done
+        if [[ "$wanted" != true ]]; then
+            # Another job runs this check; speed ci merge takes its result from there.
+            _ci_record "$name" skipped "Not selected with --only" 0 '{"selected":false}'
+            return 1
+        fi
+    fi
     for step in "${_CI_SKIP[@]:-}"; do
-        [[ "$step" == "$1" ]] && return 0
+        if [[ "$step" == "$name" ]]; then
+            _ci_record "$name" skipped "skipped with --skip" 0
+            return 1
+        fi
     done
-    return 1
+}
+
+_ci_python() {
+    "$(_context_python)" "${LIB_DIR}/ci_tools.py" "$@"
 }
 
 # Run a project command in the project root with a time limit. The JSON output
@@ -103,13 +124,10 @@ _ci_exec() {
     echo "$rc $log"
 }
 
-# lint, typecheck, test and e2e come from the project's ## Quality Gates section.
+# lint, typecheck, test, e2e and any custom check come from the project's ## Quality Gates section.
 _ci_gate_step() {
     local gate="$1" started=$SECONDS
-    if _ci_skipped "$gate"; then
-        _ci_record "$gate" skipped "skipped with --skip" 0
-        return 0
-    fi
+    _ci_selected "$gate" || return 0
     local cmds
     cmds=$(gates_get_config "$gate" both)
     if [[ -z "$cmds" ]]; then
@@ -143,10 +161,7 @@ _ci_gate_step() {
 # Whole-repository secrets scan over tracked files. Matched text is never printed.
 _ci_secrets_step() {
     local started=$SECONDS
-    if _ci_skipped secrets; then
-        _ci_record secrets skipped "skipped with --skip" 0
-        return 0
-    fi
+    _ci_selected secrets || return 0
     # A committed .env is the most common leak, so unlike the task-diff scan this
     # one does not exclude .env files unless the project says so.
     local -a pathspec=(.)
@@ -192,6 +207,7 @@ _ci_secrets_step() {
     local total details
     total=$(wc -l < "$hits" | tr -d ' ')
     details=$(jq -sc --argjson keep "$CI_SECRETS_KEEP" '{total_findings:length, findings:.[:$keep]}' "$hits")
+    jq -sc 'map(. + {severity:"high", title:("Secret: " + .pattern)})' "$hits" > "${_CI_DIR}/secrets-findings.json"
     if [[ "$total" -gt 0 ]]; then
         _ci_record secrets fail "${total} possible secret(s) in tracked files" $((SECONDS - started)) "$details"
         jq -r '"    \(.pattern) at \(.file):\(.line)"' "$hits" | head -n 50 >&2
@@ -218,10 +234,7 @@ _ci_scan_format_ok() {
 # SAST or SCA: run the configured scanner and fail on findings at or above the threshold.
 _ci_scan_step() {
     local kind="$1" cmd="$2" parser="$3" started=$SECONDS
-    if _ci_skipped "$kind"; then
-        _ci_record "$kind" skipped "skipped with --skip" 0
-        return 0
-    fi
+    _ci_selected "$kind" || return 0
     if [[ -z "$cmd" ]]; then
         _ci_record "$kind" skipped "No ${kind}_cmd in the [security] section of speed.toml" 0
         return 0
@@ -265,23 +278,148 @@ _ci_scan_step() {
         _ci_record "$kind" fail "The scanner exited ${rc} without reporting any finding" "$(elapsed)"
         return 1
     fi
-    # A severity SPEED does not recognise is treated as blocking, never as harmless.
-    local threshold="$_CI_THRESHOLD" blocking
+    _ci_judge "$kind" "$normalized" "$total" "$started" "$warnings"
+}
+
+# Judge normalised findings against the threshold. In report mode they warn; in strict
+# mode (the default) they fail. A severity SPEED does not recognise counts as blocking.
+_ci_judge() {
+    local kind="$1" normalized="$2" total="$3" started="$4" warnings="${5:-0}"
+    local threshold="$_CI_THRESHOLD" blocking count details
     blocking=$(jq -c --arg threshold "$threshold" '
         {critical:5, high:4, medium:3, low:2, info:1} as $rank
         | [.[] | select(($rank[.severity // ""] // 5) >= $rank[$threshold])
                | {severity, title, file, line, package} | with_entries(select(.value != null))]' "$normalized")
-    local count details
     count=$(jq 'length' <<< "$blocking")
     details=$(jq -c --argjson total "$total" --argjson warnings "$warnings" --arg threshold "$threshold" \
-        '{threshold:$threshold, total_findings:$total, scanner_warnings:$warnings, blocking_findings:.[:50]}' <<< "$blocking")
+        --arg mode "$_CI_MODE" \
+        '{threshold:$threshold, security_mode:$mode, total_findings:$total, scanner_warnings:$warnings,
+          blocking_findings:.[:50]}' <<< "$blocking")
     if [[ "$count" -gt 0 ]]; then
-        _ci_record "$kind" fail "${count} finding(s) at or above ${threshold} (${total} in all)" "$(elapsed)" "$details"
+        if [[ "$_CI_MODE" == report ]]; then
+            _ci_record "$kind" warn "${count} finding(s) at or above ${threshold}, not blocking in report mode (${total} in all)" \
+                $((SECONDS - started)) "$details"
+        else
+            _ci_record "$kind" fail "${count} finding(s) at or above ${threshold} (${total} in all)" $((SECONDS - started)) "$details"
+        fi
         jq -r '.[:20][] | "    [\(.severity)] \(.title) \(.file // .package // "")\(if .line then ":\(.line)" else "" end)"' \
             <<< "$blocking" >&2
+        [[ "$_CI_MODE" == report ]]
+        return
+    fi
+    _ci_record "$kind" pass "No findings at or above ${threshold} (${total} in all)" $((SECONDS - started)) "$details"
+}
+
+# Record a check that needs a secret the run does not have. Pull requests from forks and
+# Dependabot get no repository secrets, so there the check is skipped rather than failed.
+_ci_missing_secret() {
+    local name="$1" secret="$2"
+    if [[ "${SPEED_CI_SECRETS_UNAVAILABLE:-}" == true ]]; then
+        _ci_record "$name" skipped "${secret} is not available to pull requests from forks or Dependabot" 0
+        return 0
+    fi
+    _ci_record "$name" fail "${secret} is not set; ${name} needs it to run" 0
+    return 1
+}
+
+# A plugged-in tool ([ci.tools.NAME]): Trivy, Gitleaks, Snyk, or any SARIF producer such as CodeQL.
+_ci_tool_step() {
+    local name="$1" started=$SECONDS
+    _ci_selected "$name" || return 0
+    local fmt cmd token
+    fmt=$(jq -r --arg n "$name" '.tools[$n].format' <<< "$_CI_CONFIG")
+    cmd=$(jq -r --arg n "$name" '.tools[$n].cmd' <<< "$_CI_CONFIG")
+    token=$(jq -r --arg n "$name" '.tools[$n].token_env' <<< "$_CI_CONFIG")
+    # token_env is checked to be a variable name when speed.toml is read.
+    if [[ -n "$token" && -z "$(printenv -- "$token" 2>/dev/null)" ]]; then
+        _ci_missing_secret "$name" "$token"
+        return
+    fi
+    # Raw tool output can hold code snippets and the secrets a tool found, so it is written
+    # outside .speed/ci (which CI uploads) and deleted; only the normalised findings are kept.
+    local raw normalized="${_CI_DIR}/${name}-findings.json"
+    local log="${_CI_DIR}/logs/${name}.log" rc=0 err
+    raw=$(mktemp "${TMPDIR:-/tmp}/speed-ci-${name}.XXXXXX")
+    rm -f "$normalized"
+    _ci_run_command "$cmd" "$raw" "$log" || rc=$?
+    if [[ "$rc" -eq 124 ]]; then
+        rm -f "$raw"
+        _ci_record "$name" fail "${name} timed out after ${_CI_TIMEOUT}s" $((SECONDS - started))
         return 1
     fi
-    _ci_record "$kind" pass "No findings at or above ${threshold} (${total} in all)" "$(elapsed)" "$details"
+    if ! err=$(_ci_python parse "$fmt" "$raw" "$normalized" 2>&1); then
+        rm -f "$raw"
+        _ci_record "$name" fail "Could not read the ${name} output (exit ${rc}): ${err}; see ${log#"${PROJECT_ROOT}"/}" \
+            $((SECONDS - started))
+        return 1
+    fi
+    rm -f "$raw"
+    local total
+    total=$(jq 'length' "$normalized")
+    if [[ "$rc" -ne 0 && "$total" -eq 0 ]]; then
+        _ci_record "$name" fail "${name} exited ${rc} without reporting any finding; see ${log#"${PROJECT_ROOT}"/}" \
+            $((SECONDS - started))
+        return 1
+    fi
+    _ci_judge "$name" "$normalized" "$total" "$started"
+}
+
+# SonarQube or SonarCloud: run the scanner, wait for the analysis, read the quality gate.
+_ci_sonar_step() {
+    local started=$SECONDS
+    _ci_selected sonarqube || return 0
+    local host key org scanner blocking wait task
+    host=$(jq -r '.sonarqube.host_url' <<< "$_CI_CONFIG")
+    key=$(jq -r '.sonarqube.project_key' <<< "$_CI_CONFIG")
+    org=$(jq -r '.sonarqube.organization' <<< "$_CI_CONFIG")
+    scanner=$(jq -r '.sonarqube.scanner_cmd' <<< "$_CI_CONFIG")
+    blocking=$(jq -r '.sonarqube.blocking' <<< "$_CI_CONFIG")
+    wait=$(jq -r '.sonarqube.wait_timeout' <<< "$_CI_CONFIG")
+    task="${PROJECT_ROOT}/$(jq -r '.sonarqube.report_task' <<< "$_CI_CONFIG")"
+    if [[ -z "${SONAR_TOKEN:-}" ]]; then
+        _ci_missing_secret sonarqube SONAR_TOKEN
+        return
+    fi
+    # speed ci waits for the quality gate itself, so the scanner must not wait and exit 1 on a failed gate.
+    local -a args=("-Dsonar.host.url=${host}" "-Dsonar.projectKey=${key}" "-Dsonar.qualitygate.wait=false")
+    [[ -n "$org" ]] && args+=("-Dsonar.organization=${org}")
+    local log="${_CI_DIR}/logs/sonarqube.log" rc=0 result
+    rm -f "$task"
+    _ci_run_command "${scanner} $(printf '%q ' "${args[@]}")" "$log" "${log}.err" || rc=$?
+    cat "${log}.err" >> "$log" 2>/dev/null && rm -f "${log}.err"
+    if [[ "$rc" -eq 124 ]]; then
+        _ci_record sonarqube fail "The SonarQube scanner timed out after ${_CI_TIMEOUT}s" $((SECONDS - started))
+        return 1
+    fi
+    if [[ "$rc" -ne 0 ]]; then
+        _ci_record sonarqube fail "The SonarQube scanner exited ${rc}; see ${log#"${PROJECT_ROOT}"/}" $((SECONDS - started))
+        return 1
+    fi
+    if ! result=$(_ci_python sonar-wait "$host" "$task" "$wait" 2>&1); then
+        _ci_record sonarqube fail "Could not read the SonarQube result: ${result}" $((SECONDS - started))
+        return 1
+    fi
+    local status details failed
+    status=$(jq -r '.status' <<< "$result")
+    details=$(jq -c '{dashboard_url, failed_conditions}' <<< "$result")
+    failed=$(jq -r '[.failed_conditions[] | "\(.metric) \(.actual) (needs \(.comparator) \(.threshold))"] | join(", ")' \
+        <<< "$result")
+    case "$status" in
+        OK)
+            _ci_record sonarqube pass "Quality gate passed" $((SECONDS - started)) "$details" ;;
+        WARN)
+            _ci_record sonarqube warn "Quality gate passed with warnings" $((SECONDS - started)) "$details" ;;
+        ERROR)
+            if [[ "$blocking" == true ]]; then
+                _ci_record sonarqube fail "Quality gate failed: ${failed:-see the dashboard}" $((SECONDS - started)) "$details"
+                return 1
+            fi
+            _ci_record sonarqube warn "Quality gate failed, not blocking: ${failed:-see the dashboard}" \
+                $((SECONDS - started)) "$details" ;;
+        *)
+            _ci_record sonarqube fail "SonarQube returned no quality gate result (${status})" $((SECONDS - started)) "$details"
+            return 1 ;;
+    esac
 }
 
 # One feature's task statuses, whether a test spec is configured, and where its
@@ -302,10 +440,7 @@ _ci_feature_state() (
 # Run speed eval for every feature (or the one given with --feature).
 _ci_eval_step() {
     local started=$SECONDS
-    if _ci_skipped eval; then
-        _ci_record eval skipped "skipped with --skip" 0
-        return 0
-    fi
+    _ci_selected eval || return 0
     local -a features=()
     if [[ -n "${GLOBAL_FEATURE:-}" ]]; then
         features=("$GLOBAL_FEATURE")
@@ -421,7 +556,8 @@ _ci_run_checks() {
         return
     fi
     trap '_ci_unlock' EXIT
-    rm -rf "${_CI_DIR}/logs"
+    rm -rf "${_CI_DIR}/logs" "${_CI_DIR}/eval"
+    rm -f "${_CI_DIR}"/*-findings.json "${_CI_DIR}"/*-output.json
     mkdir -p "${_CI_DIR}/logs"
     _CI_STEPS_FILE="${_CI_DIR}/steps.jsonl"
     : > "$_CI_STEPS_FILE"
@@ -431,13 +567,19 @@ _ci_run_checks() {
     # Evals run first, on the tree exactly as checked out: later commands can leave
     # files behind, and an evaluation must describe a clean tree.
     _ci_eval_step || true
-    local gate
-    for gate in lint typecheck test e2e; do
+    local gate tool
+    for gate in lint typecheck test e2e "${_CI_CUSTOM[@]+"${_CI_CUSTOM[@]}"}"; do
         _ci_gate_step "$gate" || true
     done
     _ci_secrets_step || true
     _ci_scan_step sast "${TOML_SECURITY_SAST_CMD:-}" security_sast_parse || true
     _ci_scan_step sca "${TOML_SECURITY_SCA_CMD:-}" security_sca_parse || true
+    for tool in "${_CI_TOOLS[@]+"${_CI_TOOLS[@]}"}"; do
+        _ci_tool_step "$tool" || true
+    done
+    if [[ "$(jq -r '.sonarqube != null' <<< "$_CI_CONFIG")" == true ]]; then
+        _ci_sonar_step || true
+    fi
     if [[ "${SPEED_CI_REQUIRE_CLEAN:-}" == 1 ]]; then
         _ci_clean_tree_step || true
     fi
@@ -450,11 +592,19 @@ _ci_run_checks() {
           commit:$commit, branch:$branch, started_at:$started, finished_at:$finished,
           summary:{pass: map(select(.status == "pass")) | length,
                    fail: map(select(.status == "fail")) | length,
+                   warn: map(select(.status == "warn")) | length,
                    skipped: map(select(.status == "skipped")) | length},
           steps:.}' "$_CI_STEPS_FILE" > "${_CI_DIR}/report.json"
     rm -f "$_CI_STEPS_FILE"
+    # Reports for other tools: SARIF for GitHub's Security tab, JUnit for test dashboards,
+    # and a Markdown summary on the GitHub Actions run page.
+    _ci_python sarif "$_CI_DIR" "${_CI_DIR}/speed-ci.sarif" 2>/dev/null || log_warn "Could not write the SARIF report"
+    _ci_python junit "${_CI_DIR}/report.json" "${_CI_DIR}/junit.xml" 2>/dev/null || log_warn "Could not write the JUnit report"
+    if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+        _ci_python summary "${_CI_DIR}/report.json" >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+    fi
     local summary
-    summary=$(jq -r '"\(.summary.pass) passed, \(.summary.fail) failed, \(.summary.skipped) skipped"' "${_CI_DIR}/report.json")
+    summary=$(jq -r "$_CI_COUNTS" "${_CI_DIR}/report.json")
     if [[ "$(jq -r '.passed' "${_CI_DIR}/report.json")" == true ]]; then
         echo -e "${COLOR_SUCCESS}${BOLD}PASSED${RESET}  ${summary}  (report: .speed/ci/report.json)"
         return 0
@@ -519,7 +669,8 @@ _ci_speed_ref() {
 }
 
 _ci_init() {
-    local force=false repo="" ref=""
+    _ci_settings || return
+    local force=false repo="" ref="" name
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --force) force=true; shift ;;
@@ -563,6 +714,13 @@ _ci_init() {
         _ci_reject "$EXIT_CONFIG_ERROR" "Invalid --speed-ref: ${ref}"
         return
     fi
+    local codecov_check
+    codecov_check=$(jq -r '.codecov.check // empty' <<< "$_CI_CONFIG")
+    if [[ -n "$codecov_check" && "$(jq -r '.parallel' <<< "$_CI_CONFIG")" == true \
+            && " ${_CI_AVAILABLE[*]} " != *" ${codecov_check} "* ]]; then
+        _ci_reject "$EXIT_CONFIG_ERROR" "[ci.codecov] check '${codecov_check}' is not one of this project's checks (${_CI_AVAILABLE[*]})"
+        return
+    fi
     local main_branch setup
     main_branch=$(git_main_branch)
     setup=$(_ci_project_setup)
@@ -570,17 +728,13 @@ _ci_init() {
         _ci_reject "$EXIT_CONFIG_ERROR" "Cannot create .github/workflows in ${PROJECT_ROOT}"
         return
     fi
-    if ! MAIN="$main_branch" REPO="$repo" REF="$ref" SETUP="$setup" "$(_context_python)" - \
-            "${SPEED_DIR}/templates/ci/github-actions.yml" "$target" <<'PYEOF'
-import os, sys
-text = open(sys.argv[1], encoding="utf-8").read()
-setup = os.environ["SETUP"]
-for key, value in (("@MAIN_BRANCH@", os.environ["MAIN"]), ("@SPEED_REPOSITORY@", os.environ["REPO"]),
-                   ("@SPEED_REF@", os.environ["REF"]), ("@PROJECT_SETUP@\n", setup + "\n" if setup else "")):
-    text = text.replace(key, value)
-open(sys.argv[2], "w", encoding="utf-8").write(text)
-PYEOF
-    then
+    local settings checks
+    checks=$(printf '%s\n' "${_CI_AVAILABLE[@]}" | jq -R . | jq -sc .)
+    settings=$(jq -n --arg main "$main_branch" --arg repo "$repo" --arg ref "$ref" --arg setup "$setup" \
+        --argjson config "$_CI_CONFIG" --argjson checks "$checks" \
+        '{main_branch:$main, speed_repository:$repo, speed_ref:$ref, project_setup:$setup, config:$config, checks:$checks}')
+    if ! _ci_python workflow <<< "$settings" > "${target}.tmp" 2>/dev/null || ! mv "${target}.tmp" "$target"; then
+        rm -f "${target}.tmp"
         _ci_reject "$EXIT_CONFIG_ERROR" "Could not write .github/workflows/speed-ci.yml"
         return
     fi
@@ -591,6 +745,26 @@ PYEOF
     fi
     if [[ -z "$setup" ]]; then
         log_warn "No package.json, requirements.txt, pyproject.toml or go.mod found; add the project's setup steps to the workflow"
+    fi
+    local -a secrets=()
+    [[ "$(jq -r '.sonarqube != null' <<< "$_CI_CONFIG")" == true ]] && secrets+=(SONAR_TOKEN)
+    [[ "$(jq -r '.codecov != null' <<< "$_CI_CONFIG")" == true ]] && secrets+=(CODECOV_TOKEN)
+    while IFS= read -r name; do
+        [[ -n "$name" ]] && secrets+=("$name")
+    done < <(jq -r '[.tools[].token_env | select(. != "")] | unique[]' <<< "$_CI_CONFIG")
+    if [[ ${#secrets[@]} -gt 0 ]]; then
+        log_info "Add these repository secrets on GitHub: ${secrets[*]}"
+    fi
+    if [[ "$(jq -r '.parallel' <<< "$_CI_CONFIG")" == true ]]; then
+        log_info "Checks run as ${#_CI_AVAILABLE[@]} parallel jobs; require the speed-ci status check, which combines them"
+    fi
+    # The workflow installs Trivy, Gitleaks, Snyk and sonar-scanner for their default commands only.
+    local unmanaged
+    unmanaged=$(jq -r '[(.tools | to_entries[] | select((.value.default_cmd | not) or (.key | IN("trivy","gitleaks","snyk") | not)) | .key),
+                         (if .sonarqube != null and .sonarqube.scanner_cmd != "sonar-scanner" then "sonarqube" else empty end)]
+                        | join(", ")' <<< "$_CI_CONFIG")
+    if [[ -n "$unmanaged" ]]; then
+        log_warn "Add an install step for ${unmanaged} to the workflow's project setup; it runs a custom command"
     fi
     log_info "Commit the file to turn it on. For a private SPEED repository, add a SPEED_REPO_TOKEN secret that can read it."
     if [[ "${JSON_OUTPUT:-false}" == true ]]; then
@@ -612,9 +786,13 @@ _ci_pr_body() {
         echo "### speed ci"
         echo ""
         if [[ "$(jq -r '.passed' "$report")" == true ]]; then
-            echo "**Passed**: $(jq -r '"\(.summary.pass) passed, \(.summary.skipped) skipped"' "$report")"
+            echo "**Passed**: $(jq -r "$_CI_COUNTS" "$report")"
         else
-            echo "**Failed**: $(jq -r '"\(.summary.fail) failed, \(.summary.pass) passed, \(.summary.skipped) skipped"' "$report")"
+            echo "**Failed**: $(jq -r "$_CI_COUNTS" "$report")"
+        fi
+        if [[ "$(jq -r '.summary.warn // 0' "$report")" -gt 0 ]]; then
+            echo ""
+            echo "Warnings do not fail the check (security_mode = \"report\", or a non-blocking SonarQube gate); review them before merging."
         fi
         echo ""
         echo "| Check | Result | Detail |"
@@ -692,6 +870,47 @@ _ci_settings() {
         _ci_reject "$EXIT_CONFIG_ERROR" "Invalid [ci] command_timeout: ${_CI_TIMEOUT} (seconds)"
         return
     fi
+    if ! _CI_CONFIG=$(_ci_python config "${PROJECT_ROOT}/speed.toml" 2>&1); then
+        _ci_reject "$EXIT_CONFIG_ERROR" "Invalid speed.toml: ${_CI_CONFIG}"
+        return
+    fi
+    _CI_MODE=$(jq -r '.security_mode' <<< "$_CI_CONFIG")
+    local name gates problems
+    if ! gates=$(_ci_python gates "${AGENT_FILE_PATH:-}" "$(jq -c '.ignore_gates' <<< "$_CI_CONFIG")" \
+            "$(jq -c '.tools | keys' <<< "$_CI_CONFIG")" 2>&1); then
+        _ci_reject "$EXIT_CONFIG_ERROR" "Could not read the Quality Gates: ${gates}"
+        return
+    fi
+    problems=$(jq -r '.problems | join("; ")' <<< "$gates")
+    if [[ -n "$problems" ]]; then
+        _ci_reject "$EXIT_CONFIG_ERROR" "Quality Gates names that cannot run as checks: ${problems} (rename them, or list them in [ci] ignore_gates)"
+        return
+    fi
+    _CI_CUSTOM=()
+    while IFS= read -r name; do
+        [[ -n "$name" ]] && _CI_CUSTOM+=("$name")
+    done < <(jq -r '.gates[]' <<< "$gates")
+    _CI_TOOLS=()
+    while IFS= read -r name; do
+        [[ -n "$name" ]] && _CI_TOOLS+=("$name")
+    done < <(jq -r '.tools | keys_unsorted[]' <<< "$_CI_CONFIG")
+    _CI_AVAILABLE=(eval lint typecheck test e2e "${_CI_CUSTOM[@]+"${_CI_CUSTOM[@]}"}" secrets sast sca
+                   "${_CI_TOOLS[@]+"${_CI_TOOLS[@]}"}")
+    if [[ "$(jq -r '.sonarqube != null' <<< "$_CI_CONFIG")" == true ]]; then
+        _CI_AVAILABLE+=(sonarqube)
+    fi
+}
+
+# Check names given to --skip or --only must be checks this project has.
+_ci_check_names() {
+    local option="$1" step
+    shift
+    for step in "$@"; do
+        if [[ " ${_CI_AVAILABLE[*]} " != *" ${step} "* ]]; then
+            _ci_reject "$EXIT_CONFIG_ERROR" "Unknown check for ${option}: ${step} (checks: ${_CI_AVAILABLE[*]})"
+            return
+        fi
+    done
 }
 
 # Run the checks inside the assembly worktree, with every project path and setting
@@ -914,9 +1133,9 @@ _ci_pr() {
     _ci_pr_body "$feature" "$tasks_json" "$report" > "$body_file"
     local state description pr_url="" title="SPEED: ${feature}"
     if [[ "$passed" == true ]]; then
-        state=success; description="speed ci passed: $(jq -r '"\(.summary.pass) passed, \(.summary.skipped) skipped"' "$report")"
+        state=success; description="speed ci passed: $(jq -r "$_CI_COUNTS" "$report")"
     else
-        state=failure; description="speed ci failed: $(jq -r '"\(.summary.fail) failed, \(.summary.pass) passed"' "$report")"
+        state=failure; description="speed ci failed: $(jq -r "$_CI_COUNTS" "$report")"
         draft=true
     fi
     local context="${TOML_CI_STATUS_CONTEXT:-speed/ci}"
@@ -985,34 +1204,73 @@ cmd_ci() (
         _ci_init "$@"
         exit
     fi
-    local pr=false
+    if [[ "${1:-}" == merge ]]; then
+        shift
+        if [[ $# -eq 0 ]]; then
+            _ci_reject "$EXIT_CONFIG_ERROR" "speed ci merge needs the report directories of the parallel jobs"
+            exit
+        fi
+        local merge_rc=0
+        rm -f "${STATE_DIR}/ci/summary.md" "${STATE_DIR}/ci/report.json"
+        _ci_python merge "${STATE_DIR}/ci" "$@" || merge_rc=$?
+        if [[ "$merge_rc" -gt 2 ]]; then
+            _ci_reject "$EXIT_CONFIG_ERROR" "The reports could not be combined"
+            exit
+        fi
+        cat "${STATE_DIR}/ci/summary.md"
+        if [[ "${JSON_OUTPUT:-false}" == true ]]; then
+            cat "${STATE_DIR}/ci/report.json" >&3
+        fi
+        exit "$merge_rc"
+    fi
+    local pr=false list=false step
     _CI_SKIP=()
+    _CI_ONLY=()
     local -a pr_args=()
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --pr) pr=true; shift ;;
-            --skip)
-                [[ $# -ge 2 && "$2" != --* ]] || { _ci_reject "$EXIT_CONFIG_ERROR" "--skip requires a value"; exit; }
-                local step
-                for step in ${2//,/ }; do
-                    if [[ " ${CI_STEPS[*]} " != *" ${step} "* ]]; then
-                        _ci_reject "$EXIT_CONFIG_ERROR" "Unknown check for --skip: ${step} (checks: ${CI_STEPS[*]})"
-                        exit
-                    fi
-                    _CI_SKIP+=("$step")
+            --list) list=true; shift ;;
+            --skip|--only)
+                [[ $# -ge 2 && "$2" != --* ]] || { _ci_reject "$EXIT_CONFIG_ERROR" "$1 requires a value"; exit; }
+                local -a names=()
+                IFS=, read -ra names <<< "$2"
+                local added=0
+                for step in "${names[@]+"${names[@]}"}"; do
+                    step="${step// /}"
+                    [[ -n "$step" ]] || continue
+                    added=$((added + 1))
+                    if [[ "$1" == --skip ]]; then _CI_SKIP+=("$step"); else _CI_ONLY+=("$step"); fi
                 done
+                if [[ "$added" -eq 0 ]]; then
+                    _ci_reject "$EXIT_CONFIG_ERROR" "$1 requires at least one check name"
+                    exit
+                fi
                 shift 2 ;;
             --draft|--dry-run|--force) pr_args+=("$1"); shift ;;
             --base|--branch|--remote|--repo)
                 [[ $# -ge 2 ]] || { _ci_reject "$EXIT_CONFIG_ERROR" "$1 requires a value"; exit; }
                 pr_args+=("$1" "$2"); shift 2 ;;
             -h|--help)
-                echo "Usage: speed ci [--skip CHECK[,CHECK]] | speed ci init [--force] | speed ci --pr [--draft] [--dry-run] [--base B] [--branch B]"
+                echo "Usage: speed ci [--skip CHECKS | --only CHECKS] [--list] | speed ci init [--force] | speed ci --pr [--draft] [--dry-run] [--base B] [--branch B] | speed ci merge DIR..."
                 exit 0 ;;
             *) _ci_reject "$EXIT_CONFIG_ERROR" "Unknown ci option: $1"; exit ;;
         esac
     done
     _ci_settings || exit
+    _ci_check_names --skip "${_CI_SKIP[@]+"${_CI_SKIP[@]}"}" || exit
+    _ci_check_names --only "${_CI_ONLY[@]+"${_CI_ONLY[@]}"}" || exit
+    if [[ ${#_CI_SKIP[@]} -gt 0 && ${#_CI_ONLY[@]} -gt 0 ]]; then
+        _ci_reject "$EXIT_CONFIG_ERROR" "Use --skip or --only, not both"
+        exit
+    fi
+    if [[ "$list" == true ]]; then
+        printf '%s\n' "${_CI_AVAILABLE[@]}"
+        if [[ "${JSON_OUTPUT:-false}" == true ]]; then
+            printf '%s\n' "${_CI_AVAILABLE[@]}" | jq -R . | jq -sc '{checks:.}' >&3
+        fi
+        exit 0
+    fi
     if [[ -z "${_TIMEOUT_CMD:-}" ]]; then
         log_warn "Neither timeout nor gtimeout is installed, so [ci] command_timeout cannot be enforced"
     fi
@@ -1022,8 +1280,8 @@ cmd_ci() (
     fi
     if [[ "$pr" == true ]]; then
         # A PR status must describe every check, so nothing can be left out.
-        if [[ ${#_CI_SKIP[@]} -gt 0 ]]; then
-            _ci_reject "$EXIT_CONFIG_ERROR" "--skip cannot be used with --pr; the PR status must cover every check"
+        if [[ ${#_CI_SKIP[@]} -gt 0 || ${#_CI_ONLY[@]} -gt 0 ]]; then
+            _ci_reject "$EXIT_CONFIG_ERROR" "--skip and --only cannot be used with --pr; the PR status must cover every check"
             exit
         fi
         _ci_pr "${pr_args[@]+"${pr_args[@]}"}"
