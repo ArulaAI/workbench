@@ -1838,3 +1838,23 @@ def test_sonarqube_reads_its_token_from_token_file(project, tmp_path):
         assert missing.returncode == 2 and "SONAR_TOKEN is not set" in step(project.report(), "sonarqube")["summary"]
     finally:
         sonar.close()
+
+
+def test_a_feature_with_no_tasks_is_skipped_not_failed(project):
+    feature = project.root / ".speed/features/empty"
+    (feature / "tasks").mkdir(parents=True)
+    (feature / "state.json").write_text(json.dumps({"status": "idle"}))
+    project.commit()
+    assert project.run().returncode == 0
+    assert step(project.report(), "eval")["features"][0] == {"feature": "empty", "status": "skipped",
+                                                             "reason": "No tasks yet"}
+
+
+def test_a_link_with_a_colon_and_at_sign_is_not_a_database_url(project):
+    (project.root / "page.html").write_text(
+        '<link href="https://fonts.googleapis.com/css2?family=Serif+4:opsz,wght@8..60,300&display=swap">\n')
+    (project.root / "config.py").write_text('CACHE = "redis://:hunter2pw@cache.internal:6379/0"\n')
+    project.commit()
+    assert project.run("--only", "secrets").returncode == 2
+    findings = step(project.report(), "secrets")["findings"]
+    assert [(f["pattern"], f["file"]) for f in findings] == [("Database URL", "config.py")]

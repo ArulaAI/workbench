@@ -617,10 +617,10 @@ _ci_eval_step() {
             status=fail; reason="Feature ${feature} could not be loaded"
         elif [[ "$statuses" == invalid ]]; then
             status=fail; reason="A task file of ${feature} is not valid JSON with a status"
-        elif [[ -n "$(tr ',' '\n' <<< "$statuses" | grep -v '^$' | grep -vxE 'pending|running|done|failed|blocked' || true)" ]]; then
-            status=fail; reason="A task of ${feature} has an unknown status (${statuses%,})"
         elif [[ "$statuses" == none ]]; then
             status=skipped; reason="No tasks yet"
+        elif [[ -n "$(tr ',' '\n' <<< "$statuses" | grep -v '^$' | grep -vxE 'pending|running|done|failed|blocked' || true)" ]]; then
+            status=fail; reason="A task of ${feature} has an unknown status (${statuses%,})"
         elif [[ ",${statuses}" == *",failed,"* || ",${statuses}" == *",blocked,"* ]]; then
             status=fail; reason="Some tasks are failed or blocked (${statuses%,})"
         elif [[ "$statuses" != "done," ]]; then

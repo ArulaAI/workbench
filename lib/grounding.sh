@@ -1544,7 +1544,7 @@ _secrets_pattern_pairs() {
         "Generic API Key" "['\"]sk-[a-zA-Z0-9]{20,}['\"]" \
         "Private Key Header" '-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----' \
         "Generic High-Entropy Secret" "['\"][A-Za-z0-9+/=]{40,}['\"]" \
-        "Database URL" '[a-z]+://[^:]+:[^@]+@[^/]+'
+        "Database URL" '[a-z][a-z0-9+.-]*://[^:/?#@[:space:]]*:[^@/?#[:space:]]+@[^/[:space:]]+'
 }
 
 grounding_check_secrets() {
