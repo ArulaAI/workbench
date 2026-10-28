@@ -1453,6 +1453,80 @@ _ci_features_awaiting_pr() {
     return 0
 }
 
+# [ci] pull_request = "branch": check the current branch where it is, then push it and open or
+# update its pull request into the main branch, posting the result as a commit status.
+_ci_branch_pr() {
+    local branch base remote="origin" repo
+    branch=$(_git symbolic-ref -q --short HEAD)
+    base=$(git_main_branch)
+    if ! _git remote get-url "$remote" > /dev/null 2>&1; then
+        _ci_reject "$EXIT_CONFIG_ERROR" "Git remote not found: ${remote}"
+        return
+    fi
+    repo=$(_ci_github_repo "$(_git config --get "remote.${remote}.url")" || true)
+    if [[ -z "$repo" ]]; then
+        _ci_reject "$EXIT_CONFIG_ERROR" "Remote ${remote} is not a GitHub repository"
+        return
+    fi
+    if ! command -v gh > /dev/null 2>&1 || ! gh auth status > /dev/null 2>&1; then
+        _ci_reject "$EXIT_CONFIG_ERROR" "gh must be installed and logged in ('gh auth login') to open the PR"
+        return
+    fi
+    # Uncommitted work would be checked here but missing from the PR, so the status would lie.
+    if [[ -n "$(_git status --porcelain --untracked-files=no -- . ':(exclude).speed' 2>/dev/null)" ]]; then
+        _ci_reject "$EXIT_CONFIG_ERROR" "Commit or stash your changes first: the PR can only describe committed work"
+        return
+    fi
+    echo -e "${BOLD}SPEED CI${RESET}  (no model calls)"
+    local checks_rc=0
+    SPEED_CI_REQUIRE_CLEAN=1 SPEED_CI_PR_MODE=1 _ci_run_checks || checks_rc=$?
+    local report="${_CI_DIR}/report.json"
+    if [[ "$checks_rc" -eq "$EXIT_CONFIG_ERROR" || ! -f "$report" ]]; then
+        return "$EXIT_CONFIG_ERROR"
+    fi
+    local sha state description context="${TOML_CI_STATUS_CONTEXT:-speed/ci}" draft=false
+    sha=$(_git rev-parse HEAD)
+    if [[ "$(jq -r '.passed' "$report")" == true ]]; then
+        state=success; description="speed ci passed: $(jq -r "$_CI_COUNTS" "$report")"
+    else
+        state=failure; description="speed ci failed: $(jq -r "$_CI_COUNTS" "$report")"; draft=true
+    fi
+    local push_err
+    if ! push_err=$(_git push -q "$remote" "HEAD:refs/heads/${branch}" 2>&1); then
+        _ci_pr_line fail push "Could not push ${branch}: $(head -n 1 <<< "$push_err")"
+        _ci_result_line "$report"
+        return "$EXIT_CONFIG_ERROR"
+    fi
+    _ci_pr_line pass push "Pushed ${branch} to ${remote}"
+    local body_file="${_CI_DIR}/pr-body.md" pr_url
+    _ci_python summary "$report" > "$body_file" 2>/dev/null || echo "speed ci: ${description}" > "$body_file"
+    pr_url=$(gh pr view "$branch" --repo "$repo" --json url,state --jq 'select(.state == "OPEN") | .url' 2>/dev/null || true)
+    if [[ -n "$pr_url" ]]; then
+        gh pr edit "$branch" --repo "$repo" --body-file "$body_file" > /dev/null 2>&1 \
+            || { _ci_pr_line fail pr "gh pr edit failed for ${pr_url}"; _ci_result_line "$report"; return "$EXIT_CONFIG_ERROR"; }
+        _ci_pr_line pass pr "Updated ${pr_url}"
+    else
+        local -a create=(gh pr create --repo "$repo" --base "$base" --head "$branch"
+                         --title "${branch}" --body-file "$body_file")
+        [[ "$draft" == true ]] && create+=(--draft)
+        if ! pr_url=$("${create[@]}" 2>/dev/null | tail -n 1) || [[ -z "$pr_url" ]]; then
+            _ci_pr_line fail pr "gh pr create failed for ${branch} into ${base}"
+            _ci_result_line "$report"
+            return "$EXIT_CONFIG_ERROR"
+        fi
+        _ci_pr_line pass pr "Opened ${pr_url}$([[ "$draft" == true ]] && echo " (draft)")"
+    fi
+    if ! gh api --method POST "repos/${repo}/statuses/${sha}" -f state="$state" -f context="$context" \
+            -f description="${description:0:140}" -f target_url="$pr_url" > /dev/null 2>&1; then
+        _ci_pr_line fail status "Could not post the ${context} status to ${sha:0:12}"
+        _ci_result_line "$report"
+        return "$EXIT_CONFIG_ERROR"
+    fi
+    _ci_pr_line pass status "Posted ${context}: ${state} on ${sha:0:12}"
+    _ci_result_line "$report"
+    [[ "$state" == success ]] || return "$EXIT_GATE_FAILURE"
+}
+
 # ── Entry point ────────────────────────────────────────────────────────────────
 
 cmd_ci() (
@@ -1570,7 +1644,19 @@ cmd_ci() (
     # [ci] pull_request = true: on a developer's machine, a full run also opens or updates the
     # PR of each finished feature, exactly as speed ci --pr does. Never inside CI, where the
     # run is itself checking a PR, and never for a partial run.
-    if [[ "$(jq -r '.pull_request' <<< "$_CI_CONFIG")" == true && "${GITHUB_ACTIONS:-}" != true \
+    local pr_mode
+    pr_mode=$(jq -r '.pull_request' <<< "$_CI_CONFIG")
+    # [ci] pull_request = "branch": the work is already on this branch, so a full run on a
+    # developer's machine checks it, pushes it and opens or updates its PR into the main branch.
+    if [[ "$pr_mode" == branch && "${GITHUB_ACTIONS:-}" != true && "${CI:-}" != true \
+            && ${#_CI_SKIP[@]} -eq 0 && ${#_CI_ONLY[@]} -eq 0 ]] \
+            && [[ -n "$(_git symbolic-ref -q --short HEAD 2>/dev/null)" \
+                  && "$(_git symbolic-ref -q --short HEAD)" != "$(git_main_branch)" ]]; then
+        local branch_rc=0
+        _ci_branch_pr || branch_rc=$?
+        exit "$branch_rc"
+    fi
+    if [[ "$pr_mode" == feature && "${GITHUB_ACTIONS:-}" != true \
             && "${CI:-}" != true && ${#_CI_SKIP[@]} -eq 0 && ${#_CI_ONLY[@]} -eq 0 ]]; then
         local -a waiting=()
         while IFS= read -r feature; do

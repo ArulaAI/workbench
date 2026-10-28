@@ -1800,7 +1800,7 @@ def test_pull_request_must_be_true_or_false(project):
     project.toml("[ci]\npull_request = \"yes\"\n")
     project.commit()
     result = project.run()
-    assert result.returncode == 3 and "pull_request must be true or false" in result.stderr
+    assert result.returncode == 3 and 'pull_request must be true, false or "branch"' in result.stderr
 
 
 def test_a_localhost_sonarqube_is_skipped_inside_ci(project):
@@ -1858,3 +1858,35 @@ def test_a_link_with_a_colon_and_at_sign_is_not_a_database_url(project):
     assert project.run("--only", "secrets").returncode == 2
     findings = step(project.report(), "secrets")["findings"]
     assert [(f["pattern"], f["file"]) for f in findings] == [("Database URL", "config.py")]
+
+
+def test_branch_pull_request_checks_pushes_and_opens_the_pr_for_the_current_branch(project, feature_branches, tmp_path):
+    project.toml('[ci]\npull_request = "branch"\n')
+    project.commit()
+    project.git("push", "-q", "origin", "main")
+    project.git("checkout", "-q", "-b", "feature-x")
+    (project.root / "extra.py").write_text("X = 1\n")
+    project.commit("feature work")
+    local = {"CI": "", "GITHUB_ACTIONS": ""}
+    result = project.run(extra_env=local)
+    assert result.returncode == 0, result.stdout + result.stderr
+    lines = [line.split()[1] for line in result.stdout.splitlines() if line.startswith("  ")]
+    assert lines[-4:] == ["clean-tree", "push", "pr", "status"]
+    assert result.stdout.strip().splitlines()[-1].startswith("PASSED")
+    pushed = subprocess.check_output(["git", "-C", str(feature_branches), "rev-parse", "feature-x"], text=True).strip()
+    assert pushed == project.git("rev-parse", "HEAD")
+    create = next(call for call in gh_calls(tmp_path) if call.startswith("pr create"))
+    assert "--base main" in create and "--head feature-x" in create and "--draft" not in create
+    status = next(call for call in gh_calls(tmp_path) if call.startswith("api"))
+    assert f"statuses/{pushed}" in status and "state=success" in status
+    # On the main branch, in CI, or with uncommitted work it does not push or open a PR.
+    project.git("checkout", "-q", "main")
+    writes = lambda: [c for c in gh_calls(tmp_path) if not c.startswith("auth status")]
+    before = len(writes())
+    assert "  ✓ pr" not in project.run(extra_env=local).stdout
+    project.git("checkout", "-q", "feature-x")
+    assert "  ✓ pr" not in project.run(extra_env={"CI": "true", "GITHUB_ACTIONS": "true"}).stdout
+    (project.root / "app.py").write_text("def add(a, b):\n    return a + b  # edited\n")
+    dirty = project.run(extra_env=local)
+    assert dirty.returncode == 3 and "Commit or stash" in dirty.stderr
+    assert len(writes()) == before
