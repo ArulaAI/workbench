@@ -1776,6 +1776,8 @@ def test_pull_request_setting_makes_a_plain_run_open_the_pr(project, feature_bra
     assert "  ✓ pr" in result.stdout and "Opened https://github.com/acme/shop/pull/7" in result.stdout
     assert result.stdout.strip().splitlines()[-1].startswith("PASSED")
     assert any(call.startswith("pr create") for call in gh_calls(tmp_path))
+    kept = json.loads((project.root / ".speed/ci/pr/shop/report.json").read_text())
+    assert kept["passed"] is True and (project.root / ".speed/ci/pr/shop/pr-body.md").is_file()
     # Inside CI, and for a partial run, it only checks.
     for env, args in (({"GITHUB_ACTIONS": "true", "CI": "true"}, ()), (local, ("--skip", "e2e"))):
         before = len(gh_calls(tmp_path))

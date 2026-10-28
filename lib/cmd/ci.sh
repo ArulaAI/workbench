@@ -1324,16 +1324,19 @@ _ci_pr() {
     fi
     # Keep the report and logs in the user's project, where speed ci always writes them.
     # This run holds the project's lock, so only its own lock entry is kept.
-    find "$_CI_DIR" -mindepth 1 -maxdepth 1 ! -name .lock -exec rm -rf {} +
+    # pr/ keeps each feature's last PR report, so a run for several features loses none.
+    find "$_CI_DIR" -mindepth 1 -maxdepth 1 ! -name .lock ! -name pr -exec rm -rf {} +
     rm -rf "${check_root}/.speed/ci/.lock"
     cp -R "${check_root}/.speed/ci/." "$_CI_DIR/"
     report="${_CI_DIR}/report.json"
+    mkdir -p "${_CI_DIR}/pr/${feature}"
     local sha passed
     sha=$(git -C "$_CI_WORKTREE" rev-parse HEAD)
     passed=$(jq -r '.passed' "$report")
 
     local body_file="${_CI_DIR}/pr-body.md"
     _ci_pr_body "$feature" "$tasks_json" "$report" > "$body_file"
+    cp "$report" "$body_file" "${_CI_DIR}/pr/${feature}/" 2>/dev/null || true
     local state description pr_url="" title="SPEED: ${feature}"
     if [[ "$passed" == true ]]; then
         state=success; description="speed ci passed: $(jq -r "$_CI_COUNTS" "$report")"
