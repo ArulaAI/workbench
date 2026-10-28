@@ -1733,3 +1733,21 @@ def test_pr_json_output_is_one_object_with_the_pr_branch(project, feature_branch
     assert result.returncode == 0, result.stderr
     report = json.loads(result.stdout)
     assert report["passed"] is True and "speed-ci/shop" in json.dumps(report)
+
+
+def test_a_project_in_a_subdirectory_ignores_changes_outside_it(tmp_path):
+    sys.path.insert(0, str(REPO / "lib"))
+    from eval_runtime import build_snapshot
+    repo = tmp_path / "repo"
+    (repo / "demo").mkdir(parents=True)
+    (repo / "demo/app.py").write_text("X = 1\n")
+    (repo / "README.md").write_text("readme\n")
+    git = ["git", "-C", str(repo)]
+    subprocess.check_call([*git, "init", "-q", "-b", "main"])
+    subprocess.check_call([*git, "add", "-A"])
+    subprocess.check_call([*git, "-c", "user.name=T", "-c", "user.email=t@example.invalid", "commit", "-qm", "i"])
+    (repo / "README.md").write_text("edited outside the project\n")
+    assert build_snapshot(repo / "demo")["dirty"] is False
+    assert build_snapshot(repo)["dirty"] is True
+    (repo / "demo/app.py").write_text("X = 2\n")
+    assert build_snapshot(repo / "demo")["dirty"] is True

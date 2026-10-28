@@ -133,7 +133,8 @@ def build_snapshot(root: Path) -> dict:
     try:
         head = git("rev-parse", "HEAD").decode().strip()
         names = set(git("ls-files", "-c", "-o", "--exclude-standard", "-z").decode().split("\0"))
-        changed = set(git("diff", "HEAD", "--name-only", "-z").decode().split("\0"))
+        # --relative keeps a project in a subdirectory to its own files, like ls-files above.
+        changed = set(git("diff", "HEAD", "--name-only", "--relative", "-z").decode().split("\0"))
         untracked = set(git("ls-files", "-o", "--exclude-standard", "-z").decode().split("\0"))
     except (OSError, subprocess.CalledProcessError):
         return {"head_commit": None, "fingerprint": None, "dirty": True, "available": False}
