@@ -86,8 +86,12 @@ GATE_LINE = re.compile(r"^(?P<bullet>[-*+]\s*)?(?P<name>[^:]+?):\s*\S")
 RESERVED = set(BUILTIN_STEPS) | {"sonarqube", "clean-tree", "merge-jobs", "merge-commit", "report", "check"}
 # Pinned installers for tools whose default command the workflow runs.
 TOOL_INSTALL = {
-    "trivy": ["curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/v0.56.2/contrib/install.sh"
-              " | sudo sh -s -- -b /usr/local/bin v0.56.2"],
+    # Trivy removes old release files, so a pinned version is fetched directly and its checksum checked.
+    "trivy": ["cd \"$RUNNER_TEMP\"",
+              "curl -sfLO https://github.com/aquasecurity/trivy/releases/download/v0.76.1/trivy_0.76.1_Linux-64bit.tar.gz",
+              "curl -sfL https://github.com/aquasecurity/trivy/releases/download/v0.76.1/trivy_0.76.1_checksums.txt"
+              " | grep ' trivy_0.76.1_Linux-64bit.tar.gz$' | sha256sum -c -",
+              "sudo tar -xzf trivy_0.76.1_Linux-64bit.tar.gz -C /usr/local/bin trivy"],
     "gitleaks": ["curl -sfL https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz"
                  " | sudo tar -xz -C /usr/local/bin gitleaks"],
     "snyk": ["npm install -g snyk@1.1308.3"],
