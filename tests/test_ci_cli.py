@@ -1816,3 +1816,25 @@ def test_a_localhost_sonarqube_is_skipped_inside_ci(project):
         assert step(project.run(extra_env={"SONAR_TOKEN": "tok"}) and project.report(), "sonarqube")["status"] == "pass"
     finally:
         sonar.close()
+
+
+def test_sonarqube_reads_its_token_from_token_file(project, tmp_path):
+    sonar = FakeSonar("OK")
+    try:
+        sonar_project(project, sonar)
+        token = tmp_path / "sonar-token.txt"
+        token.write_text("tok-from-file\n")
+        with (project.root / "speed.toml").open("a") as handle:
+            handle.write(f'token_file = "{token}"\n')
+        project.commit()
+        result = project.run(extra_env={"SONAR_TOKEN": ""})
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert step(project.report(), "sonarqube")["status"] == "pass"
+        assert all(auth == "Basic dG9rLWZyb20tZmlsZTo=" for _, auth in sonar.requests)
+        for path in (project.root / ".speed").rglob("*"):
+            assert not path.is_file() or "tok-from-file" not in path.read_text(errors="replace"), path
+        token.unlink()
+        missing = project.run(extra_env={"SONAR_TOKEN": ""})
+        assert missing.returncode == 2 and "SONAR_TOKEN is not set" in step(project.report(), "sonarqube")["summary"]
+    finally:
+        sonar.close()

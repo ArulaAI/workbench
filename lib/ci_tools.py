@@ -172,7 +172,7 @@ def ci_config(toml_path: str) -> dict:
         if not isinstance(raw_sonar, dict):
             raise Unjudgeable("[ci.sonarqube] must be a table")
         _known_keys("[ci.sonarqube]", raw_sonar, ("host_url", "project_key", "organization", "scanner_cmd", "blocking",
-                                                  "wait_timeout", "report_task"))
+                                                  "wait_timeout", "report_task", "token_file"))
         host = str(raw_sonar.get("host_url", "")).rstrip("/")
         parsed = urllib.parse.urlparse(host)
         if parsed.scheme not in ("https", "http") or not parsed.hostname or any(c.isspace() for c in host):
@@ -198,12 +198,15 @@ def ci_config(toml_path: str) -> dict:
         if not report_task or report_task.endswith("/") or report_task.startswith("/") \
                 or ".." in Path(report_task).parts:
             raise Unjudgeable("[ci.sonarqube] report_task must be a path inside the project")
+        token_file = str(raw_sonar.get("token_file", "")).strip()
+        if any(c in token_file for c in "\n\r\0"):
+            raise Unjudgeable("[ci.sonarqube] token_file must be a file path")
         if not re.match(r"^[A-Za-z0-9_.:-]+$", key):
             raise Unjudgeable("[ci.sonarqube] project_key may hold letters, digits, '.', '_', ':' and '-'")
         sonar = {"host_url": host, "project_key": key, "report_task": report_task,
                  "organization": organization,
                  "scanner_cmd": str(raw_sonar.get("scanner_cmd", "sonar-scanner")).strip() or "sonar-scanner",
-                 "blocking": blocking == "true", "wait_timeout": int(wait)}
+                 "blocking": blocking == "true", "wait_timeout": int(wait), "token_file": token_file}
 
     codecov = None
     raw_codecov = ci.get("codecov")

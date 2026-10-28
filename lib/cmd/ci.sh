@@ -1067,6 +1067,18 @@ _ci_settings() {
         return
     fi
     _CI_MODE=$(jq -r '.security_mode' <<< "$_CI_CONFIG")
+    # [ci.sonarqube] token_file: on a developer's machine the token can live in a file, so
+    # every run need not set SONAR_TOKEN. An exported SONAR_TOKEN always wins.
+    local token_file
+    token_file=$(jq -r '.sonarqube.token_file // ""' <<< "$_CI_CONFIG")
+    if [[ -z "${SONAR_TOKEN:-}" && -n "$token_file" ]]; then
+        [[ "$token_file" == "~/"* ]] && token_file="${HOME}/${token_file#"~/"}"
+        token_file="${token_file//\$HOME/$HOME}"
+        if [[ -r "$token_file" ]]; then
+            SONAR_TOKEN=$(head -n 1 "$token_file" | tr -d '[:space:]')
+            [[ -n "$SONAR_TOKEN" ]] && export SONAR_TOKEN || unset SONAR_TOKEN
+        fi
+    fi
     # Tokens meant for scanners; project commands run without them.
     _CI_SECRET_VARS=()
     while IFS= read -r name; do
