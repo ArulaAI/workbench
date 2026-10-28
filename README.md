@@ -258,8 +258,8 @@ Shell suites run on their own: `bash tests/test_multiplayer.sh`.
 # Merge a feature's task branches, run speed ci, open a PR with a pass/fail status check
 ./speed/speed ci --pr --feature my-feature
 
-# Try every speed ci check on a generated demo project (no scanners or model needed)
-./speed/scripts/speed-ci-demo.sh ~/speed-ci-demo
+# See every speed ci check on the demo project (no scanners or model needed)
+cd ./speed/examples/speed-ci-demo && ../../speed ci
 
 # Retry a failed task with human guidance
 ./speed/speed retry --task-id 3 --context "fix the import path"
