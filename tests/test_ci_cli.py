@@ -1568,7 +1568,7 @@ def test_default_gitleaks_and_snyk_commands(project, tmp_path):
     project.commit()
     assert project.run(extra_env={"SNYK_TOKEN": "t"}).returncode == 0
     assert (tmp_path / "gitleaks-args").read_text().split() == ["detect", "--no-banner", "--redact", "--report-format",
-                                                               "json", "--report-path", "-"]
+                                                               "json", "--report-path", "-", "--log-opts=HEAD"]
     assert (tmp_path / "snyk-args").read_text().split() == ["test", "--json"]
 
 

@@ -155,7 +155,7 @@ Verifies the whole project the way a CI server should, without calling a model. 
     | Tool | Settings | Default command |
     |---|---|---|
     | Trivy | `[ci.tools.trivy]` | `trivy fs --format json --quiet --scanners vuln,misconfig,secret .` |
-    | Gitleaks | `[ci.tools.gitleaks]` | `gitleaks detect --no-banner --redact --report-format json --report-path -` |
+    | Gitleaks | `[ci.tools.gitleaks]` | `gitleaks detect --no-banner --redact --report-format json --report-path - --log-opts=HEAD` (the checked commit and its history only) |
     | Snyk | `[ci.tools.snyk]` (needs `SNYK_TOKEN`) | `snyk test --json` |
     | CodeQL or any SARIF producer | `[ci.tools.codeql]` with `format = "sarif"` and `cmd = "..."` | none |
 

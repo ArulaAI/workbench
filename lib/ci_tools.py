@@ -44,7 +44,7 @@ BUILTIN_STEPS = ("eval", "lint", "typecheck", "test", "e2e", "secrets", "sast", 
 TOOL_FORMATS = ("trivy", "gitleaks", "snyk", "sarif")
 DEFAULT_TOOL_COMMANDS = {
     "trivy": "trivy fs --format json --quiet --scanners vuln,misconfig,secret .",
-    "gitleaks": "gitleaks detect --no-banner --redact --report-format json --report-path -",
+    "gitleaks": "gitleaks detect --no-banner --redact --report-format json --report-path - --log-opts=HEAD",
     "snyk": "snyk test --json",
 }
 SERVICES = {
