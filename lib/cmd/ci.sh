@@ -62,6 +62,28 @@ _ci_record() {
     printf "  %b %-${_CI_WIDTH:-10}s %s\n" "$mark" "$1" "$summary"
 }
 
+# A speed ci --pr step (merge, push, pr, status), printed in the same block as the checks.
+_ci_pr_line() {
+    local mark
+    case "$1" in
+        pass) mark="${COLOR_SUCCESS}${SYM_CHECK}${RESET}" ;;
+        fail) mark="${COLOR_ERROR}${SYM_CROSS}${RESET}" ;;
+        *)    mark="${COLOR_DIM}-${RESET}" ;;
+    esac
+    printf "  %b %-${_CI_WIDTH:-10}s %s\n" "$mark" "$2" "$3"
+}
+
+# The closing PASSED or FAILED line for a report.
+_ci_result_line() {
+    local report="$1" summary
+    summary=$(jq -r "$_CI_COUNTS" "$report")
+    if [[ "$(jq -r '.passed' "$report")" == true ]]; then
+        echo -e "${COLOR_SUCCESS}${BOLD}PASSED${RESET}  ${summary}  (report: .speed/ci/report.json)"
+    else
+        echo -e "${COLOR_ERROR}${BOLD}FAILED${RESET}  ${summary}  (report: .speed/ci/report.json)"
+    fi
+}
+
 # 0 when the check should run; otherwise records why it does not run.
 _ci_selected() {
     local name="$1" step wanted=false
@@ -711,7 +733,8 @@ _ci_run_checks() {
     _ci_redaction_patterns > "$_CI_PATTERNS_FILE"
     local started_at
     started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-    echo -e "${BOLD}SPEED CI${RESET}  (no model calls)"
+    # speed ci --pr prints the header itself, above its merge step.
+    [[ "${SPEED_CI_PR_MODE:-}" == 1 ]] || echo -e "${BOLD}SPEED CI${RESET}  (no model calls)"
     # Evals run first, on the tree exactly as checked out: later commands can leave
     # files behind, and an evaluation must describe a clean tree.
     _ci_eval_step || true
@@ -762,13 +785,11 @@ _ci_run_checks() {
     if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
         _ci_python summary "${_CI_DIR}/report.json" >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
     fi
-    local summary
-    summary=$(jq -r "$_CI_COUNTS" "${_CI_DIR}/report.json")
+    # Under speed ci --pr the result line comes after the push, PR and status steps.
+    [[ "${SPEED_CI_PR_MODE:-}" == 1 ]] || _ci_result_line "${_CI_DIR}/report.json"
     if [[ "$(jq -r '.passed' "${_CI_DIR}/report.json")" == true ]]; then
-        echo -e "${COLOR_SUCCESS}${BOLD}PASSED${RESET}  ${summary}  (report: .speed/ci/report.json)"
         return 0
     fi
-    echo -e "${COLOR_ERROR}${BOLD}FAILED${RESET}  ${summary}  (report: .speed/ci/report.json)"
     return "$EXIT_GATE_FAILURE"
 }
 
@@ -1108,7 +1129,7 @@ _ci_check_worktree() (
     mp_is_enabled && MP_ENABLED=true
     _ci_settings || exit
     export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.excludesFile GIT_CONFIG_VALUE_0="$excludes"
-    SPEED_CI_REQUIRE_CLEAN=1 _ci_run_checks
+    SPEED_CI_REQUIRE_CLEAN=1 SPEED_CI_PR_MODE=1 _ci_run_checks
 )
 
 _ci_cleanup_worktree() {
@@ -1268,7 +1289,7 @@ _ci_pr() {
         _ci_reject "$EXIT_CONFIG_ERROR" "Could not create a worktree for ${pr_branch}: ${wt_err}"
         return
     fi
-    log_step "Assembling ${pr_branch} from ${base}"
+    echo -e "${BOLD}SPEED CI${RESET}  (no model calls)"
     local merge_err
     while IFS=$'\t' read -r task_id branch; do
         if git -C "$_CI_WORKTREE" merge-base --is-ancestor "$branch" HEAD 2>/dev/null; then
@@ -1285,7 +1306,7 @@ _ci_pr() {
             return
         fi
     done < <(jq -r '.[] | [.id, .branch] | @tsv' <<< "$tasks_json")
-    log_success "Merged ${#task_branches[@]} task branch(es) into ${pr_branch}"
+    _ci_pr_line pass merge "Merged ${#task_branches[@]} task branch(es) of ${feature} onto ${base} as ${pr_branch}"
 
     # A project in a subdirectory of the repository is checked in the same subdirectory.
     local prefix check_root
@@ -1323,15 +1344,16 @@ _ci_pr() {
     local context="${TOML_CI_STATUS_CONTEXT:-speed/ci}"
 
     if [[ "$dry_run" == true ]]; then
-        log_info "Dry run: not pushing ${pr_branch} or opening a PR (would post ${context}=${state} on ${sha:0:12})"
+        _ci_pr_line skipped push "Dry run: ${pr_branch} not pushed"
+        _ci_pr_line skipped pr "Dry run: no PR opened (would post ${context}: ${state} on ${sha:0:12})"
     else
-        log_step "Pushing ${pr_branch} to ${remote}"
         local push_err
         if ! push_err=$(git -C "$_CI_WORKTREE" push -q "--force-with-lease=refs/heads/${pr_branch}:${remote_sha}" \
                 "$remote" "HEAD:refs/heads/${pr_branch}" 2>&1); then
             _ci_reject "$EXIT_CONFIG_ERROR" "Could not push ${pr_branch} to ${remote}: $(head -n 3 <<< "$push_err" | tr '\n' ' ')"
             return
         fi
+        _ci_pr_line pass push "Pushed ${pr_branch} to ${remote}"
         # A PR into another repository names its head as OWNER:branch.
         local head="$pr_branch"
         if [[ -n "$pushed_repo" && "$(_ci_lower "$pushed_repo")" != "$(_ci_lower "$repo")" ]]; then
@@ -1346,7 +1368,7 @@ _ci_pr() {
             local -a ready=(gh pr ready "$head" --repo "$repo")
             [[ "$draft" == true ]] && ready+=(--undo)
             "${ready[@]}" > /dev/null 2>&1 || log_warn "Could not change the draft state of ${pr_url}"
-            log_success "Updated ${pr_url}"
+            _ci_pr_line pass pr "Updated ${pr_url}$([[ "$draft" == true ]] && echo " (draft)")"
         else
             local -a create=(gh pr create --repo "$repo" --base "$base" --head "$head" --title "$title"
                              --body-file "$body_file")
@@ -1355,15 +1377,16 @@ _ci_pr() {
                 _ci_reject "$EXIT_CONFIG_ERROR" "gh pr create failed after pushing ${pr_branch}; open the PR by hand or rerun"
                 return
             fi
-            log_success "Opened ${pr_url}"
+            _ci_pr_line pass pr "Opened ${pr_url}$([[ "$draft" == true ]] && echo " (draft)")"
         fi
         if ! gh api --method POST "repos/${pushed_repo:-$repo}/statuses/${sha}" -f state="$state" -f context="$context" \
                 -f description="${description:0:140}" -f target_url="$pr_url" > /dev/null 2>&1; then
             _ci_reject "$EXIT_CONFIG_ERROR" "Could not post the ${context} status to ${sha:0:12}"
             return
         fi
-        log_success "Posted ${context}: ${state}"
+        _ci_pr_line pass status "Posted ${context}: ${state} on ${sha:0:12}"
     fi
+    _ci_result_line "$report"
     if [[ "${JSON_OUTPUT:-false}" == true ]]; then
         jq --arg feature "$feature" --arg branch "$pr_branch" --arg base "$base" --arg url "$pr_url" \
             --arg state "$state" --argjson dry "$dry_run" \

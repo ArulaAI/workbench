@@ -1751,3 +1751,16 @@ def test_a_project_in_a_subdirectory_ignores_changes_outside_it(tmp_path):
     assert build_snapshot(repo)["dirty"] is True
     (repo / "demo/app.py").write_text("X = 2\n")
     assert build_snapshot(repo / "demo")["dirty"] is True
+
+
+def test_pr_steps_print_inside_the_result_block(project, feature_branches):
+    result = project.run("--pr")
+    assert result.returncode == 0, result.stdout + result.stderr
+    lines = [line.split()[1] if line.startswith("  ") else line.split()[0]
+             for line in result.stdout.splitlines() if line.strip()]
+    assert lines[0] == "SPEED" and lines[1] == "merge" and lines[-1] == "PASSED"
+    assert lines[-4:-1] == ["push", "pr", "status"]
+    assert "clean-tree" in lines and lines.count("SPEED") == 1
+    assert "Opened https://github.com/acme/shop/pull/7" in result.stdout
+    dry = project.run("--pr", "--dry-run")
+    assert "Dry run" in dry.stdout and dry.stdout.strip().splitlines()[-1].startswith("PASSED")
