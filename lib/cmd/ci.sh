@@ -515,6 +515,12 @@ _ci_sonar_step() {
     blocking=$(jq -r '.sonarqube.blocking' <<< "$_CI_CONFIG")
     wait=$(jq -r '.sonarqube.wait_timeout' <<< "$_CI_CONFIG")
     task="${PROJECT_ROOT}/$(jq -r '.sonarqube.report_task' <<< "$_CI_CONFIG")"
+    # A SonarQube on localhost runs on a developer's machine, which a CI runner cannot reach.
+    if [[ "$host" =~ ^https?://(localhost|127\.0\.0\.1|\[::1\])(:[0-9]+)?(/|$) ]] \
+            && [[ "${GITHUB_ACTIONS:-}" == true || "${CI:-}" == true ]]; then
+        _ci_record sonarqube skipped "SonarQube at ${host} is on a developer's machine; CI cannot reach it (use SonarCloud or a shared server to check in CI)" 0
+        return 0
+    fi
     if [[ -z "${SONAR_TOKEN:-}" ]]; then
         _ci_missing_secret sonarqube SONAR_TOKEN
         return

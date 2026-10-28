@@ -87,6 +87,9 @@ class Project:
         env = {key: value for key, value in os.environ.items() if not key.endswith("_API_KEY")}
         env.pop("SPEED_CI", None)
         env.pop("SPEED_AGENT_FILE", None)
+        # The tests describe a developer's machine unless a test sets these itself.
+        env.pop("CI", None)
+        env.pop("GITHUB_ACTIONS", None)
         env.update(SPEED_PROJECT_ROOT=str(self.root), SPEED_PYTHON=sys.executable, PYTHONDONTWRITEBYTECODE="1",
                    PATH=f"{self.tools}{os.pathsep}{env['PATH']}", CLAUDE_BIN=str(self.tools / "claude"),
                    GIT_AUTHOR_NAME="Tests", GIT_AUTHOR_EMAIL="tests@example.invalid",
@@ -1798,3 +1801,18 @@ def test_pull_request_must_be_true_or_false(project):
     project.commit()
     result = project.run()
     assert result.returncode == 3 and "pull_request must be true or false" in result.stderr
+
+
+def test_a_localhost_sonarqube_is_skipped_inside_ci(project):
+    sonar = FakeSonar("OK")
+    try:
+        sonar_project(project, sonar)
+        assert sonar.url.startswith(("http://127.0.0.1", "http://localhost"))
+        result = project.run(extra_env={"GITHUB_ACTIONS": "true", "CI": "true"})
+        assert result.returncode == 0, result.stdout + result.stderr
+        check = step(project.report(), "sonarqube")
+        assert check["status"] == "skipped" and "CI cannot reach it" in check["summary"]
+        assert not sonar.requests
+        assert step(project.run(extra_env={"SONAR_TOKEN": "tok"}) and project.report(), "sonarqube")["status"] == "pass"
+    finally:
+        sonar.close()
