@@ -128,6 +128,9 @@ def ci_config(toml_path: str) -> dict:
     parallel = str(ci.get("parallel", "false")).lower()
     if parallel not in ("true", "false"):
         raise Unjudgeable("[ci] parallel must be true or false")
+    pull_request = str(ci.get("pull_request", "false")).lower()
+    if pull_request not in ("true", "false"):
+        raise Unjudgeable("[ci] pull_request must be true or false")
     ignore = ci.get("ignore_gates", [])
     ignore = [ignore] if isinstance(ignore, str) else ignore
     if not isinstance(ignore, list) or not all(isinstance(item, str) and item.strip() for item in ignore):
@@ -216,6 +219,7 @@ def ci_config(toml_path: str) -> dict:
             raise Unjudgeable("[ci.codecov] files must be a plain path or comma-separated paths")
         codecov = {"files": files, "check": check}
     return {"security_mode": mode, "services": services, "parallel": parallel == "true",
+            "pull_request": pull_request == "true",
             "ignore_gates": ignore, "tools": tools, "sonarqube": sonar, "codecov": codecov}
 
 
@@ -252,7 +256,7 @@ def _gate_like_names(agent: Path) -> list[str]:
     return names
 
 
-CI_KEYS = ("security_mode", "services", "parallel", "ignore_gates", "tools", "sonarqube", "codecov",
+CI_KEYS = ("security_mode", "services", "parallel", "pull_request", "ignore_gates", "tools", "sonarqube", "codecov",
            "status_context", "command_timeout")
 
 

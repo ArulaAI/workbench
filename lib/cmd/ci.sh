@@ -1396,6 +1396,42 @@ _ci_pr() {
     return "$checks_rc"
 }
 
+# Features (or the --feature one) whose tasks are all done and that have a task branch not yet
+# in the main branch: the ones [ci] pull_request opens a PR for.
+_ci_features_awaiting_pr() {
+    local base feature task_file branch done_all has_branch
+    base=$(git_main_branch)
+    local -a features=()
+    if [[ -n "${GLOBAL_FEATURE:-}" ]]; then
+        features=("$GLOBAL_FEATURE")
+    else
+        while IFS= read -r feature; do
+            if [[ -n "$feature" ]]; then features+=("$feature"); fi
+        done < <(feature_list)
+    fi
+    local feat_root="$FEATURES_DIR"
+    [[ "${MP_ENABLED:-}" == "true" ]] && feat_root="$SHARED_FEATURES_DIR"
+    for feature in "${features[@]+"${features[@]}"}"; do
+        done_all=true has_branch=false
+        for task_file in "${feat_root}/${feature}/tasks/"*.json; do
+            [[ -f "$task_file" ]] || { done_all=false; break; }
+            if [[ "$(jq -r '.status // ""' "$task_file" 2>/dev/null)" != done ]]; then
+                done_all=false
+                break
+            fi
+            branch=$(jq -r '.branch // ""' "$task_file" 2>/dev/null)
+            if [[ -n "$branch" ]] && git_branch_exists "$branch" \
+                    && ! _git merge-base --is-ancestor "$branch" "$base" 2>/dev/null; then
+                has_branch=true
+            fi
+        done
+        if [[ "$done_all" == true && "$has_branch" == true ]]; then
+            echo "$feature"
+        fi
+    done
+    return 0
+}
+
 # ── Entry point ────────────────────────────────────────────────────────────────
 
 cmd_ci() (
@@ -1509,6 +1545,35 @@ cmd_ci() (
     if ! _git rev-parse --git-dir > /dev/null 2>&1; then
         _ci_reject "$EXIT_CONFIG_ERROR" "speed ci must run inside a git repository"
         exit
+    fi
+    # [ci] pull_request = true: on a developer's machine, a full run also opens or updates the
+    # PR of each finished feature, exactly as speed ci --pr does. Never inside CI, where the
+    # run is itself checking a PR, and never for a partial run.
+    if [[ "$(jq -r '.pull_request' <<< "$_CI_CONFIG")" == true && "${GITHUB_ACTIONS:-}" != true \
+            && "${CI:-}" != true && ${#_CI_SKIP[@]} -eq 0 && ${#_CI_ONLY[@]} -eq 0 ]]; then
+        local -a waiting=()
+        while IFS= read -r feature; do
+            if [[ -n "$feature" ]]; then waiting+=("$feature"); fi
+        done < <(_ci_features_awaiting_pr)
+        if [[ ${#waiting[@]} -gt 0 ]]; then
+            if [[ "${JSON_OUTPUT:-false}" == true && ${#waiting[@]} -gt 1 ]]; then
+                _ci_reject "$EXIT_CONFIG_ERROR" "${#waiting[@]} features are ready for a PR (${waiting[*]}); use --feature NAME with --json"
+                exit
+            fi
+            local rc=0 feature_rc
+            for feature in "${waiting[@]}"; do
+                feature_rc=0
+                # Each feature runs as its own speed ci --pr, with its own lock and report.
+                "$BASH" "$0" $([[ "${JSON_OUTPUT:-false}" == true ]] && echo --json) --feature "$feature" ci --pr \
+                    >&"$([[ "${JSON_OUTPUT:-false}" == true ]] && echo 3 || echo 1)" || feature_rc=$?
+                if [[ "$feature_rc" -eq "$EXIT_CONFIG_ERROR" || "$rc" -eq "$EXIT_CONFIG_ERROR" ]]; then
+                    rc=$EXIT_CONFIG_ERROR
+                elif [[ "$feature_rc" -ne 0 && "$rc" -eq 0 ]]; then
+                    rc=$feature_rc
+                fi
+            done
+            exit "$rc"
+        fi
     fi
     local rc=0
     _ci_run_checks || rc=$?

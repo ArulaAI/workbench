@@ -1764,3 +1764,35 @@ def test_pr_steps_print_inside_the_result_block(project, feature_branches):
     assert "Opened https://github.com/acme/shop/pull/7" in result.stdout
     dry = project.run("--pr", "--dry-run")
     assert "Dry run" in dry.stdout and dry.stdout.strip().splitlines()[-1].startswith("PASSED")
+
+
+def test_pull_request_setting_makes_a_plain_run_open_the_pr(project, feature_branches, tmp_path):
+    project.toml("[ci]\npull_request = true\n")
+    project.commit()
+    project.git("push", "-q", "origin", "main")
+    local = {"CI": "", "GITHUB_ACTIONS": ""}
+    result = project.run(extra_env=local)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "  ✓ pr" in result.stdout and "Opened https://github.com/acme/shop/pull/7" in result.stdout
+    assert result.stdout.strip().splitlines()[-1].startswith("PASSED")
+    assert any(call.startswith("pr create") for call in gh_calls(tmp_path))
+    # Inside CI, and for a partial run, it only checks.
+    for env, args in (({"GITHUB_ACTIONS": "true", "CI": "true"}, ()), (local, ("--skip", "e2e"))):
+        before = len(gh_calls(tmp_path))
+        again = project.run(*args, extra_env=env)
+        assert again.returncode == 0 and "  ✓ pr" not in again.stdout
+        assert len(gh_calls(tmp_path)) == before
+
+
+def test_pull_request_setting_without_a_finished_feature_only_checks(project):
+    project.toml("[ci]\npull_request = true\n")
+    project.commit()
+    result = project.run(extra_env={"CI": "", "GITHUB_ACTIONS": ""})
+    assert result.returncode == 0 and "  ✓ pr" not in result.stdout
+
+
+def test_pull_request_must_be_true_or_false(project):
+    project.toml("[ci]\npull_request = \"yes\"\n")
+    project.commit()
+    result = project.run()
+    assert result.returncode == 3 and "pull_request must be true or false" in result.stderr
