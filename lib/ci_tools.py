@@ -44,7 +44,7 @@ BUILTIN_STEPS = ("eval", "lint", "typecheck", "test", "e2e", "secrets", "sast", 
 TOOL_FORMATS = ("trivy", "gitleaks", "snyk", "sarif")
 DEFAULT_TOOL_COMMANDS = {
     "trivy": "trivy fs --format json --quiet --scanners vuln,misconfig,secret .",
-    "gitleaks": "gitleaks detect --no-banner --redact --report-format json --report-path /dev/stdout",
+    "gitleaks": "gitleaks detect --no-banner --redact --report-format json --report-path -",
     "snyk": "snyk test --json",
 }
 SERVICES = {
@@ -88,7 +88,7 @@ RESERVED = set(BUILTIN_STEPS) | {"sonarqube", "clean-tree", "merge-jobs", "merge
 TOOL_INSTALL = {
     "trivy": ["curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/v0.56.2/contrib/install.sh"
               " | sudo sh -s -- -b /usr/local/bin v0.56.2"],
-    "gitleaks": ["curl -sfL https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz"
+    "gitleaks": ["curl -sfL https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz"
                  " | sudo tar -xz -C /usr/local/bin gitleaks"],
     "snyk": ["npm install -g snyk@1.1308.3"],
 }
