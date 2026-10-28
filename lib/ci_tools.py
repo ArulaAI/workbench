@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -107,11 +108,16 @@ def ci_config(toml_path: str) -> dict:
     ci = data.get("ci", {}) if isinstance(data, dict) else {}
     if not isinstance(ci, dict):
         raise Unjudgeable("[ci] must be a table")
-    mode = str(ci.get("security_mode", "strict")).lower()
+    _known_keys("[ci]", ci, CI_KEYS)
+    raw_mode = ci.get("security_mode", "strict")
+    mode = str(raw_mode).lower()
     if mode not in ("strict", "report"):
-        raise Unjudgeable(f"[ci] security_mode must be strict or report, not {mode}")
+        raise Unjudgeable(f"[ci] security_mode must be strict or report, not {raw_mode!r}")
     services = ci.get("services", [])
-    services = [services] if isinstance(services, str) else list(services or [])
+    services = [services] if isinstance(services, str) else services
+    if not isinstance(services, list) or not all(isinstance(item, str) for item in services):
+        raise Unjudgeable("[ci] services must be a list of names, for example [\"postgres\"]")
+    services = list(dict.fromkeys(services))
     for service in services:
         if service not in SERVICES:
             raise Unjudgeable(f"[ci] services: unknown service {service} (known: {', '.join(SERVICES)})")
@@ -119,7 +125,12 @@ def ci_config(toml_path: str) -> dict:
     if parallel not in ("true", "false"):
         raise Unjudgeable("[ci] parallel must be true or false")
     ignore = ci.get("ignore_gates", [])
-    ignore = [ignore] if isinstance(ignore, str) else list(ignore or [])
+    ignore = [ignore] if isinstance(ignore, str) else ignore
+    if not isinstance(ignore, list) or not all(isinstance(item, str) and item.strip() for item in ignore):
+        raise Unjudgeable("[ci] ignore_gates must be a list of Quality Gates names")
+    for name in ignore:
+        if name.strip().lower() in BUILTIN_GATES:
+            raise Unjudgeable(f"[ci] ignore_gates cannot leave out '{name}', a built-in check; use --skip {name.lower()}")
 
     tools = {}
     raw_tools = ci.get("tools", {})
@@ -129,7 +140,11 @@ def ci_config(toml_path: str) -> dict:
         if not NAME.match(name) or name in RESERVED:
             raise Unjudgeable(f"[ci.tools.{name}]: tool names are lowercase letters, digits, - and _, "
                               f"and cannot be one of {', '.join(sorted(RESERVED))}")
-        settings = settings if isinstance(settings, dict) else {}
+        if not isinstance(settings, dict):
+            raise Unjudgeable(f"[ci.tools.{name}] must be a table")
+        _known_keys(f"[ci.tools.{name}]", settings, ("format", "cmd", "token_env"))
+        if any(not isinstance(value, str) for value in settings.values()):
+            raise Unjudgeable(f"[ci.tools.{name}] settings must be strings")
         fmt = str(settings.get("format", name if name in TOOL_FORMATS else "")).lower()
         if fmt not in TOOL_FORMATS:
             raise Unjudgeable(f"[ci.tools.{name}] needs format = one of {', '.join(TOOL_FORMATS)}")
@@ -149,10 +164,14 @@ def ci_config(toml_path: str) -> dict:
     if raw_sonar is not None:
         if not isinstance(raw_sonar, dict):
             raise Unjudgeable("[ci.sonarqube] must be a table")
+        _known_keys("[ci.sonarqube]", raw_sonar, ("host_url", "project_key", "organization", "scanner_cmd", "blocking",
+                                                  "wait_timeout", "report_task"))
         host = str(raw_sonar.get("host_url", "")).rstrip("/")
         parsed = urllib.parse.urlparse(host)
         if parsed.scheme not in ("https", "http") or not parsed.hostname or any(c.isspace() for c in host):
             raise Unjudgeable("[ci.sonarqube] needs host_url, for example https://sonarcloud.io")
+        if parsed.query or parsed.fragment or parsed.username or parsed.password or ";" in host:
+            raise Unjudgeable("[ci.sonarqube] host_url must be the server address only, with no query, fragment or login")
         # The token would travel in clear text over http, so only a local server may use it.
         if parsed.scheme == "http" and parsed.hostname not in ("localhost", "127.0.0.1", "::1"):
             raise Unjudgeable("[ci.sonarqube] host_url must use https (http is allowed only for localhost)")
@@ -169,7 +188,8 @@ def ci_config(toml_path: str) -> dict:
         if not wait.isdigit() or int(wait) < 1:
             raise Unjudgeable("[ci.sonarqube] wait_timeout must be a number of seconds")
         report_task = str(raw_sonar.get("report_task", ".scannerwork/report-task.txt")).strip()
-        if report_task.startswith("/") or ".." in Path(report_task).parts:
+        if not report_task or report_task.endswith("/") or report_task.startswith("/") \
+                or ".." in Path(report_task).parts:
             raise Unjudgeable("[ci.sonarqube] report_task must be a path inside the project")
         if not re.match(r"^[A-Za-z0-9_.:-]+$", key):
             raise Unjudgeable("[ci.sonarqube] project_key may hold letters, digits, '.', '_', ':' and '-'")
@@ -181,12 +201,14 @@ def ci_config(toml_path: str) -> dict:
     codecov = None
     raw_codecov = ci.get("codecov")
     if raw_codecov is not None:
-        raw_codecov = raw_codecov if isinstance(raw_codecov, dict) else {}
+        if not isinstance(raw_codecov, dict):
+            raise Unjudgeable("[ci.codecov] must be a table")
+        _known_keys("[ci.codecov]", raw_codecov, ("files", "check"))
         check = str(raw_codecov.get("check", "test")).strip() or "test"
         if not GATE_NAME.match(check):
             raise Unjudgeable("[ci.codecov] check must be the name of a check")
         files = str(raw_codecov.get("files", "")).strip()
-        if any(c in files for c in "\n\r\""):
+        if any(c in files for c in "\n\r\"$`"):
             raise Unjudgeable("[ci.codecov] files must be a plain path or comma-separated paths")
         codecov = {"files": files, "check": check}
     return {"security_mode": mode, "services": services, "parallel": parallel == "true",
@@ -210,12 +232,31 @@ def _gate_like_names(agent: Path) -> list[str]:
         if not in_section:
             in_section = bool(re.match(r"^##\s+Quality\s+Gates\s*$", line, re.I))
             continue
+        # Same boundary as read_gates: ### groups gates, any other heading ends the section.
         if heading and len(heading[1]) != 3:
             break
+        if heading:
+            continue
         match = GATE_LINE.match(line)
         if match and "://" not in match["name"]:
-            names.append((match["name"].strip(), (match["bullet"] or "").strip()))
+            raw_name = match["name"]
+            if raw_name != raw_name.rstrip() and GATE_NAME.match(raw_name.strip()):
+                # '- api : cmd' is not read as a gate; report the space rather than the name.
+                names.append((raw_name.rstrip(), (match["bullet"] or "").strip()))
+            else:
+                names.append((raw_name.strip(), (match["bullet"] or "").strip()))
     return names
+
+
+CI_KEYS = ("security_mode", "services", "parallel", "ignore_gates", "tools", "sonarqube", "codecov",
+           "status_context", "command_timeout")
+
+
+def _known_keys(section: str, table: dict, known) -> None:
+    """A misspelled setting is refused, not silently ignored."""
+    unknown = sorted(set(table) - set(known))
+    if unknown:
+        raise Unjudgeable(f"{section}: unknown setting(s) {', '.join(unknown)} (known: {', '.join(known)})")
 
 
 def custom_gates(agent_file: str, ignore: list[str], tools: list[str]) -> dict:
@@ -235,6 +276,9 @@ def custom_gates(agent_file: str, ignore: list[str], tools: list[str]) -> dict:
             problems.append(f"'{name}' uses a '{bullet}' bullet; only '- {plain}: command' lines run")
         elif plain != name:
             problems.append(f"'{name}' must be written without backticks or bold, as '- {plain}: command'")
+        elif GATE_NAME.match(name) or (len(name) > 40 and re.match(r"^[A-Za-z][A-Za-z0-9_-]*$", name)):
+            problems.append(f"'{name}' is longer than 40 characters" if len(name) > 40
+                            else f"'{name}' has a space before ':'; write '- {name}: command'")
         else:
             problems.append(f"'{name}' is not a valid check name (letters, digits, - and _, starting with a letter)")
     for row in read_gates(Path(agent_file)):
@@ -279,8 +323,9 @@ def _sarif_rule(result: dict, run: dict) -> dict:
     index = reference.get("index", result.get("ruleIndex"))
     component = (reference.get("toolComponent") or {}).get("index")
     if isinstance(index, int):
-        source = components[component + 1] if isinstance(component, int) and component + 1 < len(components) \
-            else driver
+        if isinstance(component, int) and not 0 <= component + 1 < len(components):
+            return {"properties": {"security-severity": "unknown"}}
+        source = components[component + 1] if isinstance(component, int) else driver
         rules = source.get("rules") or []
         if 0 <= index < len(rules) and isinstance(rules[index], dict):
             return rules[index]
@@ -295,10 +340,13 @@ def _sarif_rule(result: dict, run: dict) -> dict:
 def _sarif_severity(result: dict, rule: dict) -> str:
     score = (result.get("properties") or {}).get("security-severity") or \
         (rule.get("properties") or {}).get("security-severity")
-    try:
-        score = float(score)
-    except (TypeError, ValueError):
-        score = None
+    if score is not None:
+        try:
+            score = float(score)
+        except (TypeError, ValueError):
+            return "unknown"
+        if math.isnan(score) or math.isinf(score):
+            return "unknown"
     if score is not None:
         return "critical" if score >= 9 else "high" if score >= 7 else "medium" if score >= 4 else "low"
     level = result.get("level") or ((rule.get("defaultConfiguration") or {}).get("level")) or "warning"
@@ -372,6 +420,12 @@ def parse_tool(fmt: str, data) -> list[dict]:
             if not isinstance(run, dict):
                 raise Unjudgeable("not SARIF (a run is not an object)")
             for result in run.get("results") or []:
+                if not isinstance(result, dict) or result.get("kind", "fail") in ("pass", "notApplicable", "informational"):
+                    continue
+                suppressions = result.get("suppressions") or []
+                if suppressions and all(isinstance(item, dict) and item.get("status", "accepted") == "accepted"
+                                        for item in suppressions):
+                    continue
                 rule = _sarif_rule(result, run)
                 location = ((result.get("locations") or [{}])[0].get("physicalLocation") or {})
                 findings.append({"severity": _sarif_severity(result, rule), "rule": result.get("ruleId") or rule.get("id"),
@@ -400,14 +454,18 @@ class _Transient(Unjudgeable):
 _OPENER = urllib.request.build_opener(_NoRedirect)
 
 
-def _sonar_get(host: str, path: str, params: dict, token: str) -> dict:
+def _sonar_get(host: str, path: str, params: dict, token: str, deadline: float | None = None) -> dict:
     url = f"{host}{path}?{urllib.parse.urlencode(params)}"
     request = urllib.request.Request(url)
     # A SonarQube token is sent as the user name with an empty password; this works on every version.
     request.add_header("Authorization", "Basic " + base64.b64encode(f"{token}:".encode()).decode())
     try:
-        with _OPENER.open(request, timeout=30) as response:
-            return json.loads(response.read().decode())
+        limit = 30 if deadline is None else max(1, min(30, deadline - time.monotonic()))
+        with _OPENER.open(request, timeout=limit) as response:
+            body = json.loads(response.read().decode())
+            if not isinstance(body, dict):
+                raise ValueError("not an object")
+            return body
     except urllib.error.HTTPError as error:
         kind = _Transient if error.code >= 500 or error.code == 429 else Unjudgeable
         raise kind(f"SonarQube {path} answered HTTP {error.code}") from error
@@ -434,7 +492,9 @@ def sonar_wait(host: str, report_task: str, timeout: int) -> dict:
     deadline = time.monotonic() + timeout
     while True:
         try:
-            status = _sonar_get(host, "/api/ce/task", {"id": task_id}, token).get("task", {})
+            status = _sonar_get(host, "/api/ce/task", {"id": task_id}, token, deadline).get("task") or {}
+            if not isinstance(status, dict):
+                raise Unjudgeable("SonarQube /api/ce/task answered an unexpected shape")
         except _Transient:
             if time.monotonic() >= deadline:
                 raise
@@ -452,7 +512,9 @@ def sonar_wait(host: str, report_task: str, timeout: int) -> dict:
     while True:
         try:
             gate = _sonar_get(host, "/api/qualitygates/project_status", {"analysisId": status["analysisId"]},
-                              token).get("projectStatus", {})
+                              token, deadline).get("projectStatus") or {}
+            if not isinstance(gate, dict):
+                raise Unjudgeable("SonarQube /api/qualitygates/project_status answered an unexpected shape")
             break
         except _Transient:
             if time.monotonic() >= deadline:
@@ -465,24 +527,75 @@ def sonar_wait(host: str, report_task: str, timeout: int) -> dict:
             "failed_conditions": failed}
 
 
-def redact(path: str, patterns: list[tuple[str, str]]) -> None:
-    """Replace every secret-pattern match in a log with [redacted]."""
+POSIX_CLASSES = {"[:upper:]": "A-Z", "[:lower:]": "a-z", "[:digit:]": "0-9", "[:alpha:]": "A-Za-z",
+                 "[:alnum:]": "A-Za-z0-9", "[:space:]": "\\s", "[:xdigit:]": "0-9A-Fa-f",
+                 "[:punct:]": "!-/:-@\\[-`{-~"}
+NOT_KEPT = "This text was not kept: a [security] secrets_patterns entry could not be applied to it."
+
+
+def _redaction_patterns(lines: list[str]) -> list[str]:
+    """Regexes from 'name<TAB>regex' lines; '=literal<TAB>value' lines are exact secret values."""
+    patterns = []
+    for line in lines:
+        name, _, value = line.partition("\t")
+        if not value:
+            continue
+        if name == "=literal":
+            if len(value) >= 4:
+                patterns.append(re.escape(value))
+            continue
+        for posix, replacement in POSIX_CLASSES.items():
+            value = value.replace(posix, replacement)
+        patterns.append(value)
+    return patterns
+
+
+def redact_text(text: str, patterns: list[str]) -> str:
+    for regex in patterns:
+        try:
+            text = re.sub(regex, "[redacted]", text)
+        except re.error:
+            return NOT_KEPT
+    return text
+
+
+def _redact_value(value, patterns: list[str]):
+    if isinstance(value, str):
+        return redact_text(value, patterns)
+    if isinstance(value, list):
+        return [_redact_value(item, patterns) for item in value]
+    if isinstance(value, dict):
+        return {key: _redact_value(item, patterns) for key, item in value.items()}
+    return value
+
+
+def redact(path: str, patterns: list[str]) -> None:
+    """Replace every secret-pattern match in a file with [redacted]. JSON is redacted value by
+    value, because some patterns include the quotes that delimit JSON strings."""
     try:
         text = Path(path).read_text(encoding="utf-8", errors="replace")
     except OSError:
         return
-    posix = {"[:upper:]": "A-Z", "[:lower:]": "a-z", "[:digit:]": "0-9", "[:alpha:]": "A-Za-z",
-             "[:alnum:]": "A-Za-z0-9", "[:space:]": "\\s", "[:xdigit:]": "0-9A-Fa-f", "[:punct:]": "!-/:-@\\[-`{-~"}
-    for _, regex in patterns:
-        for name, replacement in posix.items():
-            regex = regex.replace(name, replacement)
+    if path.endswith((".json", ".sarif")):
         try:
-            text = re.sub(regex, "[redacted]", text)
-        except re.error:
-            # A pattern SPEED cannot apply here could leave a secret in the log, so drop the log.
-            text = "This log was not kept: a [security] secrets_patterns entry could not be applied to it.\n"
-            break
-    Path(path).write_text(text, encoding="utf-8")
+            data = json.loads(text)
+        except ValueError:
+            data = None
+        if data is not None:
+            cleaned = _redact_value(data, patterns)
+            if cleaned != data:
+                Path(path).write_text(json.dumps(cleaned, indent=2) + "\n", encoding="utf-8")
+            return
+    cleaned = redact_text(text, patterns)
+    if cleaned != text:
+        Path(path).write_text(cleaned + ("\n" if cleaned == NOT_KEPT else ""), encoding="utf-8")
+
+
+def redact_tree(directory: str, patterns: list[str]) -> None:
+    """Redact every text file speed ci wrote: reports, findings, SARIF, JUnit, logs and summaries."""
+    for path in Path(directory).rglob("*"):
+        if path.is_file() and not path.is_symlink() and path.stat().st_size < 20_000_000 and path.name != "pid":
+            redact(str(path), patterns)
 
 
 # ── Reports ────────────────────────────────────────────────────────────────────
@@ -533,12 +646,20 @@ def sarif(ci_dir: str) -> dict:
             if uri:
                 region = {"startLine": int(item["line"])} if item.get("file") and str(item.get("line", "")).isdigit() \
                     and int(item["line"]) > 0 else {}
-                result["locations"] = [{"physicalLocation": {"artifactLocation": {"uri": uri},
+                result["locations"] = [{"physicalLocation": {"artifactLocation": {"uri": urllib.parse.quote(uri, safe="/")},
                                                              **({"region": region} if region else {})}}]
             results.append(result)
         runs.append({"tool": {"driver": {"name": f"speed-ci/{check}", "rules": list(rules.values())}},
                      "automationDetails": {"id": f"speed-ci/{check}/"}, "results": results})
     return {"$schema": "https://json.schemastore.org/sarif-2.1.0.json", "version": "2.1.0", "runs": runs}
+
+
+CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def _one_line(text) -> str:
+    """Text for a table cell or an XML attribute: no control characters, no line breaks."""
+    return CONTROL.sub("", " ".join(str(text or "").split()))
 
 
 def junit(report: dict) -> str:
@@ -551,7 +672,7 @@ def junit(report: dict) -> str:
              f'time="{total_time}">']
     for step in steps:
         head = f'  <testcase classname="speed-ci" name={quoteattr(step["name"])} time="{step.get("duration_s", 0)}"'
-        summary = step.get("summary", "")
+        summary = _one_line(step.get("summary", ""))
         if step.get("status") == "fail":
             lines += [head + ">", f"    <failure message={quoteattr(summary)}>{escape(summary)}</failure>", "  </testcase>"]
         elif step.get("status") == "skipped":
@@ -568,13 +689,13 @@ def summary_markdown(report: dict) -> str:
     totals = report.get("summary", {})
     verdict = "Passed" if report.get("passed") else "Failed"
     lines = [f"## speed ci: {verdict}", "",
-             f"{totals.get('pass', 0)} passed, {totals.get('fail', 0)} failed, {totals.get('warn', 0)} warnings, "
+             f"{totals.get('pass', 0)} passed, {totals.get('fail', 0)} failed, {totals.get('warn', 0)} warning(s), "
              f"{totals.get('skipped', 0)} skipped. Commit `{report.get('commit', '')[:12]}`. No model calls.", "",
              "| Check | Result | Detail |", "|---|---|---|"]
     for step in report.get("steps", []):
-        detail = str(step.get("summary", "")).replace("|", "/")
+        detail = _one_line(step.get("summary", "")).replace("|", "/")
         if step.get("dashboard_url"):
-            detail += f" ([dashboard]({step['dashboard_url']}))"
+            detail += f" ([dashboard]({urllib.parse.quote(str(step['dashboard_url']), safe=':/?=&#%')}))"
         lines.append(f"| {step['name']} | {marks.get(step.get('status'), '')} {step.get('status')} | {detail} |")
     return "\n".join(lines) + "\n"
 
@@ -604,6 +725,9 @@ def _read_report(directory: str):
 def merge(out_dir: str, dirs: list[str]) -> int:
     """Combine reports from parallel jobs. A check's result comes from the job that ran it;
     when more than one job reports it, the most severe result counts."""
+    target = Path(out_dir).resolve()
+    if any(Path(directory).resolve() == target for directory in dirs):
+        raise Unjudgeable("a job directory cannot also be where the combined report is written")
     chosen, order, sarif_runs, commits, branches, started, finished = {}, [], [], set(), set(), [], []
     missing = []
     for directory in dirs:
@@ -661,6 +785,9 @@ def _q(value: str) -> str:
 
 def workflow(settings: dict) -> str:
     main, repo, ref = settings["main_branch"], settings["speed_repository"], settings["speed_ref"]
+    for label, value in (("main branch", main), ("SPEED repository", repo), ("SPEED ref", ref)):
+        if not re.match(r"^[A-Za-z0-9_./-]+$", str(value)):
+            raise Unjudgeable(f"the {label} {value!r} cannot be written into a workflow")
     setup = settings.get("project_setup", "")
     config = settings["config"]
     checks = settings.get("checks", [])
@@ -761,8 +888,6 @@ def workflow(settings: dict) -> str:
         "          sudo apt-get update -qq && sudo apt-get install -y -qq jq",
         "          python -m venv \"$RUNNER_TEMP/speed/.venv\"",
         "          \"$RUNNER_TEMP/speed/.venv/bin/pip\" install -q -r \"$RUNNER_TEMP/speed/requirements.txt\"",
-        "          npm install -g tree-sitter-cli",
-        "          (cd \"$RUNNER_TEMP/speed\" && ./scripts/build-grammars.sh)",
         "          echo \"SPEED_PYTHON=$RUNNER_TEMP/speed/.venv/bin/python3\" >> \"$GITHUB_ENV\"",
         "          echo \"$RUNNER_TEMP/speed\" >> \"$GITHUB_PATH\"",
         "",
@@ -890,8 +1015,13 @@ def main(argv: list[str]) -> int:
                 raise Unjudgeable("the tool printed more than one JSON document")
             Path(out).write_text(json.dumps(parse_tool(fmt, data)), encoding="utf-8")
         elif command == "redact":
-            pairs = [tuple(line.split("\t", 1)) for line in sys.stdin.read().splitlines() if "\t" in line]
-            redact(args[0], pairs)
+            redact(args[0], _redaction_patterns(sys.stdin.read().splitlines()))
+        elif command == "redact-tree":
+            redact_tree(args[0], _redaction_patterns(sys.stdin.read().splitlines()))
+        elif command == "redact-text":
+            # Patterns come from the file named in args[0]; the text from stdin.
+            patterns = _redaction_patterns(Path(args[0]).read_text(encoding="utf-8").splitlines())
+            sys.stdout.write(redact_text(sys.stdin.read(), patterns))
         elif command == "sonar-wait":
             print(json.dumps(sonar_wait(args[0], args[1], int(args[2]))))
         elif command == "sarif":
@@ -908,7 +1038,9 @@ def main(argv: list[str]) -> int:
             fail(f"unknown command: {command}")
     except Unjudgeable as error:
         fail(str(error))
-    except (IndexError, ValueError, KeyError, TypeError) as error:
+    except (IndexError, ValueError, KeyError, TypeError, AttributeError) as error:
+        fail(f"{command}: unexpected input ({type(error).__name__}: {str(error)[:200]})")
+    except OSError as error:
         fail(f"{command}: {error}")
     return 0
 

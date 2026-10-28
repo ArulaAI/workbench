@@ -33,8 +33,11 @@ def read_gates(agent: Path) -> list[dict[str, str]]:
             break
         match = re.match(r"^(?:-\s*)?([A-Za-z_][A-Za-z_0-9-]*):\s*(.+)$", line)
         if match:
-            gates.append({"gate": match[1], "subsystem": subsystem,
-                          "command": match[2].strip().strip("`")})
+            command = match[2].strip()
+            # `cmd` written as one code span is the command; backticks inside are shell syntax.
+            if len(command) > 1 and command[0] == command[-1] == "`" and command.count("`") == 2:
+                command = command[1:-1]
+            gates.append({"gate": match[1], "subsystem": subsystem, "command": command})
     return gates
 
 

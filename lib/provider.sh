@@ -26,7 +26,11 @@ require_timeout_cmd() {
 }
 
 # Fail fast at source time — don't wait until the first agent call
-require_timeout_cmd || exit "$EXIT_CONFIG_ERROR"
+if ! require_timeout_cmd; then
+    declare -F _speed_ci_startup_failed > /dev/null \
+        && _speed_ci_startup_failed "timeout or gtimeout is not installed (GNU coreutils)"
+    exit "$EXIT_CONFIG_ERROR"
+fi
 
 # ── JSON extraction from agent output ────────────────────────────
 # Agent output is free-form text that may contain JSON. This function

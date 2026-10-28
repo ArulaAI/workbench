@@ -14,7 +14,7 @@
 #   status                  Show SPEED state and progress
 #   coherence [--resolve]    Check cross-task consistency before integration
 #   integrate               Merge completed branches into main
-#   ci [init|--pr]          Run every check without model calls; set up GitHub Actions; open a PR
+#   ci [init|--pr|merge]    Run every check without model calls; set up GitHub Actions; open a PR
 #   review [--task-id ID]   Run code review on completed tasks
 #   define feature|defects  Review findings or the defect portfolio
 #   defect <spec-file>      Run full defect pipeline (triage → fix → review)
@@ -71,6 +71,17 @@ for _speed_arg in "$@"; do
     esac
 done
 unset _speed_skip_next _speed_arg
+# A startup check that fails under `speed --json ci` still prints the JSON error object.
+_SPEED_JSON=0
+for _speed_arg in "$@"; do
+    [[ "$_speed_arg" == --json ]] && _SPEED_JSON=1
+done
+unset _speed_arg
+_speed_ci_startup_failed() {
+    if [[ "${SPEED_CI:-}" == 1 && "${_SPEED_JSON:-0}" == 1 ]]; then
+        printf '{"passed":false,"error":"%s","exit_code":3,"steps":[]}\n' "$1"
+    fi
+}
 # config.sh exports the agent file it detects; remember whether the user chose one.
 _SPEED_USER_AGENT_FILE="${SPEED_AGENT_FILE:-}"
 
@@ -162,9 +173,11 @@ speed_help() {
     echo -e "    ${COLOR_STEP}security${RESET} [--create-defects]   Run security audit on completed task diffs"
     echo -e "    ${COLOR_STEP}new${RESET} <type> <name>           Scaffold a new spec from template"
     echo -e "    ${COLOR_STEP}gates${RESET}   --task ID             Run quality gates for a task (used by Developer Agent mid-task)"
-    echo -e "    ${COLOR_STEP}ci${RESET}      [--skip CHECKS]       Run lint, typecheck, tests, e2e, security scans and evals (no model calls)"
+    echo -e "    ${COLOR_STEP}ci${RESET}      [--skip|--only CHECKS] Run evals, lint, typecheck, tests, e2e and security scans (no model calls)"
+    echo -e "    ${COLOR_STEP}ci --list${RESET}                     List the checks speed ci would run in this project"
     echo -e "    ${COLOR_STEP}ci init${RESET} [--force]             Write .github/workflows/speed-ci.yml so CI runs speed ci"
     echo -e "    ${COLOR_STEP}ci --pr${RESET} [--draft] [--dry-run] Merge a feature's task branches, run speed ci, open a PR with a status check"
+    echo -e "    ${COLOR_STEP}ci merge${RESET} DIR...               Combine the reports of parallel CI jobs into one"
     echo -e "    ${COLOR_STEP}discover${RESET} domains [opts]       Discover business domains (--facts-only, --status, --cancel, --export ddd, --review FILE)"
     echo -e "    ${COLOR_STEP}add-language${RESET} <lang>          Generate ast-grep rules for a new language"
     echo -e "    ${COLOR_STEP}test-rules${RESET}  [lang|--all]     Verify ast-grep rules against fixture files"

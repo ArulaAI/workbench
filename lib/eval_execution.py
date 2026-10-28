@@ -355,7 +355,7 @@ def evidence_artifact(execution: dict) -> Path | None:
 
 
 def run_command(base: str, selectors: list[str], root: Path, evidence_dir: Path,
-                *, gate: str = "test", timeout: int = 600,
+                *, gate: str = "test", timeout: int = int(os.environ.get("SPEED_CI_COMMAND_TIMEOUT") or 600),
                 test_name: str = "", runner: str = "", exact: bool = False) -> dict:
     if not selectors or any(not valid_selector(s) for s in selectors):
         return {"status": "fail", "command": "", "evidence": "Rejected empty or option-like selector", "tests": []}

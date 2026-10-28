@@ -679,7 +679,7 @@ def test_init_refuses_a_subdirectory_and_avoids_creating_a_lockfile(project, cli
     assert "npm install --no-package-lock" in (project.root / ".github/workflows/speed-ci.yml").read_text()
 
 
-def test_ci_mode_does_not_record_integration_in_the_feature_state(project):
+def test_ci_mode_leaves_the_feature_state_untouched(project):
     spec = project.root / "specs/tests/adding.md"
     spec.parent.mkdir(parents=True)
     spec.write_text("# Test Spec: Adding\n## Scenario Catalog\n| ID | Scenario | Level | Expected outcome |\n"
@@ -690,9 +690,7 @@ def test_ci_mode_does_not_record_integration_in_the_feature_state(project):
     feature = write_feature(project, "adding")
     (feature / "state.json").write_text(json.dumps({"status": "idle"}))
     assert project.run().returncode == 0
-    state = json.loads((feature / "state.json").read_text())
-    assert state["evaluation"]["integration_verified"] is False
-    assert state["status"] == "idle"
+    assert json.loads((feature / "state.json").read_text()) == {"status": "idle"}
 
 
 def test_ci_mode_still_fails_a_task_branch_that_is_only_on_the_remote(project, tmp_path):
@@ -1607,3 +1605,131 @@ def test_merge_keeps_every_jobs_sarif_runs(project, tmp_path):
     project.run("merge", *jobs)
     names = {run["tool"]["driver"]["name"] for run in json.loads((project.root / ".speed/ci/speed-ci.sarif").read_text())["runs"]}
     assert {"speed-ci/secrets", "speed-ci/trivy"} <= names
+
+
+def test_an_example_under_a_deep_heading_is_never_run(project):
+    (project.root / "AGENTS.md").write_text("# Project\n\n## Quality Gates\n\n- test: true\n\n#### Example\n\n"
+                                           "- lint: false\n")
+    project.commit()
+    assert project.run().returncode == 0
+    assert step(project.report(), "lint")["status"] == "skipped"
+
+
+def test_only_a_whole_command_code_span_loses_its_backticks(project):
+    project.gates(lint="`true`", test="test \"`echo ok`\" = ok")
+    project.commit()
+    result = project.run()
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert step(project.report(), "lint")["status"] == "pass"
+
+
+def test_a_command_that_exits_124_by_itself_is_a_failure_not_a_timeout(project):
+    project.gates(test="exit 124")
+    project.commit()
+    assert project.run().returncode == 2
+    test = step(project.report(), "test")
+    assert test["status"] == "fail" and "timed out" not in json.dumps(test).lower()
+
+
+def test_a_corrupt_task_file_fails_eval(project):
+    project.commit()
+    feature = write_feature(project, "adding")
+    (feature / "tasks/1.json").write_text("{not json")
+    assert project.run().returncode == 2
+    assert "not valid JSON" in step(project.report(), "eval")["features"][0]["reason"]
+
+
+def test_a_lock_left_by_a_dead_run_is_taken_over(project):
+    lock = project.root / ".speed/ci/.lock"
+    lock.mkdir(parents=True)
+    dead = subprocess.Popen(["true"])
+    dead.wait()
+    (lock / "pid").write_text(str(dead.pid))
+    assert project.run().returncode == 0
+    assert not lock.exists()
+
+
+def test_gates_never_see_scanner_tokens_and_token_values_are_redacted(project):
+    project.gates(test="test -z \"$SNYK_TOKEN\"")
+    (project.root / "tool.sh").write_text("echo \"token is $SNYK_TOKEN\" >&2\necho '{\"ok\":true,\"vulnerabilities\":[]}'\n")
+    project.toml('[ci.tools.snyk]\nformat = "snyk"\ncmd = "sh tool.sh"\n')
+    project.commit()
+    secret = "snyk-" + "a1b2c3d4e5f6"
+    result = project.run(extra_env={"SNYK_TOKEN": secret})
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert secret not in result.stdout + result.stderr
+    for path in (project.root / ".speed").rglob("*"):
+        assert not path.is_file() or secret not in path.read_text(errors="replace"), path
+
+
+def test_unknown_ci_settings_are_refused(project):
+    project.toml("[ci]\nsecurity_mod = \"report\"\n")
+    project.commit()
+    result = project.run()
+    assert result.returncode == 3 and "security_mod" in result.stderr
+
+
+def test_ignore_gates_cannot_leave_out_a_built_in_check(project):
+    project.toml("[ci]\nignore_gates = [\"test\"]\n")
+    project.commit()
+    result = project.run()
+    assert result.returncode == 3 and "--skip test" in result.stderr
+
+
+def test_sonarqube_host_url_with_a_query_is_refused(project):
+    project.toml("[ci.sonarqube]\nhost_url = \"https://sonar.example.com/?token=x\"\nproject_key = \"shop\"\n")
+    project.commit()
+    result = project.run(extra_env={"SONAR_TOKEN": "t"})
+    assert result.returncode == 3 and "no query" in result.stderr
+
+
+def test_merge_refuses_its_own_output_directory_as_a_job(project):
+    project.run()
+    before = (project.root / ".speed/ci/report.json").read_text()
+    result = project.run("merge", str(project.root / ".speed/ci"))
+    assert result.returncode == 3 and "cannot also be where" in result.stderr
+    assert (project.root / ".speed/ci/report.json").read_text() == before
+
+
+def test_json_startup_failures_still_print_one_object(project, cli, tmp_path):
+    source = cli.read_text().replace("# preflight omitted in isolated CLI tests",
+                                     "_speed_ci_startup_failed \"dependency check failed\"; exit 3")
+    cli.write_text(source)
+    result = project.run(json_output=True)
+    assert result.returncode == 3
+    assert json.loads(result.stdout) == {"passed": False, "error": "dependency check failed",
+                                         "exit_code": 3, "steps": []}
+
+
+def test_init_json_lists_the_secrets_to_add(project):
+    project.toml('[ci.tools.snyk]\nformat = "snyk"\n')
+    project.commit()
+    result = project.run("init", "--speed-repo", "acme/speed", json_output=True)
+    assert result.returncode == 0, result.stderr
+    assert "SNYK_TOKEN" in json.dumps(json.loads(result.stdout))
+
+
+def test_pr_will_not_overwrite_a_reviewers_merge_commit(project, feature_branches):
+    assert project.run("--pr").returncode == 0
+    project.git("fetch", "-q", "origin", "speed-ci/shop")
+    project.git("checkout", "-q", "-b", "review", "FETCH_HEAD")
+    project.git("checkout", "-q", "-b", "side", "main")
+    (project.root / "side.py").write_text("SIDE = 1\n")
+    project.commit("side work")
+    project.git("checkout", "-q", "review")
+    project.git("-c", "user.name=Reviewer", "-c", "user.email=r@example.invalid",
+                "merge", "-q", "--no-ff", "--no-edit", "side")
+    project.git("push", "-q", "origin", "review:refs/heads/speed-ci/shop")
+    merged = project.git("rev-parse", "HEAD")
+    project.git("checkout", "-q", "main")
+    result = project.run("--pr")
+    assert result.returncode == 3 and "pass --force" in result.stderr
+    remote = subprocess.check_output(["git", "-C", str(feature_branches), "rev-parse", "speed-ci/shop"], text=True).strip()
+    assert remote == merged
+
+
+def test_pr_json_output_is_one_object_with_the_pr_branch(project, feature_branches):
+    result = project.run("--pr", json_output=True)
+    assert result.returncode == 0, result.stderr
+    report = json.loads(result.stdout)
+    assert report["passed"] is True and "speed-ci/shop" in json.dumps(report)

@@ -317,7 +317,7 @@ def prepare(root: Path, feature_dir: Path, state_file: Path, test_spec: Path,
     healthy = not state.get("integration_failure") and not unmerged
     strict_verified = bool(recorded and healthy and not unchecked)
     integration_verified = bool(healthy and (ci or (recorded and not unchecked)))
-    context = {"integration_verified": integration_verified, "state_integration_verified": strict_verified,
+    context = {"integration_verified": integration_verified, "state_integration_verified": strict_verified, "ci": ci,
                "run_id": run.name, "project_root": str(root), "feature_dir": str(feature_dir),
                "state_file": str(state_file), "output_dir": str(output), "task_id": task_id,
                "test_spec": str(test_spec), "test_spec_sha256": hashlib.sha256(spec_text.encode()).hexdigest(),
@@ -325,7 +325,8 @@ def prepare(root: Path, feature_dir: Path, state_file: Path, test_spec: Path,
                "unmerged_tasks": unmerged, "selection": plan["selection"]}
     atomic_json(run / "context.json", context)
     atomic_json(run / "attempt.json", {"status": "running", "started_at": context["started_at"]})
-    if task_id is None:
+    # speed ci evaluates a checkout, not the feature's progress, so it leaves the feature state alone.
+    if task_id is None and not ci:
         state["evaluation"] = {"status": "running", "accepted": False, "run_id": run.name,
                                "integration_verified": strict_verified, "report": str(run / "report.json")}
         state["status"] = "evaluating"
@@ -472,7 +473,7 @@ def finish(run: Path, failed: bool = False) -> None:
             stale.unlink(missing_ok=True)
         atomic_json(run / "attempt.json", {"status": "completed", "accepted": report["accepted"], "finished_at": utc_now()})
     atomic_json(output / "latest-attempt.json", {"run_id": run.name, **read_object(run / "attempt.json")})
-    if context["task_id"] is None:
+    if context["task_id"] is None and not context.get("ci"):
         state = read_object(state_file)
         accepted = not failed and report["accepted"]
         verified = context.get("state_integration_verified", context["integration_verified"])

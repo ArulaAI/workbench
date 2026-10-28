@@ -46,7 +46,9 @@ _ci_reject() {
 
 # Append one step result. Args: name status summary duration [details_json]
 _ci_record() {
-    jq -nc --arg name "$1" --arg status "$2" --arg summary "$3" --argjson duration "$4" \
+    local summary
+    summary=$(printf '%s' "$3" | tr '\n\r\t' '   ' | _ci_redact_stream)
+    jq -nc --arg name "$1" --arg status "$2" --arg summary "$summary" --argjson duration "$4" \
         --argjson details "${5:-{\}}" \
         '{name:$name, status:$status, summary:$summary, duration_s:$duration} + $details' \
         >> "$_CI_STEPS_FILE"
@@ -57,7 +59,7 @@ _ci_record() {
         warn) mark="${COLOR_WARN}!${RESET}" ;;
         *)    mark="${COLOR_DIM}-${RESET}" ;;
     esac
-    printf "  %b %-${_CI_WIDTH:-10}s %s\n" "$mark" "$1" "$3"
+    printf "  %b %-${_CI_WIDTH:-10}s %s\n" "$mark" "$1" "$summary"
 }
 
 # 0 when the check should run; otherwise records why it does not run.
@@ -85,9 +87,39 @@ _ci_python() {
     "$(_context_python)" "${LIB_DIR}/ci_tools.py" "$@"
 }
 
+# The secret patterns, plus the exact values of the tokens this run holds, for redaction.
+_ci_redaction_patterns() {
+    _secrets_pattern_pairs
+    local name value
+    for name in "${_CI_SECRET_VARS[@]+"${_CI_SECRET_VARS[@]}"}" SPEED_REPO_TOKEN GITHUB_TOKEN GH_TOKEN; do
+        value=$(printenv -- "$name" 2>/dev/null || true)
+        [[ -n "$value" ]] && printf '=literal\t%s\n' "$value"
+    done
+    return 0
+}
+
 # Scanners print what they found; their logs keep it only with secret-pattern matches removed.
 _ci_redact_log() {
-    _secrets_pattern_pairs | _ci_python redact "$1" 2>/dev/null || true
+    _ci_redaction_patterns | _ci_python redact "$1" 2>/dev/null || true
+}
+
+# Text on its way to the terminal or a report, with secret-pattern matches removed.
+_ci_redact_stream() {
+    if [[ -z "${_CI_PATTERNS_FILE:-}" || ! -s "${_CI_PATTERNS_FILE}" ]]; then
+        cat
+        return
+    fi
+    _ci_python redact-text "$_CI_PATTERNS_FILE" 2>/dev/null || echo "[output not shown: it could not be redacted]"
+}
+
+# Stop the running command and remove raw scanner output, then exit (Ctrl+C or kill).
+_ci_on_signal() {
+    if [[ -n "${_CI_CHILD:-}" ]]; then
+        kill -TERM "$_CI_CHILD" 2>/dev/null || true
+        wait "$_CI_CHILD" 2>/dev/null || true
+    fi
+    rm -f "${_CI_RAW:-}" "${_CI_RAW_ERR:-}" "${_CI_STEPS_FILE:-}" "${_CI_PATTERNS_FILE:-}"
+    exit "$1"
 }
 
 # The check name matching $1 without regard to case, or nothing.
@@ -108,24 +140,30 @@ _ci_canonical() {
 # Args: command stdout_file stderr_file. Returns the command's exit code (124 on timeout).
 _ci_run_command() {
     local cmd="$1" out="$2" err="$3" rc=0 started=$SECONDS
-    local -a limit=()
+    local -a limit=() hide=()
     [[ -n "${_TIMEOUT_CMD:-}" ]] && limit=("$_TIMEOUT_CMD" -k 10 "$_CI_TIMEOUT")
+    # Project commands (gates, evals) never see the tokens meant for scanners.
+    if [[ "${_CI_HIDE_SECRETS:-}" == true ]]; then
+        local name
+        for name in "${_CI_SECRET_VARS[@]+"${_CI_SECRET_VARS[@]}"}"; do
+            hide+=(-u "$name")
+        done
+    fi
+    _CI_TIMED_OUT=false
     # timeout puts the command in its own process group, where Ctrl+C does not reach it,
     # so the command runs in the background and an interrupt stops it explicitly.
-    ( cd "$PROJECT_ROOT" && exec "${limit[@]+"${limit[@]}"}" bash -c "$cmd" ) > "$out" 2> "$err" < /dev/null 3>&- &
+    ( cd "$PROJECT_ROOT" && exec env "${hide[@]+"${hide[@]}"}" "${limit[@]+"${limit[@]}"}" bash -c "$cmd" ) \
+        > "$out" 2> "$err" < /dev/null 3>&- &
     _CI_CHILD=$!
-    # An interrupted scan also removes its raw output, which can hold what the scanner found.
-    # errexit applies inside traps, and wait returns the killed command's status, hence || true.
-    trap 'kill -TERM "$_CI_CHILD" 2>/dev/null || true; wait "$_CI_CHILD" 2>/dev/null || true
-          rm -f "${_CI_RAW:-}" "${_CI_RAW_ERR:-}"; exit 130' INT
-    trap 'kill -TERM "$_CI_CHILD" 2>/dev/null || true; wait "$_CI_CHILD" 2>/dev/null || true
-          rm -f "${_CI_RAW:-}" "${_CI_RAW_ERR:-}"; exit 143' TERM
+    trap '_ci_on_signal 130' INT
+    trap '_ci_on_signal 143' TERM
     wait "$_CI_CHILD" || rc=$?
-    trap - INT TERM
     _CI_CHILD=""
-    # timeout -k ends a command that ignores TERM with KILL (137); that is still a timeout.
-    if [[ "$rc" -eq 137 && -n "${limit[*]:-}" && $((SECONDS - started)) -ge "$_CI_TIMEOUT" ]]; then
+    # A timeout is a 124 (or a KILL, 137, for a command that ignores TERM) after the limit;
+    # a command that exits 124 by itself before then is just a failure.
+    if [[ -n "${limit[*]:-}" && ( "$rc" -eq 124 || "$rc" -eq 137 ) && $((SECONDS - started)) -ge "$_CI_TIMEOUT" ]]; then
         rc=124
+        _CI_TIMED_OUT=true
     fi
     return "$rc"
 }
@@ -134,11 +172,14 @@ _ci_run_command() {
 _ci_exec() {
     local name="$1" cmd="$2"
     local log="${_CI_DIR}/logs/${name}.log"
-    local rc=0
+    local rc=0 _CI_HIDE_SECRETS=true
+    # A gate can delete .speed (git clean -fdx); the next command still gets its log.
+    mkdir -p "${_CI_DIR}/logs"
     _ci_run_command "$cmd" "$log" "$log.err" || rc=$?
-    cat "$log.err" >> "$log" && rm -f "$log.err"
+    mkdir -p "${_CI_DIR}/logs"
+    cat "$log.err" >> "$log" 2>/dev/null; rm -f "$log.err"
     # Failure details are printed under the check's line, once the check is recorded.
-    if [[ "$rc" -eq 124 ]]; then
+    if [[ "$_CI_TIMED_OUT" == true ]]; then
         echo "    ${cmd} timed out after ${_CI_TIMEOUT}s" >> "${_CI_DIR}/logs/.details"
     elif [[ "$rc" -ne 0 ]]; then
         {
@@ -146,7 +187,7 @@ _ci_exec() {
             tail -n 20 "$log" | sed 's/^/      /'
         } >> "${_CI_DIR}/logs/.details"
     fi
-    echo "$rc $log"
+    echo "$rc $_CI_TIMED_OUT $log"
 }
 
 # lint, typecheck, test, e2e and any custom check come from the project's ## Quality Gates section.
@@ -167,16 +208,17 @@ _ci_gate_step() {
     while IFS= read -r cmd; do
         [[ -z "$cmd" ]] && continue
         count=$((count + 1))
-        read -r rc log < <(_ci_exec "${gate}-${count}" "$cmd")
-        runs=$(jq -c --arg cmd "$cmd" --argjson rc "$rc" --arg log "${log#"${PROJECT_ROOT}"/}" \
-            '. + [{command:$cmd, exit_code:$rc, log:$log} + (if $rc == 124 then {timed_out:true} else {} end)]' <<< "$runs")
+        local timed_out
+        read -r rc timed_out log < <(_ci_exec "${gate}-${count}" "$cmd")
+        runs=$(jq -c --arg cmd "$cmd" --argjson rc "${rc:-1}" --arg log "${log#"${PROJECT_ROOT}"/}" --arg to "$timed_out" \
+            '. + [{command:$cmd, exit_code:$rc, log:$log} + (if $to == "true" then {timed_out:true} else {} end)]' <<< "$runs")
         [[ "$rc" -ne 0 ]] && failed=$((failed + 1))
     done <<< "$cmds"
     local details
     details=$(jq -c '{commands:.}' <<< "$runs")
     if [[ "$failed" -gt 0 ]]; then
         _ci_record "$gate" fail "${failed} of ${count} command(s) failed" $((SECONDS - started)) "$details"
-        cat "${_CI_DIR}/logs/.details" >&2 2>/dev/null || true
+        _ci_redact_stream < "${_CI_DIR}/logs/.details" >&2 2>/dev/null || true
         rm -f "${_CI_DIR}/logs/.details"
         return 1
     fi
@@ -209,8 +251,17 @@ _ci_secrets_step() {
     # The generated workflow's database settings carry a mark; it is honoured in that file only.
     local workflow_file=".github/workflows/speed-ci.yml"
     local -a skip_mark=(--and --not -e "$CI_TEST_CREDENTIAL_MARK")
-    local -a workflow_spec=(":(literal)${workflow_file}")
-    pathspec+=(":(exclude,literal)${workflow_file}")
+    if [[ -n "$(_git rev-parse --show-prefix 2>/dev/null)" ]] \
+            || ! _git ls-files -- . "${pathspec[@]:1}" 2>/dev/null | grep -Fxq -- "$workflow_file"; then
+        # A project in a subdirectory has no generated workflow there; an excluded one is not scanned.
+        # (git 2.39 ls-files drops files under a dot directory when a literal path meets an exclude, so list "." instead.)
+        workflow_file=""
+    fi
+    local -a workflow_spec=()
+    if [[ -n "$workflow_file" ]]; then
+        workflow_spec=(":(literal)${workflow_file}")
+        pathspec+=(":(exclude,literal)${workflow_file}")
+    fi
     local name regex rc file count line
     local listing="${_CI_DIR}/secrets-files.tmp" hits="${_CI_DIR}/secrets-hits.jsonl"
     : > "$hits"
@@ -219,7 +270,7 @@ _ci_secrets_step() {
         rc=0
         # Output is "<file>\0<count>\n" per matching file.
         _git "${grep_opts[@]}" -z -c -e "$regex" -- "${pathspec[@]}" > "$listing" 2>/dev/null || rc=$?
-        if [[ "$rc" -le 1 ]] && _git ls-files --error-unmatch -- "$workflow_file" > /dev/null 2>&1; then
+        if [[ "$rc" -le 1 && -n "$workflow_file" ]]; then
             local wf_rc=0
             _git "${grep_opts[@]}" -z -c -e "$regex" "${skip_mark[@]}" -- "${workflow_spec[@]}" >> "$listing" 2>/dev/null \
                 || wf_rc=$?
@@ -296,7 +347,7 @@ _ci_scan_read() {
     _ci_run_command "$cmd" "$raw" "$log" || rc=$?
     _ci_redact_log "$log"
     elapsed() { echo $((SECONDS - started)); }
-    if [[ "$rc" -eq 124 ]]; then
+    if [[ "$_CI_TIMED_OUT" == true ]]; then
         _ci_record "$kind" fail "The scanner timed out after ${_CI_TIMEOUT}s" "$(elapsed)"
         return 1
     fi
@@ -355,7 +406,7 @@ _ci_judge() {
             _ci_record "$kind" fail "${count} finding(s) at or above ${threshold} (${total} in all)" $((SECONDS - started)) "$details"
         fi
         jq -r '.[:20][] | "    [\(.severity)] \(.title) \(.file // .package // "")\(if .line then ":\(.line)" else "" end)"' \
-            <<< "$blocking" >&2
+            <<< "$blocking" | _ci_redact_stream >&2
         [[ "$_CI_MODE" == report ]]
         return
     fi
@@ -405,7 +456,7 @@ _ci_tool_step() {
         _ci_run_command "$cmd" "$raw" "$log" || rc=$?
         _ci_redact_log "$log"
     fi
-    if [[ "$rc" -eq 124 ]]; then
+    if [[ "$_CI_TIMED_OUT" == true ]]; then
         rm -f "$raw"
         _CI_RAW=""
         _ci_record "$name" fail "${name} timed out after ${_CI_TIMEOUT}s" $((SECONDS - started))
@@ -453,7 +504,8 @@ _ci_sonar_step() {
     rm -f "$task"
     _ci_run_command "${scanner} $(printf '%q ' "${args[@]}")" "$log" "${log}.err" || rc=$?
     cat "${log}.err" >> "$log" 2>/dev/null && rm -f "${log}.err"
-    if [[ "$rc" -eq 124 ]]; then
+    _ci_redact_log "$log"
+    if [[ "$_CI_TIMED_OUT" == true ]]; then
         _ci_record sonarqube fail "The SonarQube scanner timed out after ${_CI_TIMEOUT}s" $((SECONDS - started))
         return 1
     fi
@@ -496,9 +548,15 @@ _ci_feature_state() (
     feature_activate "$1" > /dev/null 2>&1 || exit 1
     # In a fresh multi-player checkout the local lock directory does not exist yet.
     mkdir -p "$(dirname "$SPEED_LOCK")" 2>/dev/null || true
-    local statuses=""
+    local statuses="" file
     if compgen -G "${TASKS_DIR}/*.json" > /dev/null; then
-        statuses=$(jq -r '.status // "unknown"' "${TASKS_DIR}"/*.json | sort -u | tr '\n' ',')
+        for file in "${TASKS_DIR}"/*.json; do
+            if ! jq -e 'type == "object" and (.status | type == "string")' "$file" > /dev/null 2>&1; then
+                echo "invalid false -"
+                exit 0
+            fi
+        done
+        statuses=$(jq -r '.status' "${TASKS_DIR}"/*.json | sort -u | tr '\n' ',')
     fi
     local configured=false
     [[ -s "${FEATURE_DIR}/test_spec_path" ]] && configured=true
@@ -529,6 +587,10 @@ _ci_eval_step() {
         read -r statuses configured summary < <(_ci_feature_state "$feature" || echo "missing false -")
         if [[ "$statuses" == missing ]]; then
             status=fail; reason="Feature ${feature} could not be loaded"
+        elif [[ "$statuses" == invalid ]]; then
+            status=fail; reason="A task file of ${feature} is not valid JSON with a status"
+        elif [[ -n "$(tr ',' '\n' <<< "$statuses" | grep -v '^$' | grep -vxE 'pending|running|done|failed|blocked' || true)" ]]; then
+            status=fail; reason="A task of ${feature} has an unknown status (${statuses%,})"
         elif [[ "$statuses" == none ]]; then
             status=skipped; reason="No tasks yet"
         elif [[ ",${statuses}" == *",failed,"* || ",${statuses}" == *",blocked,"* ]]; then
@@ -537,7 +599,10 @@ _ci_eval_step() {
             status=skipped; reason="Work in progress (${statuses%,})"
         else
             rc=0
-            out=$(JSON_OUTPUT=true GLOBAL_FEATURE="$feature" cmd_eval 2>> "$log") || rc=$?
+            # Evals run the project's tests: no scanner tokens, no stdin, and the CI time limit.
+            out=$(for name in "${_CI_SECRET_VARS[@]+"${_CI_SECRET_VARS[@]}"}"; do unset "$name"; done
+                  SPEED_CI_COMMAND_TIMEOUT="$_CI_TIMEOUT" JSON_OUTPUT=true GLOBAL_FEATURE="$feature" \
+                      cmd_eval < /dev/null 2>> "$log") || rc=$?
             reason=$(jq -r '.error // empty' <<< "$out" 2>/dev/null || true)
             # Keep each evaluated feature's summary with the CI report, which outlives a --pr worktree.
             mkdir -p "${_CI_DIR}/eval"
@@ -546,6 +611,8 @@ _ci_eval_step() {
                 status=pass
             elif [[ "$rc" -eq "$EXIT_CONFIG_ERROR" && "$reason" == "No test spec found"* && "$configured" != true ]]; then
                 status=skipped; reason="No test spec for this feature"
+            elif [[ "$reason" == "No test spec found"* ]]; then
+                reason="Its test spec is missing; create specs/tests/${feature}.md or fix test_spec_path"
             else
                 status=fail
                 if [[ -z "$reason" ]]; then
@@ -568,7 +635,7 @@ _ci_eval_step() {
     details=$(jq -c '{features:.}' <<< "$results")
     if [[ "$failed" -gt 0 ]]; then
         _ci_record eval fail "${failed} feature(s) failed, ${passed} accepted" $((SECONDS - started)) "$details"
-        jq -r '.[] | select(.status == "fail") | "    \(.feature): \(.reason)"' <<< "$results" >&2
+        jq -r '.[] | select(.status == "fail") | "    \(.feature): \(.reason)"' <<< "$results" | _ci_redact_stream >&2
         return 1
     fi
     if [[ "$passed" -eq 0 ]]; then
@@ -593,7 +660,9 @@ _ci_clean_tree_step() {
 # Only one speed ci run may use .speed/ci at a time.
 _ci_lock() {
     local lock="${_CI_DIR}/.lock"
-    mkdir -p "$_CI_DIR"
+    if ! mkdir -p "$_CI_DIR" 2>/dev/null || [[ ! -w "$_CI_DIR" ]]; then
+        return 2
+    fi
     if ! mkdir "$lock" 2>/dev/null; then
         local holder
         holder=$(cat "${lock}/pid" 2>/dev/null || echo "")
@@ -605,7 +674,9 @@ _ci_lock() {
         if [[ -n "$holder" ]] && kill -0 "$holder" 2>/dev/null; then
             return 1
         fi
-        rm -rf "$lock"
+        # Only one run can move the stale lock away, so two runs never both take it over.
+        mv "$lock" "${lock}.stale.$$" 2>/dev/null || return 1
+        rm -rf "${lock}.stale.$$"
         mkdir "$lock" 2>/dev/null || return 1
     fi
     echo "$BASHPID" > "${lock}/pid"
@@ -619,16 +690,25 @@ _ci_unlock() {
 # or EXIT_CONFIG_ERROR when another run holds the lock.
 _ci_run_checks() {
     _CI_DIR="${STATE_DIR}/ci"
-    if ! _ci_lock; then
+    local lock_rc=0
+    _ci_lock || lock_rc=$?
+    if [[ "$lock_rc" -eq 2 ]]; then
+        _ci_reject "$EXIT_CONFIG_ERROR" "Cannot write ${_CI_DIR#"${PROJECT_ROOT}"/}"
+        return
+    elif [[ "$lock_rc" -ne 0 ]]; then
         _ci_reject "$EXIT_CONFIG_ERROR" "Another speed ci is running in this project"
         return
     fi
-    trap '_ci_unlock' EXIT
+    trap '_ci_unlock; rm -f "${_CI_STEPS_FILE:-}" "${_CI_PATTERNS_FILE:-}"' EXIT
+    trap '_ci_on_signal 130' INT
+    trap '_ci_on_signal 143' TERM
     rm -rf "${_CI_DIR}/logs" "${_CI_DIR}/eval"
     rm -f "${_CI_DIR}"/*-findings.json "${_CI_DIR}"/*-output.json
     mkdir -p "${_CI_DIR}/logs"
-    _CI_STEPS_FILE="${_CI_DIR}/steps.jsonl"
-    : > "$_CI_STEPS_FILE"
+    # Kept outside .speed, so a gate that deletes .speed cannot lose the results so far.
+    _CI_STEPS_FILE=$(mktemp "${TMPDIR:-/tmp}/speed-ci-steps.XXXXXX")
+    _CI_PATTERNS_FILE=$(mktemp "${TMPDIR:-/tmp}/speed-ci-patterns.XXXXXX")
+    _ci_redaction_patterns > "$_CI_PATTERNS_FILE"
     local started_at
     started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     echo -e "${BOLD}SPEED CI${RESET}  (no model calls)"
@@ -653,7 +733,11 @@ _ci_run_checks() {
     fi
     local commit branch
     commit=$(_git rev-parse HEAD 2>/dev/null || echo "")
-    branch=$(git_current_branch 2>/dev/null || echo "")
+    branch=$(_git symbolic-ref -q --short HEAD 2>/dev/null || echo "")
+    if ! mkdir -p "$_CI_DIR" 2>/dev/null; then
+        _ci_reject "$EXIT_CONFIG_ERROR" "Cannot write ${_CI_DIR#"${PROJECT_ROOT}"/}/report.json"
+        return
+    fi
     jq -s --arg started "$started_at" --arg finished "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
         --arg commit "$commit" --arg branch "$branch" \
         '{passed: (map(select(.status == "fail")) | length == 0),
@@ -662,8 +746,15 @@ _ci_run_checks() {
                    fail: map(select(.status == "fail")) | length,
                    warn: map(select(.status == "warn")) | length,
                    skipped: map(select(.status == "skipped")) | length},
-          steps:.}' "$_CI_STEPS_FILE" > "${_CI_DIR}/report.json"
+          steps:.}' "$_CI_STEPS_FILE" > "${_CI_DIR}/report.json.tmp" 2>/dev/null \
+        && mv "${_CI_DIR}/report.json.tmp" "${_CI_DIR}/report.json" || {
+            _ci_reject "$EXIT_CONFIG_ERROR" "Cannot write ${_CI_DIR#"${PROJECT_ROOT}"/}/report.json"
+            return
+        }
     rm -f "$_CI_STEPS_FILE"
+    # Last line of defence for secrets: everything speed ci wrote is redacted before the
+    # SARIF, JUnit and summary files are derived from it.
+    _ci_python redact-tree "$_CI_DIR" < "$_CI_PATTERNS_FILE" 2>/dev/null || log_warn "Could not redact .speed/ci"
     # Reports for other tools: SARIF for GitHub's Security tab, JUnit for test dashboards,
     # and a Markdown summary on the GitHub Actions run page.
     _ci_python sarif "$_CI_DIR" "${_CI_DIR}/speed-ci.sarif" 2>/dev/null || log_warn "Could not write the SARIF report"
@@ -837,7 +928,10 @@ _ci_init() {
     log_info "Commit the file to turn it on. For a private SPEED repository, add a SPEED_REPO_TOKEN secret that can read it."
     if [[ "${JSON_OUTPUT:-false}" == true ]]; then
         jq -n --arg path ".github/workflows/speed-ci.yml" --arg repo "$repo" --arg ref "$ref" \
-            --arg branch "$main_branch" '{written:$path, speed_repository:$repo, speed_ref:$ref, main_branch:$branch}' >&3
+            --arg branch "$main_branch" --arg unmanaged "$unmanaged" \
+            --argjson secrets "$(printf '%s\n' "${secrets[@]+"${secrets[@]}"}" | awk 'NF && !seen[$0]++' | jq -R . | jq -sc .)" \
+            '{written:$path, speed_repository:$repo, speed_ref:$ref, main_branch:$branch, secrets_to_add:$secrets,
+              tools_to_install:($unmanaged | split(", ") | map(select(. != "")))}' >&3
     fi
 }
 
@@ -865,7 +959,7 @@ _ci_pr_body() {
         echo ""
         echo "| Check | Result | Detail |"
         echo "|---|---|---|"
-        jq -r '.steps[] | "| \(.name) | \(.status) | \(.summary | gsub("\\|"; "/"))\(if (.dashboard_url // "") != "" then " ([dashboard](\(.dashboard_url)))" else "" end) |"' "$report"
+        jq -r '.steps[] | "| \(.name) | \(.status) | \(.summary | gsub("\\|"; "/"))\(if (.dashboard_url // "") != "" then " ([dashboard](\(.dashboard_url | gsub("\\|"; "%7C") | gsub(" "; "%20"))))" else "" end) |"' "$report"
         echo ""
         echo "Checked at commit \`$(jq -r '.commit' "$report")\`. Opened by \`speed ci --pr\`; the checks made no model calls."
     }
@@ -881,7 +975,10 @@ _ci_foreign_commits() {
     for branch in "$@"; do
         exclude+=("^${branch}")
     done
-    _git rev-list --no-merges --max-count=5 "$tip" "${exclude[@]}" -- 2>/dev/null || true
+    # Only merges speed ci made itself ("Merge <branch> (task N)") are not someone's work.
+    _git log --format='%H%x09%P%x09%s' "$tip" "${exclude[@]}" -- 2>/dev/null \
+        | awk -F'\t' '{ n = split($2, parents, " "); if (!(n > 1 && $3 ~ /^Merge .* \(task [^)]+\)$/)) print $1 }' \
+        | head -n 5 || true
 }
 
 _ci_lower() {
@@ -933,7 +1030,7 @@ _ci_settings() {
         critical|high|medium|low|info) _CI_THRESHOLD="$threshold" ;;
         *) _ci_reject "$EXIT_CONFIG_ERROR" "Invalid [security] severity_threshold: ${TOML_SECURITY_SEVERITY_THRESHOLD} (use critical, high, medium, low or info)"; return ;;
     esac
-    _CI_TIMEOUT="${TOML_CI_COMMAND_TIMEOUT:-1800}"
+    _CI_TIMEOUT="${TOML_CI_COMMAND_TIMEOUT-1800}"
     if [[ ! "$_CI_TIMEOUT" =~ ^[1-9][0-9]*$ ]]; then
         _ci_reject "$EXIT_CONFIG_ERROR" "Invalid [ci] command_timeout: ${_CI_TIMEOUT} (seconds)"
         return
@@ -943,6 +1040,12 @@ _ci_settings() {
         return
     fi
     _CI_MODE=$(jq -r '.security_mode' <<< "$_CI_CONFIG")
+    # Tokens meant for scanners; project commands run without them.
+    _CI_SECRET_VARS=()
+    while IFS= read -r name; do
+        if [[ -n "$name" ]]; then _CI_SECRET_VARS+=("$name"); fi
+    done < <(jq -r '([.tools[].token_env] + (if .sonarqube != null then ["SONAR_TOKEN"] else [] end))
+                    | map(select(. != "")) | unique[]' <<< "$_CI_CONFIG")
     local name gates problems
     if ! gates=$(_ci_python gates "${AGENT_FILE_PATH:-}" "$(jq -c '.ignore_gates' <<< "$_CI_CONFIG")" \
             "$(jq -c '.tools | keys' <<< "$_CI_CONFIG")" 2>&1); then
@@ -994,6 +1097,8 @@ _ci_check_names() {
 # taken from there, as a fresh CI checkout would.
 _ci_check_worktree() (
     local root="$1" excludes="$2"
+    # The parent reports any refusal once; this subshell only logs it.
+    JSON_OUTPUT=false
     unset $(compgen -v TOML_ || true) SPEED_TOML_INVALID
     [[ -z "${_SPEED_USER_AGENT_FILE:-}" ]] && unset SPEED_AGENT_FILE
     export SPEED_PROJECT_ROOT="$root"
@@ -1262,7 +1367,7 @@ _ci_pr() {
     if [[ "${JSON_OUTPUT:-false}" == true ]]; then
         jq --arg feature "$feature" --arg branch "$pr_branch" --arg base "$base" --arg url "$pr_url" \
             --arg state "$state" --argjson dry "$dry_run" \
-            '{feature:$feature, branch:$branch, base:$base, pr_url:$url, status:$state, dry_run:$dry} + .' \
+            '. + {feature:$feature, branch:$branch, base:$base, pr_url:$url, status:$state, dry_run:$dry}' \
             "$report" >&3
     fi
     return "$checks_rc"
@@ -1288,10 +1393,11 @@ cmd_ci() (
             exit
         fi
         local merge_rc=0
-        rm -f "${STATE_DIR}/ci/summary.md" "${STATE_DIR}/ci/report.json"
-        _ci_python merge "${STATE_DIR}/ci" "$@" || merge_rc=$?
-        if [[ "$merge_rc" -gt 2 ]]; then
-            _ci_reject "$EXIT_CONFIG_ERROR" "The reports could not be combined"
+        # The merge helper writes every output itself; a refused merge keeps the previous report.
+        local merge_err
+        merge_err=$(_ci_python merge "${STATE_DIR}/ci" "$@" 2>&1 >/dev/null) || merge_rc=$?
+        if [[ "$merge_rc" -ne 0 && "$merge_rc" -ne 2 ]]; then
+            _ci_reject "$EXIT_CONFIG_ERROR" "The reports could not be combined: ${merge_err:-unknown error}"
             exit
         fi
         cat "${STATE_DIR}/ci/summary.md"
