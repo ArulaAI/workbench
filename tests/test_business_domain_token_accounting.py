@@ -201,3 +201,21 @@ def test_speed_toml_can_set_the_verification_model(tmp_path):
     override = json.loads(subprocess.run(command, cwd=tmp_path, capture_output=True, text=True, check=True,
                                          env={**env, 'SPEED_DISCOVER_VERIFICATION_MODEL': 'sonnet'}).stdout)
     assert override['verification_model'] == 'sonnet'
+
+
+def test_a_sonnet_build_on_claude_is_verified_by_opus_unless_told_otherwise(tmp_path):
+    command = ['bash', str(ROOT / 'lib/cmd/domains.sh'), 'config']
+    env = {key: value for key, value in os.environ.items()
+           if key not in ('SPEED_DISCOVER_VERIFICATION_MODEL', 'SPEED_SUPPORT_MODEL', 'SPEED_PROVIDER')}
+    def config(toml):
+        (tmp_path / 'speed.toml').write_text(toml)
+        return json.loads(subprocess.run(command, cwd=tmp_path, capture_output=True, text=True,
+                                         check=True, env=env).stdout)
+    # Nothing set: Sonnet builds, Opus verifies.
+    default = config('[project]\nname = "x"\n')
+    assert default['model'] == 'sonnet' and default['verification_model'] == 'opus'
+    # An explicit choice is kept, even Sonnet.
+    assert config('[agent]\nverification_model = "sonnet"\n')['verification_model'] == 'sonnet'
+    # Opus builds: verification follows it, as before.
+    opus = config('[agent]\nsupport_model = "opus"\n')
+    assert opus['model'] == 'opus' and opus['verification_model'] == 'opus'

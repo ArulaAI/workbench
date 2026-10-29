@@ -97,9 +97,15 @@ MODEL_PLANNING="${SPEED_PLANNING_MODEL:-${TOML_AGENT_PLANNING_MODEL:-opus}}"
 #   Used by: debugger, supervisor, guardian, reviewer, validator, integrator
 MODEL_SUPPORT="${SPEED_SUPPORT_MODEL:-${TOML_AGENT_SUPPORT_MODEL:-sonnet}}"
 # Business-domain verification may use its own model, so synthesis can run on a cheaper one.
-# [agent] verification_model sets it; SPEED_DISCOVER_VERIFICATION_MODEL still wins.
-if [[ -z "${SPEED_DISCOVER_VERIFICATION_MODEL:-}" && -n "${TOML_AGENT_VERIFICATION_MODEL:-}" ]]; then
-    export SPEED_DISCOVER_VERIFICATION_MODEL="$TOML_AGENT_VERIFICATION_MODEL"
+# SPEED_DISCOVER_VERIFICATION_MODEL wins, then [agent] verification_model. With neither set and
+# Claude synthesizing on Sonnet, verification uses Opus: a Sonnet verifier misreports the scope
+# it checked and the run stops. Sonnet and Opus have the same limits, so request sizing holds.
+if [[ -z "${SPEED_DISCOVER_VERIFICATION_MODEL:-}" ]]; then
+    if [[ -n "${TOML_AGENT_VERIFICATION_MODEL:-}" ]]; then
+        export SPEED_DISCOVER_VERIFICATION_MODEL="$TOML_AGENT_VERIFICATION_MODEL"
+    elif [[ "$MODEL_SUPPORT" == sonnet && "${SPEED_PROVIDER:-${TOML_AGENT_PROVIDER:-claude-code}}" == claude-code ]]; then
+        export SPEED_DISCOVER_VERIFICATION_MODEL=opus
+    fi
 fi
 
 # Developer tier: set per-task by the architect, defaults to MODEL_SUPPORT.
