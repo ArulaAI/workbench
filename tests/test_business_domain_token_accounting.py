@@ -211,11 +211,31 @@ def test_a_sonnet_build_on_claude_is_verified_by_opus_unless_told_otherwise(tmp_
         (tmp_path / 'speed.toml').write_text(toml)
         return json.loads(subprocess.run(command, cwd=tmp_path, capture_output=True, text=True,
                                          check=True, env=env).stdout)
-    # Nothing set: Sonnet builds, Opus verifies.
-    default = config('[project]\nname = "x"\n')
-    assert default['model'] == 'sonnet' and default['verification_model'] == 'opus'
+    # Sonnet chosen for building: Opus still verifies.
+    chosen = config('[agent]\nsupport_model = "sonnet"\n')
+    assert chosen['model'] == 'sonnet' and chosen['verification_model'] == 'opus'
     # An explicit choice is kept, even Sonnet.
-    assert config('[agent]\nverification_model = "sonnet"\n')['verification_model'] == 'sonnet'
+    assert config('[agent]\nsupport_model = "sonnet"\nverification_model = "sonnet"\n')['verification_model'] == 'sonnet'
     # Opus builds: verification follows it, as before.
     opus = config('[agent]\nsupport_model = "opus"\n')
     assert opus['model'] == 'opus' and opus['verification_model'] == 'opus'
+
+
+def test_discovery_defaults_match_the_configuration_that_published_petclinic(tmp_path):
+    from lib.context.business_domain_schema import DEFAULTS
+    command = ['bash', str(ROOT / 'lib/cmd/domains.sh'), 'config']
+    env = {key: value for key, value in os.environ.items()
+           if key not in ('SPEED_DISCOVER_VERIFICATION_MODEL', 'SPEED_SUPPORT_MODEL', 'SPEED_PROVIDER', 'SPEED_TIMEOUT')}
+    def config(toml):
+        (tmp_path / 'speed.toml').write_text(toml)
+        return json.loads(subprocess.run(command, cwd=tmp_path, capture_output=True, text=True,
+                                         check=True, env=env).stdout)
+    # A project with no model or timeout settings builds and verifies on Opus with 90-minute calls.
+    plain = config('[project]\nname = "x"\n')
+    assert (plain['model'], plain['verification_model'], plain['agent_timeout']) == ('opus', 'opus', 5400)
+    # A project's own choices are kept.
+    own = config('[agent]\nsupport_model = "sonnet"\ntimeout = 1200\n')
+    assert (own['model'], own['agent_timeout']) == ('sonnet', 1200)
+    # Build budgets and the deadline leave room for repairs and a paused run.
+    assert (DEFAULTS['max_build_input_tokens'], DEFAULTS['max_build_output_tokens'],
+            DEFAULTS['provider_concurrency'], DEFAULTS['deadline_seconds']) == (20000000, 4000000, 4, 28800)

@@ -1803,10 +1803,10 @@ Add `[business_domains]` to target `speed.toml`; absence uses the following data
 | `max_symbols_per_activity` / `MAX_ACTIVITY_SYMBOLS` | 200 | Positive integer |
 | `max_request_input_tokens` / `MAX_REQUEST_INPUT` | 2000000 | Positive integer local ceiling; applies independently to synthesis, verification, repair and reconciliation requests; effective cap is the lower of this value and the selected provider/model context capacity |
 | `max_request_output_tokens` / `MAX_REQUEST_OUTPUT` | 128000 | Positive integer local ceiling; effective cap is the lower of this value and the selected provider/model output capacity; report provider enforcement or local-estimate enforcement explicitly |
-| `max_build_input_tokens` / `MAX_BUILD_INPUT` | 8000000 | Positive integer; must accommodate the configured synthesis, verification and distinct-repair chain; every request/retry is charged |
-| `max_build_output_tokens` / `MAX_BUILD_OUTPUT` | 512000 | Positive integer; reserves the configured bounded completion chain before concurrency dispatch |
-| `provider_concurrency` / `MAX_PROVIDER_CONCURRENCY` | 2 | Integer 1–4 |
-| `deadline_seconds` / `BUILD_DEADLINE_SECONDS` | 3600 | Positive integer; includes extraction, synthesis, verification, repair and reconciliation |
+| `max_build_input_tokens` / `MAX_BUILD_INPUT` | 20000000 | Positive integer; must accommodate the configured synthesis, verification and distinct-repair chain; every request/retry is charged |
+| `max_build_output_tokens` / `MAX_BUILD_OUTPUT` | 4000000 | Positive integer; reserves the configured bounded completion chain before concurrency dispatch |
+| `provider_concurrency` / `MAX_PROVIDER_CONCURRENCY` | 4 | Integer 1–4 |
+| `deadline_seconds` / `BUILD_DEADLINE_SECONDS` | 28800 | Positive integer; includes extraction, synthesis, verification, repair and reconciliation |
 | `max_source_bytes` / `MAX_SOURCE_BYTES` | 500000 | Per source input; oversized input excluded with a gap, not parsed after silent truncation |
 | `max_artifact_bytes` / `MAX_ARTIFACT_BYTES` | 25000000 | Candidate canonical JSON byte cap; over-cap build fails without replacement |
 | `cache_retention_days` / `CACHE_RETENTION_DAYS` | 30 | Positive integer; applies only to unreferenced cache/snapshot objects |

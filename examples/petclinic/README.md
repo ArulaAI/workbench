@@ -34,7 +34,7 @@ cp ~/workbench/examples/petclinic/speed.toml speed.toml
 
 `git checkout 4a6c26d` pins PetClinic to the version these steps were tested on, so a later change to PetClinic cannot change the result. Git reports a "detached HEAD" state, which is expected.
 
-`speed.toml` must sit in the PetClinic folder, because SPEED reads it from the folder it runs in. It selects Opus and gives the run enough time and token budget:
+`speed.toml` must sit in the PetClinic folder, because SPEED reads it from the folder it runs in. Discovery's defaults already use Opus and the time and budgets below, so a run without this file also works; copying it pins the exact tested setup, including the 450,000-token request size that splits PetClinic into 6 parts:
 
 | Setting | Value | Why |
 | --- | --- | --- |
@@ -42,7 +42,7 @@ cp ~/workbench/examples/petclinic/speed.toml speed.toml
 | `timeout` | 5400 seconds | One synthesis call can take close to an hour |
 | `max_request_input_tokens` | 450,000 | Splits PetClinic into 6 parts plus a final join |
 | `max_build_input_tokens` | 20,000,000 | Total input budget for the whole run, including repairs |
-| `max_build_output_tokens` | 4,000,000 | The default (512,000) is too small for a run with repairs |
+| `max_build_output_tokens` | 4,000,000 | Room for a run with repairs |
 | `provider_concurrency` | 4 | Up to four parts are worked on at the same time |
 | `deadline_seconds` | 28,800 | A full run takes about 1.5 to 2 hours; this leaves room for a paused run |
 
@@ -85,6 +85,6 @@ A second run on the same machine can finish in seconds, because SPEED reuses an 
 | Message | Fix |
 | --- | --- |
 | `speed: command not found` | Run the `export PATH=...` line in this Terminal window |
-| `BUILD_BUDGET` or `BUILD_TIMEOUT` | `speed.toml` is missing from the PetClinic folder; repeat the `cp` line in Step 2 |
+| `BUILD_BUDGET` or `BUILD_TIMEOUT` | The run needed more budget or time than `speed.toml` allows; raise the setting the message names, or repeat the `cp` line in Step 2 if the file was changed |
 | `Cannot load custom language library` | Build the grammars: `cd ~/workbench && ./scripts/build-grammars.sh` |
 | `SEMANTIC_VERIFICATION_FAILED` | The model did not converge within 4 repairs. Run Step 3 again; model output varies between runs |

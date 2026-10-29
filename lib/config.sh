@@ -85,6 +85,14 @@ export PATH="${PATH}:${HOME}/.local/bin"
 # ── Defaults (env > toml > built-in) ─────────────────────────────
 DEFAULT_MAX_PARALLEL=3
 DEFAULT_AGENT_TIMEOUT="${SPEED_TIMEOUT:-${TOML_AGENT_TIMEOUT:-600}}"
+# Business-domain discovery (lib/cmd/domains.sh) makes few, long, high-stakes calls: one Opus
+# synthesis of a large slice can take close to an hour. Unless the project chose otherwise,
+# one discovery call may run 90 minutes. Other commands keep their 10-minute default.
+_SPEED_DISCOVERY=false
+[[ "$(basename -- "${0:-}")" == domains.sh ]] && _SPEED_DISCOVERY=true
+if [[ "$_SPEED_DISCOVERY" == true && -z "${SPEED_TIMEOUT:-}${TOML_AGENT_TIMEOUT:-}" ]]; then
+    DEFAULT_AGENT_TIMEOUT=5400
+fi
 AGENT_KILL_GRACE=10          # seconds after SIGTERM before SIGKILL
 BRANCH_PREFIX="speed"
 
@@ -96,6 +104,11 @@ MODEL_PLANNING="${SPEED_PLANNING_MODEL:-${TOML_AGENT_PLANNING_MODEL:-opus}}"
 # Support tier: structured tasks applying frameworks to known inputs.
 #   Used by: debugger, supervisor, guardian, reviewer, validator, integrator
 MODEL_SUPPORT="${SPEED_SUPPORT_MODEL:-${TOML_AGENT_SUPPORT_MODEL:-sonnet}}"
+# Discovery builds on Opus unless the project names a support model: the published PetClinic
+# model was built and verified on Opus. Other commands keep Sonnet as their support tier.
+if [[ "$_SPEED_DISCOVERY" == true && -z "${SPEED_SUPPORT_MODEL:-}${TOML_AGENT_SUPPORT_MODEL:-}" ]]; then
+    MODEL_SUPPORT=opus
+fi
 # Business-domain verification may use its own model, so synthesis can run on a cheaper one.
 # SPEED_DISCOVER_VERIFICATION_MODEL wins, then [agent] verification_model. With neither set and
 # Claude synthesizing on Sonnet, verification uses Opus: a Sonnet verifier misreports the scope
