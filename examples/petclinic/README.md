@@ -38,10 +38,13 @@ cp ~/workbench/examples/petclinic/speed.toml speed.toml
 
 | Setting | Value | Why |
 | --- | --- | --- |
-| `support_model` | `opus` | The model used for synthesis and verification |
-| `timeout` | 2400 seconds | One synthesis call can take over 30 minutes |
-| `max_build_output_tokens` | 2,048,000 | The default (512,000) is too small for a run with repairs |
-| `deadline_seconds` | 10,800 | The default (1 hour) can be shorter than a full run |
+| `support_model` | `opus` | The model used for synthesis and verification. Without this file SPEED builds with Sonnet |
+| `timeout` | 5400 seconds | One synthesis call can take close to an hour |
+| `max_request_input_tokens` | 450,000 | Splits PetClinic into 6 parts plus a final join |
+| `max_build_input_tokens` | 20,000,000 | Total input budget for the whole run, including repairs |
+| `max_build_output_tokens` | 4,000,000 | The default (512,000) is too small for a run with repairs |
+| `provider_concurrency` | 4 | Up to four parts are worked on at the same time |
+| `deadline_seconds` | 28,800 | A full run takes about 1.5 to 2 hours; this leaves room for a paused run |
 
 ## Step 3: run discovery
 
