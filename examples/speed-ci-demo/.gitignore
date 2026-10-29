@@ -1,0 +1,6 @@
+.speed/ci/
+.speed/features/*/eval/
+.speed/features/*/evaluation.yaml
+.speed/features/*/logs/
+__pycache__/
+.scannerwork/

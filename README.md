@@ -218,6 +218,18 @@ via `SPEED_PROJECT_ROOT`).
 # Merge completed branches into main
 ./speed/speed integrate
 
+# Run every check without model calls: lint, typecheck, tests, e2e, security scans, evals
+./speed/speed ci
+
+# Write a GitHub Actions workflow that runs speed ci on pull requests and pushes to main
+./speed/speed ci init
+
+# Merge a feature's task branches, run speed ci, open a PR with a pass/fail status check
+./speed/speed ci --pr --feature my-feature
+
+# See every speed ci check on the demo project (no scanners or model needed)
+cd ./speed/examples/speed-ci-demo && ../../speed ci
+
 # Retry a failed task with human guidance
 ./speed/speed retry --task-id 3 --context "fix the import path"
 

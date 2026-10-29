@@ -226,7 +226,8 @@ max_turns = 50                 # max turns for developer agents
 # sast_cmd = "semgrep --config auto --json"
 # sca_cmd = "npm audit --json"
 # severity_threshold = "medium"
-# secrets_patterns = ["AWS", "GITHUB_TOKEN", "GENERIC_SECRET"]
+# Replaces the built-in patterns; each entry is "Name|regex".
+# secrets_patterns = ["AWS Access Key|AKIA[0-9A-Z]{16}", "Corp Token|CORP-[A-Z0-9]{12}"]
 # secrets_exclude = [".env*", "*.example", "tests/fixtures/**"]
 
 [multiplayer]

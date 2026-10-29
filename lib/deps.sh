@@ -618,14 +618,19 @@ speed_check_deps() {
     _check_python_version        || fail=1
     _check_provider              || fail=1
     _check_agent_files           || fail=1
-    _check_worktree_symlinks     || fail=1
+    [[ "${SPEED_CI:-}" == 1 ]] || _check_worktree_symlinks || fail=1
     _check_data_files            || fail=1
-    _check_ast_grep              || fail=1
-    _check_sgconfig              || fail=1
-    _check_ast_grep_rules        || fail=1
-    _check_tree_sitter_grammars  || fail=1
+    # speed ci uses neither ast-grep nor the tree-sitter grammars, so a CI runner needs neither.
+    if [[ "${SPEED_CI:-}" != 1 ]]; then
+        _check_ast_grep              || fail=1
+        _check_sgconfig              || fail=1
+        _check_ast_grep_rules        || fail=1
+        _check_tree_sitter_grammars  || fail=1
+    fi
 
     if (( fail )); then
+        declare -F _speed_ci_startup_failed > /dev/null \
+            && _speed_ci_startup_failed "SPEED's dependency check failed; see the messages on stderr"
         exit "$EXIT_CONFIG_ERROR"
     fi
 }

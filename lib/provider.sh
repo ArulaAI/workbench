@@ -26,7 +26,11 @@ require_timeout_cmd() {
 }
 
 # Fail fast at source time — don't wait until the first agent call
-require_timeout_cmd || exit "$EXIT_CONFIG_ERROR"
+if ! require_timeout_cmd; then
+    declare -F _speed_ci_startup_failed > /dev/null \
+        && _speed_ci_startup_failed "timeout or gtimeout is not installed (GNU coreutils)"
+    exit "$EXIT_CONFIG_ERROR"
+fi
 
 # ── JSON extraction from agent output ────────────────────────────
 # Agent output is free-form text that may contain JSON. This function
@@ -188,7 +192,7 @@ source "$_PROVIDER_FILE"
 # real binary before any agent calls. Catches missing installs early
 # with a clear message instead of a cryptic failure at first agent call.
 
-if ! command -v "$PROVIDER_BIN" &>/dev/null; then
+if [[ "${SPEED_CI:-}" != 1 ]] && ! command -v "$PROVIDER_BIN" &>/dev/null; then
     log_error_block \
         "Provider '${_PROVIDER_NAME}' binary not found: ${PROVIDER_BIN}" \
         "Install the binary or set the path via the provider's env var"

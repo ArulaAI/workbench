@@ -22,7 +22,9 @@ tree-sitter-elixir
 tree-sitter-lua
 tree-sitter-haskell
 tree-sitter-zig
-ast-grep-cli
+# 0.50 rejects custom languages unless allowed and 0.51 renames tree-sitter kinds
+# the rules use, so the startup check fails on newer releases.
+ast-grep-cli>=0.40,<0.50
 scikit-learn
 networkx
 python-igraph
