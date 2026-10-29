@@ -188,3 +188,16 @@ def test_the_provider_config_lists_the_verification_model(tmp_path):
                                                        'SPEED_DISCOVER_VERIFICATION_MODEL': 'sonnet'}).stdout)
     assert split['verification_model'] == 'sonnet'
     assert 'sonnet' in split['models']
+
+
+def test_speed_toml_can_set_the_verification_model(tmp_path):
+    (tmp_path / 'speed.toml').write_text('[agent]\nsupport_model = "sonnet"\nverification_model = "opus"\n')
+    command = ['bash', str(ROOT / 'lib/cmd/domains.sh'), 'config']
+    env = {key: value for key, value in os.environ.items() if key != 'SPEED_DISCOVER_VERIFICATION_MODEL'}
+    config = json.loads(subprocess.run(command, cwd=tmp_path, capture_output=True, text=True,
+                                       check=True, env=env).stdout)
+    assert config['model'] == 'sonnet' and config['verification_model'] == 'opus'
+    # The environment variable still wins over speed.toml.
+    override = json.loads(subprocess.run(command, cwd=tmp_path, capture_output=True, text=True, check=True,
+                                         env={**env, 'SPEED_DISCOVER_VERIFICATION_MODEL': 'sonnet'}).stdout)
+    assert override['verification_model'] == 'sonnet'

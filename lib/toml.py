@@ -201,7 +201,7 @@ def emit(data: dict) -> None:
     # [agent] section
     agent = data.get("agent", {})
     if isinstance(agent, dict):
-        for key in ("provider", "planning_model", "support_model", "cli_command", "ollama_base_url", "timeout", "max_turns"):
+        for key in ("provider", "planning_model", "support_model", "verification_model", "cli_command", "ollama_base_url", "timeout", "max_turns"):
             val = agent.get(key)
             if val is not None:
                 var_name = f"TOML_AGENT_{key.upper()}"

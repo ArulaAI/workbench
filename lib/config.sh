@@ -96,6 +96,11 @@ MODEL_PLANNING="${SPEED_PLANNING_MODEL:-${TOML_AGENT_PLANNING_MODEL:-opus}}"
 # Support tier: structured tasks applying frameworks to known inputs.
 #   Used by: debugger, supervisor, guardian, reviewer, validator, integrator
 MODEL_SUPPORT="${SPEED_SUPPORT_MODEL:-${TOML_AGENT_SUPPORT_MODEL:-sonnet}}"
+# Business-domain verification may use its own model, so synthesis can run on a cheaper one.
+# [agent] verification_model sets it; SPEED_DISCOVER_VERIFICATION_MODEL still wins.
+if [[ -z "${SPEED_DISCOVER_VERIFICATION_MODEL:-}" && -n "${TOML_AGENT_VERIFICATION_MODEL:-}" ]]; then
+    export SPEED_DISCOVER_VERIFICATION_MODEL="$TOML_AGENT_VERIFICATION_MODEL"
+fi
 
 # Developer tier: set per-task by the architect, defaults to MODEL_SUPPORT.
 #   Escalated automatically by timeout (sonnet → opus).

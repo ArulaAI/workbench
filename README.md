@@ -81,6 +81,7 @@ SPEED is configured via `speed.toml` in the project root. All values are optiona
 provider = "claude-code"       # or "codex-cli"
 planning_model = "opus"        # high-stakes: architect, verifier, coherence
 support_model = "sonnet"       # structured: guardian, reviewer, developer default
+# verification_model = "opus"  # business-domain verify only; defaults to support_model
 timeout = 600                  # agent timeout in seconds
 max_turns = 50                 # max turns for developer agents
 
@@ -118,6 +119,7 @@ For verbosity: `--quiet`/`--verbose`/`--debug` flag > `SPEED_VERBOSITY` env > `u
 | Skill harnesses | `WORKBENCH_HARNESSES` | `skills.harnesses` | resolved during `workbench init` |
 | Planning model | `SPEED_PLANNING_MODEL` | `agent.planning_model` | `opus` |
 | Support model | `SPEED_SUPPORT_MODEL` | `agent.support_model` | `sonnet` |
+| Business-domain verification model | `SPEED_DISCOVER_VERIFICATION_MODEL` | `agent.verification_model` | the support model |
 | Timeout | `SPEED_TIMEOUT` | `agent.timeout` | `600` |
 | Max turns | `SPEED_MAX_TURNS` | `agent.max_turns` | `50` |
 | Vision file | — | `specs.vision_file` | `specs/product/overview.md` |
