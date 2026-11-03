@@ -201,7 +201,8 @@ source "$_PROVIDER_FILE"
 if [[ "${SPEED_CI:-}" != 1 ]] && ! command -v "$PROVIDER_BIN" &>/dev/null; then
     log_error_block \
         "Provider '${_PROVIDER_NAME}' binary not found: ${PROVIDER_BIN}" \
-        "Install the binary or set the path via the provider's env var"
+        "Agents run through the provider's command-line tool, and it is not on PATH" \
+        "Install the binary or set the path via the provider's env var (CLAUDE_BIN for claude-code)"
     exit "$EXIT_CONFIG_ERROR"
 fi
 
