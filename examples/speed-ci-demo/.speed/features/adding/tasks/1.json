@@ -1,0 +1,3 @@
+{"id": "1", "title": "Add two numbers", "status": "done", "required_test_cases": ["AC-01"],
+ "test_selectors": ["tests/test_app.py::AddTest::test_add"], "files_touched": ["app.py"],
+ "acceptance_criteria": [], "depends_on": []}

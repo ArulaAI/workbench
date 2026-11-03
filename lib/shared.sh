@@ -38,9 +38,57 @@ _get_spec_path() {
     fi
 }
 
+# ── Spec documents (feature-mode plans) ──────────────────────────
+# `speed plan --feature NAME` records every document it planned from in
+# spec_documents ("kind<TAB>project-relative path" per line). Single-file
+# plans have no such file and keep using spec_path.
+
+_get_spec_documents_file() {
+    local dir="${FEATURE_DIR:-${STATE_DIR}}"
+    [[ -f "${dir}/spec_documents" ]] && echo "${dir}/spec_documents"
+    return 0
+}
+
+# Prints every recorded document, labelled by kind and path, plus the shared
+# platform architecture as constraints. Returns 1 if a recorded document is
+# missing, because the plan no longer matches the specs on disk.
+_get_spec_documents_content() {
+    local list_file="$1"
+    local kind rel label missing=0 out=""
+    while IFS=$'\t' read -r kind rel; do
+        [[ -z "$rel" ]] && continue
+        if [[ ! -f "${PROJECT_ROOT}/${rel}" ]]; then
+            log_error "Planned document no longer exists: ${rel}"
+            missing=1
+            continue
+        fi
+        case "$kind" in
+            product)      label="Product Spec" ;;
+            architecture) label="Architecture Spec" ;;
+            design)       label="Design Spec" ;;
+            tech)         label="Tech Spec" ;;
+            *)            label="Spec" ;;
+        esac
+        out+="## ${label}: ${rel}"$'\n\n'"$(cat "${PROJECT_ROOT}/${rel}")"$'\n\n'
+    done < "$list_file"
+    if [[ -f "${PROJECT_ROOT}/specs/architecture/overview.md" ]]; then
+        out+="## Shared Platform Architecture (constraints, not feature scope): specs/architecture/overview.md"$'\n\n'
+        out+="$(cat "${PROJECT_ROOT}/specs/architecture/overview.md")"$'\n'
+    fi
+    printf '%s' "$out"
+    return "$missing"
+}
+
 # ── Product Guardian ──────────────────────────────────────────────
 # Runs the Product Guardian agent against any input (spec, diff, integration)
 # Returns: 0 = aligned, 1 = rejected, 2 = flagged (warnings), 3 = unparseable
+
+# The Guardian verdict JSON is for machines: print it on stdout only with --json.
+# Callers capture stdout, so everything a person should read goes to stderr.
+_guardian_emit_json() {
+    [[ "${JSON_OUTPUT:-false}" == "true" ]] && echo "$1"
+    return 0
+}
 
 _run_guardian() {
     local check_type="$1"  # "pre-plan" | "post-review" | "post-integration"
@@ -93,7 +141,7 @@ ${content}
 
 Evaluate this ${check_type} input against the product vision. Respond with JSON."
 
-    log_step "Running Product Guardian (${check_type})..."
+    log_step "Running Product Guardian (${check_type})..." >&2
 
     local raw_guardian_output
     if ! raw_guardian_output=$(provider_run \
@@ -133,46 +181,52 @@ Evaluate this ${check_type} input against the product vision. Respond with JSON.
 
     case "$status" in
         aligned)
-            log_success "Guardian: ${COLOR_SUCCESS}ALIGNED${RESET} — ${summary}"
-            echo "$guardian_output"
+            log_success "Guardian: ${COLOR_SUCCESS}ALIGNED${RESET} — ${summary}" >&2
+            _guardian_emit_json "$guardian_output"
             return 0
             ;;
         flagged)
             log_warn "Guardian: ${COLOR_WARN}FLAGGED${RESET} — ${summary}"
-            echo "$guardian_output"
+            _guardian_emit_json "$guardian_output"
 
             # Print flags
             local flag_count
             flag_count=$(echo "$guardian_output" | jq '.flags | length')
             if [[ "$flag_count" -gt 0 ]]; then
-                echo ""
-                echo -e "  ${BOLD}Vision Flags:${RESET}"
-                echo "$guardian_output" | jq -r '.flags[] | "    \(.severity): \(.description)"'
-                echo ""
+                {
+                    echo ""
+                    echo -e "  ${BOLD}Vision Flags:${RESET}"
+                    echo "$guardian_output" | jq -r '.flags[] | "    \(.severity): \(.description)"'
+                    echo ""
+                } >&2
             fi
             return 2
             ;;
         rejected)
             log_error "Guardian: ${COLOR_ERROR}REJECTED${RESET} — ${summary}"
-            echo "$guardian_output"
+            _guardian_emit_json "$guardian_output"
 
             # Print critical flags
             local critical_flags
             critical_flags=$(echo "$guardian_output" | jq -r '.flags[] | select(.severity == "critical") | "    \(.description)\n    Spec: \(.vision_reference // .spec_reference)"' 2>/dev/null || echo "")
             if [[ -n "$critical_flags" ]]; then
-                echo ""
-                echo -e "  ${BOLD}Critical Violations:${RESET}"
-                echo -e "$critical_flags"
-                echo ""
+                {
+                    echo ""
+                    echo -e "  ${BOLD}Critical Violations:${RESET}"
+                    echo -e "$critical_flags"
+                    echo ""
+                } >&2
             fi
 
             # Print Won't Have violations
             local wont_have
             wont_have=$(echo "$guardian_output" | jq -r '(.scope_violations // .wont_have_violations // [])[] | "    \(.feature) → maps to Won'\''t Have: \(.maps_to)"' 2>/dev/null || echo "")
             if [[ -n "$wont_have" ]]; then
-                echo -e "  ${BOLD}Won't Have Violations:${RESET}"
-                echo -e "$wont_have"
-                echo ""
+                {
+                    echo -e "  ${BOLD}Won't Have Violations:${RESET}"
+                    echo -e "$wont_have"
+                    echo ""
+                } >&2
             fi
             return 1
             ;;
@@ -183,7 +237,7 @@ Evaluate this ${check_type} input against the product vision. Respond with JSON.
             echo "$guardian_output" | head -3 | while IFS= read -r line; do
                 echo -e "    ${COLOR_DIM}${line}${RESET}" >&2
             done
-            echo "$guardian_output"
+            _guardian_emit_json "$guardian_output"
             return 3  # Distinct code: 0=aligned, 1=rejected, 2=flagged, 3=unparseable
             ;;
     esac
@@ -483,4 +537,25 @@ _kill_orphan_agents() {
     done
 
     echo "$killed"
+}
+
+# ── Task file integrity ───────────────────────────────────────────
+# Task JSON that jq cannot read surfaced as raw "jq: parse error" lines and odd
+# exit codes. Name the files instead, and stop before acting on a broken plan.
+_unreadable_task_files() {
+    local dir="${1:-$TASKS_DIR}" f
+    for f in "${dir}"/*.json; do
+        [[ -f "$f" ]] || continue
+        jq -e 'type == "object"' "$f" >/dev/null 2>&1 || echo "$f"
+    done
+}
+
+_require_readable_tasks() {
+    local bad
+    bad=$(_unreadable_task_files "$TASKS_DIR")
+    [[ -z "$bad" ]] && return 0
+    log_error "Task file(s) are not valid JSON:"
+    echo "$bad" | while IFS= read -r f; do echo "  - ${f}" >&2; done
+    log_error "Fix or restore them, or re-plan with 'speed plan'."
+    exit "$EXIT_CONFIG_ERROR"
 }

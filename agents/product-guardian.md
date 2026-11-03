@@ -128,6 +128,14 @@ Question: Does the integrated result still align with the product vision, or has
 - **"flagged"** — The work has warnings or concerns that should be reviewed before proceeding. The vision is not violated, but drift is possible.
 - **"rejected"** — The work violates a product principle, introduces an excluded feature, or fundamentally misaligns with the vision. Do not proceed without explicit product decision to override.
 
+Set `status` from your flags: `rejected` needs at least one `critical` flag, `flagged` at least one `warning`.
+
+### Critical versus warning
+
+A flag is **critical** only when the conflict is verified: the work states the conflicting behaviour, the behaviour falls within the plain meaning of the vision text you quote, and the work records no product decision about it. For example, a spec that sends the request containing the card number to an external AI service, or that puts an excluded feature in scope.
+
+A flag is a **warning** when the conflict depends on interpretation, and you must name who has to rule. Examples: whether coarse attributes such as a country or an amount band count as "cardholder data"; whether holding data in memory counts as "stored"; a trade-off the work already records as an Unresolved Question, an accepted exception or a Drawback with an owner. Do not raise an interpretive concern to critical. If you are unsure whether a conflict is verified, it is a warning.
+
 ## Guidelines
 
 - **You are the vision's advocate, not the team's adversary.** Your job is to protect the product from becoming something it's not. You are not blocking work — you are ensuring the work serves the right purpose.

@@ -224,7 +224,7 @@ _invoke_debugger() {
     local title description criteria branch
     title=$(echo "$task_json" | jq -r '.title')
     description=$(echo "$task_json" | jq -r '.description')
-    criteria=$(echo "$task_json" | jq -r '.acceptance_criteria')
+    criteria=$(echo "$task_json" | jq -r "$TASK_CRITERIA_JQ")
     branch=$(echo "$task_json" | jq -r '.branch')
 
     local output_file="${LOGS_DIR}/${task_id}.log"
@@ -289,12 +289,17 @@ cmd_run() {
     # Parse arguments before _require_feature so --defect can skip the feature requirement
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --max-parallel) max_parallel="$2"; shift 2 ;;
-            --model)        model="$2"; shift 2 ;;
-            --defect)       defect_name="$2"; shift 2 ;;
+            --max-parallel) _need_value "$@"; max_parallel="$2"; shift 2 ;;
+            --model)        _need_value "$@"; model="$2"; shift 2 ;;
+            --defect)       _need_value "$@"; defect_name="$2"; shift 2 ;;
             *) log_error "Unknown option: $1"; exit 1 ;;
         esac
     done
+
+    if ! [[ "$max_parallel" =~ ^[1-9][0-9]*$ ]]; then
+        log_error "--max-parallel must be a whole number of at least 1, got '${max_parallel}'"
+        exit "$EXIT_CONFIG_ERROR"
+    fi
 
     # ── --defect mode: run defect pipeline, skip feature requirement ──
     if [[ -n "$defect_name" ]]; then
@@ -315,10 +320,12 @@ cmd_run() {
     log_header "Running SPEED"
     log_info "Max parallel: ${max_parallel} | Model: ${model}"
 
+    _require_readable_tasks
+
     # Check for circular dependencies before starting
     if ! task_topo_sort > /dev/null; then
         log_error "Cannot run: circular dependencies in task graph. Fix depends_on fields."
-        exit 1
+        exit "$EXIT_CONFIG_ERROR"
     fi
 
     # Ensure working tree is committed so task branches see all files
@@ -343,6 +350,8 @@ cmd_run() {
         execution_task_id=$(jq -r '.id' "$execution_task_file")
         task_update "$execution_task_id" "execution_base_commit" "$execution_base_commit"
     done
+    git_record_feature_base_branch
+    log_info "Base branch: $(git_main_branch) (task branches are compared with and merged into it)"
 
     # Verify tasks exist
     local total
@@ -740,7 +749,7 @@ cmd_run() {
                 local title description criteria task_model branch
                 title=$(echo "$task_json" | jq -r '.title')
                 description=$(echo "$task_json" | jq -r '.description')
-                criteria=$(echo "$task_json" | jq -r '.acceptance_criteria')
+                criteria=$(echo "$task_json" | jq -r "$TASK_CRITERIA_JQ")
                 task_model=$(echo "$task_json" | jq -r ".agent_model // \"${model}\"")
                 branch=$(echo "$task_json" | jq -r '.branch')
 

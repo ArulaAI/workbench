@@ -64,7 +64,7 @@ cmd_spec_review() {
         case "$1" in
             --approve) verdict="approve"; shift ;;
             --reject)  verdict="reject"; shift ;;
-            --comment) comment="$2"; shift 2 ;;
+            --comment) _need_value "$@"; comment="$2"; shift 2 ;;
             *) spec_path="$1"; shift ;;
         esac
     done
@@ -251,7 +251,7 @@ cmd_review_judge() {
         case "$1" in
             --approve) verdict="approve"; shift ;;
             --reject)  verdict="reject"; shift ;;
-            --comment) comment="$2"; shift 2 ;;
+            --comment) _need_value "$@"; comment="$2"; shift 2 ;;
             *) judge_args+=("$1"); shift ;;
         esac
     done

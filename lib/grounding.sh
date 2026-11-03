@@ -1267,6 +1267,9 @@ toml_get_value() {
 
 contract_check() {
     local contract_file="${CONTRACT_FILE:-${STATE_DIR}/contract.json}"
+    CONTRACT_PASSED=""
+    CONTRACT_TOTAL=""
+    CONTRACT_REPORT=""
 
     if [[ ! -f "$contract_file" ]]; then
         log_warn "No contract.json found — skipping contract verification"
@@ -1302,37 +1305,39 @@ contract_check() {
         return 1
     fi
 
-    local all_passed
+    local all_passed total failed
     all_passed=$(echo "$results_json" | jq -r '.passed')
+    total=$(echo "$results_json" | jq '.results | length')
+    failed=$(echo "$results_json" | jq '[.results[] | select(.passed != true)] | length')
+    CONTRACT_TOTAL=$total
+    CONTRACT_PASSED=$((total - failed))
 
-    # Print each check result
-    echo ""
-    echo -e "  ${BOLD}Contract Verification:${RESET}"
+    # Full list goes to a log; the terminal shows failures (all checks with --verbose).
+    local report="${LOGS_DIR:-${STATE_DIR}}/contract-check.log"
+    mkdir -p "$(dirname "$report")"
+    echo "$results_json" | jq -r '.results[] | "\(if .passed == true then "ok  " else "FAIL" end) \(.check): \(.detail)"' > "$report"
+    CONTRACT_REPORT="$report"
 
-    local check_count
-    check_count=$(echo "$results_json" | jq '.results | length')
-    local i=0
-    while [[ $i -lt $check_count ]]; do
-        local check_name passed detail
-        check_name=$(echo "$results_json" | jq -r ".results[$i].check")
-        passed=$(echo "$results_json" | jq -r ".results[$i].passed")
-        detail=$(echo "$results_json" | jq -r ".results[$i].detail")
-
-        if [[ "$passed" == "true" ]]; then
-            echo -e "    ${COLOR_SUCCESS}${SYM_CHECK} ${check_name}${RESET} ${COLOR_DIM}${detail}${RESET}"
-        else
-            echo -e "    ${COLOR_ERROR}${SYM_CROSS} ${check_name}${RESET} — ${detail}"
-        fi
-        ((i++)) || true
-    done
-
-    echo ""
+    local show_all=false
+    [[ "${VERBOSITY:-1}" -ge 2 ]] && show_all=true
+    if [[ "$show_all" == true || "$failed" -gt 0 ]]; then
+        echo ""
+        echo "$results_json" | jq -r --argjson all "$show_all" '.results[] | select($all or .passed != true) | [.passed, .check, .detail] | @tsv' |
+        while IFS=$'\t' read -r passed check_name detail; do
+            if [[ "$passed" == "true" ]]; then
+                echo -e "    ${COLOR_SUCCESS}${SYM_CHECK} ${check_name}${RESET} ${COLOR_DIM}${detail}${RESET}"
+            else
+                echo -e "    ${COLOR_ERROR}${SYM_CROSS} ${check_name}${RESET}: ${detail}"
+            fi
+        done
+        echo ""
+    fi
 
     if [[ "$all_passed" == "true" ]]; then
-        log_success "Contract satisfied — all declared artifacts exist"
+        log_success "Contract: ${CONTRACT_PASSED}/${total} declared artifacts found"
         return 0
     else
-        log_error "Contract VIOLATED — declared artifacts missing from implementation"
+        log_error "Contract: ${failed} of ${total} declared artifacts missing (full list: ${report#"${PROJECT_ROOT}"/})"
         return 1
     fi
 }
@@ -1340,7 +1345,6 @@ contract_check() {
 # ── Regression Gate: run full test suite ──────────────────────────
 
 regression_run() {
-    log_step "Running regression tests (full suite)..."
 
     local all_passed=true
     local results=()
@@ -1544,7 +1548,7 @@ _secrets_pattern_pairs() {
         "Generic API Key" "['\"]sk-[a-zA-Z0-9]{20,}['\"]" \
         "Private Key Header" '-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----' \
         "Generic High-Entropy Secret" "['\"][A-Za-z0-9+/=]{40,}['\"]" \
-        "Database URL" '[a-z]+://[^:]+:[^@]+@[^/]+'
+        "Database URL" "[a-z][a-z0-9+.-]*://[^/:@[:space:]'\"?#]+:[^/@[:space:]'\"?#]+@[^/[:space:]'\"]+"
 }
 
 grounding_check_secrets() {

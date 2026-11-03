@@ -11,6 +11,14 @@ _ensure_jq() {
     fi
 }
 
+# jq filter: a task's acceptance criteria as prompt text. Structured criteria
+# become "- criterion (verify: X)" lines; a legacy string is printed as is.
+TASK_CRITERIA_JQ='.acceptance_criteria
+    | if type == "array" then
+        map(if type == "object" then "- \(.criterion // "") (verify: \(.verify_by // "manual"))" else "- \(.)" end)
+        | join("\n")
+      else (. // "") end'
+
 # Create a task file from parameters
 task_create() {
     local id="$1"
@@ -398,7 +406,7 @@ task_print_graph() {
             history_str+=" ${COLOR_ACCENT}[retry x${retry_count}]${RESET}"
         fi
 
-        printf "  %b%s%b  %-4s %s%s%s\n" "$status_color" "$status_icon" "$RESET" "$id" "$title" "$dep_str" "$history_str"
+        printf "  %b%s%b  %-4s %s%b%b\n" "$status_color" "$status_icon" "$RESET" "$id" "$title" "$dep_str" "$history_str"
     done | sort -t' ' -k4 -n
 }
 
@@ -437,6 +445,27 @@ task_topo_sort() {
             echo "$id" >> "$tmpdir/adj/$dep"
         done <<< "$deps"
     done
+
+    # A dependency on a task that does not exist can never be satisfied. Name it
+    # instead of reporting it as a cycle.
+    # Space-delimited set (Bash 3.2 has no associative arrays)
+    local _known_ids=" ${all_ids[*]:-} "
+    local _unknown=0 _f _tid _dep
+    for _f in "${TASKS_DIR}"/*.json; do
+        [[ -f "$_f" ]] || continue
+        _tid=$(jq -r '.id' "$_f")
+        while IFS= read -r _dep; do
+            [[ -z "$_dep" ]] && continue
+            if [[ "$_known_ids" != *" ${_dep} "* ]]; then
+                log_error "Task ${_tid} depends on task ${_dep}, which does not exist"
+                _unknown=1
+            fi
+        done < <(jq -r '.depends_on[]? | tostring' "$_f")
+    done
+    if [[ $_unknown -eq 1 ]]; then
+        rm -rf "$tmpdir"
+        return 1
+    fi
 
     # Kahn's algorithm
     local queue=()
@@ -489,7 +518,32 @@ task_topo_sort() {
                 unsorted+=("$id")
             fi
         done
-        log_error "Tasks in cycle: ${unsorted[*]}"
+        # Every unsorted task waits on another unsorted task, so following those
+        # edges from any of them must revisit a task: that loop is the cycle.
+        # Space-delimited sets (Bash 3.2 has no associative arrays)
+        local _in_unsorted=" ${unsorted[*]} " _visited=" "
+        local _cur _next _d _k _start=0
+        local -a _path=()
+        _cur="${unsorted[0]}"
+        while [[ -n "$_cur" && "$_visited" != *" ${_cur} "* ]]; do
+            _visited+="${_cur} "
+            _path+=("$_cur")
+            _next=""
+            while IFS= read -r _d; do
+                if [[ "$_in_unsorted" == *" ${_d} "* ]]; then _next="$_d"; break; fi
+            done < <(jq -r '.depends_on[]? | tostring' "${TASKS_DIR}/${_cur}.json" 2>/dev/null)
+            _cur="$_next"
+        done
+        if [[ -n "$_cur" ]]; then
+            for _k in "${!_path[@]}"; do
+                if [[ "${_path[$_k]}" == "$_cur" ]]; then _start=$_k; break; fi
+            done
+            local -a _cycle=("${_path[@]:$_start}" "$_cur")
+            local _chain
+            _chain=$(printf ' → %s' "${_cycle[@]}")
+            log_error "Dependency cycle (each task waits on the next): ${_chain# → }"
+        fi
+        log_error "Tasks that cannot start: ${unsorted[*]}"
         return 1
     fi
 

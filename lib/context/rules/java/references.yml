@@ -7,6 +7,38 @@ rule:
   kind: field_access
 
 ---
+id: java-field-type
+language: java
+metadata:
+  # Field types are structural dependencies: Spring-style injection
+  # (private final OwnerRepository repository;) has no call or import at the
+  # declaration. csg.py turns type_ref references into references_type edges.
+  produces: reference
+  ref_kind: type_ref
+  name_var: TYPE
+rule:
+  kind: field_declaration
+  has:
+    field: type
+    kind: type_identifier
+    pattern: $TYPE
+
+---
+id: java-parameter-type
+language: java
+metadata:
+  # Same for constructor injection, the usual modern Spring pattern.
+  produces: reference
+  ref_kind: type_ref
+  name_var: TYPE
+rule:
+  kind: formal_parameter
+  has:
+    field: type
+    kind: type_identifier
+    pattern: $TYPE
+
+---
 id: java-import
 language: java
 metadata:
@@ -39,4 +71,16 @@ rule:
   kind: method_invocation
   pattern: $FUNC($$$ARGS)
 
-The definitions file covers 10 rules across three categories:
+---
+id: java-method-call-qualified
+language: java
+metadata:
+  produces: reference
+  ref_kind: call
+  name_var: FUNC
+rule:
+  # $FUNC($$$ARGS) only matches a method_invocation with no object field, a
+  # bare call. Qualified calls (repository.findById(), this.helper()) are the
+  # usual way one Java class calls another and were never captured.
+  kind: method_invocation
+  pattern: $OBJ.$FUNC($$$ARGS)

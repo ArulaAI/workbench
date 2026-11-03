@@ -273,9 +273,15 @@ else:
     check("Layer D: returns dict even empty", isinstance(impact, dict))
     print("  (skipping Layer A-D depth tests — sg not installed)")
 
-# Query helpers with real CSG
+# Query helpers with real CSG. These and the skeleton checks below read the
+# Layer 1 index; build it when missing instead of relying on an earlier run
+# (test_e2e_layer1 builds it, but only if it ran first in this checkout).
 from lib.context.utils import read_json
-csg = read_json(os.path.join(PROJECT_ROOT, ".speed", "context", "semantic-graph.json"))
+_graph_path = os.path.join(PROJECT_ROOT, ".speed", "context", "semantic-graph.json")
+if not os.path.exists(_graph_path):
+    from lib.context.layer1 import build_layer1
+    build_layer1(PROJECT_ROOT)
+csg = read_json(_graph_path)
 if csg and csg.get("nodes"):
     # get_symbol
     sample_id = csg["nodes"][0]["id"]
@@ -292,9 +298,13 @@ if csg and csg.get("nodes"):
     edges = get_edges_for_symbol(csg, sample_id)
     check("get_edges_for_symbol: returns list", isinstance(edges, list))
 
-    # get_cluster_for_file
-    cluster = get_cluster_for_file(csg, sample_file)
-    check("get_cluster_for_file: found", cluster is not None)
+    # get_cluster_for_file: use a file that clustering included. Shell
+    # scripts have symbols but are not clustered (CODE_EXTENSIONS), and the
+    # first node is often one of them.
+    clustered = next((f for c in csg.get("clusters", []) for f in c.get("files", [])), None)
+    cluster = get_cluster_for_file(csg, clustered) if clustered else None
+    check("get_cluster_for_file: found", cluster is not None and clustered in cluster["files"])
+    check("get_cluster_for_file: unknown file", get_cluster_for_file(csg, "no/such/file.py") is None)
 
     # get_bridge_symbols / get_high_impact_symbols
     bridges = get_bridge_symbols(csg)

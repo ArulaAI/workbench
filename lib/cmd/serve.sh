@@ -28,7 +28,7 @@ cmd_serve() {
             local port="$SERVE_DEFAULT_PORT"
             while [[ $# -gt 0 ]]; do
                 case "$1" in
-                    --port) port="$2"; shift 2 ;;
+                    --port) _need_value "$@"; port="$2"; shift 2 ;;
                     *) log_error "Unknown option: $1"; exit 1 ;;
                 esac
             done

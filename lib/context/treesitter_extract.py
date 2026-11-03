@@ -101,6 +101,8 @@ _SG_CONFIG = _SPEED_ROOT / "sgconfig.yml"
 # Cache sg availability check
 _SG_PATH: str | None = None
 _SG_CHECKED = False
+# Custom-grammar languages in sgconfig.yml. Their native libraries are optional
+# builds (scripts/build-grammars.sh) and are git-ignored.
 _CUSTOM_LANGUAGES = {"prisma", "graphql", "protobuf", "zig"}
 
 
@@ -182,6 +184,9 @@ def _run_ast_grep(file_path: str, language: str) -> list[dict]:
         return []
 
     try:
+        # sgconfig.yml loads every custom grammar library, and one missing
+        # library makes ast-grep fail for all languages. Only custom languages
+        # need it; ordinary languages run their rule files directly.
         if not _custom_grammar_available(language):
             return _run_ast_grep_rule_files(sg, file_path, lang_rules_dir)
 
@@ -202,15 +207,20 @@ def _run_ast_grep(file_path: str, language: str) -> list[dict]:
 
 
 def _run_ast_grep_rule_files(sg: str, file_path: str, lang_rules_dir: Path) -> list[dict]:
-    """Apply ordinary-language rule files without loading custom grammars."""
+    """Apply a language's rule files without loading sgconfig.yml.
+
+    Runs from a neutral directory so no sgconfig.yml in the working directory
+    (this repository's or the scanned project's) is picked up.
+    """
     all_matches: list[dict] = []
+    # ast-grep runs from a neutral directory, so a relative path (a project
+    # root of ".") must be made absolute or it resolves to nothing.
+    target = _native_path(os.path.abspath(file_path))
     for rule_file in sorted(lang_rules_dir.glob("*.yml")):
         try:
             result = subprocess.run(
-                [sg, "scan", "--json", "--include-metadata", "--rule",
-                 _native_path(rule_file), _native_path(file_path)],
-                capture_output=True, text=True, timeout=30,
-                cwd=tempfile.gettempdir(),
+                [sg, "scan", "--json", "--include-metadata", "--rule", _native_path(rule_file), target],
+                capture_output=True, text=True, timeout=30, cwd=tempfile.gettempdir(),
             )
             if result.returncode != 0 or not result.stdout.strip():
                 continue
@@ -376,9 +386,11 @@ def _extract_name_from_match(match: dict, kind: str) -> str | None:
     if not text:
         return None
 
-    # For classes/functions: first identifier-like word after keyword
+    # For classes/functions: first identifier-like word after keyword. The
+    # keyword must be a whole word: ``@MappedSuperclass`` ends in "class" and
+    # would otherwise name the class after the modifier that follows it.
     if kind in ("class", "type"):
-        m = re.search(r"(?:class|struct|interface|type|enum|model|trait|impl)\s+(\w+)", text)
+        m = re.search(r"\b(?:class|struct|interface|type|enum|model|trait|impl)\s+(\w+)", text)
         if m:
             return m.group(1)
     elif kind in ("function", "method"):

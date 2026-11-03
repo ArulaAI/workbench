@@ -28,11 +28,42 @@
 # ── Derive feature name from a spec file path ────────────────────
 # specs/tech/auth.md → auth
 # specs/product/billing.md → billing
+# specs/tech/adaptive-auth/1-high-value-traveller.md → adaptive-auth
 # /absolute/path/to/my-feature.md → my-feature
+#
+# A file nested under specs/<kind>/<feature>/ belongs to <feature>, so
+# numbered documents never become features named "1-…" or "2-…".
 
 feature_name_from_spec() {
     local spec_file="$1"
+    if [[ "$spec_file" =~ specs/(product|design|tech|architecture)/([^/]+)/.+\.md$ ]]; then
+        echo "${BASH_REMATCH[2]}"
+        return
+    fi
     basename "$spec_file" .md
+}
+
+# ── Discover every document of a feature ─────────────────────────
+# Prints "kind<TAB>path" lines, ordered product, architecture, design,
+# tech, then natural number order within a kind (1-…, 2-…, 10-…).
+# Includes nested specs/<kind>/<feature>/**/*.md and a flat
+# specs/<kind>/<feature>.md. Shared overviews are not included here.
+
+feature_discover_specs() {
+    local name="$1"
+    local specs_root="${PROJECT_ROOT}/specs"
+    local kind file
+    for kind in product architecture design tech; do
+        {
+            [[ -f "${specs_root}/${kind}/${name}.md" ]] && echo "${specs_root}/${kind}/${name}.md"
+            if [[ -d "${specs_root}/${kind}/${name}" ]]; then
+                find "${specs_root}/${kind}/${name}" -type f -name '*.md' 2>/dev/null
+            fi
+        } | sort -V | while IFS= read -r file; do
+            [[ -L "$file" ]] && continue
+            printf '%s\t%s\n' "$kind" "$file"
+        done
+    done
 }
 
 # ── Activate a feature: override global paths ────────────────────

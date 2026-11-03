@@ -12,7 +12,7 @@ class ArchitectReferences(unittest.TestCase):
     def setUp(self):
         self.validator = Draft202012Validator(SCHEMA['properties']['tasks'])
         self.task = {'id': '1', 'title': 'Fix fee', 'description': 'Round fees half up',
-                     'acceptance_criteria': 'RISK-02 passes', 'depends_on': [],
+                     'acceptance_criteria': [{'criterion': 'RISK-02 passes', 'verify_by': 'test'}], 'depends_on': [],
                      'agent_model': 'sonnet', 'files_touched': ['src/payments/service.ts']}
 
     def reference(self, spec):

@@ -13,6 +13,7 @@ cmd_security() {
                 shift
                 ;;
             --feature|-f)
+                _need_value "$@"
                 feature_name="$2"
                 shift 2
                 ;;

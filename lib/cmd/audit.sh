@@ -54,12 +54,13 @@ cmd_audit() {
         product/*)  spec_type="prd";    template_file="${TEMPLATES_DIR}/prd.md" ;;
         tech/*)     spec_type="rfc";    template_file="${TEMPLATES_DIR}/rfc.md" ;;
         design/*)   spec_type="design"; template_file="${TEMPLATES_DIR}/design.md" ;;
+        architecture/*) spec_type="architecture"; template_file="${TEMPLATES_DIR}/architecture.md" ;;
         defects/*)  spec_type="defect"; template_file="${TEMPLATES_DIR}/defect.md" ;;
         *)
             log_error_block \
                 "Unrecognized spec path: ${rel_path}" \
                 "Cannot determine spec type from file location" \
-                "Spec must be under a specs/ directory with product/, tech/, design/, or defects/ subdirs"
+                "Spec must be under a specs/ directory with product/, tech/, design/, architecture/, or defects/ subdirs"
             exit $EXIT_CONFIG_ERROR
             ;;
     esac
@@ -210,6 +211,13 @@ cmd_audit() {
     # ── Agent context assembly ─────────────────────────────────
     local audit_message=""
     audit_message+="## Spec Under Audit\n\n${spec_content}"
+    # Heading numbers for sizing.phase_sections and suggested_children. Counted
+    # here the way the phase split counts them, so the agent never counts.
+    local h2_index
+    h2_index=$(printf '%s\n' "$spec_content" | awk '/^## / { sub(/^## /, ""); printf "%d  %s\n", n++, $0 }')
+    if [[ -n "$h2_index" ]]; then
+        audit_message+="\n\n## H2 Heading Index\n\nUse exactly these 0-based numbers for sizing.phase_sections and suggested_children sections. Do not count headings yourself.\n\n${h2_index}"
+    fi
     audit_message+="\n\n## Template (structural contract)\n\n${template_content}"
     audit_message+="\n\n## Product Vision\n\n${vision_content}"
 
@@ -266,7 +274,7 @@ cmd_audit() {
     # ── Response parsing ───────────────────────────────────────
     local audit_output
     audit_output=$(parse_agent_json "$raw_audit_output") || {
-        log_error "Could not extract valid JSON from audit output"
+        log_error "Could not extract valid JSON from audit output. The agent said: $(agent_output_first_line "$raw_audit_output")"
         log_error "Raw output saved to ${log_file}"
         exit 1
     }
@@ -368,8 +376,8 @@ cmd_audit() {
             exit $EXIT_GATE_FAILURE
             ;;
         *)
-            log_warn "Audit returned unknown status: ${status}"
-            exit $EXIT_OK
+            log_error "Audit gave no pass, warn or fail verdict (status: ${status}); the audit did not complete"
+            exit 1
             ;;
     esac
 }

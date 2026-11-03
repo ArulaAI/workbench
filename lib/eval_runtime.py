@@ -133,7 +133,8 @@ def build_snapshot(root: Path) -> dict:
     try:
         head = git("rev-parse", "HEAD").decode().strip()
         names = set(git("ls-files", "-c", "-o", "--exclude-standard", "-z").decode().split("\0"))
-        changed = set(git("diff", "HEAD", "--name-only", "-z").decode().split("\0"))
+        # --relative keeps a project in a subdirectory to its own files, like ls-files above.
+        changed = set(git("diff", "HEAD", "--name-only", "--relative", "-z").decode().split("\0"))
         untracked = set(git("ls-files", "-o", "--exclude-standard", "-z").decode().split("\0"))
     except (OSError, subprocess.CalledProcessError):
         return {"head_commit": None, "fingerprint": None, "dirty": True, "available": False}
@@ -295,27 +296,40 @@ def prepare(root: Path, feature_dir: Path, state_file: Path, test_spec: Path,
     if review_plan is not None:
         atomic_json(run / "review-derived-plan.json", review_plan)
     atomic_json(run / "runner-config.json", config)
-    unmerged = []
+    # Under speed ci the tested commit is the integrated code. A fresh CI checkout has
+    # no local feature state and often no task branches, so there a task counts as
+    # unmerged only when its branch (local or remote-tracking) exists and is not in HEAD.
+    # The relaxed verdict is used for this report only; the feature state keeps the strict one.
+    ci = os.environ.get("SPEED_CI") == "1"
+    unmerged, unchecked = [], []
     for task in selected:
         if task.get("branch"):
-            if subprocess.run(["git", "-C", str(root), "merge-base", "--is-ancestor", task["branch"], "HEAD"],
-                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode:
+            patterns = [f"refs/heads/{task['branch']}"] + ([f"refs/remotes/*/{task['branch']}"] if ci else [])
+            refs = subprocess.run(["git", "-C", str(root), "for-each-ref", "--format=%(refname)", *patterns],
+                                  capture_output=True, text=True).stdout.split()
+            if not refs:
+                unchecked.append(str(task["id"]))
+            elif any(subprocess.run(["git", "-C", str(root), "merge-base", "--is-ancestor", ref, "HEAD"],
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode for ref in refs):
                 unmerged.append(str(task["id"]))
     prior_evaluation = state.get("evaluation", {})
-    integration_verified = (state.get("status") == "completed" or
-                            (isinstance(prior_evaluation, dict) and
-                             prior_evaluation.get("integration_verified") is True))
-    integration_verified = bool(integration_verified and not state.get("integration_failure") and not unmerged)
-    context = {"integration_verified": integration_verified, "run_id": run.name, "project_root": str(root), "feature_dir": str(feature_dir),
+    recorded = (state.get("status") == "completed" or
+                (isinstance(prior_evaluation, dict) and prior_evaluation.get("integration_verified") is True))
+    healthy = not state.get("integration_failure") and not unmerged
+    strict_verified = bool(recorded and healthy and not unchecked)
+    integration_verified = bool(healthy and (ci or (recorded and not unchecked)))
+    context = {"integration_verified": integration_verified, "state_integration_verified": strict_verified, "ci": ci,
+               "run_id": run.name, "project_root": str(root), "feature_dir": str(feature_dir),
                "state_file": str(state_file), "output_dir": str(output), "task_id": task_id,
                "test_spec": str(test_spec), "test_spec_sha256": hashlib.sha256(spec_text.encode()).hexdigest(),
                "started_at": utc_now(), "build_before": build, "feature_state": state,
                "unmerged_tasks": unmerged, "selection": plan["selection"]}
     atomic_json(run / "context.json", context)
     atomic_json(run / "attempt.json", {"status": "running", "started_at": context["started_at"]})
-    if task_id is None:
+    # speed ci evaluates a checkout, not the feature's progress, so it leaves the feature state alone.
+    if task_id is None and not ci:
         state["evaluation"] = {"status": "running", "accepted": False, "run_id": run.name,
-                               "integration_verified": integration_verified, "report": str(run / "report.json")}
+                               "integration_verified": strict_verified, "report": str(run / "report.json")}
         state["status"] = "evaluating"
         atomic_json(state_file, state)
     return run
@@ -460,16 +474,17 @@ def finish(run: Path, failed: bool = False) -> None:
             stale.unlink(missing_ok=True)
         atomic_json(run / "attempt.json", {"status": "completed", "accepted": report["accepted"], "finished_at": utc_now()})
     atomic_json(output / "latest-attempt.json", {"run_id": run.name, **read_object(run / "attempt.json")})
-    if context["task_id"] is None:
+    if context["task_id"] is None and not context.get("ci"):
         state = read_object(state_file)
         accepted = not failed and report["accepted"]
-        if context["integration_verified"]:
+        verified = context.get("state_integration_verified", context["integration_verified"])
+        if verified:
             state["status"] = "accepted" if accepted else "integrated_not_accepted"
         else:
             original_status = context["feature_state"].get("status", "idle")
             state["status"] = original_status if original_status not in ("accepted", "integrated_not_accepted", "evaluating") else "idle"
         state["evaluation"] = {"status": "failed" if failed else "completed", "accepted": accepted,
-                               "integration_verified": context["integration_verified"],
+                               "integration_verified": verified,
                                "run_id": run.name, "report": str(run / "report.json"), "evaluated_at": utc_now()}
         # Existing integration failures belong to integration and are preserved.
         atomic_json(state_file, state)

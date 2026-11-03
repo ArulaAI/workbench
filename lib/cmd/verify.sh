@@ -223,7 +223,7 @@ _build_verify_message() {
         id=$(jq -r '.id' "$f")
         title=$(jq -r '.title' "$f")
         desc=$(jq -r '.description' "$f")
-        criteria=$(jq -r '.acceptance_criteria' "$f")
+        criteria=$(jq -r "$TASK_CRITERIA_JQ" "$f")
         deps=$(jq -r '.depends_on | join(", ")' "$f")
         files=$(jq -r '.files_touched // [] | join(", ")' "$f")
 
@@ -256,8 +256,57 @@ ${contract_section}
 Verify this plan against the product specification. Read the spec FIRST, form your own understanding, THEN check the plan."
 }
 
+# Files the Fix Agent may edit: every task JSON, then the plan's contract.
+_verify_fix_files_content() {
+    local f
+    for f in "${TASKS_DIR}"/*.json; do
+        [[ -f "$f" ]] || continue
+        printf -- '--- FILE: %s ---\n%s\n\n' "$f" "$(cat "$f")"
+    done
+    if [[ -n "${CONTRACT_FILE:-}" && -f "$CONTRACT_FILE" ]]; then
+        printf -- '--- FILE: %s (contract) ---\n%s\n\n' "$CONTRACT_FILE" "$(cat "$CONTRACT_FILE")"
+    fi
+}
+
+# Snapshot the files the Fix Agent may edit: task JSONs and the contract.
+# Prints the snapshot directory.
+_verify_snapshot_plan_files() {
+    local snap
+    snap=$(mktemp -d)
+    mkdir -p "${snap}/tasks"
+    cp "${TASKS_DIR}"/*.json "${snap}/tasks/" 2>/dev/null || true
+    [[ -n "${CONTRACT_FILE:-}" && -f "$CONTRACT_FILE" ]] && cp "$CONTRACT_FILE" "${snap}/contract.json"
+    echo "$snap"
+}
+
+# Put back any task file or contract the Fix Agent left unreadable, keeping its
+# valid edits. An invalid task file made the next jq call end verify with jq's
+# own exit code.
+_verify_restore_invalid_files() {
+    local snap="$1" f name
+    [[ -n "$snap" && -d "$snap" ]] || return 0
+    for f in "${TASKS_DIR}"/*.json; do
+        [[ -f "$f" ]] || continue
+        jq -e 'type == "object"' "$f" >/dev/null 2>&1 && continue
+        name=$(basename "$f")
+        if [[ -f "${snap}/tasks/${name}" ]]; then
+            cp "${snap}/tasks/${name}" "$f"
+            log_warn "Fix Agent left ${name} invalid; restored the previous version"
+        else
+            rm -f "$f"
+            log_warn "Fix Agent created an invalid ${name}; removed it"
+        fi
+    done
+    if [[ -n "${CONTRACT_FILE:-}" && -f "${snap}/contract.json" ]] && ! jq empty "$CONTRACT_FILE" 2>/dev/null; then
+        cp "${snap}/contract.json" "$CONTRACT_FILE"
+        log_warn "Fix Agent left the contract invalid; restored the previous version"
+    fi
+    rm -rf "$snap"
+}
+
 cmd_verify() {
     _require_feature "$GLOBAL_FEATURE"
+    _require_readable_tasks
     log_header "Verifying Plan Against Spec"
 
     # Check prerequisites
@@ -268,10 +317,22 @@ cmd_verify() {
         exit 1
     fi
 
-    local spec_file
+    local spec_file spec_documents_file
     spec_file=$(_get_spec_path)
+    spec_documents_file=$(_get_spec_documents_file)
     local spec_content=""
-    if [[ -n "$spec_file" ]] && [[ -f "$spec_file" ]]; then
+    if [[ -n "$spec_documents_file" ]]; then
+        # Plan was made with --feature: verify against every planned document
+        local _kind _rel
+        log_step "Reading feature specs ($(grep -c . "$spec_documents_file") documents):"
+        while IFS=$'\t' read -r _kind _rel; do
+            [[ -n "$_rel" ]] && log_step "  $(printf '%-13s' "${_kind}:") ${COLOR_STEP}${_rel}${RESET}"
+        done < "$spec_documents_file"
+        if ! spec_content=$(_get_spec_documents_content "$spec_documents_file"); then
+            log_error "The plan's documents have changed. Re-run 'speed plan --feature ${FEATURE_NAME}' first."
+            exit "$EXIT_CONFIG_ERROR"
+        fi
+    elif [[ -n "$spec_file" ]] && [[ -f "$spec_file" ]]; then
         log_step "Reading product spec: ${COLOR_STEP}${spec_file}${RESET}"
         spec_content=$(cat "$spec_file")
     else
@@ -370,6 +431,11 @@ cmd_verify() {
     # Extract status and act on it
     local status
     status=$(echo "$verify_json" | jq -r '.status // "unknown"')
+    # A "pass" that still lists critical failures is not a pass.
+    if [[ "$status" == "pass" ]] && [[ "$(echo "$verify_json" | jq '[.critical_failures // [] | .[]] | length')" -gt 0 ]]; then
+        log_warn "Verifier said pass but listed critical failures; treating it as a failure"
+        status="fail"
+    fi
 
     if [[ "$status" == "pass" ]]; then
         log_success "Plan verification PASSED"
@@ -377,9 +443,9 @@ cmd_verify() {
         echo ""
         return
     elif [[ "$status" != "fail" ]]; then
-        log_warn "Could not parse verification status. Review the report manually."
-        echo ""
-        return
+        log_error "Verifier gave no pass or fail verdict (status: ${status}); verification did not complete"
+        log_error "Review ${LOGS_DIR}/plan-verification.log and re-run speed verify"
+        exit 1
     fi
 
     # ── Status is "fail" — attempt auto-fix loop ─────────────────
@@ -397,11 +463,8 @@ cmd_verify() {
     fi
 
     # Gather task file contents for the Fix Agent
-    local task_files_content=""
-    for f in "${TASKS_DIR}"/*.json; do
-        [[ -f "$f" ]] || continue
-        task_files_content+="--- FILE: ${f} ---"$'\n'"$(cat "$f")"$'\n\n'
-    done
+    local task_files_content
+    task_files_content=$(_verify_fix_files_content)
 
     # Build the issues payload (critical_failures + recommendations)
     local issues_json
@@ -442,8 +505,10 @@ You are a mechanical fix agent. You receive a verification report listing issues
 
 - Read each issue in the verification report
 - Determine if it can be fixed by editing a task JSON file (e.g., adjusting a threshold, adding missing detail, fixing a field value)
+- The specification is included. Use it to decide what the spec actually says before editing; never add a requirement it does not state
 - If an issue requires human judgment (ambiguous spec interpretation, architectural decisions, trade-offs between approaches), do NOT fix it — add it to `needs_human`
-- Apply fixes by editing the task JSON files directly using Write tool
+- Apply fixes by editing the task JSON files directly with the Edit or Write tool. You have no shell; do not try to run scripts
+- The plan's contract file is listed with the task files. When a fix changes what a task builds, update the matching contract entry in the same pass, so task files and contract never disagree. Fix an issue about the contract alone by editing the contract file. Keep it valid JSON with the same structure
 - Report exactly what you changed
 
 ## Output Format
@@ -478,26 +543,35 @@ FIXPROMPT
 
 ${issues_json}
 
+## Specification (ground truth the plan is checked against)
+
+${spec_content}
+
 ## Task Files
 
 ${task_files_content}
 
 Apply ONLY the fixes described above. Do NOT change anything else."
 
+        local plan_snapshot
+        plan_snapshot=$(_verify_snapshot_plan_files)
+
         local fix_output
-        if ! fix_output=$(provider_run_json \
+        # The Fix Agent edits task files with tools, so it needs more turns than
+        # a JSON-only call allows.
+        if ! fix_output=$(provider_run \
             "$fix_system_prompt" \
             "$fix_message" \
-            "${TEMPLATES_DIR}/plan-fix-output.json" \
             "$MODEL_SUPPORT" \
-            "$DEFAULT_JSON_MAX_TURNS" \
             "$AGENT_TOOLS_WRITE" \
             "FixAgent"); then
             rm -f "$fix_system_prompt"
+            _verify_restore_invalid_files "$plan_snapshot"
             log_error "Fix Agent failed — skipping auto-fix"
             break
         fi
         rm -f "$fix_system_prompt"
+        _verify_restore_invalid_files "$plan_snapshot"
 
         if [[ -z "$fix_output" ]]; then
             log_error "Fix Agent returned empty output — skipping"
@@ -580,6 +654,9 @@ Apply ONLY the fixes described above. Do NOT change anything else."
         _print_verify_report "$verify_json"
 
         status=$(echo "$verify_json" | jq -r '.status // "unknown"')
+        if [[ "$status" == "pass" ]] && [[ "$(echo "$verify_json" | jq '[.critical_failures // [] | .[]] | length')" -gt 0 ]]; then
+            status="fail"
+        fi
 
         if [[ "$status" == "pass" ]]; then
             _print_fix_summary "$all_fixes_json" "$total_fixes"
@@ -608,11 +685,7 @@ Apply ONLY the fixes described above. Do NOT change anything else."
         }' 2>/dev/null)
 
         # Re-gather task files (they may have been edited)
-        task_files_content=""
-        for f in "${TASKS_DIR}"/*.json; do
-            [[ -f "$f" ]] || continue
-            task_files_content+="--- FILE: ${f} ---"$'\n'"$(cat "$f")"$'\n\n'
-        done
+        task_files_content=$(_verify_fix_files_content)
     done
 
     # Loop exhausted or broke — print final summary

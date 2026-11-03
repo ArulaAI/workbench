@@ -96,10 +96,10 @@ _resolve_python() {
     [[ -n "$_deps_python" ]] && return 0
     if [[ -n "${SPEED_PYTHON:-}" ]]; then
         _deps_python="$SPEED_PYTHON"
-    elif [[ -x "${SPEED_DIR}/.venv/bin/python3" ]]; then
-        _deps_python="${SPEED_DIR}/.venv/bin/python3"
-    elif [[ -x "${PROJECT_ROOT}/.venv/bin/python3" ]]; then
-        _deps_python="${PROJECT_ROOT}/.venv/bin/python3"
+    elif _deps_python=$(speed_venv_python "${SPEED_DIR}"); then
+        :
+    elif _deps_python=$(speed_venv_python "${PROJECT_ROOT}"); then
+        :
     elif command -v python3 &>/dev/null; then
         _deps_python="$(command -v python3)"
     fi
@@ -443,6 +443,8 @@ except Exception as e:
     sys.exit(1)
 
 errors = []
+# Custom grammars (prisma, graphql, protobuf, zig) are optional builds: a
+# missing library disables only that language, so it is a warning.
 warnings = []
 
 # Check ruleDirs
@@ -466,15 +468,14 @@ for lang, spec in config.get('customLanguages', {}).items():
             else:
                 warnings.append(f'{lang}: grammar library missing: {lib_path}')
             break
-    if not found and not errors and not any(lang in warning for warning in warnings):
+    if not found and not any(w.startswith(f'{lang}:') for w in warnings):
         warnings.append(f'{lang}: no grammar library for .{platform_ext} platform')
-
-if warnings:
-    print('WARNING: ' + '; '.join(warnings), file=sys.stderr)
 
 if errors:
     print('; '.join(errors))
     sys.exit(1)
+if warnings:
+    print('WARNING: ' + '; '.join(warnings))
 " 2>&1) || {
         log_error_block \
             "sgconfig.yml validation failed" \
@@ -482,6 +483,10 @@ if errors:
             "Check sgconfig.yml and rebuild grammars: ./scripts/build-grammars.sh --clean"
         return 1
     }
+    if [[ "$check_result" == WARNING:* ]]; then
+        log_warn "Optional grammars not built (those languages are skipped): ${check_result#WARNING: }"
+        log_warn "Build them with ./scripts/build-grammars.sh if this project uses them"
+    fi
 }
 
 _check_ast_grep_rules() {
@@ -506,22 +511,23 @@ _check_ast_grep_rules() {
         local lang
         lang=$(basename "$lang_dir")
 
-        # Custom languages require platform-native grammar libraries. They are
-        # optional, so do not fail startup when a library is not installed.
+        local rule_file
+        local config="${SPEED_DIR}/sgconfig.yml"
+        # Custom languages need sgconfig.yml for their grammar library; skip one
+        # whose optional library is not built (_check_sgconfig warns about it).
+        # Ordinary languages are probed without sgconfig.yml, as extraction runs
+        # them, so a missing custom grammar cannot mark them broken.
+        local custom=false
         case "$lang" in
             graphql|prisma|protobuf|zig)
+                custom=true
                 [[ -f "${SPEED_DIR}/lib/context/data/grammars/${lang}.$(_platform_ext)" ]] || continue
                 ;;
         esac
-
-        local rule_file
-        local config="${SPEED_DIR}/sgconfig.yml"
         for rule_file in "$lang_dir"*.yml; do
             [[ -f "$rule_file" ]] || continue
             local probe_output
-            # Custom grammar libraries are optional. Only load sgconfig for a
-            # custom language when its platform-specific library is available.
-            if [[ -f "$config" ]] && [[ -f "${SPEED_DIR}/lib/context/data/grammars/${lang}.$(_platform_ext)" ]]; then
+            if $custom && [[ -f "$config" ]]; then
                 probe_output=$("$sg" scan --config "$config" --rule "$rule_file" --json /dev/null 2>&1)
             else
                 probe_output=$("$sg" scan --rule "$rule_file" --json /dev/null 2>&1)
@@ -541,7 +547,7 @@ _check_ast_grep_rules() {
         details=$(printf '  %s\n' "${broken[@]}")
         log_error_block \
             "${#broken[@]} language(s) have broken ast-grep rules" \
-            "ast-grep cannot load these rules. Extraction for ALL languages fails when any rule is broken:
+            "ast-grep cannot load these rules, so extraction for these languages fails:
 ${details}" \
             "Fix the rule YAML files in ${rules_dir}/ or remove the broken language directories"
         return 1
@@ -624,14 +630,19 @@ speed_check_deps() {
     _check_python_version        || fail=1
     _check_provider              || fail=1
     _check_agent_files           || fail=1
-    _check_worktree_symlinks     || fail=1
+    [[ "${SPEED_CI:-}" == 1 ]] || _check_worktree_symlinks || fail=1
     _check_data_files            || fail=1
-    _check_ast_grep              || fail=1
-    _check_sgconfig              || fail=1
-    _check_ast_grep_rules        || fail=1
-    _check_tree_sitter_grammars  || fail=1
+    # speed ci uses neither ast-grep nor the tree-sitter grammars, so a CI runner needs neither.
+    if [[ "${SPEED_CI:-}" != 1 ]]; then
+        _check_ast_grep              || fail=1
+        _check_sgconfig              || fail=1
+        _check_ast_grep_rules        || fail=1
+        _check_tree_sitter_grammars  || fail=1
+    fi
 
     if (( fail )); then
+        declare -F _speed_ci_startup_failed > /dev/null \
+            && _speed_ci_startup_failed "SPEED's dependency check failed; see the messages on stderr"
         exit "$EXIT_CONFIG_ERROR"
     fi
 }

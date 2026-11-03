@@ -32,7 +32,11 @@ require_timeout_cmd() {
 }
 
 # Fail fast at source time — don't wait until the first agent call
-require_timeout_cmd || exit "$EXIT_CONFIG_ERROR"
+if ! require_timeout_cmd; then
+    declare -F _speed_ci_startup_failed > /dev/null \
+        && _speed_ci_startup_failed "timeout or gtimeout is not installed (GNU coreutils)"
+    exit "$EXIT_CONFIG_ERROR"
+fi
 
 # ── JSON extraction from agent output ────────────────────────────
 # Agent output is free-form text that may contain JSON. This function
@@ -129,6 +133,13 @@ sys.exit(1)
 # Validate that a string is valid JSON. Logs an error with the agent
 # name and a preview of the raw output if not.
 # Usage: _require_json "Guardian" "$output" || return 1
+# First non-empty line of an agent's output, for error messages. When the agent
+# CLI fails (unknown model, no access, network) it prints its reason instead of
+# JSON; showing that line tells a setup problem apart from a bad answer.
+agent_output_first_line() {
+    printf '%s\n' "$1" | sed 's/\x1b\[[0-9;]*m//g' | awk 'NF { print; exit }' | cut -c1-200
+}
+
 _require_json() {
     local label="$1" json="$2"
     if [[ -z "$json" ]]; then
@@ -136,7 +147,7 @@ _require_json() {
         return 1
     fi
     if ! echo "$json" | jq empty 2>/dev/null; then
-        log_error "${label} returned invalid JSON"
+        log_error "${label} returned invalid JSON. The agent said: $(agent_output_first_line "$json")"
         log_verbose "  First 300 chars: ${json:0:300}"
         return 1
     fi
@@ -187,7 +198,7 @@ source "$_PROVIDER_FILE"
 # real binary before any agent calls. Catches missing installs early
 # with a clear message instead of a cryptic failure at first agent call.
 
-if ! command -v "$PROVIDER_BIN" &>/dev/null; then
+if [[ "${SPEED_CI:-}" != 1 ]] && ! command -v "$PROVIDER_BIN" &>/dev/null; then
     log_error_block \
         "Provider '${_PROVIDER_NAME}' binary not found: ${PROVIDER_BIN}" \
         "Install the binary or set the path via the provider's env var"

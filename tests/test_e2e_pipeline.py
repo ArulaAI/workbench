@@ -133,7 +133,7 @@ tasks = [
                        "is covered by at least one task's spec_references or description. "
                        "Feed uncovered requirements to the Plan Verifier.",
         "files_touched": ["lib/spec_traceability.py"],
-        "depends_on": [],
+        "depends_on": ["cv-1"],
         "acceptance_criteria": [
             {
                 "criterion": "spec_traceability.py exists",
@@ -150,8 +150,8 @@ tasks = [
             {"spec": "product-spec.md", "section": "Overview"},
             {"spec": "product-spec.md", "section": "Requirements"},
         ],
-        "rationale": "Independent of cv-1/cv-2 — traceability is a plan-time check, "
-                     "not a runtime check.",
+        "rationale": "Depends on cv-1 because spec_traceability.py calls "
+                     "verify_criteria from lib/criteria_verify.py. Independent of cv-2.",
         "assumptions": ["Product spec follows markdown heading conventions"],
         "cross_cutting_concerns": [],
     },

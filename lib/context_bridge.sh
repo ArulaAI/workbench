@@ -26,10 +26,13 @@
 _context_python() {
     if [[ -n "${SPEED_PYTHON:-}" ]]; then
         echo "$SPEED_PYTHON"
+    elif declare -F speed_venv_python >/dev/null && speed_venv_python "${SPEED_DIR}"; then
+        :
+    elif declare -F speed_venv_python >/dev/null && speed_venv_python "${PROJECT_ROOT}"; then
+        :
     elif [[ -x "${SPEED_DIR}/.venv/bin/python3" ]]; then
+        # Sourced without config.sh (some tests)
         echo "${SPEED_DIR}/.venv/bin/python3"
-    elif [[ -x "${PROJECT_ROOT}/.venv/bin/python3" ]]; then
-        echo "${PROJECT_ROOT}/.venv/bin/python3"
     else
         echo "python3"
     fi

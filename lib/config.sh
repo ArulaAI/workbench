@@ -3,21 +3,61 @@
 
 set -euo pipefail
 
+# ── Windows (Git Bash, MSYS2, Cygwin) ────────────────────────────
+# Python and jq here are native Windows programs. They cannot open /c/... or
+# /tmp/... paths written into script text or environment variables, so every
+# root path is kept in C:/... form, which bash accepts too. Windows jq also
+# ends each line with CRLF, and `read` would keep the \r in task IDs.
+SPEED_WINDOWS=false
+case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) command -v cygpath &>/dev/null && SPEED_WINDOWS=true ;;
+esac
+
+# Path in the form native tools can open: C:/... on Windows, unchanged elsewhere
+speed_native_path() {
+    if [[ "$SPEED_WINDOWS" == "true" ]]; then cygpath -m "$1"; else printf '%s\n' "$1"; fi
+}
+
+# Absolute path of directory $1 in native form
+speed_abs_dir() {
+    (cd "$1" && speed_native_path "$(pwd)")
+}
+
+# Python of the virtualenv in $1/.venv, if there is one. Windows venvs keep it
+# in Scripts/python.exe instead of bin/python3.
+speed_venv_python() {
+    local py
+    for py in "$1/.venv/bin/python3" "$1/.venv/Scripts/python.exe"; do
+        [[ -x "$py" ]] && { echo "$py"; return 0; }
+    done
+    return 1
+}
+
+if [[ "$SPEED_WINDOWS" == "true" ]]; then
+    export TMPDIR
+    TMPDIR="$(cygpath -m "${TMPDIR:-/tmp}")"
+    # Windows Python reads files as cp1252 by default; specs are UTF-8
+    export PYTHONUTF8=1
+    # Look at raw bytes: Git Bash's $(...) drops the \r, but `read` keeps it
+    if command -v jq &>/dev/null && [[ "$(printf '1' | command jq . 2>/dev/null | od -An -c)" == *'\r'* ]]; then
+        jq() { command jq -b "$@"; }
+        export -f jq
+    fi
+fi
+
 # ── Paths ────────────────────────────────────────────────────────
-SPEED_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SPEED_DIR="$(speed_abs_dir "$(dirname "${BASH_SOURCE[0]}")/..")"
 export SPEED_DIR    # Available to Python subprocesses
-PROJECT_ROOT="${SPEED_PROJECT_ROOT:-$(pwd)}"
+PROJECT_ROOT="$(speed_native_path "${SPEED_PROJECT_ROOT:-$(pwd)}")"
 # An agent runs inside its task worktree (<project>/.speed/worktrees/<feature>/task-N),
 # which only holds git-tracked files. Workbench state for new features lives in the real
 # project, so resolve the project root back out of the worktree.
 case "$PROJECT_ROOT" in
     */.speed/worktrees/*) PROJECT_ROOT="${PROJECT_ROOT%%/.speed/worktrees/*}" ;;
 esac
-# MSYS converts native executable arguments but does not convert path values
-# embedded in environment variables or Python source. Keep native equivalents
-# for Python bridges when Workbench is launched from Git Bash on Windows.
-SPEED_DIR_PY="$(cygpath -m "$SPEED_DIR" 2>/dev/null || printf '%s' "$SPEED_DIR")"
-PROJECT_ROOT_PY="$(cygpath -m "$PROJECT_ROOT" 2>/dev/null || printf '%s' "$PROJECT_ROOT")"
+# Both roots are already in native form. The Python bridges read these names.
+SPEED_DIR_PY="$SPEED_DIR"
+PROJECT_ROOT_PY="$PROJECT_ROOT"
 export SPEED_DIR_PY PROJECT_ROOT_PY
 LIB_DIR="${SPEED_DIR}/lib"
 AGENTS_DIR="${SPEED_DIR}/agents"
@@ -81,6 +121,8 @@ if [[ -f "$SPEED_TOML" ]]; then
 
         if [[ $_toml_rc -ne 0 ]]; then
             echo "Warning: could not parse ${SPEED_TOML}; using defaults${_toml_err:+: ${_toml_err}}" >&2
+            # speed ci refuses to run on defaults it was not asked for.
+            SPEED_TOML_INVALID=1
         elif [[ -n "$_toml_err" ]]; then
             echo "Warning: ${_toml_err}" >&2
             eval "$_toml_out"
@@ -126,7 +168,7 @@ ARCHITECT_TIMEOUT_PHASED_MIN=900     # floor for phased plans (large specs by de
 
 # ── Agent Tool Sets ──────────────────────────────────────────────
 AGENT_TOOLS_FULL="Bash Edit Read Write Glob Grep"
-AGENT_TOOLS_WRITE="Read Write Glob"
+AGENT_TOOLS_WRITE="Read Write Edit Glob"
 AGENT_TOOLS_READONLY="Read Glob Grep"
 
 # ── Orchestration Tuning ─────────────────────────────────────────

@@ -7,8 +7,10 @@ You have no tools. All context is in this message.
 ## Input
 
 You receive:
-1. A **skeleton plan** — JSON with tasks (id, title, description, files_touched, depends_on, agent_model). These are final. Do not add, remove, or reorder tasks. Do not change IDs, titles, dependencies, or file assignments.
-2. The **original specs** (product, tech, design) and codebase context — same input the skeleton was produced from.
+1. The **original specs** (product, tech, design, architecture), each labelled with its path.
+2. A **skeleton plan** — JSON with tasks (id, title, description, files_touched, depends_on) and the plan's `cross_cutting_concerns`. These are final. Do not add, remove, or reorder tasks. Do not change IDs, titles, dependencies, or file assignments.
+
+You do not receive the codebase scan. The skeleton's descriptions already name the files, functions and types each task changes; take names from them and from the specs, and do not invent others. Contract `path` values must be files listed in the creating task's `files_touched`.
 
 ## Your Job
 
@@ -24,7 +26,7 @@ Prefer `test` and `schema_check`. A task where every criterion is `manual` provi
 
 **`rationale`** — why this task exists with these boundaries. Not what it does (that's in the skeleton's description). Answer: "Why is this separate from task N?" or "Why does this depend on task M?"
 
-**`assumptions`** — decisions where the spec was ambiguous. One sentence each: what was ambiguous, what you decided. Empty array when unambiguous.
+**`assumptions`** — decisions where the spec was ambiguous. One sentence each: what was ambiguous, what you decided. Empty array when unambiguous. Never use an assumption to decide a question the spec lists under Unresolved Questions or marks as blocked: leave that behaviour as it is today, with no task, test, error message or contract entry for it.
 
 ## Contract
 

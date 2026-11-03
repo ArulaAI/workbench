@@ -246,6 +246,7 @@ cmd_review() {
         case "$1" in
             --task) task_id="$2"; task_mode=true; shift 2 ;;
             --task-id) task_id="$2"; shift 2 ;;
+            --task-id) _need_value "$@"; task_id="$2"; shift 2 ;;
             *) log_error "Unknown option: $1"; exit 1 ;;
         esac
     done
@@ -304,7 +305,7 @@ cmd_review() {
         local title branch criteria inspected_commit diff_hash
         title=$(echo "$task_json" | jq -r '.title')
         branch=$(echo "$task_json" | jq -r '.branch')
-        criteria=$(echo "$task_json" | jq -r '.acceptance_criteria')
+        criteria=$(echo "$task_json" | jq -r "$TASK_CRITERIA_JQ")
 
         log_step "Reviewing task ${tid}: ${COLOR_STEP}${title}${RESET}"
 

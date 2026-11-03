@@ -342,12 +342,13 @@ if has_sg:
 
         poisoned = _run_ast_grep(test_file, "python")
 
-        # ast-grep --config loads all rules globally. A bad rule in any
-        # language directory kills extraction for every language. This is
-        # ast-grep's behavior, not a bug in our code. Section 2 exists
-        # to prevent bad rules from ever reaching this point.
-        check("--config poison: bad rule zeros all extraction",
-              len(poisoned) == 0 and len(baseline) > 0,
+        # ast-grep --config loads every rule globally, so a bad rule in any
+        # language directory used to zero extraction for every language.
+        # Ordinary languages now run only their own rule files (sgconfig.yml
+        # is loaded only for custom grammars), so the poison stays contained.
+        # Section 2 still keeps bad rules from being installed at all.
+        check("poison in another language does not affect Python",
+              len(poisoned) == len(baseline) and len(baseline) > 0,
               f"baseline={len(baseline)}, poisoned={len(poisoned)}")
     finally:
         if poison_file.exists():
@@ -415,7 +416,10 @@ with patch("lib.context.treesitter_extract.subprocess.run", return_value=mock_re
     with patch("lib.context.treesitter_extract._find_sg", return_value="/usr/bin/fake-sg"):
         rok = _run_ast_grep(test_file, "python")
 
-check("exit 0 + valid JSON returns matches", len(rok) == 1)
+# Python runs each of its rule files once, so the mocked match comes back per file.
+python_rule_files = len(list((_RULES_DIR / "python").glob("*.yml")))
+check("exit 0 + valid JSON returns matches", len(rok) == python_rule_files,
+      f"got {len(rok)}, expected {python_rule_files}")
 
 # Timeout
 with patch("lib.context.treesitter_extract.subprocess.run",

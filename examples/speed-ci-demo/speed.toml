@@ -1,0 +1,22 @@
+# speed ci demo. The scanners read sample outputs in scan-results/ (each in the tool's
+# real format), so nothing has to be installed. Replace cmd with the real tool to scan for real.
+
+[security]
+sast_cmd = "cat scan-results/semgrep.json"
+sca_cmd = "cat scan-results/pip-audit.json"
+severity_threshold = "high"
+
+[ci]
+security_mode = "strict"
+
+[ci.tools.trivy]
+format = "trivy"
+cmd = "cat scan-results/trivy.json"
+
+[ci.tools.gitleaks]
+format = "gitleaks"
+cmd = "cat scan-results/gitleaks.json"
+
+[ci.tools.codeql]
+format = "sarif"
+cmd = "cat scan-results/codeql.sarif"

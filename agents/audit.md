@@ -139,7 +139,7 @@ Respond with a single JSON object matching this schema exactly:
 ```json
 {
   "status": "pass | warn | fail",
-  "spec_type": "prd | rfc | design | defect",
+  "spec_type": "prd | rfc | design | architecture | defect",
   "spec_file": "<relative path to the spec file>",
   "linked_specs": {
     "prd": "<relative path to linked PRD, or null>",
@@ -176,7 +176,8 @@ Respond with a single JSON object matching this schema exactly:
 ```
 
 - `issues` is an empty array if there are none.
-- `sizing` is `null` for Design and Defect specs (sizing does not apply).
+- `sizing` is `null` for Design, Architecture and Defect specs (sizing does not apply).
+- Architecture specs (`specs/architecture/`) are checked at Levels 1 and 2 against the architecture template. They describe boundaries and constraints rather than user flows, so Level 3 PRD coverage checks do not apply to them.
 - `sizing.recommendation` is `"multi_rfc"` when the RFC should be split into multiple child RFCs (> 15 tasks or > 1,000 lines). `"split"` is for phase-based splitting within a single RFC.
 - `sizing.suggested_children` is only populated when `recommendation` is `"multi_rfc"`. Each entry suggests a child RFC with sections (by H2 index), dependencies on other children, and a testable output.
 - `linked_specs.prd` and `linked_specs.design` are `null` if the spec type does not link to them or if no link is present.
