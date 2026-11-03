@@ -54,9 +54,9 @@ class BashCompatibility(unittest.TestCase):
                             self.assertNotIn('Failure Classification:', r.stdout)
 
     def test_planning_single_split_and_defect_modes(self):
-        for mode in ('single', 'split', 'defect'):
+        for mode, single_call in [(m, c) for m in ('single', 'split', 'defect') for c in ('true', 'false')]:
             for bash in BASHES:
-                with self.subTest(bash=bash, mode=mode), tempfile.TemporaryDirectory(prefix='spec space ') as tmp:
+                with self.subTest(bash=bash, mode=mode, single_call=single_call), tempfile.TemporaryDirectory(prefix='spec space ') as tmp:
                     project = Path(tmp)
                     for kind in ('tech', 'product', 'design'):
                         p = project / f'specs/{kind}/payments.md'
@@ -64,7 +64,7 @@ class BashCompatibility(unittest.TestCase):
                         p.write_text(f'# {kind}\n## Foundation\n{kind}-foundation\n## Features\n{kind}-features\n')
                     defect = project / 'fee.md'
                     defect.write_text('# Defect: fee rounding\n\n## Observed Behavior\nFee rounds down.\n')
-                    code = r'''
+                    code = f'export SPEED_PLAN_SINGLE_CALL={single_call}\n' + r'''
 export SPEED_PROJECT_ROOT="$PROJECT"
 source "$ROOT/lib/config.sh"
 source "$ROOT/lib/log.sh"
@@ -102,6 +102,11 @@ context_split_spec_for_phase() {
 context_verify_spec_split() { echo '{"pass":true,"warnings":[]}'; }
 _run_architect_phase() {
     printf '%s\n' "$2" > "$PROJECT/$1.txt"
+    # Two-pass planning: the enrichment call adds criteria to skeleton tasks.
+    if [[ "$1" == *enrich* ]]; then
+        printf '{"tasks":[{"id":1,"acceptance_criteria":[{"criterion":"c","verify_by":"test"}],"spec_references":[{"spec":"s","section":"x","requirement":"r"}]},{"id":2,"acceptance_criteria":[{"criterion":"c","verify_by":"test"}],"spec_references":[{"spec":"s","section":"x","requirement":"r"}]}],"contract":{"entities":[],"relationships":[]}}\n'
+        return 0
+    fi
     local id=1
     [[ "$1" == 'Architect (Phase 2)' ]] && id=2
     printf '{"tasks":[{"id":%s,"title":"task","depends_on":[],"files_touched":[],"description":"task"}],"contract":{"entities":[],"relationships":[]}}\n' "$id"
